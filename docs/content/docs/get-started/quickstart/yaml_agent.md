@@ -30,15 +30,33 @@ into an `AgentsExecutionEnvironment`. It uses the same
 as the Java and Python APIs. Your Action and tool implementations still live in Python or Java;
 the YAML file declares their configuration and connections.
 
-This quickstart runs the same **Review Analysis** workflow as the [Build Your First Agent]({{< ref "docs/get-started/quickstart/create-agent/single-agent" >}}) — extracting a satisfaction score and dissatisfaction reasons from a stream of product reviews — but declares the agent in YAML and loads it with `load_yaml` / `loadYaml`. The action functions and the `notify_shipping_manager` tool are reused from the single-Agent example as static methods, so this quickstart shows the **smallest possible delta** between a code-defined agent and a YAML-declared agent.
+This quickstart runs the same Review Analysis job as
+[Build Your First Agent]({{< ref "docs/get-started/quickstart/create-agent/single-agent" >}}),
+which scores each product review and reports the reasons behind the score. It declares the Agent in a
+YAML file instead of in code. Load the file with `load_yaml` / `loadYaml`, then apply the Agent by its
+YAML `name`. Its Actions and tool are the same `ReviewAnalysisAgent` static methods, and the chat
+model connection is declared in the file rather than registered on the environment.
 
 For the full reference of the YAML format, see the [YAML API]({{< ref "docs/development/create-agent/yaml" >}}) documentation.
+
+## Complete Example
+
+| Language | Example job | Agent declaration |
+|----------|-------------|-------------------|
+| Python | {{< gh_link file="python/flink_agents/examples/quickstart/yaml_workflow_agent_example.py" name="yaml_workflow_agent_example.py" >}} | {{< gh_link file="python/flink_agents/examples/quickstart/yaml_review_analysis_agent.yaml" name="yaml_review_analysis_agent.yaml" >}} |
+| Java | {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/YamlWorkflowAgentExample.java" name="YamlWorkflowAgentExample.java" >}} | {{< gh_link file="examples/src/main/resources/yaml/yaml_review_analysis_agent.yaml" name="yaml_review_analysis_agent.yaml" >}} |
+
+The Actions and tool are the `ReviewAnalysisAgent` static methods used by
+[Build Your First Agent]({{< ref "docs/get-started/quickstart/create-agent/single-agent" >}}),
+and the reviews come from the same input file.
 
 ## Code Walkthrough
 
 ### Declare the Agent in YAML
 
-The whole agent — chat model, prompt, tool, and the two actions — is declared in `yaml_review_analysis_agent.yaml`. The `function:` strings point at static methods on the existing `ReviewAnalysisAgent` class from the single-Agent quickstart.
+One file declares the Agent's chat model connection and setup, its prompt, its tool, and its two
+Actions. Each `function:` string names a static method of the `ReviewAnalysisAgent` class that
+Build Your First Agent defines, in the form `<module-or-class>:<qualname>`.
 
 {{< tabs "Declare Agent YAML" >}}
 
@@ -79,8 +97,8 @@ agents:
                   "review": "The headphones broke after one week. Very poor quality."
               }
 
-              Ensure your response can be parsed by Python JSON, using this format
-              as an example:
+              Ensure your response can be parsed by Python JSON, using this
+              format as an example:
               {
                "id": "12345",
                "score": 1,
@@ -95,6 +113,8 @@ agents:
               "input":
               {input}
 
+    # Action ``process_input`` sends ``ChatRequestEvent(model="review_analysis_model", ...)``,
+    # so the chat-model setup MUST be named ``review_analysis_model``.
     chat_model_setups:
       - name: review_analysis_model
         clazz: ollama
@@ -151,8 +171,8 @@ agents:
                   "review": "The headphones broke after one week. Very poor quality."
               }
 
-              Ensure your response can be parsed by Java JSON, using this format
-              as an example:
+              Ensure your response can be parsed by Java JSON, using this
+              format as an example:
               {
                "id": "12345",
                "score": 1,
@@ -189,25 +209,25 @@ agents:
 
 {{< /tabs >}}
 
-A few things to notice in the YAML above:
+Notes on the file above:
 
-- A Resource's `name` is the name used by Actions and other Resources to find it. Its section
-  determines the resource type; for example, `chat_model_setups` declares chat model Resources.
-  See [Registering and Referencing Resources]({{< ref "docs/development/create-agent/overview#registering-and-referencing-resources" >}}).
-- The chat model setup's `connection`, `prompt`, and `tools` fields reference registered
-  Resource names. Its `model: qwen3:8b` field selects the model on the Ollama server.
-- The reused input Action sends a `ChatRequestEvent` naming the chat model setup. The
-  [built-in chat Action]({{< ref "docs/development/calling-llms/chat#chat-events" >}})
-  gets and calls that Resource, then sends a response Event.
-- `clazz: ollama` is an alias resolved by the loader to the full Ollama chat-model class — see the alias table in the [YAML API]({{< ref "docs/development/create-agent/yaml#class-aliases" >}}) doc.
-- `trigger_conditions: [input]` / `[chat_response]` use **event aliases** for the framework's built-in events. An alias replaces only a complete event-type entry; it never rewrites text inside a condition expression or quoted event type.
-- `function:` strings use the `<module-or-class>:<qualname>` format. The right side is the class-qualified method name, so the YAML reuses the same `process_input` / `processInput` static methods the original `ReviewAnalysisAgent` already defines.
+- A Resource's `name` is the name Actions and other Resources use to find it, and the section it
+  sits in gives its type, so `chat_model_setups` declares chat model Resources. See
+  [Registering and Referencing Resources]({{< ref "docs/development/create-agent/overview#registering-and-referencing-resources" >}}).
+- The chat model setup's `connection`, `prompt`, and `tools` fields name Resources the same file
+  declares. Its `model: qwen3:8b` field selects the model on the Ollama server.
+- `clazz: ollama` is a provider alias for the Ollama chat model classes, and
+  `trigger_conditions: [input]` / `[chat_response]` are event aliases for the framework's built-in
+  events. See [Provider aliases]({{< ref "docs/development/create-agent/yaml#provider-aliases" >}})
+  for the alias tables and the exact-match rule.
 
-### Load and Run
+### Create the Execution Environment
 
-In the entry-point script, build the Flink stream as usual, then load the YAML and apply the agent **by name**.
+An `AgentsExecutionEnvironment` wraps a Flink `StreamExecutionEnvironment`, as in the single-Agent
+walkthrough, and the example caps how many chat requests run at once. No connection registration
+appears here, because the YAML file declares the connection and `load_yaml` registers it.
 
-{{< tabs "Load and Run" >}}
+{{< tabs "Create the Execution Environment" >}}
 
 {{< tab "Python" >}}
 ```python
@@ -217,8 +237,43 @@ agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
 # limit async request to avoid overwhelming ollama server
 agents_env.get_config().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2)
+```
+{{< /tab >}}
 
-# Load the YAML — agents and shared resources are registered on the env.
+{{< tab "Java" >}}
+```java
+// Set up the Flink streaming environment and the Agents execution environment.
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+env.setParallelism(1);
+AgentsExecutionEnvironment agentsEnv =
+        AgentsExecutionEnvironment.getExecutionEnvironment(env);
+
+// limit async request to avoid overwhelming ollama server
+agentsEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2);
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+### Load the YAML and Apply the Agent
+
+Load the file, then apply the Agent by the `name` it declares. Two calls carry the difference from
+Build Your First Agent:
+
+1. `agents_env.load_yaml(...)` / `agentsEnv.loadYaml(...)` registers the declared Agent and its
+   Resources on the environment.
+2. `.apply("review_analysis_agent")` looks the Agent up by name rather than taking an `Agent`
+   instance.
+
+The rest of the job matches the walkthrough.
+
+{{< tabs "Load the YAML and Apply the Agent" >}}
+
+{{< tab "Python" >}}
+```python
+# Load the YAML — the declared agent and its chat-model connection,
+# chat-model setup, prompt, tool, and actions are all registered on
+# the environment in this single call.
 agents_env.load_yaml(current_dir / "yaml_review_analysis_agent.yaml")
 
 # Read product reviews from a text file as a streaming source.
@@ -233,9 +288,14 @@ product_review_stream = env.from_source(
     .build(),
     watermark_strategy=WatermarkStrategy.no_watermarks(),
     source_name="yaml_review_analysis_example",
-).map(lambda x: ProductReview.model_validate_json(x))
+).map(
+    lambda x: ProductReview.model_validate_json(
+        x
+    )  # Deserialize JSON to ProductReview.
+)
 
-# Apply the YAML-declared agent BY NAME.
+# Apply the YAML-declared agent BY NAME — ``apply`` accepts either an
+# Agent instance or the name of an agent registered on the environment.
 review_analysis_res_stream = (
     agents_env.from_datastream(
         input=product_review_stream, key_selector=lambda x: x.id
@@ -252,18 +312,11 @@ agents_env.execute("YAML Agent Example Job")
 
 {{< tab "Java" >}}
 ```java
-// Set up the Flink streaming environment and the Agents execution environment.
-StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-env.setParallelism(1);
-AgentsExecutionEnvironment agentsEnv =
-        AgentsExecutionEnvironment.getExecutionEnvironment(env);
-
-// limit async request to avoid overwhelming ollama server
-agentsEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2);
-
-// Load the YAML — agents and shared resources are registered on the env.
-Path yamlPath = copyResource("yaml/yaml_review_analysis_agent.yaml").toPath();
-agentsEnv.loadYaml(yamlPath);
+// Load the YAML — the declared agent and its chat-model connection,
+// chat-model setup, prompt, tool, and actions are all registered on
+// the environment in this single call.
+File yamlFile = copyResource("yaml/yaml_review_analysis_agent.yaml");
+agentsEnv.loadYaml(yamlFile.toPath());
 
 // Read product reviews from input_data.txt file as a streaming source.
 File inputDataFile = copyResource("input_data.txt");
@@ -276,7 +329,8 @@ DataStream<String> productReviewStream =
                 WatermarkStrategy.noWatermarks(),
                 "yaml-review-analysis-example");
 
-// Apply the YAML-declared agent BY NAME.
+// Apply the YAML-declared agent BY NAME — `apply` accepts either an
+// Agent instance or the name of an agent registered on the environment.
 DataStream<Object> reviewAnalysisResStream =
         agentsEnv
                 .fromDataStream(productReviewStream)
@@ -291,105 +345,36 @@ agentsEnv.execute("YAML Agent Example Job");
 
 {{< /tabs >}}
 
-The key difference from the code-defined Agent quickstart is the pair of calls:
-
-1. `agents_env.load_yaml(...)` / `agentsEnv.loadYaml(...)` — parses the YAML and registers the declared agent(s) and shared resources on the environment.
-2. `.apply("review_analysis_agent")` — looks the agent up **by name** instead of passing an `Agent` instance.
-
-Everything else — the Flink source, the key selector, the sink — is identical.
-
 {{< hint info >}}
 See [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}) for details on integrating agents with the Flink DataStream and Table API.
 {{< /hint >}}
 
 ## Run the Example
 
-### Prerequisites
-
-* Unix-like environment (we use Linux, Mac OS X, Cygwin, WSL)
-* Git
-* Java 11+
-* Python 3.10, 3.11 or 3.12
-
-### Preparation
-
-#### Prepare Flink and Flink Agents
-
-Follow the [Setup]({{< ref "docs/get-started/setup" >}}) instructions to set up Flink and Flink Agents.
-
-#### Clone the Flink Agents Repository (if not done already)
-
-```bash
-git clone https://github.com/apache/flink-agents.git
-cd flink-agents
-```
-
-{{< hint info >}}
-For python examples, you can skip this step and submit the python file in installed flink-agents wheel.
-{{< /hint >}}
-
-#### Deploy a Standalone Flink Cluster
-
-You can deploy a standalone Flink cluster in your local environment with the following command.
-
-{{< tabs "Deploy a Standalone Flink Cluster" >}}
-
-{{< tab "Python" >}}
-```bash
-export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
-$FLINK_HOME/bin/start-cluster.sh
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-1. Build Flink Agents from source to generate example jar. See [Setup]({{< ref "docs/get-started/setup" >}}) for more details.
-2. Start the Flink cluster
-    ```bash
-    $FLINK_HOME/bin/start-cluster.sh
-    ```
-
-{{< hint info >}}
-To run example on JDK 21+, append jvm option `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to [env.java.opts.all](https://nightlies.apache.org/flink/flink-docs-stable/docs/deployment/config/#env-java-opts-all) in `$FLINK_HOME/conf/config.yaml` before start the flink cluster.
-{{< /hint >}}
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### Prepare Ollama
-
-Download and install Ollama from the official [website](https://ollama.com/download).
-
-{{< hint info >}}
-Ollama server **0.9.0** or higher is required.
-{{< /hint >}}
-
-Then pull the `qwen3:8b` model:
-
-```bash
-ollama pull qwen3:8b
-```
-
-### Submit Flink Agents Job to Standalone Flink Cluster
+Install Flink and Flink Agents, get the example source, prepare Ollama, and start a local
+cluster as described in
+[Before You Begin]({{< ref "docs/get-started/quickstart#before-you-begin" >}}). From the
+repository root, submit the job:
 
 {{< tabs "Submit YAML Example" >}}
 
 {{< tab "Python" >}}
 ```bash
-export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
-
-# Run the YAML-declared review analysis example
-$FLINK_HOME/bin/flink run -py ./flink-agents/python/flink_agents/examples/quickstart/yaml_workflow_agent_example.py
-# or submit the example python file in installed flink-agents wheel
-$FLINK_HOME/bin/flink run -py $PYTHONPATH/flink_agents/examples/quickstart/yaml_workflow_agent_example.py
+# Or submit the copy inside the installed package, at
+# $PYTHONPATH/flink_agents/examples/quickstart/yaml_workflow_agent_example.py
+$FLINK_HOME/bin/flink run -py python/flink_agents/examples/quickstart/yaml_workflow_agent_example.py
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```bash
-$FLINK_HOME/bin/flink run -c org.apache.flink.agents.examples.YamlWorkflowAgentExample ./flink-agents/examples/target/flink-agents-examples-$VERSION.jar
+$FLINK_HOME/bin/flink run -c org.apache.flink.agents.examples.YamlWorkflowAgentExample \
+  examples/target/flink-agents-examples-*.jar
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
 
-You should see a Flink job submitted to the Flink Cluster in the Flink web UI at [localhost:8081](localhost:8081). After a few minutes, the analysis results — one JSON record per input review — appear in the TaskManager output log.
+The job appears in the Flink web UI at [localhost:8081](http://localhost:8081). After a few
+minutes, one JSON record per input review appears in the TaskManager output log under
+`$FLINK_HOME/log`.

@@ -2,7 +2,7 @@ agents:
   - name: review_analysis_agent
     description: |
       YAML-declared review analysis agent. Reuses the static methods of
-      ReviewAnalysisAgent from the workflow_agent quickstart as actions
+      ReviewAnalysisAgent from the single-Agent quickstart as actions
       and tool, but wires everything together through this YAML file
       instead of class-level annotations.
 

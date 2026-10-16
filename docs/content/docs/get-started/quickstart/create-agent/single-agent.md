@@ -24,19 +24,32 @@ under the License.
 
 ## Overview
 
-Build an Agent that analyzes a stream of product reviews.
+Build an Agent that analyzes a stream of product reviews. The job reads one review per line from a
+text file, asks a local Ollama model for a satisfaction score and the reasons behind it, and prints
+one result per review.
+
+## Complete Example
+
+| Language | Example job | Agent definition | Shared types and resources |
+|----------|-------------|------------------|----------------------------|
+| Python | {{< gh_link file="python/flink_agents/examples/quickstart/workflow_single_agent_example.py" name="workflow_single_agent_example.py" >}} | {{< gh_link file="python/flink_agents/examples/quickstart/agents/review_analysis_agent.py" name="review_analysis_agent.py" >}} | {{< gh_link file="python/flink_agents/examples/quickstart/agents/custom_types_and_resources.py" name="custom_types_and_resources.py" >}} |
+| Java | {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/WorkflowSingleAgentExample.java" name="WorkflowSingleAgentExample.java" >}} | {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/agents/ReviewAnalysisAgent.java" name="ReviewAnalysisAgent.java" >}} | {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/agents/CustomTypesAndResources.java" name="CustomTypesAndResources.java" >}} |
+
+The reviews come from
+{{< gh_link file="python/flink_agents/examples/quickstart/resources/product_review.txt" name="product_review.txt" >}}
+in Python and
+{{< gh_link file="examples/src/main/resources/input_data.txt" name="input_data.txt" >}}
+in Java.
 
 ## Code Walkthrough
 
-### Prepare Agents Execution Environment
+### Create the Execution Environment
 
-Create the agents execution environment and register an Ollama connection as a named
-Resource of type `CHAT_MODEL_CONNECTION`. Registering it on the environment makes it available
-to the Agents in that environment. See
-[Registering and Referencing Resources]({{< ref "docs/development/create-agent/overview#registering-and-referencing-resources" >}})
-for the shared registration and access model.
+An `AgentsExecutionEnvironment` wraps a Flink `StreamExecutionEnvironment` and is the
+entry point that attaches an Agent to a stream. The job also pins parallelism to one and
+caps how many chat requests run at once.
 
-{{< tabs "Prepare Agents Execution Environment" >}}
+{{< tabs "Create the Execution Environment" >}}
 
 {{< tab "Python" >}}
 ```python
@@ -44,8 +57,38 @@ for the shared registration and access model.
 env = StreamExecutionEnvironment.get_execution_environment()
 agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
-# Add Ollama chat model connection to be used by the ReviewAnalysisAgent
-# and ProductSuggestionAgent.
+# limit async request to avoid overwhelming ollama server
+agents_env.get_config().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+// Set up the Flink streaming environment and the Agents execution environment.
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+env.setParallelism(1);
+AgentsExecutionEnvironment agentsEnv =
+        AgentsExecutionEnvironment.getExecutionEnvironment(env);
+
+// limit async request to avoid overwhelming ollama server
+agentsEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2);
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+### Register the Chat Model Connection
+
+Actions and Resources find a Resource by name, so register the Ollama connection on the
+environment before you apply an Agent. `ollama_server_descriptor` and
+`OLLAMA_SERVER_DESCRIPTOR` are the descriptors in the shared types file above, and each
+declares `ResourceName.ChatModel.OLLAMA_CONNECTION`.
+
+{{< tabs "Register the Chat Model Connection" >}}
+
+{{< tab "Python" >}}
+```python
+# Add Ollama chat model connection to be used by the ReviewAnalysisAgent.
 agents_env.add_resource(
     "ollama_server",
     ResourceType.CHAT_MODEL_CONNECTION,
@@ -55,12 +98,7 @@ agents_env.add_resource(
 {{< /tab >}}
 
 {{< tab "Java" >}}
-```Java
-// Set up the Flink streaming environment and the Agents execution environment.
-StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-AgentsExecutionEnvironment agentsEnv =
-        AgentsExecutionEnvironment.getExecutionEnvironment(env);
-
+```java
 // Add Ollama chat model connection to be used by the ReviewAnalysisAgent.
 agentsEnv.addResource(
         "ollamaChatModelConnection",
@@ -71,18 +109,19 @@ agentsEnv.addResource(
 
 {{< /tabs >}}
 
-### Create the Agents
+Registering on the environment makes the Resource visible to every Agent applied to it.
+See
+[Registering and Referencing Resources]({{< ref "docs/development/create-agent/overview#registering-and-referencing-resources" >}})
+for the shared registration and access model.
 
-`ReviewAnalysisAgent` analyzes product reviews and produces a satisfaction score and reasons
-for dissatisfaction. It declares prompt, tool, and chat model Resources, along with two Actions.
-The chat model setup references the environment's connection by name: `ollama_server` in Python
-or `ollamaChatModelConnection` in Java.
+### Create the Agent
 
-The input Action sends a `ChatRequestEvent` naming the model Resource (`review_analysis_model`
-or `reviewAnalysisModel`). The [built-in chat Action]({{< ref "docs/development/calling-llms/chat#chat-events" >}})
+`ReviewAnalysisAgent` declares one prompt, one tool, one chat model setup, and two Actions. The
+setup references the registered connection by name, and the input Action sends a `ChatRequestEvent`
+that names the setup. The [built-in chat Action]({{< ref "docs/development/calling-llms/chat#chat-events" >}})
 gets and calls that Resource, then sends a response Event for the output Action to handle.
 
-{{< tabs "Create the Agents" >}}
+{{< tabs "Create the Agent" >}}
 
 {{< tab "Python" >}}
 ```python
@@ -135,14 +174,14 @@ class ReviewAnalysisAgent(Agent):
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send chat request for review analysis."""
-        input = ProductReview.model_validate(InputEvent.from_event(event).input)
+        input = ProductReview.model_validate(cast("InputEvent", event).input)
         ctx.short_term_memory.set("id", input.id)
 
         content = f"""
             "id": {input.id},
             "review": {input.review}
         """
-        msg = ChatMessage(role=MessageRole.USER)
+        msg = ChatMessage.user("")
         ctx.send_event(
             ChatRequestEvent(
                 model="review_analysis_model",
@@ -155,29 +194,28 @@ class ReviewAnalysisAgent(Agent):
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
-        chat_response = ChatResponseEvent.from_event(event)
-        try:
-            json_content = json.loads(chat_response.response.text)
-            ctx.send_event(
-                OutputEvent(
-                    output=ProductReviewAnalysisRes(
-                        id=ctx.short_term_memory.get("id"),
-                        score=json_content["score"],
-                        reasons=json_content["reasons"],
-                    )
+        chat_response = cast("ChatResponseEvent", event)
+        # Fail fast on a malformed LLM response: a parse error here propagates
+        # and fails the agent, so a dropped input is surfaced instead of
+        # silently lost. In production, choose the handling that fits your
+        # pipeline: raise to fail the input (as below), emit an OutputEvent
+        # carrying an error sentinel, or send a custom error event so
+        # downstream operators can detect the failure.
+        json_content = json.loads(chat_response.response.text)
+        ctx.send_event(
+            OutputEvent(
+                output=ProductReviewAnalysisRes(
+                    id=ctx.short_term_memory.get("id"),
+                    score=json_content["score"],
+                    reasons=json_content["reasons"],
                 )
             )
-        except Exception:
-            logging.exception(
-                f"Error processing chat response {chat_response.response.text}"
-            )
-
-            # To fail the agent, you can raise an exception here.
+        )
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
-```Java
+```java
 /**
  * An agent that uses a large language model (LLM) to analyze product reviews and generate a
  * satisfaction score and potential reasons for dissatisfaction.
@@ -187,97 +225,101 @@ class ReviewAnalysisAgent(Agent):
  */
 public class ReviewAnalysisAgent extends Agent {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    @Prompt
-    public static org.apache.flink.agents.api.prompt.Prompt reviewAnalysisPrompt() {
-        return REVIEW_ANALYSIS_PROMPT;
-    }
-
-    @ChatModelSetup
-    public static ResourceDescriptor reviewAnalysisModel() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
-                .addInitialArgument("connection", "ollamaChatModelConnection")
-                .addInitialArgument("model", "qwen3:8b")
-                .addInitialArgument("prompt", "reviewAnalysisPrompt")
-                .addInitialArgument("tools", Collections.singletonList("notifyShippingManager"))
-                .addInitialArgument("extract_reasoning", true)
-                .build();
-    }
-
-    /**
-     * Tool for notifying the shipping manager when product received a negative review due to
-     * shipping damage.
-     *
-     * @param id The id of the product that received a negative review due to shipping damage
-     * @param review The negative review content
-     */
-    @Tool(
-            description =
-                    "Notify the shipping manager when product received a negative review due to shipping damage.")
-    public static void notifyShippingManager(
-            @ToolParam(name = "id") String id, @ToolParam(name = "review") String review) {
-        CustomTypesAndResources.notifyShippingManager(id, review);
-    }
-
-    /** Process input event and send chat request for review analysis. */
-    @Action(EventType.InputEvent)
-    public static void processInput(Event event, RunnerContext ctx) throws Exception {
-        InputEvent inputEvent = InputEvent.fromEvent(event);
-        String input = (String) inputEvent.getInput();
-        MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-        CustomTypesAndResources.ProductReview inputObj =
-                MAPPER.readValue(input, CustomTypesAndResources.ProductReview.class);
-
-        ctx.getShortTermMemory().set("id", inputObj.getId());
-
-        String content =
-                String.format(
-                        "{\n" + "\"id\": %s,\n" + "\"review\": \"%s\"\n" + "}",
-                        inputObj.getId(), inputObj.getReview());
-        ChatMessage msg = new ChatMessage(MessageRole.USER, "");
-
-        ctx.sendEvent(
-                new ChatRequestEvent(
-                        "reviewAnalysisModel", List.of(msg), Map.of("input", content), null));
-    }
-
-    @Action(EventType.ChatResponseEvent)
-    public static void processChatResponse(Event event, RunnerContext ctx)
-            throws Exception {
-        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
-        JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getText());
-        JsonNode scoreNode = jsonNode.findValue("score");
-        JsonNode reasonsNode = jsonNode.findValue("reasons");
-        if (scoreNode == null || reasonsNode == null) {
-            throw new IllegalStateException(
-                    "Invalid response from LLM: missing 'score' or 'reasons' field.");
-        }
-        List<String> result = new ArrayList<>();
-        if (reasonsNode.isArray()) {
-            for (JsonNode node : reasonsNode) {
-                result.add(node.asText());
-            }
-        }
-
-        ctx.sendEvent(
-                new OutputEvent(
-                        new CustomTypesAndResources.ProductReviewAnalysisRes(
-                                ctx.getShortTermMemory().get("id").getValue().toString(),
-                                scoreNode.asInt(),
-                                result)));
-    }
+@Prompt
+public static org.apache.flink.agents.api.prompt.Prompt reviewAnalysisPrompt() {
+    return REVIEW_ANALYSIS_PROMPT;
 }
-```
+
+@ChatModelSetup
+public static ResourceDescriptor reviewAnalysisModel() {
+    return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
+            .addInitialArgument("connection", "ollamaChatModelConnection")
+            .addInitialArgument("model", "qwen3:8b")
+            .addInitialArgument("prompt", "reviewAnalysisPrompt")
+            .addInitialArgument("tools", Collections.singletonList("notifyShippingManager"))
+            .addInitialArgument("extract_reasoning", true)
+            .build();
+}
+
+/**
+ * Tool for notifying the shipping manager when product received a negative review due to
+ * shipping damage.
+ *
+ * @param id The id of the product that received a negative review due to shipping damage
+ * @param review The negative review content
+ */
+@Tool(
+        description =
+                "Notify the shipping manager when product received a negative review due to shipping damage.")
+public static void notifyShippingManager(
+        @ToolParam(name = "id") String id, @ToolParam(name = "review") String review) {
+    CustomTypesAndResources.notifyShippingManager(id, review);
+}
+
+/** Process input event and send chat request for review analysis. */
+@Action(EventType.InputEvent)
+public static void processInput(Event event, RunnerContext ctx) throws Exception {
+    InputEvent inputEvent = (InputEvent) event;
+    String input = (String) inputEvent.getInput();
+    MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+    CustomTypesAndResources.ProductReview inputObj =
+            MAPPER.readValue(input, CustomTypesAndResources.ProductReview.class);
+
+    ctx.getShortTermMemory().set("id", inputObj.getId());
+
+    String content =
+            String.format(
+                    "{\n" + "\"id\": %s,\n" + "\"review\": \"%s\"\n" + "}",
+                    inputObj.getId(), inputObj.getReview());
+    ChatMessage msg = new ChatMessage(MessageRole.USER, "");
+
+    ctx.sendEvent(
+            new ChatRequestEvent(
+                    "reviewAnalysisModel", List.of(msg), Map.of("input", content), null));
+}
+
+@Action(EventType.ChatResponseEvent)
+public static void processChatResponse(Event event, RunnerContext ctx) throws Exception {
+    ChatResponseEvent chatResponse = (ChatResponseEvent) event;
+    // Fail fast on a malformed LLM response: a parse error here propagates and fails the
+    // agent, so a dropped input is surfaced instead of silently lost. In production, choose
+    // the handling that fits your pipeline: raise to fail the input (as below), emit an
+    // OutputEvent carrying an error sentinel, or send a custom error event so downstream
+    // operators can detect the failure.
+    JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getText());
+    JsonNode scoreNode = jsonNode.findValue("score");
+    JsonNode reasonsNode = jsonNode.findValue("reasons");
+    if (scoreNode == null || reasonsNode == null) {
+        throw new IllegalStateException(
+                "Invalid response from LLM: missing 'score' or 'reasons' field.");
+    }
+    List<String> result = new ArrayList<>();
+    if (reasonsNode.isArray()) {
+        for (JsonNode node : reasonsNode) {
+            result.add(node.asText());
+        }
+    }
+
+    ctx.sendEvent(
+            new OutputEvent(
+                    new CustomTypesAndResources.ProductReviewAnalysisRes(
+                            ctx.getShortTermMemory().get("id").getValue().toString(),
+                            scoreNode.asInt(),
+                            result)));
+}
+}```
 {{< /tab >}}
 
 {{< /tabs >}}
 
-### Integrate the Agents with Flink
+### Integrate the Agent with Flink
 
-Create the input DataStream by reading the product reviews from a text file as a streaming source, and use the `ReviewAnalysisAgent` to analyze the product reviews and generate the result DataStream. Finally print the result DataStream.
+Read the product reviews from the text file as a streaming source, apply the Agent to that
+stream, and print the results.
 
-{{< tabs "Integrate the Agents with Flink" >}}
+{{< tabs "Integrate the Agent with Flink" >}}
 
 {{< tab "Python" >}}
 ```python
@@ -318,24 +360,25 @@ agents_env.execute("Workflow Agent Example Job")
 {{< /tab >}}
 
 {{< tab "Java" >}}
-```Java
+```java
 // Read product reviews from input_data.txt file as a streaming source.
 // Each element represents a ProductReview.
+File inputDataFile = copyResource("input_data.txt");
 DataStream<String> productReviewStream =
-       env.fromSource(
-               FileSource.forRecordStreamFormat(
-                               new TextLineInputFormat(),
-                               new Path(inputDataFile.getAbsolutePath()))
-                       .build(),
-               WatermarkStrategy.noWatermarks(),
-               "streaming-agent-example");
+        env.fromSource(
+                FileSource.forRecordStreamFormat(
+                                new TextLineInputFormat(),
+                                new Path(inputDataFile.getAbsolutePath()))
+                        .build(),
+                WatermarkStrategy.noWatermarks(),
+                "streaming-agent-example");
 
 // Use the ReviewAnalysisAgent to analyze each product review.
 DataStream<Object> reviewAnalysisResStream =
-       agentsEnv
-               .fromDataStream(productReviewStream)
-               .apply(new ReviewAnalysisAgent())
-               .toDataStream();
+        agentsEnv
+                .fromDataStream(productReviewStream)
+                .apply(new ReviewAnalysisAgent())
+                .toDataStream();
 
 // Print the analysis results to stdout.
 reviewAnalysisResStream.print();
@@ -349,105 +392,32 @@ agentsEnv.execute("Workflow Agent Example Job");
 
 ## Run the Example
 
-### Prerequisites
-
-* Unix-like environment (we use Linux, Mac OS X, Cygwin, WSL)
-* Git
-* Java 11+
-* Python 3.10, 3.11 or 3.12
-
-### Preparation
-
-#### Prepare Flink and Flink Agents
-
-Follow the [Setup]({{< ref "docs/get-started/setup" >}}) instructions to setup Flink and the Flink Agents.
-
-#### Clone the Flink Agents Repository (if not done already)
-
-```bash
-git clone https://github.com/apache/flink-agents.git
-cd flink-agents
-```
-
-{{< hint info >}}
-For python examples, you can skip this step and submit the python file in installed flink-agents wheel.
-{{< /hint >}}
-
-#### Deploy a Standalone Flink Cluster
-
-You can deploy a standalone Flink cluster in your local environment with the following command.
-
-{{< tabs "Deploy a Standalone Flink Cluster" >}}
-
-{{< tab "Python" >}}
-```bash
-export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
-$FLINK_HOME/bin/start-cluster.sh
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-1. Build Flink Agents from source to generate example jar. See [Setup]({{< ref "docs/get-started/setup" >}}) for more details.
-2. Start the Flink cluster
-    ```bash
-    $FLINK_HOME/bin/start-cluster.sh
-    ```
-
-{{< hint info >}}
-To run example on JDK 21+, append jvm option `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to [env.java.opts.all](https://nightlies.apache.org/flink/flink-docs-stable/docs/deployment/config/#env-java-opts-all) in `$FLINK_HOME/conf/config.yaml` before start the flink cluster.
-{{< /hint >}}
-{{< /tab >}}
-
-{{< /tabs >}}
-You can refer to the [local cluster](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/try-flink/local_installation/#starting-and-stopping-a-local-cluster) instructions for more detailed step.
-
-{{< hint info >}}
-If you can't navigate to the web UI at [localhost:8081](localhost:8081), you can find the reason in `$FLINK_HOME/log`. If the reason is port conflict, you can change the port in `$FLINK_HOME/conf/config.yaml`.
-{{< /hint >}}
-
-#### Prepare Ollama
-
-Download and install Ollama from the official [website](https://ollama.com/download).
-
-{{< hint info >}}
-Ollama server **0.9.0** or higher is required.
-{{< /hint >}}
-
-Then pull the qwen3:8b model, which is required by the quickstart examples
-
-```bash
-ollama pull qwen3:8b
-```
-
-### Submit Flink Agents Job to Standalone Flink Cluster
-
-#### Submit to Flink Cluster
+Install Flink and Flink Agents, get the example source, prepare Ollama, and start a local
+cluster as described in
+[Before You Begin]({{< ref "docs/get-started/quickstart#before-you-begin" >}}). From the
+repository root, submit the job:
 
 {{< tabs "Submit to Flink Cluster" >}}
 
 {{< tab "Python" >}}
 ```bash
-export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
-
-# Run review analysis example
-$FLINK_HOME/bin/flink run -py ./flink-agents/python/flink_agents/examples/quickstart/workflow_single_agent_example.py
-# or submit the example python file in installed flink-agents wheel
-$FLINK_HOME/bin/flink run -py  $PYTHONPATH/flink_agents/examples/quickstart/workflow_single_agent_example.py
+# Submitted from the repository, or from the installed package by replacing the path with
+# $PYTHONPATH/flink_agents/examples/quickstart/workflow_single_agent_example.py
+$FLINK_HOME/bin/flink run -py python/flink_agents/examples/quickstart/workflow_single_agent_example.py
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```bash
-# Run review analysis example
-$FLINK_HOME/bin/flink run -c org.apache.flink.agents.examples.WorkflowSingleAgentExample ./flink-agents/examples/target/flink-agents-examples-$VERSION.jar
+$FLINK_HOME/bin/flink run -c org.apache.flink.agents.examples.WorkflowSingleAgentExample \
+  examples/target/flink-agents-examples-*.jar
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
 
-Now you should see a Flink job submitted to the Flink Cluster in Flink web UI [localhost:8081](
-localhost:8081)
-
-After a few minutes, you can check for the output in the TaskManager output log.
+The job appears in the Flink web UI at [localhost:8081](http://localhost:8081). After a few
+minutes, one result per review appears in the TaskManager output log under
+`$FLINK_HOME/log`.
 
 Continue with [Connect Multiple Agents]({{< ref "docs/get-started/quickstart/create-agent/multiple-agents" >}}), or explore [Skills]({{< ref "docs/development/calling-llms/skills" >}}).

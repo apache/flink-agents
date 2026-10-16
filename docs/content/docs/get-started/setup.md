@@ -24,23 +24,44 @@ specific language governing permissions and limitations
 under the License.
 -->
 
-## Overview
-Flink Agents runs as part of a Java Flink or PyFlink job. Follow the setup for that
-job. A YAML Agent can be loaded by either type of job. If the Agent contains both
-Java and Python components, install the dependencies required by both.
+## Choose a Setup Path
+
+An Agent runs inside a Flink job, so what you install follows that job. Two job types
+exist: a Java Flink job and a PyFlink job. The job type is decided by how you submit the
+job, not by the language you wrote the Agent in.
+
+| Flink job | Submit with | Flink Agents JAR | Python environment |
+|---|---|---|---|
+| Java Flink job | `flink run -c <MainClass> job.jar` | You supply the distribution JAR yourself. | Needed only when the Agent runs a Python component. |
+| PyFlink job | `flink run -py job.py` | Registered for you from the installed `flink-agents` package. | Required. |
+
+A YAML Agent is not a third job type. A Java Flink job or a PyFlink job loads the YAML
+file and submits the job, so install for whichever job loads it. An Agent can also mix
+Actions and Resources written in both languages, and then the job needs both sets of
+dependencies. See
+[Use Java and Python Actions and Resources]({{< ref "docs/development/create-agent/choose-apis-and-languages#use-java-and-python-actions-and-resources" >}})
+for which combinations are supported.
+
+Two installation paths follow, and you pick one of them:
+
+* **Quick install** runs `install.sh`, which provisions Flink, the JARs, and the Python
+  environment for you.
+* **Manual installation** places each piece yourself. Use it when the script cannot run
+  in your environment, when you want control over each step, or when you build Flink
+  Agents from source.
 
 {{< hint warning >}}
-__NOTE:__ To run on a Flink cluster, Flink-Agents requires a stable release of Flink version 1.20.3 or higher. We highly recommend using the **latest stable release of your chosen Flink minor version** (e.g., for minor version 2.2, use the latest 2.2.x release).
+__NOTE:__ To run on a Flink cluster, Flink Agents requires a stable release of Flink version 1.20.3 or higher. We highly recommend using the **latest stable release of your chosen Flink minor version** (e.g., for minor version 2.2, use the latest 2.2.x release). Some features need a higher patch release, such as [Cross-language Async Requirements]({{< ref "docs/development/create-agent/actions#cross-language-async-requirements" >}}).
 {{< /hint >}}
 
 ## Prerequisites
 
-Both the script-based and manual installation paths require:
+Both installation paths above require:
 
 * **Java 11+** on your `PATH`, using a JDK supported by your chosen Flink release. See [Java Versions](#java-versions) for feature-specific requirements.
 * **Python 3.10, 3.11, or 3.12** when using a PyFlink job, Python Actions or Resources, or another feature that uses Python, such as the Python MCP SDK. This includes Java Flink jobs that use those components.
 
-For building Flink Agents from source, you additionally need:
+To build Flink Agents from source, you additionally need:
 - Unix-like environment (Linux, macOS, Cygwin, or WSL)
 - Git
 - Maven 3
@@ -63,17 +84,31 @@ feature:
 
 ## Quick install (recommended)
 
-The `install.sh` script provisions everything you need: it downloads Apache Flink, creates a Python virtual environment, installs `flink-agents` and `apache-flink` into it, and copies the required JARs into `$FLINK_HOME/lib`.
+The `install.sh` script downloads Apache Flink and copies the Flink Agents distribution JAR
+into `$FLINK_HOME/lib`. When you enable PyFlink, it also creates a Python virtual environment
+and installs `flink-agents` and `apache-flink` into it.
 
-Run the one-liner from any directory you want the virtual environment created in:
+Run the one-liner from the directory where you want the virtual environment created:
 
 ```shell
 curl -fsSL https://raw.githubusercontent.com/apache/flink-agents/main/tools/install.sh | bash
 ```
 
-## Manual installation
+The script asks whether to install Flink and whether to enable PyFlink. Answer **Yes** to
+PyFlink for a PyFlink job, and **No** for a Java-only setup. To run it without prompts, pass
+`--non-interactive` together with `--install-flink` and the versions you want, and add
+`--enable-pyflink` when you also need the Python environment:
 
-Use this path when you want full control over each step, when running `install.sh` is not feasible in your environment, or when building Flink Agents from source.
+```shell
+curl -fsSL https://raw.githubusercontent.com/apache/flink-agents/main/tools/install.sh | bash -s -- \
+  --non-interactive --install-flink --flink-version <flink-version> --flink-agents-version <flink-agents-version>
+```
+
+Run the script with `--dry-run` to print the plan without changing anything, and with
+`--help` to list every option and environment variable. When it finishes, continue at
+[Submit Your First Job](#submit-your-first-job).
+
+## Manual installation
 
 ### Install Apache Flink
 
@@ -100,7 +135,10 @@ cp $FLINK_HOME/opt/flink-python-${FLINK_VERSION}.jar $FLINK_HOME/lib/
 **Note:** For more detailed Flink installation instructions, refer to the [Flink local installation guide](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/try-flink/local_installation/).
 {{< /hint >}}
 
-### Set Up Python Environment (Recommended)
+### Set Up a Python Environment
+
+Do this step for a PyFlink job, and for a Java Flink job whose Agent runs a Python
+component. Skip it when no Python component is involved.
 
 We recommend using a Python virtual environment to isolate Flink Agents dependencies from your system Python packages.
 
@@ -141,7 +179,7 @@ pip install flink-agents apache-flink==${FLINK_VERSION}
 ```
 
 {{< hint warning >}}
-**Apple Silicon (macOS arm64) + Python 3.12**: `apache-flink` depends on `apache-beam`, which ships no macOS arm64 wheel for Python 3.12, so pip builds it from source. The build pulls the latest `setuptools` (>=82), which removed `pkg_resources`, causing `ModuleNotFoundError: No module named 'pkg_resources'` (an upstream issue — see [setuptools#5174](https://github.com/pypa/setuptools/issues/5174)). Constrain the build's setuptools to fix it:
+**Apple Silicon (macOS arm64) + Python 3.12**: `apache-flink` depends on `apache-beam`, which ships no macOS arm64 wheel for Python 3.12, so pip builds it from source. The build pulls the latest `setuptools` (>=82), which removed `pkg_resources`, causing `ModuleNotFoundError: No module named 'pkg_resources'`. That is an upstream issue, tracked in [setuptools#5174](https://github.com/pypa/setuptools/issues/5174). Constrain the build's setuptools to fix it:
 
 ```shell
 echo "setuptools<82" > /tmp/constraint.txt
@@ -181,11 +219,28 @@ This script will:
 **Note:** If you activated a virtual environment earlier, the Python package will be installed into that virtual environment. Otherwise, it will be installed into your system Python environment.
 {{< /hint >}}
 
-After building:
-- The Python package is installed and ready to use
-- The distribution JAR is located at: `dist/flink-${FLINK_VERSION%.*}/target/flink-agents-dist-*.jar`
+After building, the Python package is installed and ready to use. The Java build leaves two
+distribution JARs in `dist/flink-${FLINK_VERSION%.*}/target/`, and the one a Java Flink job
+needs is the one without the `-thin` suffix.
+
+The Python package bundles the JARs it needs, so a PyFlink job does not use those build
+outputs. See
+[Install Flink Agents Java Library](#install-flink-agents-java-library-java-flink-jobs)
+for the jobs that do.
+
+### Build Environment Variables
+
+The following environment variables can be used to control how JARs are resolved during `pip install flink-agents` (from sdist) or `python -m build`:
+
+| Variable | Description |
+|----------|-------------|
+| `FLINK_AGENTS_SKIP_JAR_DOWNLOAD` | Set to `1`, `true`, `yes`, or `on` (case-insensitive) to skip downloading JARs from Maven Central. Useful when building from source with `tools/build.sh`, which copies JARs from the local Maven build. |
+| `FLINK_AGENTS_MAVEN_MIRROR` | Override the Maven repository base URL for JAR downloads. Defaults to `https://repo1.maven.org/maven2`. Useful for environments with restricted network access or internal mirrors. |
 
 ### Configure PYTHONPATH
+
+Do this step whenever the job needs a Python environment, which is every PyFlink job and
+every Java Flink job whose Agent runs a Python component.
 
 Flink runs in its own JVM process and needs the `PYTHONPATH` environment variable to locate the flink-agents Python package. You need to set `PYTHONPATH` to the directory where flink-agents is installed.
 
@@ -220,6 +275,10 @@ export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["pu
 automatically registers the required JARs via `pipeline.jars` so Flink loads
 them into the user-code classloader. No manual JAR copy into
 `$FLINK_HOME/lib/` is needed.
+
+The same call fails if the `flink-agents` package is missing its bundled JARs, so
+install the Python package in the environment that submits the job. See
+[Configure PYTHONPATH](#configure-pythonpath) for the environment Flink reads.
 {{< /hint >}}
 
 This step is for Java Flink jobs, including those that load YAML Agents or use Python
@@ -230,7 +289,7 @@ directory:
 
 {{< tab "From Official Release" >}}
 Download the published JAR from Maven Central into Flink's `lib` directory.
-Set `FLINK_AGENTS_VERSION` to the release you want (e.g. `0.2.1`):
+Set `FLINK_AGENTS_VERSION` to the release you want (e.g. `0.3.0`):
 
 ```shell
 export FLINK_AGENTS_VERSION=<version>
@@ -257,28 +316,29 @@ cp dist/flink-${FLINK_VERSION%.*}/target/flink-agents-dist-flink-${FLINK_VERSION
 
 {{< /tabs >}}
 
-### Build Environment Variables
+{{< hint info >}}
+**Note:** The quick install performs this step for you, so you can skip it if you ran
+`install.sh`.
+{{< /hint >}}
 
-The following environment variables can be used to control how JARs are resolved during `pip install flink-agents` (from sdist) or `python -m build`:
+## Developing with the Java API
 
-| Variable | Description |
-|----------|-------------|
-| `FLINK_AGENTS_SKIP_JAR_DOWNLOAD` | Set to `1`, `true`, `yes`, or `on` (case-insensitive) to skip downloading JARs from Maven Central. Useful when building from source with `tools/build.sh`, which copies JARs from the local Maven build. |
-| `FLINK_AGENTS_MAVEN_MIRROR` | Override the Maven repository base URL for JAR downloads. Defaults to `https://repo1.maven.org/maven2`. Useful for environments with restricted network access or internal mirrors. |
+A Java Flink job declares its Agent in Java, so it also needs the Flink Agents artifacts
+on its compile classpath.
 
-## Maven Dependencies (For Java)
+### Maven Dependencies
 
-For developing Flink Agents applications in Java, add the following dependencies to your `pom.xml`:
+Add the following dependencies to your `pom.xml`:
 
 **Required**
 - **`flink-agents-api`** : Flink Agents API
 - **`flink-streaming-java`** and/or **`flink-table-api-java`** : Flink DataStream and/or Table API
 
 **Optional**
-- **`flink-agents-ide-support`** : Runtime execution dependencies (required for local execution/testing).
-  - Unlike running in a Flink cluster, when running in IDE, because the runtime dependencies are absent, user need additional dependencies.
-    To simplify the complexity for adding multiple dependencies in pom, flink-agents provide the above artifact.
-    This way, users only need to add this single dependency in their pom.xml.
+- **`flink-agents-ide-support`** : the runtime execution dependencies, needed to run an
+  Agent locally or in an IDE. A Flink cluster gets the runtime from the distribution JAR
+  in `$FLINK_HOME/lib`, so this artifact is not needed there. It bundles the same runtime
+  dependencies so you can add one dependency instead of several.
 
 {{< hint info >}}
 All the above dependencies should be in provided scope, to avoid potential conflict with the Flink cluster.
@@ -320,24 +380,25 @@ For execution in IDE, enable the feature `add dependencies with provided scope t
     <dependency>
       <groupId>org.apache.flink</groupId>
       <artifactId>flink-agents-ide-support</artifactId>
-      <version>${project.version}</version>
+      <version>${flink-agents.version}</version>
       <scope>provided</scope>
     </dependency>
 </dependencies>
 ```
 
-## Deploy to Flink Cluster
+## Submit Your First Job
 
-Once the Java library is installed and PYTHONPATH is configured, you can start your Flink cluster or submit jobs:
+Start a local cluster and submit the job through the entry point you installed for:
 
-{{< tabs "Deploy to Flink Cluster" >}}
+{{< tabs "Submit Your First Job" >}}
 
 {{< tab "Python" >}}
 ```bash
-# Start your Flink cluster
+# Required: lets the Flink JVM locate the flink-agents package
+export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
+
 $FLINK_HOME/bin/start-cluster.sh
 
-# Or submit your job directly
 $FLINK_HOME/bin/flink run -py /path/to/your/job.py
 ```
 
@@ -345,15 +406,20 @@ $FLINK_HOME/bin/flink run -py /path/to/your/job.py
 
 {{< tab "Java" >}}
 ```bash
-# Start your Flink cluster
 $FLINK_HOME/bin/start-cluster.sh
 
-# Or submit your job directly
 $FLINK_HOME/bin/flink run -c <your.main.class> /path/to/your-job.jar
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
 
-See [deployment]({{< ref "docs/operations/deployment" >}}) for more details on
-running Java Flink and PyFlink jobs with Flink Agents.
+The shortest way to a working job is to run a Quickstart end to end, because each one
+submits a complete example and shows its output:
+
+- [Build an Agent]({{< ref "docs/get-started/quickstart/create-agent" >}})
+- [Use the Built-in ReAct Agent]({{< ref "docs/get-started/quickstart/react_agent" >}})
+- [Define an Agent with YAML]({{< ref "docs/get-started/quickstart/yaml_agent" >}})
+
+For a remote cluster, and for the consistency guarantees that apply once the job runs
+there, see [Deployment]({{< ref "docs/operations/deployment" >}}).

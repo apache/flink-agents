@@ -118,7 +118,7 @@ Here, `review_model` / `reviewModel` names the Resource within your application;
 The examples below accept a review as a **string** and output the model's summary as a string.
 They assume an Ollama connection named `ollama_server` is registered in the agents execution
 environment and the `qwen3:8b` model is available on that server. See the
-[Quickstart]({{< ref "docs/get-started/quickstart/create-agent/single-agent#prepare-agents-execution-environment" >}})
+[Quickstart]({{< ref "docs/get-started/quickstart/create-agent/single-agent#register-the-chat-model-connection" >}})
 for environment registration (use `ollama_server` as the connection name in either language),
 and [Chat Model Providers]({{< ref "docs/development/calling-llms/chat-models/providers" >}})
 for provider configuration. Imports and job setup are omitted here to focus on the Agent definition.

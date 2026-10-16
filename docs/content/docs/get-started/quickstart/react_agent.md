@@ -26,23 +26,39 @@ under the License.
 
 Flink Agents provides `ReActAgent` as a built-in subclass of `Agent` that implements the ReAct pattern.
 
-ReAct Agent is a general paradigm that combines reasoning and action capabilities to solve complex tasks. Leveraging this paradigm, the user only needs to specify the goal with prompt and provide available tools, and the LLM will decide how to achieve the goal and take actions autonomously.
+ReAct Agent is a general paradigm that combines reasoning and action capabilities to solve complex tasks. You state the goal in a prompt and expose the capabilities as tools, and the model decides how to reach the goal and when to use them.
 
-This quickstart introduces a small example that demonstrate how to build a streaming ReAct Agent with Flink Agents:
+This example runs a streaming ReAct Agent over product reviews. It extracts a satisfaction
+score (1–5) and the unsatisfied reasons from each review, and calls the
+`notify_shipping_manager` tool when a review complains about shipping.
 
-The **Review Analysis** agent processes a stream of product reviews and uses a single agent to extract a rating (1–5) and unsatisfied reasons from each review. And notify the shipping manager if a review includes dissatisfaction with the shipping process.
+## Complete Example
+
+| Language | Example job | Shared types and prompts |
+|----------|-------------|----------------------|
+| Python | {{< gh_link file="python/flink_agents/examples/quickstart/react_agent_example.py" name="react_agent_example.py" >}} | {{< gh_link file="python/flink_agents/examples/quickstart/agents/custom_types_and_resources.py" name="custom_types_and_resources.py" >}} |
+| Java | {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/ReActAgentExample.java" name="ReActAgentExample.java" >}} | {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/agents/CustomTypesAndResources.java" name="CustomTypesAndResources.java" >}} |
+
+`ReActAgent` is a built-in class, so this example declares no Agent subclass of its own and
+configures the Agent inside the job. Its tool is `notify_shipping_manager`, the one the first
+walkthrough used, registered with `Tool.from_callable` in Python and
+`Tool.fromMethod` in Java. Python passes the prompt `review_analysis_react_prompt` from the shared
+file, and Java declares a `@Prompt` method that returns the shared
+`REVIEW_ANALYSIS_REACT_PROMPT`. The reviews are read from
+{{< gh_link file="python/flink_agents/examples/quickstart/resources/product_review.txt" name="product_review.txt" >}}
+in Python and
+{{< gh_link file="examples/src/main/resources/input_data.txt" name="input_data.txt" >}}
+in Java. See [Use the ReAct Agent]({{< ref "docs/development/react_agent" >}}) for the
+built-in Agent's full options.
 
 ## Code Walkthrough
 
-### Prepare Agents Execution Environment
+### Create the Execution Environment
 
-Create the agents execution environment and register the Ollama connection and notification
-tool as named Resources of types `CHAT_MODEL_CONNECTION` and `TOOL`. The ReAct Agent's model
-configuration references these names through its `connection` and `tools` fields. See
-[Registering and Referencing Resources]({{< ref "docs/development/create-agent/overview#registering-and-referencing-resources" >}})
-for the shared registration and access model.
+An `AgentsExecutionEnvironment` wraps a Flink `StreamExecutionEnvironment` and is the entry
+point that attaches an Agent to a stream. The example also caps how many chat requests run at once.
 
-{{< tabs "Prepare Agents Execution Environment" >}}
+{{< tabs "Create the Execution Environment" >}}
 
 {{< tab "Python" >}}
 ```python
@@ -50,15 +66,8 @@ for the shared registration and access model.
 env = StreamExecutionEnvironment.get_execution_environment()
 agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
-# Add Ollama chat model connection and notify shipping manager tool to be used
-# by the Agent.
-agents_env.add_resource(
-  "ollama_server",
-  ResourceType.CHAT_MODEL_CONNECTION,
-  ResourceDescriptor(clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=120),
-).add_resource(
-  "notify_shipping_manager", ResourceType.TOOL, Tool.from_callable(notify_shipping_manager)
-)
+# limit async request to avoid overwhelming ollama server
+agents_env.get_config().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2)
 ```
 {{< /tab >}}
 
@@ -69,7 +78,44 @@ StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironm
 AgentsExecutionEnvironment agentsEnv =
         AgentsExecutionEnvironment.getExecutionEnvironment(env);
 
-// Add Ollama chat model connection and record shipping question tool to be used
+// limit async request to avoid overwhelming ollama server
+agentsEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2);
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+### Register the Connection and the Tool
+
+Register the Ollama connection and the notification tool as named Resources of types
+`CHAT_MODEL_CONNECTION` and `TOOL`. The chat model setup refers to them by name through its
+`connection` and `tools` fields. See
+[Registering and Referencing Resources]({{< ref "docs/development/create-agent/overview#registering-and-referencing-resources" >}})
+for the shared registration and access model.
+
+{{< tabs "Register the Connection and the Tool" >}}
+
+{{< tab "Python" >}}
+```python
+# Add Ollama chat model connection and notify shipping manager tool to be used
+# by the Agent.
+agents_env.add_resource(
+    "ollama_server",
+    ResourceType.CHAT_MODEL_CONNECTION,
+    ResourceDescriptor(
+        clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=120
+    ),
+).add_resource(
+    "notify_shipping_manager",
+    ResourceType.TOOL,
+    Tool.from_callable(notify_shipping_manager),
+)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```Java
+// Add Ollama chat model connection and notify shipping manager tool to be used
 // by the Agent.
 agentsEnv
         .addResource(
@@ -88,48 +134,54 @@ agentsEnv
 {{< /tabs >}}
 
 ### Create the ReAct Agent
-Create the ReAct Agent instance, configure the chat model, prompt and the output schema of result to be used.
+
+Configure the built-in `ReActAgent` with the chat model it calls, the prompt that states the
+task, and the schema its answer is parsed into. The `chat_model` descriptor names the
+connection and the tool registered above, and `model: qwen3:8b` selects the model on the
+Ollama server. Java keeps the prompt in a `@Prompt` method of the job class and passes its return
+value to the constructor. See
+[Use the ReAct Agent]({{< ref "docs/development/react_agent" >}}) for the other options this
+Agent accepts.
 
 {{< tabs "Create the ReAct Agent" >}}
 
 {{< tab "Python" >}}
 ```python
+# Create react agent
 review_analysis_react_agent = ReActAgent(
-  chat_model=ResourceDescriptor(
-      clazz=ResourceName.ChatModel.OLLAMA_SETUP,
-      connection="ollama_server",
-      model="qwen3:8b",
-      tools=["notify_shipping_manager"],
-  ),
-  prompt=review_analysis_react_prompt,
-  output_schema=ProductReviewAnalysisRes,
+    chat_model=ResourceDescriptor(
+        clazz=ResourceName.ChatModel.OLLAMA_SETUP,
+        connection="ollama_server",
+        model="qwen3:8b",
+        tools=["notify_shipping_manager"],
+    ),
+    prompt=review_analysis_react_prompt,
+    output_schema=ProductReviewAnalysisRes,
 )
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```Java
-// Create ReAct agent.
-ReActAgent reviewAnalysisReactAgent = getReActAgent();
-
- private static ReActAgent getReActAgent() {
-     return new ReActAgent(
-             ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
-                     .addInitialArgument("connection", "ollamaChatModelConnection")
-                     .addInitialArgument("model", "qwen3:8b")
-                     .addInitialArgument(
-                             "tools", Collections.singletonList("notifyShippingManager"))
-                     .build(),
-             reviewAnalysisReactPrompt(),
-             CustomTypesAndResources.ProductReviewAnalysisRes.class);
- }
+// Create react agent
+ReActAgent reviewAnalysisReactAgent = new ReActAgent(
+        ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
+                .addInitialArgument("connection", "ollamaChatModelConnection")
+                .addInitialArgument("model", "qwen3:8b")
+                .addInitialArgument(
+                        "tools", Collections.singletonList("notifyShippingManager"))
+                .build(),
+        reviewAnalysisReactPrompt(),
+        CustomTypesAndResources.ProductReviewAnalysisRes.class);
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
 
 ### Integrate the ReAct Agent with Flink
-Produce a source DataStream by reading a product review text file, and use the ReAct Agent to analyze the review and generate result DataStream. Finally print the result DataStream.
+
+Read the product reviews from the text file, then apply the Agent to that stream and print the
+results. Java parses each line into a `Row` with `id` and `review` fields before the Agent sees it.
 
 {{< tabs "Integrate the ReAct Agent with Flink" >}}
 
@@ -176,11 +228,13 @@ agents_env.execute("ReAct Agent Example Job")
 ```Java
 // Read product reviews from input_data.txt file as a streaming source.
 // Each element represents a ProductReview.
+File inputDataFile = copyResource("input_data.txt");
+
 DataStream<Row> productReviewStream =
         env.fromSource(
-                FileSource.forRecordStreamFormat(
-                                new TextLineInputFormat(),
-                                new Path(inputDataFile.getAbsolutePath()))
+                        FileSource.forRecordStreamFormat(
+                                        new TextLineInputFormat(),
+                                        new Path(inputDataFile.getAbsolutePath()))
                                 .monitorContinuously(Duration.ofMinutes(1))
                                 .build(),
                         WatermarkStrategy.noWatermarks(),
@@ -196,7 +250,6 @@ DataStream<Row> productReviewStream =
                             row.setField("review", productReview.getReview());
                             return row;
                         });
-
 
 // Use the ReAct agent to analyze each product review and
 // record shipping question.
@@ -222,104 +275,30 @@ See [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}) 
 
 ## Run the Example
 
-### Prerequisites
-
-* Unix-like environment (we use Linux, Mac OS X, Cygwin, WSL)
-* Git
-* Java 11+
-* Python 3.10, 3.11 or 3.12
-
-### Preparation
-
-#### Prepare Flink and Flink Agents
-
-Follow the [Setup]({{< ref "docs/get-started/setup" >}}) instructions to setup Flink and the Flink Agents.
-
-#### Clone the Flink Agents Repository (if not done already)
-
-```bash
-git clone https://github.com/apache/flink-agents.git
-cd flink-agents
-```
-{{< hint info >}}
-For python examples, you can skip this step and submit the python file in installed flink-agents wheel.
-{{< /hint >}}
-
-
-#### Deploy a Standalone Flink Cluster
-
-You can deploy a standalone Flink cluster in your local environment with the following command.
-
-{{< tabs "Deploy a Standalone Flink Cluster" >}}
-
-{{< tab "Python" >}}
-```bash
-export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
-$FLINK_HOME/bin/start-cluster.sh
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-1. Build Flink Agents from source to generate example jar. See [Setup]({{< ref "docs/get-started/setup" >}}) for more details.
-2. Start the Flink cluster
-    ```bash
-    $FLINK_HOME/bin/start-cluster.sh
-    ```
-
-{{< hint info >}}
-To run example on JDK 21+, append jvm option `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to [env.java.opts.all](https://nightlies.apache.org/flink/flink-docs-stable/docs/deployment/config/#env-java-opts-all) in `$FLINK_HOME/conf/config.yaml` before start the flink cluster.
-{{< /hint >}}
-{{< /tab >}}
-
-{{< /tabs >}}
-You can refer to the [local cluster](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/try-flink/local_installation/#starting-and-stopping-a-local-cluster) instructions for more detailed step.
-
-
-{{< hint info >}}
-If you can't navigate to the web UI at [localhost:8081](localhost:8081), you can find the reason in `$FLINK_HOME/log`. If the reason is port conflict, you can change the port in `$FLINK_HOME/conf/config.yaml`.
-{{< /hint >}}
-
-#### Prepare Ollama
-
-Download and install Ollama from the official [website](https://ollama.com/download).
-
-{{< hint info >}}
-Ollama server **0.9.0** or higher is required.
-{{< /hint >}}
-
-Then pull the qwen3:8b model, which is required by the quickstart examples
-
-```bash
-ollama pull qwen3:8b
-```
-
-### Submit Flink Agents Job to Standalone Flink Cluster
-
-#### Submit to Flink Cluster
+Install Flink and Flink Agents, get the example source, prepare Ollama, and start a local
+cluster as described in
+[Before You Begin]({{< ref "docs/get-started/quickstart#before-you-begin" >}}). From the
+repository root, submit the job:
 
 {{< tabs "Submit to Flink Cluster" >}}
 
 {{< tab "Python" >}}
 ```bash
-export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
-
-# Run review analysis example
-$FLINK_HOME/bin/flink run -py ./flink-agents/python/flink_agents/examples/quickstart/react_agent_example.py
-# or submit the example python file in installed flink-agents wheel
-$FLINK_HOME/bin/flink run -py  $PYTHONPATH/flink_agents/examples/quickstart/react_agent_example.py
+# Or submit the copy inside the installed package, at
+# $PYTHONPATH/flink_agents/examples/quickstart/react_agent_example.py
+$FLINK_HOME/bin/flink run -py python/flink_agents/examples/quickstart/react_agent_example.py
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```bash
-$FLINK_HOME/bin/flink run -c org.apache.flink.agents.examples.ReActAgentExample ./flink-agents/examples/target/flink-agents-examples-$VERSION.jar
+$FLINK_HOME/bin/flink run -c org.apache.flink.agents.examples.ReActAgentExample \
+  examples/target/flink-agents-examples-*.jar
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
 
-Now you should see a Flink job submitted to the Flink Cluster in Flink web UI [localhost:8081](
-localhost:8081)
-
-After a few minutes, you can check for the output in the TaskManager output log.
-
+The job appears in the Flink web UI at [localhost:8081](http://localhost:8081). After a few
+minutes, one result per review appears in the TaskManager output log under
+`$FLINK_HOME/log`.
