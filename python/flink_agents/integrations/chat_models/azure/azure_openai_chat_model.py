@@ -29,7 +29,11 @@ from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema, render_output_schema
+from flink_agents.api.agents.types import (
+    OutputSchema,
+    contains_open_object,
+    render_output_schema,
+)
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -304,10 +308,12 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         """Whether a request built from these inputs would carry a native
         ``response_format``, leaving the effective model's capability out of the answer.
 
-        Two conditions. Only a ``BaseModel`` subclass has a native translation here; a
-        ``RowTypeInfo`` wrapped in ``OutputSchema``, or no schema at all, has none. And
-        the configured api-version has to reach the structured-output floor, which is a
-        property of this connection rather than of the request.
+        Two conditions. Only a ``BaseModel`` subclass has a native translation here,
+        and only one whose schema admits no undeclared keys: a ``dict`` field admits
+        them, and strict mode requires every object to be closed. A ``RowTypeInfo``
+        wrapped in ``OutputSchema``, or no schema at all, has none. And the configured
+        api-version has to reach the structured-output floor, which is a property of
+        this connection rather than of the request.
 
         A caller-supplied ``response_format`` is deliberately not a condition: the
         branch sets the format and then raises on that conflict rather than skipping,
@@ -334,12 +340,15 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         Returns:
         -------
         bool
-            ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass and the
-            configured api-version reaches the structured-output floor.
+            ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass whose schema
+            admits no undeclared keys, and the configured api-version reaches the
+            structured-output floor.
         """
+        model = _native_output_model(output_schema)
         return (
-            _native_output_model(output_schema) is not None
+            model is not None
             and self._api_version_supports_structured_output()
+            and not contains_open_object(model)
         )
 
     def chat(

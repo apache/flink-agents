@@ -281,10 +281,11 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
      * Whether {@code outputSchema} is a form this connection could translate into a native {@code
      * response_format}, the effective model's capability aside.
      *
-     * <p>Two conditions. Only a POJO {@link Class} has a native translation here; a {@code
-     * RowTypeInfo} wrapped in {@code OutputSchema}, or any other form, has none. And the configured
-     * api-version has to reach the structured-output floor, which is a property of this connection
-     * rather than of the request.
+     * <p>Two conditions. Only a POJO {@link Class} has a native translation here, and only one
+     * whose schema reaches no {@code Map} or {@code JsonNode}: strict mode closes every object, so
+     * the model could return only {@code {}} for one. A {@code RowTypeInfo} wrapped in {@code
+     * OutputSchema}, or any other form, has none. And the configured api-version has to reach the
+     * structured-output floor, which is a property of this connection rather than of the request.
      *
      * <p>A {@code true} answer is about those two conditions alone, and is not a promise that a
      * request gets built. A caller-supplied {@code response_format} in {@code additional_kwargs} is
@@ -300,13 +301,16 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
      * @param outputSchema the schema the request would carry, or null for an unconstrained request
      * @param tools not read; bound tools do not stop this connection sending a native schema
      * @param modelParams not read
-     * @return true if {@code outputSchema} is a POJO {@link Class} and the configured api-version
-     *     reaches the structured-output floor; a caller-supplied {@code response_format} does not
-     *     make it false, and the request builder raises on that conflict
+     * @return true if {@code outputSchema} is a POJO {@link Class} that reaches no {@code Map} or
+     *     {@code JsonNode} and the configured api-version reaches the structured-output floor; a
+     *     caller-supplied {@code response_format} does not make it false, and the request builder
+     *     raises on that conflict
      */
     private boolean canApplyNativeStructuredOutput(
             Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
-        return outputSchema instanceof Class && apiVersionSupportsStructuredOutput();
+        return outputSchema instanceof Class
+                && apiVersionSupportsStructuredOutput()
+                && OpenAIChatCompletionsUtils.canDescribeNatively((Class<?>) outputSchema);
     }
 
     /**

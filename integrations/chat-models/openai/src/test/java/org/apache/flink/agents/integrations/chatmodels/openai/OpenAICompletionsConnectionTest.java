@@ -141,6 +141,18 @@ class OpenAICompletionsConnectionTest {
         public Person author;
     }
 
+    /** Output schema fixture with a {@code Map} field, whose keys are not known in advance. */
+    public static class Tally {
+        public String label;
+        public Map<String, Integer> counts;
+    }
+
+    /** Output schema fixture with a {@code JsonNode} field, which holds any JSON value. */
+    public static class Note {
+        public String title;
+        public JsonNode body;
+    }
+
     /** The JSON Schema the request carries, as a JSON tree. */
     private static JsonNode nativeSchema(ChatCompletionCreateParams params) {
         return ObjectMappers.jsonMapper()
@@ -511,6 +523,25 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
+    @DisplayName("Native NOT applied for a schema reaching a Map or a JsonNode")
+    void testNativeNotAppliedForOpenObjectSchema() {
+        // Strict mode closes every object, so the native schema would admit only {} for the map or
+        // the tree and the model would return that. The prompt path keeps the field's contents.
+        for (Class<?> schema : List.of(Tally.class, Note.class)) {
+            ChatCompletionCreateParams params =
+                    connection().buildRequest(userMessage(), List.of(), params("gpt-4o"), schema);
+
+            assertThat(params.responseFormat()).as(schema.getSimpleName()).isEmpty();
+            assertThat(
+                            connection()
+                                    .supportsNativeStructuredOutput(
+                                            schema, List.of(), params("gpt-4o")))
+                    .as(schema.getSimpleName())
+                    .isEqualTo(NativeStructuredOutputSupport.INFEASIBLE);
+        }
+    }
+
+    @Test
     @DisplayName("Native applied for a POJO even when tools are bound (no empty-tools gate)")
     void testNativeAppliedEvenWhenToolsBound() {
         ChatCompletionCreateParams params =
@@ -601,7 +632,8 @@ class OpenAICompletionsConnectionTest {
         // capable in every case, so feasibility alone decides the branch.
         OpenAICompletionsConnection connection = connection();
 
-        for (Object schema : Arrays.asList(Person.class, "row<name STRING>", null)) {
+        for (Object schema :
+                Arrays.asList(Person.class, Tally.class, Note.class, "row<name STRING>", null)) {
             for (List<Tool> tools :
                     Arrays.asList(List.<Tool>of(), List.<Tool>of(new StubTool()), null)) {
                 NativeStructuredOutputSupport answer =

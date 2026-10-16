@@ -28,7 +28,11 @@ from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema, render_output_schema
+from flink_agents.api.agents.types import (
+    OutputSchema,
+    contains_open_object,
+    render_output_schema,
+)
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -285,8 +289,10 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
 
         Only a ``BaseModel`` subclass has a native translation here; a ``RowTypeInfo``
         wrapped in ``OutputSchema``, or no schema at all, has none and keeps the
-        prompt-engineering fallback. Nothing else about the request constrains the
-        native branch, so neither the tools nor the parameters are read: this connection
+        prompt-engineering fallback. So does a model whose schema admits undeclared
+        keys, such as one with a ``dict`` field, since strict mode requires every
+        object to be closed. Nothing else about the request constrains the native
+        branch, so neither the tools nor the parameters are read: this connection
         sends a native schema alongside bound tools, and the one parameter that would
         bear on the answer is the model, which is the capability question this excludes.
 
@@ -307,9 +313,11 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         Returns:
         -------
         bool
-            ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass.
+            ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass whose schema
+            admits no undeclared keys.
         """
-        return _native_output_model(output_schema) is not None
+        model = _native_output_model(output_schema)
+        return model is not None and not contains_open_object(model)
 
     def chat(
         self,

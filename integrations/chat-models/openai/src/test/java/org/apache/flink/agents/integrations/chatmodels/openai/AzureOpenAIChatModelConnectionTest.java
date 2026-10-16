@@ -131,6 +131,18 @@ class AzureOpenAIChatModelConnectionTest {
         public Status status;
     }
 
+    /** Output schema fixture with a {@code Map} field, whose keys are not known in advance. */
+    public static class Tally {
+        public String label;
+        public Map<String, Integer> counts;
+    }
+
+    /** Output schema fixture with a {@code JsonNode} field, which holds any JSON value. */
+    public static class Note {
+        public String title;
+        public JsonNode body;
+    }
+
     /** Enum constants deserialized from their {@code @JsonProperty} values. */
     public enum Status {
         @JsonProperty("in-progress")
@@ -504,6 +516,26 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     @Test
+    @DisplayName("Native NOT applied for a schema reaching a Map or a JsonNode")
+    void testNativeNotAppliedForOpenObjectSchema() {
+        // Strict mode closes every object, so the native schema would admit only {} for the map or
+        // the tree and the model would return that. The prompt path keeps the field's contents.
+        for (Class<?> schema : List.of(Tally.class, Note.class)) {
+            ChatCompletionCreateParams request =
+                    connection()
+                            .buildRequest(userMessage(), List.of(), params("gpt-4o-mini"), schema);
+
+            assertThat(request.responseFormat()).as(schema.getSimpleName()).isEmpty();
+            assertThat(
+                            connection()
+                                    .supportsNativeStructuredOutput(
+                                            schema, List.of(), params("gpt-4o-mini")))
+                    .as(schema.getSimpleName())
+                    .isEqualTo(NativeStructuredOutputSupport.INFEASIBLE);
+        }
+    }
+
+    @Test
     @DisplayName("Native applied for a POJO even when tools are bound")
     void testNativeAppliedEvenWhenToolsBound() {
         // Azure documents structured outputs as unsupported with parallel function calls, which
@@ -596,6 +628,9 @@ class AzureOpenAIChatModelConnectionTest {
                 Arguments.of(
                         "non_pojo_schema", CAPABLE_API_VERSION, "gpt-4o-mini", "row<name STRING>"),
                 Arguments.of("no_output_schema", CAPABLE_API_VERSION, "gpt-4o-mini", null),
+                Arguments.of("schema_with_map", CAPABLE_API_VERSION, "gpt-4o-mini", Tally.class),
+                Arguments.of(
+                        "schema_with_json_node", CAPABLE_API_VERSION, "gpt-4o-mini", Note.class),
                 Arguments.of(
                         "api_version_below_floor",
                         BELOW_FLOOR_API_VERSION,
@@ -833,7 +868,9 @@ class AzureOpenAIChatModelConnectionTest {
         for (String apiVersion : List.of(CAPABLE_API_VERSION, BELOW_FLOOR_API_VERSION)) {
             AzureOpenAIChatModelConnection connection = connection(apiVersion);
 
-            for (Object schema : Arrays.asList(Person.class, "row<name STRING>", null)) {
+            for (Object schema :
+                    Arrays.asList(
+                            Person.class, Tally.class, Note.class, "row<name STRING>", null)) {
                 for (List<Tool> tools :
                         Arrays.asList(List.<Tool>of(), List.<Tool>of(new StubTool()), null)) {
                     for (String backing : Arrays.asList("gpt-4o-mini", "gpt-3.5-turbo", null)) {

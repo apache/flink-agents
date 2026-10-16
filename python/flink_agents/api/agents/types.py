@@ -128,3 +128,54 @@ def render_output_schema(
         )
         raise TypeError(msg)
     return schema
+
+
+def contains_open_object(model: type[BaseModel]) -> bool:
+    """Whether ``model``'s JSON Schema admits keys it does not declare, at any depth.
+
+    A ``dict`` field does, wherever it sits, and so does a model configured with
+    ``extra="allow"``: their keys are not known in advance. A strict native schema
+    requires every object to be closed, so it cannot state either, and a connection
+    whose native form is strict keeps the prompt path for such a model.
+
+    Only the keywords that hold subschemas are followed. Keys under ``properties`` and
+    ``$defs`` are names, so a field named ``additionalProperties`` does not count.
+
+    Args:
+        model: The model class describing the shape the response must take.
+
+    Returns:
+        ``True`` if some object in the schema sets ``additionalProperties`` to
+        anything but ``False``, or sets ``patternProperties``. ``False`` when the
+        model has no JSON Schema, leaving that failure to ``render_output_schema``,
+        which reports it clearly.
+    """
+    try:
+        schema = model.model_json_schema()
+    except Exception:
+        return False
+    return _admits_undeclared_keys(schema)
+
+
+def _admits_undeclared_keys(schema: Any) -> bool:
+    if not isinstance(schema, dict):
+        return False
+    if schema.get("additionalProperties", False) is not False:
+        return True
+    if "patternProperties" in schema:
+        return True
+    for keyword in ("properties", "$defs"):
+        subschemas = schema.get(keyword)
+        if isinstance(subschemas, dict) and any(
+            _admits_undeclared_keys(subschema) for subschema in subschemas.values()
+        ):
+            return True
+    for keyword in ("prefixItems", "anyOf", "oneOf", "allOf"):
+        subschemas = schema.get(keyword)
+        if isinstance(subschemas, list) and any(
+            _admits_undeclared_keys(subschema) for subschema in subschemas
+        ):
+            return True
+    return _admits_undeclared_keys(schema.get("items")) or _admits_undeclared_keys(
+        schema.get("not")
+    )

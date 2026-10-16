@@ -133,6 +133,17 @@ class GeminiChatModelConnectionTest {
         public int total;
     }
 
+    /** Output schema fixture with a {@code JsonNode} field, which holds any JSON value. */
+    public static class Note {
+        public String title;
+        public JsonNode body;
+    }
+
+    /** Output schema fixture whose map values are {@code JsonNode}s. */
+    public static class Catalog {
+        public Map<String, JsonNode> entries;
+    }
+
     /** Nested type reused by two described fields of {@link Addresses}. */
     public static class Address {
         public String street;
@@ -776,6 +787,24 @@ class GeminiChatModelConnectionTest {
     }
 
     @Test
+    @DisplayName("A schema reaching a JsonNode is skipped, directly or as a map's values")
+    void nativeSchemaSkippedForJsonNode() {
+        // The generator describes a JsonNode as an object and the native schema closes it, so it
+        // would admit only {} and the model would return that. A map with typed values keeps its
+        // value schema and stays native, as the Report fixture shows.
+        for (Class<?> schema : List.of(Note.class, Catalog.class)) {
+            GenerateContentConfig config =
+                    connection().buildConfig(userMessage(), null, params(), schema);
+
+            assertThat(config.responseJsonSchema()).as(schema.getSimpleName()).isEmpty();
+            assertThat(config.responseMimeType()).as(schema.getSimpleName()).isEmpty();
+            assertThat(connection().supportsNativeStructuredOutput(schema, List.of(), params()))
+                    .as(schema.getSimpleName())
+                    .isEqualTo(NativeStructuredOutputSupport.INFEASIBLE);
+        }
+    }
+
+    @Test
     @DisplayName("The derived schema lists enum constants by the values Jackson deserializes")
     void derivedSchemaListsEnumsByTheirJacksonWireValues() throws Exception {
         GenerateContentConfig config =
@@ -1017,7 +1046,8 @@ class GeminiChatModelConnectionTest {
         // capable throughout, so the schema form and the bound tools are what move.
         GeminiChatModelConnection connection = connection();
 
-        for (Object schema : Arrays.asList(Report.class, "row<name STRING>", null)) {
+        for (Object schema :
+                Arrays.asList(Report.class, Note.class, Catalog.class, "row<name STRING>", null)) {
             for (List<Tool> tools :
                     Arrays.asList(List.<Tool>of(), List.<Tool>of(new SchemaOnlyTool()), null)) {
                 NativeStructuredOutputSupport answer =

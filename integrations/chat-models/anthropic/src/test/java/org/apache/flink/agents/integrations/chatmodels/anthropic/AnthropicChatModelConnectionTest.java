@@ -386,6 +386,18 @@ class AnthropicChatModelConnectionTest {
         public Answer answer;
     }
 
+    /** Output schema fixture with a {@code Map} field, whose keys are not known in advance. */
+    public static class Tally {
+        public String label;
+        public Map<String, Integer> counts;
+    }
+
+    /** Output schema fixture with a {@code JsonNode} field, which holds any JSON value. */
+    public static class Note {
+        public String title;
+        public JsonNode body;
+    }
+
     private static Map<String, Object> paramsWithModel(String model, Object jsonPrefill) {
         Map<String, Object> params = params(jsonPrefill);
         params.put("model", model);
@@ -497,6 +509,30 @@ class AnthropicChatModelConnectionTest {
         // The RowTypeInfo case arrives wrapped rather than as a Class; anything but a Class has no
         // native translation and must degrade rather than fail.
         assertThat(build(CAPABLE_MODEL, "not-a-class", null).params.outputConfig()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a schema reaching a Map or a JsonNode keeps the prompt fallback")
+    void testOpenObjectSchemaKeepsFallback() {
+        // The native schema closes every object, so it would admit only {} for the map or the
+        // tree and the model would return that. The prompt path keeps the field's contents, and
+        // the json_prefill it relies on with it.
+        for (Class<?> schema : List.of(Tally.class, Note.class)) {
+            assertThat(build(CAPABLE_MODEL, schema, null).params.outputConfig())
+                    .as(schema.getSimpleName())
+                    .isEmpty();
+            assertThat(build(INCAPABLE_MODEL, schema, true).jsonPrefillApplied)
+                    .as(schema.getSimpleName())
+                    .isTrue();
+            assertThat(
+                            connection()
+                                    .supportsNativeStructuredOutput(
+                                            schema,
+                                            List.of(),
+                                            paramsWithModel(CAPABLE_MODEL, null)))
+                    .as(schema.getSimpleName())
+                    .isEqualTo(NativeStructuredOutputSupport.INFEASIBLE);
+        }
     }
 
     @Test
@@ -1173,7 +1209,9 @@ class AnthropicChatModelConnectionTest {
             AnthropicChatModelConnection connection =
                     new AnthropicChatModelConnection(descriptor(configured), NOOP);
 
-            for (Object schema : Arrays.asList(Answer.class, "row<name STRING>", null)) {
+            for (Object schema :
+                    Arrays.asList(
+                            Answer.class, Tally.class, Note.class, "row<name STRING>", null)) {
                 for (boolean callerConfig : List.of(false, true)) {
                     for (List<Tool> tools :
                             Arrays.asList(List.<Tool>of(), List.<Tool>of(new StubTool()), null)) {

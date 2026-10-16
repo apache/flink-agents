@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from openai.lib._pydantic import to_strict_json_schema
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from pyflink.common.typeinfo import Types
 
 from flink_agents.api.agents.types import OutputSchema
@@ -74,9 +74,17 @@ class MapsToFieldLess(BaseModel):
 
 
 class Labelled(BaseModel):
-    """A schema whose only member is a free-form map, a legitimate constraint."""
+    """A schema whose only member is a map, which strict mode cannot express."""
 
     labels: dict[str, str]
+
+
+class AllowsExtra(BaseModel):
+    """A schema admitting undeclared keys at its root, which strict mode forbids."""
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str
 
 
 ROW_TYPE = Types.ROW_NAMED(["name"], [Types.STRING()])
@@ -492,12 +500,12 @@ def test_unrenderable_schema_raises_naming_the_model() -> None:
         _chat_with_schema(_connection(), Unrenderable)
 
 
-@pytest.mark.parametrize("schema", [FieldLess, NestsFieldLess, MapsToFieldLess])
+@pytest.mark.parametrize("schema", [FieldLess, NestsFieldLess])
 def test_field_less_schema_is_accepted_and_sent_whole(schema: type[BaseModel]) -> None:
     """A schema declaring no fields renders, so the provider decides on it, not us.
 
     The document reaches the request exactly as rendered rather than being refused
-    here. The nested cases carry the field-less model below the root, so the
+    here. The nested case carries the field-less model below the root, so the
     assertion covers the whole document rather than only its top level.
     """
     conn = _connection()
@@ -506,12 +514,26 @@ def test_field_less_schema_is_accepted_and_sent_whole(schema: type[BaseModel]) -
     assert response_format["json_schema"]["schema"] == to_strict_json_schema(schema)
 
 
-def test_map_member_schema_is_accepted_and_sent_whole() -> None:
-    """A free-form map is a legitimate constraint and reaches the request intact."""
+@pytest.mark.parametrize("schema", [Labelled, MapsToFieldLess, AllowsExtra])
+def test_schema_admitting_undeclared_keys_keeps_the_prompt_path(
+    schema: type[BaseModel],
+) -> None:
+    """A map or an open model has no strict form, so no response_format is sent.
+
+    Strict mode requires every object to forbid undeclared keys, and these keep
+    theirs open, so the provider would reject the request. The query answers
+    INFEASIBLE in step, which fails a NATIVE policy before the call is made.
+    """
     conn = _connection()
-    _chat_with_schema(conn, Labelled)
-    response_format = _create_call_kwargs(conn)["response_format"]
-    assert response_format["json_schema"]["schema"] == to_strict_json_schema(Labelled)
+    assert (
+        conn.supports_native_structured_output(
+            OutputSchema(output_schema=schema), [], _model_kwargs("gpt-4o-mini")
+        )
+        is NativeStructuredOutputSupport.INFEASIBLE
+    )
+
+    _chat_with_schema(conn, schema)
+    assert "response_format" not in _create_call_kwargs(conn)
 
 
 def _model_kwargs(backing_model: str | None = None) -> dict[str, Any]:
@@ -572,6 +594,7 @@ def test_query_agrees_with_the_native_branch() -> None:
 
         for schema in (
             OutputSchema(output_schema=Person),
+            OutputSchema(output_schema=Labelled),
             OutputSchema(output_schema=ROW_TYPE),
             None,
         ):

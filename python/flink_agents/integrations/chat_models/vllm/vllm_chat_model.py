@@ -15,13 +15,16 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any
+from typing import Any, List, Mapping
 
 from typing_extensions import override
 
+from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.openai.openai_chat_model import (
     OpenAIChatModelConnection,
     OpenAIChatModelSetup,
+    _native_output_model,
 )
 
 DEFAULT_VLLM_API_BASE_URL = "http://localhost:8000/v1"
@@ -85,6 +88,23 @@ class VLLMChatModelConnection(OpenAIChatModelConnection):
         See https://docs.vllm.ai/en/stable/features/structured_outputs.html.
         """
         return bool(effective_model and effective_model.strip())
+
+    @override
+    def _can_apply_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> bool:
+        """Whether a request built from these inputs would carry a native
+        ``response_format``, leaving the effective model's capability out of the answer.
+
+        Unlike OpenAI, a schema that admits undeclared keys, such as one with a
+        ``dict`` field, still applies: vLLM does not enforce OpenAI's strict-mode
+        rules, and its guided decoding honours ``additionalProperties``, so a map
+        keeps its value type. Only a ``BaseModel`` subclass has a native translation.
+        """
+        return _native_output_model(output_schema) is not None
 
 
 class VLLMChatModelSetup(OpenAIChatModelSetup):
