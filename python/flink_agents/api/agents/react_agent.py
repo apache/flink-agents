@@ -27,7 +27,11 @@ from pyflink.common import Row
 from pyflink.common.typeinfo import RowTypeInfo
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.agents.types import OutputSchema, render_output_schema
+from flink_agents.api.agents.types import (
+    OutputSchema,
+    render_output_schema,
+    render_row_type_json_schema,
+)
 from flink_agents.api.chat_message import (
     ChatMessage,
     MessageRole,
@@ -236,7 +240,9 @@ class ReActAgent(Agent):
                     output_schema, lambda model: model.model_json_schema()
                 )
             elif isinstance(output_schema, RowTypeInfo):
-                json_schema = str(output_schema)
+                json_schema = render_row_type_json_schema(output_schema) or str(
+                    output_schema
+                )
             else:
                 err_msg = f"Output schema {output_schema.__class__} is not supported."
                 raise TypeError(err_msg)
