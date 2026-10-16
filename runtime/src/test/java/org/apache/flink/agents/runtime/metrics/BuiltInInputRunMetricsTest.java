@@ -106,7 +106,7 @@ class BuiltInInputRunMetricsTest {
     @Test
     void restoredRunIdentifiedBeforeCountIsNotCountedTwice() {
         setTimeMillis(300L);
-        ExecutionTraceContext inputRun = ExecutionTraceContext.forInputRun("key", "agent");
+        TraceContext inputRun = TraceContext.forInputRun("key", "agent");
 
         // The operator restores action tasks, identifying their runs, before it counts the
         // restored processing keys.
