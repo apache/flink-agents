@@ -34,59 +34,73 @@ The snippets on this page are fragments that each focus on a single concept. For
 
 ## Create a ReAct Agent
 
-A ReAct Agent only requires a chat model descriptor. The following sections describe the optional configuration. In Java, pass `null` for the prompt or output schema when you do not need it.
+The only required argument of a ReAct Agent is a chat model descriptor, which references a registered chat model connection by name. See [Chat Models]({{< ref "docs/development/calling-llms/chat-models" >}}) for the provider-specific connection and model configuration.
+
+The following example registers a chat model connection on the `AgentsExecutionEnvironment`, defines the chat model descriptor, and creates the agent:
 
 {{< tabs "Create a ReAct Agent" >}}
 
 {{< tab "Python" >}}
 ```python
+# Register a chat model connection under a resource name.
+agents_env.add_resource(
+    "my_ollama_connection",
+    ResourceType.CHAT_MODEL_CONNECTION,
+    ResourceDescriptor(
+        clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=120
+    ),
+)
+
+# Define the chat model descriptor.
+chat_model_descriptor = ResourceDescriptor(
+    clazz=ResourceName.ChatModel.OLLAMA_SETUP,
+    connection="my_ollama_connection",
+    model="qwen3:8b",
+)
+
+# Create the ReAct Agent.
 my_react_agent = ReActAgent(chat_model=chat_model_descriptor)
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```java
+// Register a chat model connection under a resource name.
+agentsEnv.addResource(
+        "myOllamaConnection",
+        ResourceType.CHAT_MODEL_CONNECTION,
+        ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_CONNECTION)
+                .addInitialArgument("endpoint", "http://localhost:11434")
+                .addInitialArgument("requestTimeout", 120)
+                .build());
+
+// Define the chat model descriptor.
+ResourceDescriptor chatModelDescriptor =
+        ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
+                .addInitialArgument("connection", "myOllamaConnection")
+                .addInitialArgument("model", "qwen3:8b")
+                .build();
+
+// Create the ReAct Agent; pass null for the optional prompt and output schema.
 ReActAgent myReActAgent = new ReActAgent(chatModelDescriptor, null, null);
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
 
-## Initialize Arguments
-### Chat Model
-Use a `ResourceDescriptor` to select the required chat model setup and pass its arguments. See [Chat Models]({{< ref "docs/development/calling-llms/chat-models" >}}) for the provider-specific connection and model configuration.
+You can optionally expose tools to the ReAct Agent. Register each tool on the `AgentsExecutionEnvironment` under a resource name (this can also be done with a YAML file — see [Tool Use]({{< ref "docs/development/calling-llms/tool_use#register-tool-to-execution-environment" >}}) for the full guide), then list the registered names in the chat model descriptor's `tools` argument. Each name must match a registered tool; otherwise the agent fails at runtime with a "resource not found" error.
 
-Tools are optional. To expose them to the ReAct Agent, first register each tool on the `AgentsExecutionEnvironment` under a resource name (this can also be done with a YAML file — see [Tool Use]({{< ref "docs/development/calling-llms/tool_use#register-tool-to-execution-environment" >}}) for the full guide):
-
-{{< tabs "Register Tools" >}}
+{{< tabs "Expose Tools" >}}
 
 {{< tab "Python" >}}
 ```python
+# Register each tool under a resource name.
 agents_env.add_resource(
     "my_tool1", ResourceType.TOOL, Tool.from_callable(my_tool1)
 )
 # Register my_tool2 the same way.
-```
-{{< /tab >}}
 
-{{< tab "Java" >}}
-```java
-agentsEnv.addResource(
-        "myTool1",
-        ResourceType.TOOL,
-        Tool.fromMethod(MyAgentExample.class.getMethod("myTool1", String.class)));
-// Register myTool2 the same way.
-```
-{{< /tab >}}
-
-{{< /tabs >}}
-
-Then list the registered names in the chat model descriptor's `tools` argument. Each name must match a registered tool; otherwise the agent fails at runtime with a "resource not found" error.
-
-{{< tabs "ChatModel ResourceDescriptor" >}}
-
-{{< tab "Python" >}}
-```python
+# List the registered tool names in tools.
 chat_model_descriptor = ResourceDescriptor(
     clazz=ResourceName.ChatModel.OLLAMA_SETUP,
     connection="my_ollama_connection",
@@ -98,13 +112,20 @@ chat_model_descriptor = ResourceDescriptor(
 
 {{< tab "Java" >}}
 ```java
+// Register each tool under a resource name.
+agentsEnv.addResource(
+        "myTool1",
+        ResourceType.TOOL,
+        Tool.fromMethod(MyAgentExample.class.getMethod("myTool1", String.class)));
+// Register myTool2 the same way.
+
+// List the registered tool names in tools.
 ResourceDescriptor chatModelDescriptor =
-                ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
-                        .addInitialArgument("connection", "myOllamaConnection")
-                        .addInitialArgument("model", "qwen3:8b")
-                        .addInitialArgument(
-                                "tools", List.of("myTool1", "myTool2"))
-                        .build();
+        ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
+                .addInitialArgument("connection", "myOllamaConnection")
+                .addInitialArgument("model", "qwen3:8b")
+                .addInitialArgument("tools", List.of("myTool1", "myTool2"))
+                .build();
 ```
 {{< /tab >}}
 
@@ -112,7 +133,9 @@ ResourceDescriptor chatModelDescriptor =
 
 Registering a Vector Store resource does not make a ReAct Agent retrieve from it automatically. Implement retrieval explicitly, for example by exposing it as a tool.
 
-### Prompt
+### Optional Arguments
+
+#### Prompt
 The prompt is optional. Without one, the agent directly converts a Java `String` or primitive wrapper, a Python `str`, `bool`, `int`, `float`, or `None`, or a Java `Map`/Python `dict` whose only key is `input` into a user message. Other structured inputs require a prompt to map their fields into one or more user messages; otherwise, the agent rejects the input at runtime.
 
 A typical prompt contains two messages: a SYSTEM message that tells the agent what to do (and gives input and output examples), and a USER message that describes how to convert the input element into a text string. This is a recommended pattern, not a strict requirement — the agent uses all messages in the prompt, and the SYSTEM message is optional. When an output schema is configured, the ReAct Agent adds its own schema instruction as a SYSTEM message, right after the prompt's first SYSTEM message or at the start if there is none.
@@ -203,7 +226,7 @@ new ChatMessage(MessageRole.USER, "{input}")
 
 See [Prompt]({{< ref "docs/development/calling-llms/prompts" >}}) for more details.
 
-### Output Schema
+#### Output Schema
 The output schema is optional. If omitted, the agent returns the text of the final assistant response as a `String` (Java) or `str` (Python).
 
 When you set an output schema, the agent emits the parsed result instead. The schema should be a `BaseModel` subclass (Python), a POJO class (Java), or a `RowTypeInfo` (both). If the final response cannot be parsed after the configured retries, the chat request fails and the ReAct Agent propagates that failure.
@@ -295,7 +318,7 @@ ReActAgent myReActAgent =
 
 {{< /tabs >}}
 
-### Skills
+#### Skills
 Skills are optional. You can pass [skills]({{< ref "docs/development/calling-llms/skills" >}}) to the constructor in addition to, or instead of, a `skills` argument on the chat model descriptor; the agent uses both. Two forms are accepted: a list of skill names, or a `Skills` object declaring where the skills are loaded from.
 
 **Skill names.** First register the skill sources on the `AgentsExecutionEnvironment`. The resource name identifies the collection of sources:
