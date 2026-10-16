@@ -245,6 +245,29 @@ Some tools need runtime data that should not be chosen by the model, such as a t
 
 The model only sees and provides normal tool parameters. The built-in `tool_call_action` resolves injected values and overwrites any model-supplied values for the same parameters before calling the tool.
 
+Choose the source according to where the value is available when the tool runs:
+
+| Source | Runtime value | Python declaration |
+| --- | --- | --- |
+| `config` | A value in the agent execution environment configuration | `InjectedArg.from_config("tenant_id")` |
+| `sensory_memory` | A value at a path in the current run's sensory memory | `InjectedArg.from_sensory_memory("request.trace_id")` |
+| `short_term_memory` | A value at a path in the agent's short-term memory | `InjectedArg.from_short_term_memory("session.tenant_id")` |
+
+For memory sources, write the value to the selected path before requesting the
+tool call. The path must exist and refer to a value, rather than a nested memory
+object. The injection key identifies the configuration entry or memory path;
+it can differ from the tool parameter name.
+
+In Java annotations, set `@ToolParam(injected = true)` to hide the parameter from
+the model, and use `source` and `key` to bind its value. The default source is
+`sensory_memory`; an omitted key uses the parameter name. For YAML declarations,
+see the [`injected_args` reference]({{< ref "docs/development/create-agent/yaml#resources" >}}),
+which covers the configuration shape, defaults, and examples.
+
+For the following example, set `tenant_id` on the agent execution environment
+with `agents_env.get_config().set_str("tenant_id", "tenant-a")` in Python or
+`agentsEnv.getConfig().setStr("tenant_id", "tenant-a")` in Java.
+
 {{< tabs "Inject Tool Parameters" >}}
 
 {{< tab "Python" >}}
@@ -291,10 +314,7 @@ public class OrderAgent extends Agent {
 
 {{< /tabs >}}
 
-The model supplies only `order_id`; the framework supplies `tenant_id`. Set its
-value on the agent execution environment with
-`agents_env.get_config().set_str("tenant_id", "tenant-a")` in Python or
-`agentsEnv.getConfig().setStr("tenant_id", "tenant-a")` in Java.
+The model supplies only `order_id`; the framework supplies `tenant_id`.
 
 Injected values can also come from memory when the value is attached to the current request or session instead of static environment configuration:
 
@@ -334,25 +354,6 @@ public static String lookupOrder(
 
 {{< /tabs >}}
 
-Choose the source according to where the value is available when the tool runs:
-
-| Source | Runtime value | Python declaration |
-| --- | --- | --- |
-| `config` | A value in the agent execution environment configuration | `InjectedArg.from_config("tenant_id")` |
-| `sensory_memory` | A value at a path in the current run's sensory memory | `InjectedArg.from_sensory_memory("request.trace_id")` |
-| `short_term_memory` | A value at a path in the agent's short-term memory | `InjectedArg.from_short_term_memory("session.tenant_id")` |
-
-For memory sources, write the value to the selected path before requesting the
-tool call. The path must exist and refer to a value, rather than a nested memory
-object. The injection key identifies the configuration entry or memory path;
-it can differ from the tool parameter name.
-
-In Java annotations, set `@ToolParam(injected = true)` to hide the parameter from
-the model, and use `source` and `key` to bind its value. The default source is
-`sensory_memory`; an omitted key uses the parameter name. For YAML declarations,
-see the [`injected_args` reference]({{< ref "docs/development/create-agent/yaml#resources" >}}),
-which covers the configuration shape, defaults, and examples.
-
 ### Overrides and failures
 
 The built-in `tool_call_action` resolves injection before invoking a function tool:
@@ -373,8 +374,9 @@ tool directly, supply its required arguments yourself.
 ## Parallel tool-call batches
 
 A model may request several tool calls in one `ToolRequestEvent`. The built-in
-`tool_call_action` can execute ordinary function or MCP tool calls as a parallel
-batch. Use the following settings on the agent execution environment:
+`tool_call_action` can execute the tools registered by the agent, possibly
+including ordinary functions or MCP tool calls, as parallel operations. Use the
+following settings on the agent execution environment:
 
 | Option | Default | Effect on tool execution |
 | --- | --- | --- |
