@@ -28,6 +28,7 @@ import com.anthropic.models.messages.Model;
 import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.TextBlockParam;
 import com.anthropic.models.messages.Tool;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.github.victools.jsonschema.generator.Option;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
@@ -202,11 +203,13 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      * Whether a request built from these inputs would carry a derived {@code output_config}, the
      * effective model's capability aside.
      *
-     * <p>Two conditions. Only a POJO {@link Class} has a native translation here; a {@code
-     * RowTypeInfo} wrapped in {@code OutputSchema}, or any other form, has none. And a
-     * caller-supplied {@code output_config} wins: it is the caller being explicit about the exact
-     * parameter the native branch writes, so the schema falls back to prompt engineering rather
-     * than the two competing on one request.
+     * <p>Two conditions. Only a POJO {@link Class} has a native translation here, and only one
+     * whose schema reaches no {@code Map} or {@code JsonNode}: the native schema closes every
+     * object, so the model could return only {@code {}} for one. A {@code RowTypeInfo} wrapped in
+     * {@code OutputSchema}, or any other form, has none. And a caller-supplied {@code
+     * output_config} wins: it is the caller being explicit about the exact parameter the native
+     * branch writes, so the schema falls back to prompt engineering rather than the two competing
+     * on one request.
      *
      * <p>The tools are not read; a bound tool does not stop this connection sending a schema.
      *
@@ -216,14 +219,16 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      *     additional_kwargs}. These must be the parameters as they arrived: {@code buildRequest}
      *     removes that key from its own copy before the native branch runs, so the stripped copy
      *     would report every caller's {@code output_config} absent
-     * @return true if {@code outputSchema} is a POJO {@link Class} and the caller supplied no
-     *     {@code output_config} of its own
+     * @return true if {@code outputSchema} is a POJO {@link Class} that reaches no {@code Map} or
+     *     {@code JsonNode} and the caller supplied no {@code output_config} of its own
      */
     private boolean canApplyNativeStructuredOutput(
             Object outputSchema,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> modelParams) {
-        return outputSchema instanceof Class && !carriesCallerOutputConfig(modelParams);
+        return outputSchema instanceof Class
+                && !carriesCallerOutputConfig(modelParams)
+                && canDescribeNatively((Class<?>) outputSchema);
     }
 
     /**
@@ -405,6 +410,26 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         return override instanceof Number ? override : topLevel;
     }
 
+    // The native schema closes every object it describes, as structured outputs require. A Map's
+    // keys are not known in advance, and a Jackson JsonNode holds any JSON value, which the
+    // generator describes as an object. Closed, either admits only {}, so a model held to the
+    // schema returns that and the data is lost.
+    private static final Option[] NATIVE_SCHEMA_OPTIONS = {
+        Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT
+    };
+
+    private static final List<Class<?>> TYPES_WITHOUT_NATIVE_FORM =
+            List.of(Map.class, JsonNode.class);
+
+    /**
+     * Whether the native {@code output_config} can state {@code schemaClass}'s contract, which it
+     * cannot once the schema reaches a {@code Map} or a {@code JsonNode}.
+     */
+    private static boolean canDescribeNatively(Class<?> schemaClass) {
+        return !PojoJsonSchemaGenerator.reachesAny(
+                schemaClass, TYPES_WITHOUT_NATIVE_FORM, NATIVE_SCHEMA_OPTIONS);
+    }
+
     /**
      * Derives the native {@code output_config} for a POJO output schema class.
      *
@@ -415,8 +440,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      */
     private static OutputConfig toNativeOutputConfig(Class<?> schemaClass) {
         Map<String, JsonValue> schema = new LinkedHashMap<>();
-        PojoJsonSchemaGenerator.generateAllRequired(
-                        schemaClass, Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT)
+        PojoJsonSchemaGenerator.generateAllRequired(schemaClass, NATIVE_SCHEMA_OPTIONS)
                 .fields()
                 .forEachRemaining(
                         member ->

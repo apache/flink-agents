@@ -109,6 +109,12 @@ class VLLMChatModelConnectionTest {
         public int age;
     }
 
+    /** Output schema fixture with a {@code Map} field, whose keys are not known in advance. */
+    public static class Tally {
+        public String label;
+        public Map<String, Integer> counts;
+    }
+
     @Test
     @DisplayName("Native is recommended for any served model, not only OpenAI model names")
     void testQueryRecommendsNativeForServedModels() {
@@ -126,6 +132,13 @@ class VLLMChatModelConnectionTest {
         assertThat(
                         conn.supportsNativeStructuredOutput(
                                 "row<name STRING>",
+                                List.of(),
+                                Map.of("model", "Qwen/Qwen2.5-7B-Instruct")))
+                .isEqualTo(NativeStructuredOutputSupport.INFEASIBLE);
+        // Nor is the strict form's exclusion of a schema reaching a Map, which vLLM inherits.
+        assertThat(
+                        conn.supportsNativeStructuredOutput(
+                                Tally.class,
                                 List.of(),
                                 Map.of("model", "Qwen/Qwen2.5-7B-Instruct")))
                 .isEqualTo(NativeStructuredOutputSupport.INFEASIBLE);

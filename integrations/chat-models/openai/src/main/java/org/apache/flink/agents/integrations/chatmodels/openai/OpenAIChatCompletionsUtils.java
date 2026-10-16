@@ -19,6 +19,7 @@ package org.apache.flink.agents.integrations.chatmodels.openai;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.victools.jsonschema.generator.Option;
 import com.openai.core.JsonValue;
@@ -178,6 +179,26 @@ final class OpenAIChatCompletionsUtils {
         }
     }
 
+    // Strict mode requires additionalProperties false on every object, so the native schema
+    // closes every object it describes. A Map's keys are not known in advance, and a Jackson
+    // JsonNode holds any JSON value, which the generator describes as an object. Closed, either
+    // admits only {}, so a model held to the schema returns that and the data is lost.
+    private static final Option[] NATIVE_SCHEMA_OPTIONS = {
+        Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT
+    };
+
+    private static final List<Class<?>> TYPES_WITHOUT_STRICT_FORM =
+            List.of(Map.class, JsonNode.class);
+
+    /**
+     * Whether the strict {@code json_schema} response format can state {@code schemaClass}'s
+     * contract, which it cannot once the schema reaches a {@code Map} or a {@code JsonNode}.
+     */
+    static boolean canDescribeNatively(Class<?> schemaClass) {
+        return !PojoJsonSchemaGenerator.reachesAny(
+                schemaClass, TYPES_WITHOUT_STRICT_FORM, NATIVE_SCHEMA_OPTIONS);
+    }
+
     /**
      * Derives the strict {@code json_schema} response format for a POJO output schema class.
      *
@@ -188,8 +209,7 @@ final class OpenAIChatCompletionsUtils {
      */
     static ResponseFormatJsonSchema toNativeResponseFormat(Class<?> schemaClass) {
         Map<String, JsonValue> schema = new LinkedHashMap<>();
-        PojoJsonSchemaGenerator.generateAllRequired(
-                        schemaClass, Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT)
+        PojoJsonSchemaGenerator.generateAllRequired(schemaClass, NATIVE_SCHEMA_OPTIONS)
                 .fields()
                 .forEachRemaining(
                         member ->

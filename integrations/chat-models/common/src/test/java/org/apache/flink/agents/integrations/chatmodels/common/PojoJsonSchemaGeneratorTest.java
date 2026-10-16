@@ -19,15 +19,19 @@ package org.apache.flink.agents.integrations.chatmodels.common;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.Option;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -101,6 +105,89 @@ class PojoJsonSchemaGeneratorTest {
         public String wire() {
             return wire;
         }
+    }
+
+    /** Output schema fixture reaching a map only through a nested class. */
+    public static class Wrapper {
+        public Report report;
+    }
+
+    /** Output schema fixture reaching maps as list elements. */
+    public static class Rows {
+        public List<Map<String, String>> rows;
+    }
+
+    /** Output schema fixture reaching maps as array elements. */
+    public static class Cells {
+        public Map<String, String>[] cells;
+    }
+
+    /** Output schema fixture reaching a concrete map implementation inside an Optional. */
+    public static class Lookup {
+        public Optional<HashMap<String, Profile>> byName;
+    }
+
+    /** Output schema fixture reaching a map only through a subtype Jackson resolves. */
+    public static class Zoo {
+        public Animal animal;
+    }
+
+    /** Polymorphic base type whose subtypes Jackson names in the payload. */
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
+    @JsonSubTypes({
+        @JsonSubTypes.Type(value = Parrot.class, name = "parrot"),
+        @JsonSubTypes.Type(value = Snake.class, name = "snake")
+    })
+    public abstract static class Animal {
+        public String name;
+    }
+
+    /** Subtype carrying a map. */
+    public static class Parrot extends Animal {
+        public Map<String, Integer> phrases;
+    }
+
+    /** Subtype carrying no map. */
+    public static class Snake extends Animal {
+        public int length;
+    }
+
+    /** Output schema fixture holding any JSON value. */
+    public static class AnyTree {
+        public JsonNode value;
+    }
+
+    /** Output schema fixture holding a JSON array. */
+    public static class ArrayTree {
+        public ArrayNode values;
+    }
+
+    /** Output schema fixture holding JSON values as list elements. */
+    public static class TreeList {
+        public List<JsonNode> values;
+    }
+
+    /** Output schema fixture whose only map is a field Jackson ignores. */
+    public static class IgnoredMap {
+        @JsonIgnore public Map<String, String> internal;
+
+        public String name;
+    }
+
+    /** Output schema fixture referring back to itself. */
+    public static class Chain {
+        public String value;
+        public Chain next;
+    }
+
+    /** Output schema fixture with a field named like the keyword that types a map's values. */
+    public static class Keyword {
+        public String additionalProperties;
+    }
+
+    /** Output schema fixture whose only JSON tree is a map's value type. */
+    public static class Catalog {
+        public Map<String, JsonNode> entries;
     }
 
     @Test
@@ -212,6 +299,66 @@ class PojoJsonSchemaGeneratorTest {
         assertThat(withOption.path("additionalProperties").path("type").asText())
                 .isEqualTo("integer");
         assertThat(withoutOption.has("additionalProperties")).isFalse();
+    }
+
+    @Test
+    @DisplayName("A map or JSON tree is reached at any depth the schema describes")
+    void reachesMapsAndTreesAtAnyDepth() {
+        for (Class<?> type :
+                List.of(
+                        Report.class,
+                        Wrapper.class,
+                        Rows.class,
+                        Cells.class,
+                        Lookup.class,
+                        Zoo.class,
+                        HashMap.class,
+                        AnyTree.class,
+                        ArrayTree.class,
+                        TreeList.class)) {
+            assertThat(
+                            PojoJsonSchemaGenerator.reachesAny(
+                                    type,
+                                    List.of(Map.class, JsonNode.class),
+                                    Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT))
+                    .as(type.getSimpleName())
+                    .isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("A type the schema does not describe is not reached")
+    void doesNotReachTypesTheSchemaLeavesOut() {
+        // IgnoredMap declares a map that Jackson never reads, so the schema leaves it out, and
+        // Keyword only names a field after the keyword a map's value schema is written under.
+        for (Class<?> type :
+                List.of(
+                        Profile.class,
+                        Ticket.class,
+                        IgnoredMap.class,
+                        Chain.class,
+                        Keyword.class,
+                        Snake.class)) {
+            assertThat(
+                            PojoJsonSchemaGenerator.reachesAny(
+                                    type,
+                                    List.of(Map.class, JsonNode.class),
+                                    Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT))
+                    .as(type.getSimpleName())
+                    .isFalse();
+        }
+    }
+
+    @Test
+    @DisplayName("A map's value type is reached only under the option that describes it")
+    void reachesMapValuesOnlyUnderTheirOption() {
+        List<Class<?>> trees = List.of(JsonNode.class);
+
+        assertThat(PojoJsonSchemaGenerator.reachesAny(Catalog.class, trees)).isFalse();
+        assertThat(
+                        PojoJsonSchemaGenerator.reachesAny(
+                                Catalog.class, trees, Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES))
+                .isTrue();
     }
 
     private static List<String> fieldNames(JsonNode node) {

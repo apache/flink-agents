@@ -209,18 +209,23 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
      *
      * <p>Only a POJO {@link Class} has a native translation here; a {@code RowTypeInfo} wrapped in
      * {@code OutputSchema}, or any other form, has none and keeps the prompt-engineering fallback.
-     * Nothing else about the request constrains the native branch, so neither the tools nor the
-     * parameters are read: this connection sends a native schema alongside bound tools, and the one
-     * parameter that would matter is the model, which is the capability question this excludes.
+     * Nor does a class whose schema reaches a {@code Map} or a {@code JsonNode}: strict mode closes
+     * every object, so the model could return only {@code {}} for one, and the class keeps the
+     * fallback too. Nothing else about the request constrains the native branch, so neither the
+     * tools nor the parameters are read: this connection sends a native schema alongside bound
+     * tools, and the one parameter that would matter is the model, which is the capability question
+     * this excludes.
      *
      * @param outputSchema the schema the request would carry, or null for an unconstrained request
      * @param tools not read; bound tools do not stop this connection sending a native schema
      * @param modelParams not read
-     * @return true if {@code outputSchema} is a POJO {@link Class}
+     * @return true if {@code outputSchema} is a POJO {@link Class} that reaches no {@code Map} or
+     *     {@code JsonNode}
      */
     private boolean canApplyNativeStructuredOutput(
             Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
-        return outputSchema instanceof Class;
+        return outputSchema instanceof Class
+                && OpenAIChatCompletionsUtils.canDescribeNatively((Class<?>) outputSchema);
     }
 
     /**

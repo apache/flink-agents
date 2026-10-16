@@ -28,7 +28,9 @@ import com.github.victools.jsonschema.generator.impl.PropertySortUtils;
 import com.github.victools.jsonschema.module.jackson.JacksonModule;
 import com.github.victools.jsonschema.module.jackson.JacksonOption;
 
+import java.util.Collection;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 
 /** Derives the JSON Schema that chat model connections send as a native output schema. */
@@ -88,8 +90,48 @@ public final class PojoJsonSchemaGenerator {
         return generate(type, field -> true, options);
     }
 
+    /**
+     * Reports whether the schema generated for {@code type} reaches a type that is an instance of
+     * one of {@code targets}.
+     *
+     * <p>The check runs the same generation as {@link #generate}, so it reaches exactly the types
+     * that schema describes: {@code type} itself, the type of every field, the element and value
+     * types the options describe, and every subtype Jackson resolves, but not a field Jackson
+     * ignores. A caller uses it to find a type its provider's schema cannot state before sending a
+     * schema that misstates it.
+     *
+     * @param type the class a response is deserialized into
+     * @param targets the types to look for; a subtype or implementation of one counts
+     * @param options the options the caller generates its schema with. They decide what the schema
+     *     describes: a map's value type, for example, is reached only under {@link
+     *     Option#MAP_VALUES_AS_ADDITIONAL_PROPERTIES}
+     * @return true if the schema reaches an instance of one of {@code targets}
+     */
+    public static boolean reachesAny(
+            Class<?> type, Collection<Class<?>> targets, Option... options) {
+        AtomicBoolean reached = new AtomicBoolean();
+        SchemaGeneratorConfigBuilder builder = configure(field -> true, options);
+        // This provider is offered each type the schema describes. It returns null, so generation
+        // proceeds as configured.
+        builder.forTypesInGeneral()
+                .withCustomDefinitionProvider(
+                        (javaType, context) -> {
+                            if (targets.stream().anyMatch(javaType::isInstanceOf)) {
+                                reached.set(true);
+                            }
+                            return null;
+                        });
+        new SchemaGenerator(builder.build()).generateSchema(type);
+        return reached.get();
+    }
+
     private static ObjectNode generate(
             Class<?> type, Predicate<FieldScope> requiredCheck, Option... options) {
+        return new SchemaGenerator(configure(requiredCheck, options).build()).generateSchema(type);
+    }
+
+    private static SchemaGeneratorConfigBuilder configure(
+            Predicate<FieldScope> requiredCheck, Option... options) {
         SchemaGeneratorConfigBuilder builder =
                 new SchemaGeneratorConfigBuilder(
                         SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON);
@@ -103,6 +145,6 @@ public final class PojoJsonSchemaGenerator {
         builder.forTypesInGeneral()
                 .withPropertySorter(PropertySortUtils.SORT_PROPERTIES_FIELDS_BEFORE_METHODS);
         builder.forFields().withRequiredCheck(requiredCheck);
-        return new SchemaGenerator(builder.build()).generateSchema(type);
+        return builder;
     }
 }

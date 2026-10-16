@@ -255,12 +255,13 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
      * Whether a config built from these inputs would carry a native {@code responseJsonSchema}, the
      * effective model's capability aside.
      *
-     * <p>Two conditions. Only a POJO {@link Class} has a native translation here; a {@code
-     * RowTypeInfo} wrapped in {@code OutputSchema}, or any other form, has none. And the request
-     * must bind no tools: outside a documented preview, Gemini answers a request combining function
-     * declarations with a JSON response mime type with {@code 400 INVALID_ARGUMENT}, so a
-     * tool-carrying request keeps its tools and drops the schema. This is the only connection whose
-     * answer the tools can move.
+     * <p>Two conditions. Only a POJO {@link Class} has a native translation here, and only one
+     * whose schema reaches no {@code JsonNode}: the native schema closes the object it describes
+     * one as, so the model could return only {@code {}} for it. A {@code RowTypeInfo} wrapped in
+     * {@code OutputSchema}, or any other form, has none. And the request must bind no tools:
+     * outside a documented preview, Gemini answers a request combining function declarations with a
+     * JSON response mime type with {@code 400 INVALID_ARGUMENT}, so a tool-carrying request keeps
+     * its tools and drops the schema. This is the only connection whose answer the tools can move.
      *
      * <p>No parameter is read today. It is nonetheless asked with the caller's parameters rather
      * than a copy the request builder has consumed, so that a conjunct added here later reads the
@@ -269,13 +270,16 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
      * @param outputSchema the schema the request would carry, or null for an unconstrained request
      * @param tools the tools the request would bind; null and empty alike mean none
      * @param arguments not read
-     * @return true if {@code outputSchema} is a POJO {@link Class} and no tools would be bound
+     * @return true if {@code outputSchema} is a POJO {@link Class} that reaches no {@code JsonNode}
+     *     and no tools would be bound
      */
     private boolean canApplyNativeStructuredOutput(
             Object outputSchema,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> arguments) {
-        return outputSchema instanceof Class && (tools == null || tools.isEmpty());
+        return outputSchema instanceof Class
+                && (tools == null || tools.isEmpty())
+                && canDescribeNatively((Class<?>) outputSchema);
     }
 
     @Override
@@ -449,13 +453,32 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
     // Enabling it instead produces a $defs entry referencing another $defs entry, a shape no
     // published Gemini example demonstrates.
     private static ObjectNode toNativeJsonSchema(Class<?> schemaClass) {
-        ObjectNode schema =
-                PojoJsonSchemaGenerator.generate(
-                        schemaClass,
-                        Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES,
-                        Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT);
+        ObjectNode schema = PojoJsonSchemaGenerator.generate(schemaClass, NATIVE_SCHEMA_OPTIONS);
         stripRefSiblings(schema);
         return schema;
+    }
+
+    // The options listed above toNativeJsonSchema. canDescribeNatively generates under the same
+    // ones, because whether a type is reached depends on them: a Map's value type is reached only
+    // under MAP_VALUES_AS_ADDITIONAL_PROPERTIES.
+    private static final Option[] NATIVE_SCHEMA_OPTIONS = {
+        Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES,
+        Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT
+    };
+
+    // A Jackson JsonNode holds any JSON value, but the generator describes it as an object, which
+    // FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT then closes. The schema admits only {} for it, so
+    // a model held to the schema returns that and the data is lost. A Map keeps its value schema
+    // under MAP_VALUES_AS_ADDITIONAL_PROPERTIES, so it is not listed.
+    private static final List<Class<?>> TYPES_WITHOUT_NATIVE_FORM = List.of(JsonNode.class);
+
+    /**
+     * Whether the native {@code responseJsonSchema} can state {@code schemaClass}'s contract, which
+     * it cannot once the schema reaches a {@code JsonNode}.
+     */
+    private static boolean canDescribeNatively(Class<?> schemaClass) {
+        return !PojoJsonSchemaGenerator.reachesAny(
+                schemaClass, TYPES_WITHOUT_NATIVE_FORM, NATIVE_SCHEMA_OPTIONS);
     }
 
     // Gemini states that a sub-schema setting $ref may set no other property except those starting
