@@ -24,6 +24,7 @@ import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
 import io.opentelemetry.sdk.common.CompletableResultCode;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.export.SpanExporter;
+import org.apache.flink.agents.api.trace.TraceRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,38 +36,40 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Exports Agent Trace Event Logs as OpenTelemetry GenAI traces.
+ * Exports Trace Logs as OpenTelemetry GenAI traces.
  *
  * <p>This is the out-of-band exporter agreed in the Agent Trace design discussions: it reads the
- * Event Log written by the File/SLF4J event loggers (with {@code event-log.trace.enabled: true}),
- * assembles spans per {@link AgentTraceSpans}, and pushes them to any OTLP endpoint. Running out of
- * band means zero impact on the Flink job, and it works retroactively on logs from already finished
- * runs. Because span/trace ids are derived deterministically from the framework ids, exporting the
- * same log twice is idempotent on the backend.
+ * Trace Log written by the File or SLF4J trace logger, assembles spans per {@link AgentTraceSpans},
+ * and pushes them to any OTLP endpoint. The Trace Log must keep execution records ({@code
+ * trace-log.targets} other than the default {@code EVENT_ONLY}). Running out of band means zero
+ * impact on the Flink job, and it works retroactively on logs from already finished runs. Because
+ * span/trace ids are derived deterministically from the framework ids, exporting the same log twice
+ * is idempotent on the backend.
  *
- * <p>Input files are streams of JSON objects — the JSONL written by the File Event Logger, and also
- * its pretty-printed variant (the parser consumes concatenated JSON objects regardless of line
+ * <p>Input files are streams of JSON objects — the JSONL written by the File trace logger, and also
+ * a pretty-printed variant (the parser consumes concatenated JSON objects regardless of line
  * breaks).
  *
  * <p>Example usage:
  *
  * <pre>{@code
- * EventLogOTelExporter exporter =
- *     EventLogOTelExporter.builder()
+ * TraceLogOTelExporter exporter =
+ *     TraceLogOTelExporter.builder()
  *             .setEndpoint("http://localhost:4317")
  *             .setProtocol("grpc")
  *             .setServiceName("my-agent-job")
  *             .build();
- * exporter.exportFiles(List.of(Path.of("/tmp/flink-agents/events-<jobId>-<task>-0.log")));
+ * exporter.exportFiles(List.of(Path.of("/tmp/flink-agents/traces-<jobId>-<task>-0.log")));
  * exporter.shutdown();
  * }</pre>
  */
-public class EventLogOTelExporter implements AutoCloseable {
+public class TraceLogOTelExporter implements AutoCloseable {
 
-    private static final Logger LOG = LoggerFactory.getLogger(EventLogOTelExporter.class);
+    private static final Logger LOG = LoggerFactory.getLogger(TraceLogOTelExporter.class);
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -83,7 +86,7 @@ public class EventLogOTelExporter implements AutoCloseable {
     private final SpanExporter spanExporter;
     private final int maxExportBatchSize;
 
-    EventLogOTelExporter(
+    TraceLogOTelExporter(
             AgentTraceSpans assembler, SpanExporter spanExporter, int maxExportBatchSize) {
         this.assembler = assembler;
         this.spanExporter = spanExporter;
@@ -95,13 +98,13 @@ public class EventLogOTelExporter implements AutoCloseable {
     }
 
     /**
-     * Reads the given Event Log files and exports the assembled spans.
+     * Reads the given Trace Log files and exports the assembled spans.
      *
-     * <p>A directory argument is expanded to the {@code events-*.log} files it contains (the
-     * FileEventLogger naming contract, matching {@code trace_tree.py}); a file argument is consumed
-     * as-is regardless of its name, so records collected from any Event Log sink work once they are
-     * on disk. Completeness of a multi-subtask file set is the caller's responsibility under the
-     * batch contract; the summary reports what was read.
+     * <p>A directory argument is expanded to the {@code traces-*.log} and {@code *.trace-log.log}
+     * files it contains (the File trace logger naming contract, matching {@code trace_tree.py}); a
+     * file argument is consumed as-is regardless of its name, so records collected from any Trace
+     * Log sink work once they are on disk. Completeness of a multi-subtask file set is the caller's
+     * responsibility under the batch contract; the summary reports what was read.
      */
     public ExportSummary exportFiles(List<Path> files) throws IOException {
         List<TraceRecord> records = new ArrayList<>();
@@ -127,7 +130,7 @@ public class EventLogOTelExporter implements AutoCloseable {
                                 new ConverterDiagnostic(
                                         ConverterDiagnostic.MALFORMED_RECORD,
                                         null,
-                                        "Could not decode an Event Log record: " + e.getMessage(),
+                                        "Could not decode a Trace Log record: " + e.getMessage(),
                                         file.toString()));
                         malformedInFile++;
                         fileAborted = malformedInFile >= MAX_MALFORMED_PER_FILE || !canContinue(it);
@@ -153,12 +156,12 @@ public class EventLogOTelExporter implements AutoCloseable {
         List<Path> expanded = new ArrayList<>();
         for (Path path : paths) {
             if (Files.isDirectory(path)) {
-                List<Path> discovered = new ArrayList<>();
-                try (DirectoryStream<Path> stream =
-                        Files.newDirectoryStream(path, "events-*.log")) {
-                    stream.forEach(discovered::add);
+                TreeSet<Path> discovered = new TreeSet<>();
+                for (String glob : new String[] {"traces-*.log", "*.trace-log.log"}) {
+                    try (DirectoryStream<Path> stream = Files.newDirectoryStream(path, glob)) {
+                        stream.forEach(discovered::add);
+                    }
                 }
-                Collections.sort(discovered);
                 expanded.addAll(discovered);
             } else {
                 expanded.add(path);
@@ -272,7 +275,7 @@ public class EventLogOTelExporter implements AutoCloseable {
         }
     }
 
-    /** Builder for {@link EventLogOTelExporter}. */
+    /** Builder for {@link TraceLogOTelExporter}. */
     public static final class Builder {
         private String endpoint = "http://localhost:4317";
         private String protocol = "grpc";
@@ -325,7 +328,7 @@ public class EventLogOTelExporter implements AutoCloseable {
             return this;
         }
 
-        public EventLogOTelExporter build() {
+        public TraceLogOTelExporter build() {
             SpanExporter exporter = spanExporter;
             if (exporter == null) {
                 if ("grpc".equalsIgnoreCase(protocol)) {
@@ -340,7 +343,7 @@ public class EventLogOTelExporter implements AutoCloseable {
                                     + " (expected 'grpc' or 'http/protobuf').");
                 }
             }
-            return new EventLogOTelExporter(
+            return new TraceLogOTelExporter(
                     new AgentTraceSpans(serviceName, businessKeyAsConversationId),
                     exporter,
                     maxExportBatchSize);
@@ -350,8 +353,9 @@ public class EventLogOTelExporter implements AutoCloseable {
     /**
      * Command-line entry point.
      *
-     * <p>Usage: {@code EventLogOTelExporter [--endpoint URL] [--protocol grpc|http/protobuf]
-     * [--service-name NAME] [--batch-size N] [--business-key-as-conversation-id] eventLogFile...}
+     * <p>Usage: {@code TraceLogOTelExporter [--endpoint URL] [--protocol grpc|http/protobuf]
+     * [--service-name NAME] [--batch-size N] [--business-key-as-conversation-id]
+     * traceLogFileOrDir...}
      */
     public static void main(String[] args) throws IOException {
         Builder builder = builder();
@@ -387,9 +391,9 @@ public class EventLogOTelExporter implements AutoCloseable {
             }
         }
         if (files.isEmpty()) {
-            exitWithUsage("No Event Log file or directory given.");
+            exitWithUsage("No Trace Log file or directory given.");
         }
-        try (EventLogOTelExporter exporter = builder.build()) {
+        try (TraceLogOTelExporter exporter = builder.build()) {
             ExportSummary summary = exporter.exportFiles(files);
             System.out.println(summary);
             for (ConverterDiagnostic diagnostic : summary.getDiagnostics()) {
@@ -414,9 +418,9 @@ public class EventLogOTelExporter implements AutoCloseable {
     private static void exitWithUsage(String problem) {
         System.err.println(problem);
         System.err.println(
-                "Usage: EventLogOTelExporter [--endpoint URL] [--protocol grpc|http/protobuf]"
+                "Usage: TraceLogOTelExporter [--endpoint URL] [--protocol grpc|http/protobuf]"
                         + " [--service-name NAME] [--batch-size N]"
-                        + " [--business-key-as-conversation-id] eventLogFile...");
+                        + " [--business-key-as-conversation-id] traceLogFileOrDir...");
         System.exit(2);
     }
 }

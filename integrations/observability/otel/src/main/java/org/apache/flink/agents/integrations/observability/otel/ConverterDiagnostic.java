@@ -21,7 +21,7 @@ import java.util.Objects;
 
 /**
  * One machine-readable converter diagnostic, mirroring the warning model of {@code trace_tree.py}
- * ({@code code} + id + {@code message} + optional file location) so the two Event Log tools share
+ * ({@code code} + id + {@code message} + optional file location) so the two Trace Log tools share
  * one diagnostic vocabulary.
  *
  * <p>Codes emitted by this converter:
@@ -32,9 +32,12 @@ import java.util.Objects;
  *   <li>{@link #INCOMPLETE_EXECUTION}: a start record has no terminal record. The span is still
  *       exported, closed at the observed start timestamp (zero duration) with status UNSET and the
  *       {@code flink_agents.execution.incomplete} attribute — a missing terminal cannot be
- *       distinguished between a crash, a best-effort Event Log write that dropped the terminal
+ *       distinguished between a crash, a best-effort Trace Log write that dropped the terminal
  *       record, and recovery discarding the transient start/terminal pairing.
  *   <li>{@link #MISSING_START}: a terminal record has no start record (same export policy).
+ *   <li>{@link #MISSING_PARENT}: the parent execution has no records, for example when the Trace
+ *       Log targets keep calls but not their Actions. The span is attached to the run root and
+ *       keeps the parent id in {@code flink_agents.parent_execution_id}.
  * </ul>
  */
 public final class ConverterDiagnostic {
@@ -42,6 +45,7 @@ public final class ConverterDiagnostic {
     public static final String MALFORMED_RECORD = "MALFORMED_RECORD";
     public static final String INCOMPLETE_EXECUTION = "INCOMPLETE_EXECUTION";
     public static final String MISSING_START = "MISSING_START";
+    public static final String MISSING_PARENT = "MISSING_PARENT";
 
     private final String code;
     private final String executionId;

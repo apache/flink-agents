@@ -31,7 +31,7 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * Immutable {@link SpanData} assembled from Event Log records.
+ * Immutable {@link SpanData} assembled from Trace Log records.
  *
  * <p>Spans are built directly as {@link SpanData} (rather than through a {@code Tracer}) because
  * the exporter must control the trace and span ids: they are derived deterministically from the
