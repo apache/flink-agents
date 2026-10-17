@@ -74,7 +74,7 @@ from either type of job.
 | YAML | Java Flink or PyFlink job | Load the YAML with `loadYaml(...)` or `load_yaml(...)`, then pass the Agent name to `apply(...)`. |
 
 For a Java Flink job, add the
-[Maven dependencies]({{< ref "docs/get-started/setup#maven-dependencies-for-java" >}})
+[Maven dependencies]({{< ref "docs/get-started/setup#maven-dependencies" >}})
 and [Flink Agents Java runtime JAR]({{< ref "docs/get-started/setup#install-flink-agents-java-library-java-flink-jobs" >}}).
 For a PyFlink job, install the
 [Python package]({{< ref "docs/get-started/setup#install-flink-agents-package" >}})

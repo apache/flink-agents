@@ -58,7 +58,7 @@ uses Python, follow these Python environment guidelines:
 
 ## Q2: How do I run an Agent in an IDE?
 
-To avoid potential conflict with Flink cluster, the scope of the dependencies related to Flink and Flink Agents for agent job are provided. See [Maven Dependencies]({{< ref "docs/get-started/setup#maven-dependencies-for-java" >}}) for details.
+To avoid potential conflict with Flink cluster, the scope of the dependencies related to Flink and Flink Agents for agent job are provided. See [Maven Dependencies]({{< ref "docs/get-started/setup#maven-dependencies" >}}) for details.
 
 To run the examples in IDE, users must enable the IDE feature: `add dependencies with provided scope to classpath`.
 * For **IDEA**, edit the **`Run/Debug Configuration`** and enable **`add dependencies with provided scope to classpath`**. See [Run/Debug Configuration](https://www.jetbrains.com/help/idea/run-debug-configuration-scala.html) for details.

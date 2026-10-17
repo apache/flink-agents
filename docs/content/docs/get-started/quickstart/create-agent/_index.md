@@ -31,10 +31,12 @@ This quickstart walks through two examples of building AI agents that process st
 
 - **Review Analysis**: Processes a stream of product reviews and uses a single agent to extract a rating (1–5) and unsatisfied reasons from each review.
 
-- **Product Improvement Suggestions**: Builds on the first example by aggregating per-review analysis in windows to produce product-level summaries (score distribution and common complaints), then applies a second agent to generate concrete improvement suggestions for each product.
+- **Product Improvement Suggestions**: Builds on the first example. It aggregates the per-review
+  analyses in windows to produce product-level summaries of the score distribution and the common
+  complaints, and then applies a second agent that generates improvement suggestions for each product.
 
-Together, these examples show how to build a multi-agent workflow with Flink Agents and run it on a Flink standalone cluster.
-
+Together, these examples show how to build a multi-agent workflow with Flink Agents and run it on a
+Flink standalone cluster.
 
 - [Build Your First Agent]({{< ref "docs/get-started/quickstart/create-agent/single-agent" >}})
 - [Connect Multiple Agents]({{< ref "docs/get-started/quickstart/create-agent/multiple-agents" >}})
