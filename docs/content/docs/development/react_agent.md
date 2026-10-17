@@ -1,6 +1,6 @@
 ---
 title: "Built-in ReAct Agent"
-weight: 6
+weight: 5
 type: docs
 ---
 <!--
@@ -400,4 +400,4 @@ Every skill found in the sources becomes available, and the resolved names are a
 
 ## As a Sub-Agent
 
-A ReActAgent can run as a sub-agent of another agent, delegated to by the parent's chat model or called from the parent's actions. See [Use a ReActAgent as the child]({{< ref "docs/development/multi-agent/subagents#use-a-reactagent-as-the-child" >}}).
+A ReActAgent can run as a sub-agent of another agent, delegated to by the parent's chat model or called from the parent's actions. See [A ReActAgent as the child]({{< ref "docs/development/multi-agent/subagents#a-reactagent-as-the-child" >}}).
