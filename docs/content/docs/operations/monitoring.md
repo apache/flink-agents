@@ -22,107 +22,124 @@ specific language governing permissions and limitations
 under the License.
 -->
 
-## Metric
+
+## Overview
+
+A running agent produces three kinds of observability data, and each answers a different question.
+
+- **Metrics** show how much and how fast: Event and Action throughput, input-run outcomes and latency, LLM, Tool and sub-agent calls, and token usage. They go through [Flink's metric system](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/metrics/), so they reach the same reporters and dashboards as the rest of the job.
+- **Logs** carry what your Action code and the framework write through Flink's logging framework, such as warnings and stack traces.
+- **The [Trace Log](#trace-log)** records Events, Action executions and the calls made within Actions as structured JSON, so you can follow what one input did. By default it records only Events; configure `trace-log.targets` to include Actions and component calls.
+
+A typical investigation starts from a metric that looks wrong, such as a rising `numOfInputRunsFailed`, moves to the logs of the affected task for the error, and then to the Trace Log to see which Events and Actions led there.
+
+## Metrics
+
+Flink Agents registers its metrics with the job's Flink metric system. For the metric types used below (Counter, Meter, Histogram and Gauge), see [Metric types](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/metrics/#metric-types). Latency metrics are in milliseconds, as their `Ms` suffix shows; `retryWaitSec` is in seconds.
+
+### Accessing metrics
+
+Metrics are available wherever the job's other metrics are: through a configured [metric reporter](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/metric_reporters/), such as Prometheus, or in the Flink Web UI (see [Dashboard integration](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/metrics/#dashboard-integration)).
+
+With Flink's default operator scope, metric identifiers start with `<host>.taskmanager.<tm_id>.<job_name>.<operator_name>.<subtask_index>`; reporters may format them differently. For an agent operator, `<operator_name>` is the agent name, or `action-execute-operator` when the agent has no name. In the Flink Web UI, the agent operator's metrics appear under the prefix `<subtask_index>.<operator_name>`.
+
+{{< img src="/fig/operations/metricwebui.png" alt="Metric Web UI" >}}
+
+### Scopes
+
+The **Scope** column in the tables below identifies the metric group. The example names omit the operator prefix shown above; reporters may represent the groups as labels instead.
+
+| Scope | Metric group | Example name |
+|-------|--------------|--------------|
+| **Agent** | the agent operator itself | `numOfEventProcessed` |
+| **Action** | `action.<action_name>` | `action.chat_model_action.numOfActionsExecuted` |
+| **Model** | `action.<action_name>.model.<model_name>` | `action.chat_model_action.model.qwen3:1.7b.promptTokens` |
+| **Model Resource**, **Tool**, **Skill**, **MCP Server**, **Subagent** | `action.<action_name>.<kind>.<name>`, where `<kind>` is `model_resource`, `tool`, `skill`, `mcp_server` or `subagent` | `action.tool_call_action.tool.get_weather.numOfToolCallsSucceeded` |
+
+Each group below the Agent scope is a key-value group: `<action_name>` is the Action's name, `<model_name>` the model a chat model reports usage for, and `<name>` the resource, Tool, Skill, MCP Server or sub-agent name. Reporters that support key-value groups, such as Prometheus, expose them as labels.
 
 ### Built-in Metrics
 
-We offer data monitoring for built-in metrics, including input runs, events, actions, execution health, and token usage.
+Flink Agents provides built-in metrics for input runs, Events, Actions, execution health, and token usage. Numbers in brackets refer to the notes below each table.
 
 #### Event and Action Metrics
 
-| Scope       | Metrics                                          | Description                                                                      | Type  |
-|-------------|--------------------------------------------------|----------------------------------------------------------------------------------|-------|
-| **Agent**   | numOfEventProcessed                              | The total number of Events this operator has processed.                          | Count |
-| **Agent** | numOfEventProcessedPerSec                        | The number of Events this operator has processed per second.                     | Meter |
-| **Agent** | numOfActionsExecuted                             | The total number of actions this operator has executed.                          | Count |
-| **Agent** | numOfActionsExecutedPerSec                       | The number of actions this operator has executed per second.                     | Meter |
-| **Agent** | numOfInputRunsSucceeded                          | The number of input runs that reached the run-completion boundary.                | Count |
-| **Agent** | numOfInputRunsFailed                             | The number of input runs terminated by an unhandled exception.                    | Count |
-| **Agent** | inputRunLatencyMs                                | End-to-end input-run latency from entering the agent operator to completion or failure, including time queued behind another input with the same key. | Histogram |
-| **Agent** | inputRunQueueLatencyMs                           | Time from entering the agent operator until the input run starts processing. | Histogram |
-| **Agent** | inputRunProcessingLatencyMs                      | Time from the input-run start boundary until completion or failure. | Histogram |
-| **Agent** | numOfPendingInputEvents                          | Current number of input Events buffered behind an active run with the same key. | Gauge |
-| **Agent** | numOfActiveInputRuns                             | Current number of logical input runs that are processing or waiting for asynchronous work. | Gauge |
-| **Action**  | action.\<action_name\>.numOfActionsExecuted | The total number of actions this operator has executed for a specific action name. | Count |
-| **Action**  | action.\<action_name\>.numOfActionsExecutedPerSec | The number of actions this operator has executed per second for a specific action name. | Meter |
-| **Action** | action.\<action_name\>.actionSchedulingLatencyMs | Time from enqueuing the initial Action task until it is selected for execution. | Histogram |
-| **Action** | action.\<action_name\>.actionExecutionLatencyMs | End-to-end latency of one logical Action execution, including asynchronous waits and continuations. | Histogram |
-| **Action** | action.\<action_name\>.numOfPendingActionTasks | Current number of physical Action task segments waiting to run, including continuations. | Gauge |
-| **Action** | action.\<action_name\>.numOfActiveActionExecutions | Current number of logical Action executions that have started but have not reached a terminal state. | Gauge |
-| **Action**  | action.\<action_name\>.routingDecisionLatencyMs | Wall-clock time, in milliseconds, spent resolving a model-routing decision when a `ChatRequestEvent` names a `MODEL_ROUTER`. Recorded once per routing decision, including replayed ones; see [Model Routing]({{< ref "docs/development/calling-llms/model_routing#observability" >}}). | Histogram |
-| **Agent**   | traceLogTruncatedRecords                          | Number of Trace Log records whose attributes were truncated at `STANDARD` level. Increments once per record, regardless of how many fields were truncated. Use this to adjust truncation limits or select entities at `VERBOSE`. | Count |
-| **Agent**   | traceLogWriteFailures                           | Number of Trace Log write attempts for which `append`, `flush`, or both failed. Trace Log writes are best-effort and do not fail the job. | Count |
+| Scope | Metrics | Description | Type |
+|-------|---------|-------------|------|
+| **Agent** | numOfEventProcessed | Events processed by this operator. | Counter |
+| **Agent** | numOfEventProcessedPerSec | Events processed per second. | Meter |
+| **Agent** | numOfActionsExecuted | Actions executed by this operator. | Counter |
+| **Agent** | numOfActionsExecutedPerSec | Actions executed per second. | Meter |
+| **Agent** | numOfInputRunsSucceeded | Input runs that completed. [1] | Counter |
+| **Agent** | numOfInputRunsFailed | Input runs terminated by an unhandled exception. [1] | Counter |
+| **Agent** | inputRunLatencyMs | Time from an input entering the operator until its run completes or fails, including time queued behind an earlier input with the same key. [1] | Histogram |
+| **Agent** | inputRunQueueLatencyMs | Time from an input entering the operator until its run starts. [1] | Histogram |
+| **Agent** | inputRunProcessingLatencyMs | Time from the start of an input run until it completes or fails. [1] | Histogram |
+| **Agent** | numOfPendingInputEvents | Inputs currently waiting behind an active run with the same key. [2] | Gauge |
+| **Agent** | numOfActiveInputRuns | Input runs currently processing or waiting for asynchronous work. [2] | Gauge |
+| **Action** | action.\<action_name\>.numOfActionsExecuted | Executions of this Action. | Counter |
+| **Action** | action.\<action_name\>.numOfActionsExecutedPerSec | Executions of this Action per second. | Meter |
+| **Action** | action.\<action_name\>.actionSchedulingLatencyMs | Time from scheduling an Action execution until it starts running. [3] | Histogram |
+| **Action** | action.\<action_name\>.actionExecutionLatencyMs | Time for one Action execution, including asynchronous waits. [1] | Histogram |
+| **Action** | action.\<action_name\>.numOfPendingActionTasks | Action tasks waiting to run, including continuations of asynchronous Actions. [3] | Gauge |
+| **Action** | action.\<action_name\>.numOfActiveActionExecutions | Action executions that have started and not yet finished. [3] | Gauge |
+| **Action** | action.\<action_name\>.routingDecisionLatencyMs | Time to resolve a routing decision when a `ChatRequestEvent` names a `MODEL_ROUTER`, including replayed decisions; see [Model Routing]({{< ref "docs/development/calling-llms/model_routing#observability" >}}). | Histogram |
+| **Agent** | traceLogTruncatedRecords | Trace Log records whose attributes were truncated at `STANDARD` level, counted once per record. | Counter |
+| **Agent** | traceLogWriteFailures | Failed Trace Log writes. Writes are best effort and do not fail the job. | Counter |
 
-For a locally observed input run, `inputRunLatencyMs` is split into queueing and processing time at the input-run start boundary. `numOfPendingInputEvents` counts buffered inputs, while `numOfActiveInputRuns` counts logical runs; an asynchronous run remains active while it is waiting for its continuation.
-
-An Action execution can be active while one of its continuation tasks is pending, so `numOfActiveActionExecutions` and `numOfPendingActionTasks` are independent. Action scheduling latency is recorded only for the initial task; continuation queueing does not create another scheduling sample.
-
-Input-run outcomes and all latency samples are process-local. Runs or Action executions already in flight when a task is restored do not produce latency samples because their original timestamps are unavailable. An input Event restored from the pending queue can still produce an outcome and processing-latency sample after it starts in the new task attempt, but it does not produce queue or end-to-end latency. Current-count gauges are rebuilt from Flink state after restore.
+1. Input-run outcomes and latency samples are local to a task attempt. Input runs already active when a task is restored produce neither outcome counts nor latency samples, and Action executions already active when the task is restored produce no latency sample. An input restored from the pending queue records its outcome and processing latency once it starts in the new attempt, but not its queue or end-to-end latency.
+2. `numOfPendingInputEvents` counts buffered inputs and `numOfActiveInputRuns` counts runs; a run waiting for an asynchronous continuation stays active. Both gauges are rebuilt from Flink state after a restore.
+3. An Action execution stays active while one of its continuation tasks is pending, so the two Action gauges move independently. Scheduling latency is recorded only for the first task of an execution.
 
 #### Execution Metrics
 
-LLM, Tool, and sub-agent metrics describe calls observed by the framework within an Action. The framework reports each call's start and outcome directly to the metric collectors. These reports do not create Events for Action routing. Metrics are collected independently of Trace Log output: changing `trace-log.targets` or `level` does not disable them.
-
-The `model_resource`, `tool`, `skill`, `mcp_server`, and `subagent` scopes are independent key-value scopes directly under an Action. The existing `model` scope remains dedicated to model usage metrics.
+These metrics describe LLM, Tool, Skill, MCP Server and sub-agent calls that the framework observes inside an Action. They are collected whatever `trace-log.targets` selects.
 
 | Scope | Metrics | Description | Type |
 |-------|---------|-------------|------|
-| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.numOfLlmCallsSucceeded | The number of framework-observed model invocations that returned successfully. | Count |
-| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.numOfLlmCallsFailed | The number of framework-observed model invocations that failed. | Count |
-| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.llmCallLatencyMs | Latency of each framework-observed model invocation, excluding structured-output parsing and retry wait time. | Histogram |
-| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryCount | The number of additional model invocations initiated when retries are enabled (`max-retries > 0`). Only recorded when at least one retry occurs. See [retry-wait-interval]({{< ref "docs/operations/configuration#core-options" >}}). | Count |
-| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryWaitSec | The total backoff time, in seconds, accumulated when retries are enabled (`max-retries > 0`). Only recorded when at least one retry occurs. | Count |
-| **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsSucceeded | The number of successful calls to the Tool. | Count |
-| **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsFailed | The number of failed calls to the Tool. | Count |
-| **Tool** | action.\<action_name\>.tool.\<tool_name\>.toolCallLatencyMs | Time spent invoking the individual Tool, excluding time waiting for other calls in the same parallel batch. | Histogram |
-| **Skill** | action.\<action_name\>.skill.\<skill_name\>.numOfSkillLoads | The number of terminal explicit `load_skill` calls attributed to the Skill, regardless of outcome. | Count |
-| **Skill** | action.\<action_name\>.skill.\<skill_name\>.skillLoadLatencyMs | Time spent invoking an explicit `load_skill` call. | Histogram |
-| **MCP Server** | action.\<action_name\>.mcp_server.\<server_name\>.numOfMcpToolCallsSucceeded | The number of successful Tool calls served by the MCP Server. | Count |
-| **MCP Server** | action.\<action_name\>.mcp_server.\<server_name\>.numOfMcpToolCallsFailed | The number of failed Tool calls served by the MCP Server. | Count |
-| **MCP Server** | action.\<action_name\>.mcp_server.\<server_name\>.mcpToolCallLatencyMs | Individual Tool invocation latency aggregated across the MCP Server. | Histogram |
-| **Subagent** | action.\<action_name\>.subagent.\<agent_name\>.numOfSubagentCallsSucceeded | The number of sub-agent delegations that returned a successful result. | Count |
-| **Subagent** | action.\<action_name\>.subagent.\<agent_name\>.numOfSubagentCallsFailed | The number of sub-agent delegations that failed, either while submitting or awaiting the delegation or because the sub-agent returned a failed result. | Count |
-| **Subagent** | action.\<action_name\>.subagent.\<agent_name\>.subagentCallLatencyMs | Time the Action observed for one sub-agent delegation, from handing the prompt to the sub-agent until its result is observed. | Histogram |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.numOfLlmCallsSucceeded | Model invocations that returned successfully. [1] [6] | Counter |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.numOfLlmCallsFailed | Model invocations that failed. [1] [6] | Counter |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.llmCallLatencyMs | Time for one model invocation, excluding structured-output parsing and retry waits. [1] | Histogram |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryCount | Additional invocations made by framework retries (`max-retries > 0`); recorded only when a retry occurs. See [retry-wait-interval]({{< ref "docs/operations/configuration#core-options" >}}). | Counter |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryWaitSec | Backoff time accumulated by framework retries; recorded only when a retry occurs. | Counter |
+| **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsSucceeded | Successful calls to the Tool. [2] [6] | Counter |
+| **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsFailed | Failed calls to the Tool. [2] [6] | Counter |
+| **Tool** | action.\<action_name\>.tool.\<tool_name\>.toolCallLatencyMs | Time spent in one Tool call, excluding waits for other calls in the same parallel batch. [5] | Histogram |
+| **Skill** | action.\<action_name\>.skill.\<skill_name\>.numOfSkillLoads | Explicit `load_skill` calls for the Skill, whatever their outcome. [3] | Counter |
+| **Skill** | action.\<action_name\>.skill.\<skill_name\>.skillLoadLatencyMs | Time for one explicit `load_skill` call. | Histogram |
+| **MCP Server** | action.\<action_name\>.mcp_server.\<server_name\>.numOfMcpToolCallsSucceeded | Successful Tool calls served by the MCP Server. [3] | Counter |
+| **MCP Server** | action.\<action_name\>.mcp_server.\<server_name\>.numOfMcpToolCallsFailed | Failed Tool calls served by the MCP Server. [3] | Counter |
+| **MCP Server** | action.\<action_name\>.mcp_server.\<server_name\>.mcpToolCallLatencyMs | Time for one Tool call served by the MCP Server. | Histogram |
+| **Subagent** | action.\<action_name\>.subagent.\<agent_name\>.numOfSubagentCallsSucceeded | Sub-agent delegations that returned a successful result. [4] | Counter |
+| **Subagent** | action.\<action_name\>.subagent.\<agent_name\>.numOfSubagentCallsFailed | Sub-agent delegations that failed while submitting or awaiting, or returned a failed result. [4] | Counter |
+| **Subagent** | action.\<action_name\>.subagent.\<agent_name\>.subagentCallLatencyMs | Time from handing the prompt to the sub-agent until its result is observed. [4] | Histogram |
 
-An LLM metric represents one framework invocation of `ChatModel`. A framework retry that calls the model again produces another LLM outcome and latency sample; retries hidden inside a provider or connection are not observed. Every named Tool execution emits Tool metrics. Skill metrics are emitted only for explicit `load_skill` calls; subsequent Tool calls are not inferred to belong to a Skill. MCP metrics aggregate only Tool executions carrying an explicit MCP Server resource name. A `load_skill` or MCP Tool execution therefore contributes to both its Tool scope and the corresponding Skill or MCP Server scope. A sub-agent delegation the model requests through the reserved `_subagent_` callable name emits Subagent metrics keyed by the registered sub-agent name, and is reported only under the Subagent scope rather than also under a Tool scope. `subagentCallLatencyMs` spans the Action-observed delegation from hand-off to result observation; for delegations dispatched concurrently in one batch, this window includes their overlap.
-
-During fine-grained recovery, a cached durable child result contributes another call outcome to these metrics; cache reuse is not separately identified. A cached LLM result is reported as successful and may produce a near-zero latency sample. A cached Tool result retains its normalized outcome: `ToolResponse.error(...)` counts as failed, while a successful `ToolResponse` or an ordinary return value that can be converted to Tool content counts as successful. A cached Tool result produces no latency sample because its callable was not invoked.
-
-Tool names that are not registered runtime resources are aggregated under the fixed `tool=unknown` scope. Requested Skill names that do not resolve in the runtime registry are similarly aggregated under `skill=unknown`. A `_subagent_` callable name that does not resolve to a registered sub-agent is reported as a Tool and therefore aggregated under `tool=unknown`; the Subagent scope is keyed only by registered sub-agent names, so its cardinality is bounded by the Agent plan. When selected for Trace Log output, the call observations retain the original requested names; metric scope cardinality remains bounded.
-
-Tool outcomes follow the same two-layer contract in Java and Python. Resource preparation and invocation exceptions are failures. A returned `ToolResponse.error(...)` is also a failed Tool execution even though the durable invocation returned normally. Tools can return an explicit `ToolResponse` or an ordinary value that is converted to text: strings are used directly, and other values use JSON when possible, falling back to their string representation. A return value that still cannot be converted to text is reported as a failed Tool execution. A durable-persistence exception is reflected as a Tool failure only when the existing durable execution path exposes it to `ToolCallAction`.
-
-`numOfSkillLoads` counts terminal calls rather than successful loads. In both runtimes, `load_skill` reports an unavailable manager, missing Skill, or missing resource through `ToolResponse.error(...)`; the Tool outcome is therefore failed while the Skill load counter still increments. MCP protocol-level errors follow the same failed Tool outcome contract.
-
-Execution latency is measured from matching start and outcome observations of the same call in the same task attempt. Assigning a call identity before preparation or submission does not start the timer. Invoked Tools retain their own start and completion timestamps, even when the reports arrive after a durable call or parallel batch returns. Queueing and time spent waiting for other calls in the batch are excluded. Outcome counters still update when no matching start is available.
-
-A timeout does not necessarily stop a running Tool. If the callable has not finished when the Action observes its durable result or failure, that observation time fixes the call's terminal timestamp. A later completion cannot extend the latency or add another outcome. This boundary excludes subsequent response processing and reporting delays, but may include a delay before the durable result reaches the Action. A callable that starts after this boundary has no reported start or latency sample, even if it later completes in the background. Cached results and failures before invocation also have no Tool latency sample.
-
-Available per-call outcomes are reported independently of response aggregation, so a later response-processing failure does not repeat or discard them. If a batch raises an ordinary Exception without returning per-call outcomes, known starts may still be observed, but no outcomes are inferred from timestamps or the batch exception. If a Java batch propagates an `Error`, directly or through a `CompletionException`, unresolved prepared calls are reported as failed and the original `Error` is rethrown. Those failures indicate a fatal batch abort; they do not imply that every Tool body ran. These rules describe the framework's observations and do not change timeout handling, durable persistence, or the business `ToolResponseEvent` error contract.
-
-In previous releases, `retryCount` and `retryWaitSec` used the `model.<connection_name>` scope. They now use `model_resource.<resource_name>` so retries are attributed to the configured ChatModel resource. Existing queries and dashboards for these two metrics must use the new scope.
+1. One sample is one framework invocation of `ChatModel`. A framework retry produces another outcome and latency sample; retries inside a provider client are not observed. A response that is later rejected for its finish reason or structured-output parsing still counts as a successful call.
+2. A Tool call fails when preparing or invoking it raises an exception, when it returns `ToolResponse.error(...)`, or when its return value cannot be converted to text. Tool names that are not registered resources are counted under `tool=unknown`.
+3. A `load_skill` call or an MCP Tool call is also counted in its Tool scope. `numOfSkillLoads` increments even when the load fails, for example for a missing Skill. Skill names that do not resolve are counted under `skill=unknown`.
+4. Only delegations the model requests through the reserved `_subagent_` name are reported, under the Subagent scope keyed by the registered sub-agent name and not also under a Tool scope. A `_subagent_` name that does not resolve is counted under `tool=unknown`. For delegations dispatched together in one batch, the latency includes their overlap.
+5. A Tool call has a latency sample only when its callable started in the current task attempt.
+6. During recovery, a result replayed from durable state counts as another outcome, without implying another provider request or Tool invocation. A replayed LLM response keeps its outcome and may produce a near-zero latency sample; a replayed Tool result keeps its outcome and has no latency sample.
 
 #### Token Usage Metrics
 
-Token usage metrics are automatically recorded when chat models are invoked through `ChatModelConnection`. These metrics help track LLM API usage and costs.
+Token usage metrics are recorded when chat models are invoked through `ChatModelConnection`, which helps track LLM API usage and cost.
 
-| Scope     | Metrics                                                      | Description                                                                    | Type  |
-|-----------|--------------------------------------------------------------|--------------------------------------------------------------------------------|-------|
-| **Model** | action.\<action_name\>.model.\<model_name\>.promptTokens     | The total number of prompt tokens consumed by the model within an action.      | Count |
-| **Model** | action.\<action_name\>.model.\<model_name\>.completionTokens | The total number of completion tokens generated by the model within an action. | Count |
+| Scope | Metrics | Description | Type |
+|-------|---------|-------------|------|
+| **Model** | action.\<action_name\>.model.\<model_name\>.promptTokens | Prompt tokens consumed by the model within an Action. | Counter |
+| **Model** | action.\<action_name\>.model.\<model_name\>.completionTokens | Completion tokens generated by the model within an Action. | Counter |
 
 ### How to add custom metrics
 
-In Flink Agents, users implement their logic by defining custom Actions that respond to various Events throughout the Agent lifecycle. To support user-defined metrics, we introduce two new properties: `agent_metric_group` and `action_metric_group` in the RunnerContext. These properties allow users to create or update global metrics and independent metrics for actions. For an introduction to metric types, please refer to the [Metric types documentation](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/metrics/#metric-types).
-
-Metric names listed in the built-in tables above are reserved in their corresponding scopes. Custom metrics must use different names within the same scope.
-
-Here is the user case example:
+Actions can register their own metrics through the `RunnerContext`: `agent_metric_group` (Java `getAgentMetricGroup()`) for metrics of the whole operator, and `action_metric_group` (Java `getActionMetricGroup()`) for metrics of the current Action. Names used by the built-in metrics are reserved in their scope, so custom metrics need different names there.
 
 {{< tabs "Custom Metrics" >}}
 
 {{< tab "Python" >}}
 ```python
+import time
+
 class MyAgent(Agent):
     @action(EventType.InputEvent)
     @staticmethod
@@ -154,10 +171,9 @@ public class MyAgent extends Agent {
     public static void firstAction(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         long startTime = System.currentTimeMillis();
-        
+
         // the action logic
-        ...
-        
+
         FlinkAgentsMetricGroup metrics = ctx.getAgentMetricGroup();
 
         metrics.getCounter("numInputEvent").inc();
@@ -174,34 +190,44 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
+## Logs
 
-### How to check the metrics with Flink executor
+In a Java Action, log through SLF4J as in any Flink code; those logs follow the job's [Flink logging configuration](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/advanced/logging/). In a Python Action, use the standard `logging` module.
 
-Flink agents enable the reporting of metrics to external systems by creating a metric identifier prefix in the format `<host>.taskmanager.<tm_id>.<job_name>.<operator_name>.<subtask_index>`. For an agent operator, `<operator_name>` is the agent name. If the Agent name is unavailable, the operator retains the previous `action-execute-operator` value as a fallback. This changes only the value of the existing `<operator_name>` scope; the Agent-specific metric hierarchy is unchanged. Queries and dashboards that filter on `operator_name=action-execute-operator` must use the Agent name after upgrading. Agent-specific metrics use key-value metric groups (e.g., `action.<action_name>`, `model.<model_name>`) which are exposed as dimensions/labels in reporters that support them (such as Prometheus). Please refer to [Flink Metric Reporters](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/metric_reporters/) for more details.
+{{< tabs "Logging in an Action" >}}
 
-Additionally, we can check the metric results in the Flink Job WebUI using the metric identifier prefix `<subtask_index>.<operator_name>`.
-
-{{< img src="/fig/operations/metricwebui.png" alt="Metric Web UI" >}}
-
-## Log
-
-The Flink Agents' log system uses Flink's logging framework. For more details, please refer to the [Flink log system documentation](https://nightlies.apache.org/flink/flink-docs-master/docs/deployment/advanced/logging/).
-
-### How to add log in Flink Agents
-
-For adding logs in Java code, you can refer to [Flink documentation](https://nightlies.apache.org/flink/flink-docs-master/docs/deployment/advanced/logging/#best-practices-for-developers). In Python, you can add logs using `logging`. Here is a specific example:
-
+{{< tab "Python" >}}
 ```python
-@action(EventType.InputEvent)
-@staticmethod
-def process_input(event: Event, ctx: RunnerContext) -> None:
-    logging.info("Processing input event: %s", event)
-    # the action logic
+import logging
+
+logger = logging.getLogger(__name__)
+
+class MyAgent(Agent):
+    @action(EventType.InputEvent)
+    @staticmethod
+    def process_input(event: Event, ctx: RunnerContext) -> None:
+        logger.info("Processing input: %s", InputEvent.from_event(event).input)
+        # the action logic
 ```
+{{< /tab >}}
 
-### How to check the logs with Flink executor
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    private static final Logger LOG = LoggerFactory.getLogger(MyAgent.class);
 
-We can check the log result in the WebUI of Flink Job:
+    @Action(EventType.InputEvent)
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        LOG.info("Processing input: {}", InputEvent.fromEvent(event).getInput());
+        // the action logic
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+You can read the logs of a running job in the Flink Web UI:
 
 {{< img src="/fig/operations/logwebui.png" alt="Log Web UI" >}}
 
@@ -209,9 +235,7 @@ We can check the log result in the WebUI of Flink Job:
 
 Trace Log records Events, Action executions, and component calls as structured JSON. By default, it records only Events at `STANDARD` level. Configure [`trace-log.targets`]({{< ref "docs/operations/configuration#trace-log-targets" >}}) to select other entities or change their level.
 
-The default output is **SLF4J Trace Log**. Select **File Trace Log** with `trace-log.output-type: FILE` or by setting a non-empty `trace-log.base-dir`. A configured base directory takes precedence over `output-type`.
-
-Trace Log writes are best-effort. An `append` or `flush` failure does not fail Event processing or the Flink job. The first failure is logged at `WARN`, subsequent failures at `DEBUG`, and every failed write attempt increments `traceLogWriteFailures`.
+Trace Log writes are best effort. A failed write does not fail Event processing or the job; the first failure is logged at `WARN`, later ones at `DEBUG`, and each one increments `traceLogWriteFailures`.
 
 ### Recording Targets
 
@@ -233,40 +257,32 @@ This example uses file output so the records can be read locally. Each target co
 
 See [Trace log targets]({{< ref "docs/operations/configuration#trace-log-targets" >}}) for the complete matching, inheritance, and validation rules. The [Recording Level](#recording-level) section below explains how the selected level affects the recorded data.
 
-### SLF4J Trace Log (Default)
+### Output
 
-The SLF4J logger uses the category `org.apache.flink.agents.TraceLog`. In Flink's default log4j2 environment, where `log.file` is set, it automatically creates `FlinkAgentsTraceLogAppender` and writes JSON to `{log.file}.trace-log.log`. This file is visible in the Flink Web UI **Logs** tab.
+The default output is **SLF4J**. Select **file** output with `trace-log.output-type: FILE` or by setting a non-empty `trace-log.base-dir`; a configured base directory takes precedence over `output-type`.
 
-An existing configuration for this logger is respected. If no dedicated logger is configured and `log.file` is absent, records go to the root logger. If automatic appender configuration fails, a warning is logged and the existing logging configuration handles output. For local use with the Trace Tree reader, select `FILE` or configure a dedicated SLF4J appender to emit JSON without log prefixes.
+**SLF4J (default).** Records go to the logger category `org.apache.flink.agents.TraceLog`. In Flink's default log4j2 setup, where `log.file` is set, Flink Agents adds an appender that writes them as plain JSON to `{log.file}.trace-log.log`; in the Flink Web UI, the file is listed in the TaskManager's **Log List**, and it can be passed directly to the [Trace Tree reader](#trace-tree-reader). An existing configuration for this logger is respected. If no dedicated logger is configured and `log.file` is absent, records follow the inherited logging configuration, normally the root logger; a custom appender should write JSON without log prefixes if you want to read it with the Trace Tree reader. If the automatic appender cannot be configured, a warning is logged and the existing logging configuration handles output. All subtasks on a TaskManager share this destination, so each record also carries `jobId`, `taskName` and `subtaskId`.
 
-All subtasks on a TaskManager share the default SLF4J destination. Each record therefore carries additional top-level `jobId`, `taskName`, and `subtaskId` fields.
-
-### File Trace Log
-
-File output stores one file per operator subtask in `trace-log.base-dir`:
+**File.** File output writes one file per operator subtask in `trace-log.base-dir`, or under `java.io.tmpdir/flink-agents` when no base directory is set:
 
 ```text
 {trace-log.base-dir}/
-├── traces-{jobId}-{taskName}-{subtaskId}.log
-├── traces-{jobId}-{taskName}-{subtaskId}.log
-└── traces-{jobId}-{taskName}-{subtaskId}.log
+├── traces-{jobId}-{taskName}-0.log
+├── traces-{jobId}-{taskName}-1.log
+└── traces-{jobId}-{taskName}-2.log
 ```
 
-When `FILE` is selected without a base directory, files are stored under `java.io.tmpdir/flink-agents`.
-
-By default, each record occupies one line of JSONL. Setting `trace-log.pretty-print: true` writes multi-line JSON objects instead, so the file is no longer JSONL.
+Each record is one line of JSONL. Setting `trace-log.pretty-print: true` writes multi-line JSON objects instead, so the file is no longer JSONL.
 
 ### JSON Format
 
-Both outputs share the same observation fields: entity identity, relationships, timestamp, status, and attributes. Every record includes the top-level integer `schemaVersion`, currently `1`, identifying its JSON format. The logger adds `level` when writing JSON; it is output metadata, not a field of the `TraceRecord` model. SLF4J output also adds the job and subtask fields described above.
-
-For an Event, `attributes` contains its payload and `entityMetadata` contains its ID and source relationships. These relationships belong to the trace context and are not fields of the Event passed between Actions.
+Every record has the top-level integer `schemaVersion`, currently `1`. Incompatible changes to field names, types or meanings require a new schema version; added optional fields do not, and readers can ignore fields they do not use.
 
 | Field | Meaning |
 |-------|---------|
 | `schemaVersion` | JSON format version, currently `1`; independent of the Flink Agents release and persisted state formats. |
 | `timestamp` | Observation or occurrence time. |
-| `level` | Output metadata identifying the resolved `STANDARD` or `VERBOSE` level. |
+| `level` | The resolved `STANDARD` or `VERBOSE` level. |
 | `inputRunId`, `businessKey`, `agentName` | Available run identity and agent context. |
 | `entityType`, `entityName` | The observed entity's type and name. For an Event, its routing type is the entity name. |
 | `executionId`, `parentExecutionId` | Identity of an Action execution or component call, and its containing execution when available. These fields are absent for Events. |
@@ -274,11 +290,7 @@ For an Event, `attributes` contains its payload and `entityMetadata` contains it
 | `status`, `problemCategory` | Progress or outcome, and optional failure classification. These fields are absent for Events. |
 | `attributes` | Event payload or details of the observed execution or call. Only this object is subject to `STANDARD` truncation. |
 
-Incompatible changes to field names, types, or meanings require a new schema version. Adding optional fields does not require a version change; readers can ignore fields they do not use.
-
-When an Action is excluded by the logging configuration, its selected component calls still retain their `parentExecutionId`, even though the Action's own record is absent.
-
-For example, an output Event produced by an Action is recorded as:
+For an Event, `attributes` contains its payload and `entityMetadata` its ID and source relationships. For example, an output Event produced by an Action is recorded as:
 
 ```json
 {
@@ -300,7 +312,7 @@ For example, an output Event produced by an Action is recorded as:
 }
 ```
 
-`producerExecutionId` identifies the Action execution that directly produced the Event. `upstreamEventId` identifies the preceding Event in its flow, and `upstreamActionName` identifies the associated Action. A runtime-generated Event may have an upstream Event without an Action producer. These references remain in `entityMetadata` even when `STANDARD` truncates attributes.
+`producerExecutionId` identifies the Action execution that produced the Event, `upstreamEventId` the preceding Event in its flow, and `upstreamActionName` the associated Action. A runtime-generated Event may have an upstream Event without an Action producer. Action records carry `triggerEventId`, linking the execution to the Event that triggered it. When an Action is not selected, its selected component calls still keep their `parentExecutionId`.
 
 An LLM call uses its configured ChatModel Resource as `entityName`:
 
@@ -325,17 +337,9 @@ An LLM call uses its configured ChatModel Resource as `entityName`:
 }
 ```
 
-`entityMetadata.model` is the model or deployment configured on the Resource. It is the requested identifier, not a provider-confirmed model identity. Action metadata carries `triggerEventId`, linking the execution to the Event that triggered it.
+`entityMetadata.model` is the model or deployment configured on the Resource, not a provider-confirmed model identity. A successful LLM record includes `entityMetadata.usage` when the model integration returns token counts; each count is optional, zero is kept, and `usage` is omitted when neither count is available. Each retry reports its own usage, and a response replayed from durable state reports its usage again.
 
-Successful LLM observations include `entityMetadata.usage` when the returned `ChatResult` contains token counts in `usage`. Trace Log records the available `TokenUsage` counts under `promptTokens` and `completionTokens`, independently of token metric collection. Each count is optional, and zero is retained. When neither count is available, `usage` is omitted. Availability depends on the ChatModel integration; the trace does not fetch additional provider data.
-
-Each retry reports its own response usage without accumulating earlier attempts. A response rejected later because of its finish reason or structured-output parsing still has a successful LLM observation with its usage. Replaying a cached durable response reports that response's usage again; this does not establish that the provider received another request.
-
-One entity can have several observations sharing its identity. Progress and outcome statuses include `created`, `started`, `success`, `failed`, and `reused`; they are not separate Event routing types. Tool calls can be observed at creation before their callable starts. Some observations are published after a durable call or parallel batch returns, while retaining their occurrence timestamp. A missing observation therefore does not establish that the call never ran or completed. Use occurrence timestamps rather than file order to calculate call latency.
-
-For a new component invocation or retry attempt, the `created` and `started` reporting helpers, including timestamped starts, can allocate and return an `executionId`. The caller retains that ID and explicitly passes it to all subsequent reports for the call, including duplicate reports. The underlying `ExecutionReporter` API requires an explicit ID. Overlapping calls with identical type, name, and metadata have different IDs. Metadata may change between reports; correlate the observations by `executionId`.
-
-An ordinary asynchronous wait retains the component call's ID. Failover or replay may create new component call IDs; Action execution IDs and lifecycle behavior retain their existing semantics. Trace output remains best effort and may contain missing or repeated records. An ID does not guarantee exactly-once output, deduplication, or a terminal observation for every call.
+An Action execution or component call can have several records sharing its `executionId`, one per status such as `created`, `started`, `success`, `failed` or `reused`; correlate them by `executionId` and use timestamps rather than file order for latency. Records are best effort: one can be missing or repeated, and failover or replay can give a component call a new ID, so a missing record does not prove that a call never ran.
 
 ### Recording Level
 
@@ -347,7 +351,7 @@ An ordinary asynchronous wait retains the component call's ID. Failover or repla
 
 `trace-log.standard.max-string-length`, `trace-log.standard.max-array-elements`, and `trace-log.standard.max-depth` control long strings, large arrays, and deep nesting respectively. Setting a threshold to `0` disables that truncation limit. Setting all three to `0` makes `STANDARD` retain the same content as `VERBOSE`, apart from the `level` label.
 
-**Media sanitization.** Both recording level settings (`STANDARD` and `VERBOSE`) omit inline Base64 media data from typed content blocks and remove userinfo, query strings, and fragments from media URLs. This includes blocks in `ChatMessage`, `ChatResult`, Tool results, and other Event attributes. Media metadata is retained. Message text is not automatically redacted.
+**Media sanitization.** Both `STANDARD` and `VERBOSE` omit inline Base64 media data from typed content blocks and remove userinfo, query strings, and fragments from media URLs. This includes blocks in `ChatMessage`, `ChatResult`, Tool results, and other Event attributes. Media metadata is retained. Message text is not automatically redacted.
 
 **Fields preserved in full.** Truncation never changes entity identity, relationships, entity metadata, timestamps, statuses, or problem categories. It applies only under `attributes`, so `STANDARD` retains the relationships needed to correlate the records that were selected.
 
@@ -363,13 +367,7 @@ A truncated field changes JSON type. Consumers requiring the full attribute sche
 
 ### Trace Tree Reader
 
-The `flink-agents-trace-tree` command is installed with the Python wheel. It reconstructs Event causal trees from the `TraceRecord` format described above. Pass a file directly or a directory containing `traces-*.log` or `*.trace-log.log` files. Both JSONL and pretty-printed JSON are supported.
-
-The reader accepts records with integer `schemaVersion: 1`. A missing, invalid, or unsupported version produces a warning and the record is skipped; other records continue to be read.
-
-The reader uses `entityMetadata.eventId`, `upstreamEventId`, and `upstreamActionName` to build an Event–Action–Event graph. An InputEvent with no upstream Event starts a tree; an InputEvent produced by an Action can be a descendant. An edge without an Action name produces a `MISSING_ACTION_NAME` warning and is not linked. The reader does not require Action observations, so the default `EVENT_ONLY` scope is sufficient. Other observed entities are skipped; component calls and their statuses are not displayed in this Event view.
-
-For example:
+The `flink-agents-trace-tree` command is installed with the Python wheel. It rebuilds Event causal trees from Trace Log records. Pass a file, or a directory containing `traces-*.log` or `*.trace-log.log` files; both JSONL and pretty-printed JSON are supported.
 
 ```bash
 flink-agents-trace-tree /path/to/trace-logs --format text
@@ -385,6 +383,8 @@ Trace Tree 1
       _output_event (output-1)
 ```
 
+The reader links Events through `entityMetadata.eventId`, `upstreamEventId` and `upstreamActionName`, so the default Event-only targets are enough; other records are skipped. It accepts `schemaVersion: 1` and skips records with a missing or unsupported version with a warning. An InputEvent with no upstream Event starts a tree. Shared descendants can appear under several branches, so the result may be a DAG rather than a strict tree, and sibling order does not indicate execution order. If the recording targets filtered out an upstream Event, that part of the tree cannot be rebuilt.
+
 The JSON result exposes the same graph:
 
 | Field | Meaning |
@@ -395,20 +395,4 @@ The JSON result exposes the same graph:
 | `nodes[id].observationCount` | Number of log observations with this Event ID, including any conflicting observations reported in `warnings`. |
 | `nodes[id].upstreamEdges` | Distinct recorded upstream Event and Action references. Consult `warnings` for missing or invalid relationships. |
 | `nodes[id].actions` | Actions linked from this Event; each has a `name` and a `children` list of output Event IDs. |
-| `warnings` | Problems encountered while reading records or reconstructing relationships. |
-
-Observations with the same Event ID and type share one node and deduplicated edges. Shared descendants can appear under several branches, so the combined graph may be a DAG rather than a strict tree. Attribute differences, including `STANDARD` truncation, do not affect identity or relationships. Sibling order is only a presentation order and does not indicate execution order.
-
-Malformed records, conflicting Event identities, missing upstream Events, and cycles produce warnings. Recoverable records remain available in the JSON result, and cycle edges are removed before rendering. If recording targets filtered an upstream Event, the reader cannot reconstruct that missing part of the tree. Historical formats using `eventType`/`eventAttributes` or a nested `event` object are unsupported.
-
-### Compatibility Notes
-
-These notes compare Trace Log with the original Event Log, which recorded Events only.
-
-- **Configuration keys.** The old `event-log.*`, `eventLoggerType`, `baseLogDir`, and `prettyPrint` settings are rejected at startup. Configure Event selection and recording levels through `trace-log.targets`, truncation through `trace-log.standard.*`, and output through `trace-log.output-type`, `trace-log.base-dir`, and `trace-log.pretty-print`. See [Trace Log Configuration]({{< ref "docs/operations/configuration#trace-log-targets" >}}).
-- **Log format.** Records use the Trace Log JSON format with `schemaVersion: 1`; the old nested `event` object is removed.
-- **Consumer field mappings.** Update parsers and queries from `logLevel` to `level`, from `eventType` to `entityName` for Events, from `event.id` to `entityMetadata.eventId`, and from `event.attributes` to `attributes`.
-- **Output names.** File names change from `events-*.log` to `traces-*.log`. The SLF4J category changes from `org.apache.flink.agents.EventLog` to `org.apache.flink.agents.TraceLog`, the appender from `FlinkAgentsEventLogAppender` to `FlinkAgentsTraceLogAppender`, and the file suffix from `.event-log.log` to `.trace-log.log`. Update log collection and custom log4j2 configuration accordingly.
-- **Custom loggers.** Custom `EventLogger` implementations and factory registrations must adapt to `TraceLogger` and `TraceLoggerFactory`. The append contract changes from `append(EventContext, Event)` to `append(TraceRecord, TraceLogLevel)`.
-- **Write failures and metrics.** An `append` or `flush` failure no longer propagates into Event processing or fails the job; it is logged and counted in `traceLogWriteFailures`. The truncation metric changes from `eventLogTruncatedEvents` to `traceLogTruncatedRecords` and covers all selected record types. Update dashboards and alert queries accordingly.
-- **Python Event identity.** Automatically generated Event IDs now use UUID4 rather than a content-derived UUID. Changing an Event's payload no longer regenerates its ID, and `id` is immutable. Code that relies on equal payloads producing equal IDs or assigns to `event.id` must be updated.
+| `warnings` | Problems encountered while reading records or reconstructing relationships, such as malformed records, conflicting Event identities, missing upstream Events, edges without an Action name, and cycles. Cycle edges are removed before rendering. |
