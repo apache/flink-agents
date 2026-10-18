@@ -159,6 +159,39 @@ class TraceLogOTelExporterTest {
     }
 
     @Test
+    @DisplayName("A file that is not JSON from its first byte does not stop the other files")
+    void testUnparseableFileDoesNotStopOtherFiles(@TempDir Path tempDir) throws Exception {
+        Path broken = tempDir.resolve("traces-job-task-0.log");
+        Files.write(broken, List.of("not-valid"));
+        Path valid = tempDir.resolve("traces-job-task-1.log");
+        String action =
+                "{\"schemaVersion\":1,\"attributes\":{},\"inputRunId\":\"run-1\","
+                        + "\"executionId\":\"act-1\",\"entityType\":\"action\","
+                        + "\"entityName\":\"review\",";
+        Files.write(
+                valid,
+                List.of(
+                        action + "\"timestamp\":\"2026-01-15T10:30:00Z\",\"status\":\"started\"}",
+                        action + "\"timestamp\":\"2026-01-15T10:30:01Z\",\"status\":\"success\"}"));
+
+        CollectingSpanExporter collector = new CollectingSpanExporter();
+        TraceLogOTelExporter exporter =
+                TraceLogOTelExporter.builder().setSpanExporter(collector).build();
+        TraceLogOTelExporter.ExportSummary summary = exporter.exportFiles(List.of(broken, valid));
+
+        assertThat(summary.getRecordsRead()).isEqualTo(2);
+        assertThat(collector.spans).hasSize(2);
+        assertThat(summary.getDiagnostics())
+                .singleElement()
+                .satisfies(
+                        d -> {
+                            assertThat(d.getCode()).isEqualTo(ConverterDiagnostic.MALFORMED_RECORD);
+                            assertThat(d.getFilePath()).isEqualTo(broken.toString());
+                        });
+        exporter.shutdown();
+    }
+
+    @Test
     @DisplayName("A directory argument is expanded to its traces-*.log and *.trace-log.log files")
     void testDirectoryDiscovery(@TempDir Path tempDir) throws Exception {
         Files.write(

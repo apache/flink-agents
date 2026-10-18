@@ -540,12 +540,14 @@ Event records are read but do not become spans. Trace and span ids are derived d
 Command line:
 
 ```bash
-java -cp <otel module jar and its dependencies> \
+java -cp <otel module jar, its runtime dependencies, and slf4j-api> \
   org.apache.flink.agents.integrations.observability.otel.TraceLogOTelExporter \
   --endpoint http://localhost:4317 --protocol grpc --service-name my-agent-job \
   [--batch-size 512] [--business-key-as-conversation-id] \
   /tmp/flink-agent-logs
 ```
+
+The module declares `slf4j-api` as `provided`, since Flink supplies it inside a job, so it is not on Maven's runtime classpath; without it the command fails with `NoClassDefFoundError: org/slf4j/LoggerFactory`. Add `slf4j-api`, and an SLF4J binding if you want the exporter's log output.
 
 Programmatic:
 
