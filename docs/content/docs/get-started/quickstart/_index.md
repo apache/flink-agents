@@ -4,6 +4,8 @@ bold: true
 bookCollapseSection: true
 type: docs
 weight: 3
+aliases:
+  - /docs/get-started/quickstart/parallel_llm/
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one
@@ -100,8 +102,10 @@ $FLINK_HOME/bin/start-cluster.sh
 The web UI is at [localhost:8081](http://localhost:8081). If it does not open, check
 `$FLINK_HOME/log`. A port conflict is fixed in `$FLINK_HOME/conf/config.yaml`.
 
-A Java job that waits inside an Action needs a JVM option on some JDK versions, so set it
-before you start the cluster. See
+On JDK 21 or later, append `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to
+[env.java.opts.all](https://nightlies.apache.org/flink/flink-docs-stable/docs/deployment/config/#env-java-opts-all)
+in `$FLINK_HOME/conf/config.yaml` before you start the cluster. Both the Python and the Java
+Quickstarts need it. See
 [JDK and Scheduling Requirements]({{< ref "docs/development/create-agent/actions#jdk-and-scheduling-requirements" >}}).
 
 To stop the cluster again, run `$FLINK_HOME/bin/stop-cluster.sh`.

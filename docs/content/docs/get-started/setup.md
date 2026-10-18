@@ -209,19 +209,22 @@ cd flink-agents
 cd ..
 ```
 
+On Apple Silicon with Python 3.12, that `pip install` can fail while building `apache-beam`. See
+the warning in [From Official Release](#from-official-release) for the fix.
+
 This script will:
 - Build all Java modules using Maven
 - Build the Python package
-- Install the Python package into your current Python environment
+- Install the Python package into `python/.venv` in the repository
 - Package the distribution JAR with all dependencies
 
 {{< hint info >}}
-**Note:** If you activated a virtual environment earlier, the Python package will be installed into that virtual environment. Otherwise, it will be installed into your system Python environment.
+**Note:** `tools/build.sh` installs the Python package into `python/.venv` in the repository, not into an activated virtual environment. To use your own environment, install the built wheel into it from the repository root with `pip install python/dist/flink_agents-*.whl`.
 {{< /hint >}}
 
-After building, the Python package is installed and ready to use. The Java build leaves two
-distribution JARs in `dist/flink-${FLINK_VERSION%.*}/target/`, and the one a Java Flink job
-needs is the one without the `-thin` suffix.
+After building, the Java build leaves two distribution JARs in
+`dist/flink-${FLINK_VERSION%.*}/target/`, and the one a Java Flink job needs is the one without
+the `-thin` suffix.
 
 The Python package bundles the JARs it needs, so a PyFlink job does not use those build
 outputs. See
