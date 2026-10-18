@@ -19,11 +19,13 @@ import importlib
 import json
 import typing
 from asyncio import CancelledError as AsyncCancelledError
+from collections.abc import Mapping
 from concurrent.futures import CancelledError
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Dict, cast
 
 import cloudpickle
+from pydantic import JsonValue
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.decision_models import DecisionRequest
@@ -65,14 +67,15 @@ def call_decision_model(
     resource: "BaseDecisionModelConnection | BaseDecisionModelSetup",
     request_json: str,
     model: str | None,
+    request_params: Mapping[str, JsonValue] | None = None,
 ) -> dict[str, str]:
     """Return a tagged decision result or cancellation signal for the Java bridge."""
     request = DecisionRequest.model_validate_json(request_json)
     try:
         result = (
-            resource.decide(request)
+            resource.decide(request, request_params=request_params)
             if model is None
-            else resource.decide(request, model=model)
+            else resource.decide(request, model=model, request_params=request_params)
         )
     except InterruptedError as error:
         return {"status": "INTERRUPTED", "message": str(error)}

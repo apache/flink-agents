@@ -24,7 +24,10 @@ import org.apache.flink.agents.api.decision.DecisionResult;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.plan.actions.Utils;
 import pemja.core.object.PyObject;
+
+import java.util.Map;
 
 /** Java access to a Python decision model setup, managed by the resource lifecycle. */
 public final class PythonDecisionModelSetup extends BaseDecisionModelSetup
@@ -46,8 +49,13 @@ public final class PythonDecisionModelSetup extends BaseDecisionModelSetup
     }
 
     @Override
-    public DecisionResult decide(DecisionRequest request) {
-        return bridge.decide(request, null);
+    public boolean supportsAsyncExecution() {
+        return Utils.supportAsync();
+    }
+
+    @Override
+    public DecisionResult decide(DecisionRequest request, Map<String, Object> requestParams) {
+        return bridge.decide(request, null, requestParams);
     }
 
     @Override

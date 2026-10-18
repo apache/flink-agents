@@ -17,59 +17,78 @@
 ################################################################################
 """Inputs and questions for constrained model decisions."""
 
-from typing import Annotated, Any, Dict, List, Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
-
-DecisionInput = str | Dict[str, Any] | List[Any]
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StrictStr,
+    model_validator,
+)
+from typing_extensions import Self
 
 
 class _DecisionData(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+
+class PredicateCriteria(_DecisionData):
+    """Descriptions of what makes a predicate true or false.
+
+    None leaves an outcome undescribed. Either outcome may be described alone.
+    """
+
+    true: JsonValue = None
+    false: JsonValue = None
 
 
 class PredicateQuestion(_DecisionData):
     """Ask for the probability that the supplied condition is true.
 
-    Instructions are required and must define the condition, as text or structured
-    JSON. Optional criteria supplement the instructions with true/false outcome
-    descriptions for providers that support them; other providers ignore criteria.
-    Either outcome may be omitted or left undescribed with None. A false criterion
-    describes when the condition does not hold; the answer still estimates the
-    probability of true.
+    Supply instructions or describe at least one outcome in criteria. A false
+    criterion describes when the condition does not hold; the answer still
+    estimates the probability of true. Providers must reject content they cannot
+    represent rather than silently discard an outcome description.
     """
 
     type: Literal["predicate"] = "predicate"
-    instructions: DecisionInput
-    criteria: Dict[Literal["true", "false"], DecisionInput | None] | None = None
+    instructions: JsonValue = None
+    criteria: PredicateCriteria | None = None
+
+    @model_validator(mode="after")
+    def _require_condition(self) -> Self:
+        if self.instructions is None and (
+            self.criteria is None
+            or (self.criteria.true is None and self.criteria.false is None)
+        ):
+            msg = "A predicate requires instructions or a described true/false outcome."
+            raise ValueError(msg)
+        return self
 
 
 class ChoiceQuestion(_DecisionData):
     """Choose among named, unordered alternatives.
 
-    Criteria use the selected provider's native format: a map of identifiers to
-    descriptions, or a list of option objects. Map identifiers are strings;
-    option values may be strings or booleans. Values preserve their type and
-    string case in the answer. Map descriptions may be text,
-    a JSON object or array, or None. Option objects follow the provider's schema.
-    Formats are not converted into one another. The SDK and service determine
-    whether the supplied shape is supported.
-    Instructions may be text or structured JSON, or omitted when supported by
-    the provider.
+    Criteria map case-sensitive string values to their JSON descriptions.
+    A null description leaves the value itself to supply the option's meaning.
+    Instructions may be omitted when the provider accepts a question defined by
+    its options alone. Adapters preserve option values and descriptions or reject
+    content that the provider cannot represent.
     """
 
     type: Literal["choice"] = "choice"
-    instructions: DecisionInput | None = None
-    criteria: Dict[str, DecisionInput | None] | List[Dict[str, Any]]
+    instructions: JsonValue = None
+    criteria: dict[StrictStr, JsonValue] = Field(min_length=1)
 
 
 class ScoreQuestion(_DecisionData):
     """Evaluate evidence against levels ordered from lowest to highest.
 
-    Criteria contain ordered levels, each described by text or
-    structured JSON. Level descriptions need not be unique; their positions
-    identify the levels. Dictionaries have no required or reserved keys.
-    Providers may restrict the supported structure and reject other shapes.
+    Criteria contain complete JSON descriptions in ascending order. Their
+    zero-based positions identify the levels; descriptions need not be unique.
+    Objects are business content with no reserved label or description fields.
     The result is the probability-weighted mean of the zero-based level indices,
     not the label of a single winning level.
     Instructions may be text or structured JSON, or omitted when supported by
@@ -77,8 +96,8 @@ class ScoreQuestion(_DecisionData):
     """
 
     type: Literal["score"] = "score"
-    instructions: DecisionInput | None = None
-    criteria: List[DecisionInput]
+    instructions: JsonValue = None
+    criteria: list[JsonValue] = Field(min_length=1)
 
 
 DecisionQuestion = Annotated[
@@ -90,15 +109,15 @@ DecisionQuestion = Annotated[
 class DecisionRequest(_DecisionData):
     """Evaluate named independent questions against shared evidence.
 
-    Input is text or a JSON object or array. Strings are preserved as text even
-    when they contain JSON. The selected provider must support the supplied
-    shape; objects and arrays are not automatically encoded as text.
+    Input and question content are JSON values. Strings are preserved as text
+    even when they contain JSON. Adapters encode structured content where the
+    provider requires text and reject content they cannot represent.
 
     Question identifiers are case-sensitive. Each identifier maps to exactly one
     question and, on success, one answer. Reuse question objects across calls;
-    business facts belong in each call's input. Provider restrictions and content
-    serialization are handled by the SDK and service.
+    business facts belong in each call's input. Common constraints are validated
+    on construction; provider-specific restrictions are checked before sending.
     """
 
-    input: DecisionInput
-    questions: Dict[str, DecisionQuestion]
+    input: JsonValue
+    questions: dict[str, DecisionQuestion] = Field(min_length=1)

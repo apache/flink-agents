@@ -33,19 +33,14 @@ from flink_agents.api.events.decision_event import (
     DecisionResponseEvent,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
-from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
     ProductReview,
     notify_shipping_manager,
 )
-from flink_agents.integrations.decision_models.openai_decision_model import (
-    OpenAIDecisionModelSetup,
-)
 
 if TYPE_CHECKING:
     from flink_agents.api.decision_models import (
-        BaseDecisionModelSetup,
         ChoiceAnswer,
         PredicateAnswer,
         ScoreAnswer,
@@ -66,11 +61,6 @@ class DecisionReviewAnalysisAgent(Agent):
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """Submit one product review to the built-in Decision Action."""
         review = ProductReview.model_validate(InputEvent.from_event(event).input)
-        model = cast(
-            "BaseDecisionModelSetup",
-            ctx.get_resource("review_analysis_model", ResourceType.DECISION_MODEL),
-        )
-
         reasons = {
             "none": "The reviewer expresses no dissatisfaction.",
             "shipping": "Late delivery, shipping damage, or missing delivery.",
@@ -78,15 +68,6 @@ class DecisionReviewAnalysisAgent(Agent):
             "fit": "The product's size, fit, or comfort is unsatisfactory.",
             "other": "Dissatisfaction that does not fit another category.",
         }
-        # Each provider receives its native Choice criteria format.
-        choice_criteria = (
-            [
-                {"value": value, "description": description}
-                for value, description in reasons.items()
-            ]
-            if isinstance(model, OpenAIDecisionModelSetup)
-            else reasons
-        )
         request = DecisionRequestEvent(
             model="review_analysis_model",
             request=DecisionRequest(
@@ -95,20 +76,11 @@ class DecisionReviewAnalysisAgent(Agent):
                     "satisfaction": ScoreQuestion(
                         instructions="Rate the satisfaction expressed in this review.",
                         criteria=[
-                            {
-                                "label": "Very dissatisfied",
-                                "description": "Strongly negative.",
-                            },
-                            {
-                                "label": "Dissatisfied",
-                                "description": "Mostly negative.",
-                            },
-                            {"label": "Neutral", "description": "Mixed or neutral."},
-                            {"label": "Satisfied", "description": "Mostly positive."},
-                            {
-                                "label": "Very satisfied",
-                                "description": "Strongly positive.",
-                            },
+                            "Very dissatisfied: strongly negative.",
+                            "Dissatisfied: mostly negative.",
+                            "Neutral: mixed or neutral.",
+                            "Satisfied: mostly positive.",
+                            "Very satisfied: strongly positive.",
                         ],
                     ),
                     "primary_reason": ChoiceQuestion(
@@ -116,7 +88,7 @@ class DecisionReviewAnalysisAgent(Agent):
                             "Select the main reason for dissatisfaction. Choose none "
                             "if the reviewer expresses no dissatisfaction."
                         ),
-                        criteria=choice_criteria,
+                        criteria=reasons,
                     ),
                     "shipping_damage": PredicateQuestion(
                         instructions=(

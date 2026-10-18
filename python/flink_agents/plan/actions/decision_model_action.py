@@ -94,7 +94,9 @@ async def process_decision_request(
     @wraps(decision_model.decide)
     def invoke(request: DecisionRequest) -> tuple[DecisionResult | None, str | None]:
         try:
-            response = decision_model.decide(request)
+            response = decision_model.decide(
+                request, request_params=event.request_params
+            )
         except (CancelledError, InterruptedError):
             raise
         except Exception as error:
@@ -119,10 +121,12 @@ async def process_decision_request(
             # Durable-state failures propagate without being attributed to the model.
             if decision_async:
                 response, failure = await ctx.durable_execute_async(
-                    invoke, event.request
+                    invoke, event.request, durable_id="decide"
                 )
             else:
-                response, failure = ctx.durable_execute(invoke, event.request)
+                response, failure = ctx.durable_execute(
+                    invoke, event.request, durable_id="decide"
+                )
             if failure is None:
                 ExecutionReporters.succeeded(
                     ctx, execution_id, ExecutionEntityTypes.LLM, event.model, {}

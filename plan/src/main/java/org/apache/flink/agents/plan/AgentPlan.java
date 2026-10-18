@@ -24,6 +24,8 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelConnection;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
+import org.apache.flink.agents.api.annotation.DecisionModelConnection;
+import org.apache.flink.agents.api.annotation.DecisionModelSetup;
 import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
 import org.apache.flink.agents.api.annotation.EmbeddingModelSetup;
 import org.apache.flink.agents.api.annotation.MCPServer;
@@ -561,6 +563,10 @@ public class AgentPlan implements Serializable {
                 extractResource(ResourceType.CHAT_MODEL, method);
             } else if (method.isAnnotationPresent(ChatModelConnection.class)) {
                 extractResource(ResourceType.CHAT_MODEL_CONNECTION, method);
+            } else if (method.isAnnotationPresent(DecisionModelSetup.class)) {
+                extractResource(ResourceType.DECISION_MODEL, method);
+            } else if (method.isAnnotationPresent(DecisionModelConnection.class)) {
+                extractResource(ResourceType.DECISION_MODEL_CONNECTION, method);
             } else if (method.isAnnotationPresent(EmbeddingModelSetup.class)) {
                 extractResource(ResourceType.EMBEDDING_MODEL, method);
             } else if (method.isAnnotationPresent(EmbeddingModelConnection.class)) {

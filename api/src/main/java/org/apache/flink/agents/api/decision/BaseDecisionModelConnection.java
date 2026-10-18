@@ -22,6 +22,9 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.annotation.Internal;
+
+import java.util.Map;
 
 /** Connection to a decision service. The resource lifecycle owns its SDK client. */
 public abstract class BaseDecisionModelConnection extends Resource {
@@ -35,6 +38,25 @@ public abstract class BaseDecisionModelConnection extends Resource {
         return ResourceType.DECISION_MODEL_CONNECTION;
     }
 
+    /** Whether decision calls may run on the runtime's managed asynchronous workers. */
+    @Internal
+    public boolean supportsAsyncExecution() {
+        return true;
+    }
+
     /** Evaluate named independent questions, preserving typed answers and provider errors. */
-    public abstract DecisionResult decide(DecisionRequest request, String model);
+    public DecisionResult decide(DecisionRequest request, String model) {
+        return decide(request, model, Map.of());
+    }
+
+    /**
+     * Evaluate questions with provider request parameters for this call only.
+     *
+     * @param request evidence and named questions
+     * @param model model identifier
+     * @param requestParams provider SDK request parameters containing JSON-compatible values;
+     *     parameters cannot override the model, evidence, or questions
+     */
+    public abstract DecisionResult decide(
+            DecisionRequest request, String model, Map<String, Object> requestParams);
 }

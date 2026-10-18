@@ -32,7 +32,6 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.plan.JavaFunction;
-import org.apache.flink.agents.plan.resource.python.PythonDecisionModelSetup;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,10 +72,9 @@ public final class DecisionModelAction {
                 (BaseDecisionModelSetup)
                         ctx.getResource(request.getModel(), ResourceType.DECISION_MODEL);
 
-        boolean async = ctx.getConfig().get(AgentExecutionOptions.DECISION_ASYNC);
-        if (model instanceof PythonDecisionModelSetup && !Utils.supportAsync()) {
-            async = false;
-        }
+        boolean async =
+                ctx.getConfig().get(AgentExecutionOptions.DECISION_ASYNC)
+                        && model.supportsAsyncExecution();
         int maxRetries = Math.max(0, ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES));
         int waitInterval =
                 Math.max(0, ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
@@ -90,7 +88,7 @@ public final class DecisionModelAction {
                 new DurableCallable<>() {
                     @Override
                     public String getId() {
-                        return "decide:" + request.getModel();
+                        return "decide";
                     }
 
                     @Override
@@ -103,7 +101,9 @@ public final class DecisionModelAction {
                         try {
                             return new InvocationOutcome(
                                     Objects.requireNonNull(
-                                            model.decide(request.getRequest()),
+                                            model.decide(
+                                                    request.getRequest(),
+                                                    request.getRequestParams()),
                                             "DecisionModel returned a null response."),
                                     null);
                         } catch (Exception error) {

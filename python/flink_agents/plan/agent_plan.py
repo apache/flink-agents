@@ -370,7 +370,7 @@ def _get_resource_providers(
                 value = value.__func__
 
             if callable(value):
-                descriptor = value()
+                descriptor = getattr(agent, name)()
                 resource_type = next(
                     resource_type
                     for marker, resource_type in {

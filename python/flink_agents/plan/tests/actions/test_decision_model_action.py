@@ -56,7 +56,7 @@ class _Model:
     def model(self) -> NoReturn:
         pytest.fail("The Action must not require a configured-model accessor.")
 
-    def _decide(self, request) -> Any:
+    def _decide(self, request, *, request_params) -> Any:
         self.threads.append(threading.get_ident())
         outcome = next(self.outcomes)
         if isinstance(outcome, BaseException):
@@ -71,15 +71,21 @@ class _Journal:
         self.snapshots = [] if snapshots is None else snapshots
         self.position = 0
 
-    def execute(self, function, *args: Any, **kwargs: Any) -> tuple:
+    def execute(
+        self, function, *args: Any, durable_id: str | None = None, **kwargs: Any
+    ) -> tuple:
         if self.position == len(self.snapshots):
             self.snapshots.append(cloudpickle.dumps(function(*args, **kwargs)))
         outcome = cloudpickle.loads(self.snapshots[self.position])
         self.position += 1
         return outcome
 
-    async def execute_async(self, function, *args: Any, **kwargs: Any) -> tuple:
-        return await asyncio.to_thread(self.execute, function, *args, **kwargs)
+    async def execute_async(
+        self, function, *args: Any, durable_id: str | None = None, **kwargs: Any
+    ) -> tuple:
+        return await asyncio.to_thread(
+            self.execute, function, *args, durable_id=durable_id, **kwargs
+        )
 
 
 def _request() -> DecisionRequestEvent:
@@ -89,6 +95,7 @@ def _request() -> DecisionRequestEvent:
             input={"review": "The package arrived damaged."},
             questions={"urgent": PredicateQuestion(instructions="Needs attention?")},
         ),
+        request_params={"safety_identifier": "review-user", "timeout": 4.0},
     )
 
 
@@ -156,10 +163,18 @@ def test_success_uses_selected_durable_path_and_action_owned_context(decision_as
     assert response.retry_count == 0
     assert response.total_retry_wait_sec == 0
     ctx.get_resource.assert_called_once_with(event.model, ResourceType.DECISION_MODEL)
-    model.decide.assert_called_once_with(event.request)
+    model.decide.assert_called_once_with(
+        event.request, request_params=event.request_params
+    )
     assert (model.threads[0] != action_thread) is decision_async
     assert ctx.durable_execute.call_count == (0 if decision_async else 1)
     assert ctx.durable_execute_async.await_count == (1 if decision_async else 0)
+    durable_call = (
+        ctx.durable_execute_async.call_args
+        if decision_async
+        else ctx.durable_execute.call_args
+    )
+    assert durable_call.kwargs == {"durable_id": "decide"}
     ctx.report_execution_started.assert_called_once()
     execution_id = ctx.report_execution_started.call_args.args[0]
     assert isinstance(execution_id, str)
@@ -187,7 +202,8 @@ def test_provider_failures_retry_with_exponential_wait_and_metrics(
     )
     model = _Model([ValueError("first"), RuntimeError("second"), _result()])
     ctx, _ = _context(model, decision_async=decision_async, retries=3, interval=2)
-    asyncio.run(process_decision_request(_request(), ctx))
+    event = _request()
+    asyncio.run(process_decision_request(event, ctx))
 
     response = _response(ctx)
     assert response.is_success
@@ -195,6 +211,10 @@ def test_provider_failures_retry_with_exponential_wait_and_metrics(
     assert response.total_retry_wait_sec == 6
     assert sleep.call_args_list == [call(2), call(4)]
     assert model.decide.call_count == 3
+    assert (
+        model.decide.call_args_list
+        == [call(event.request, request_params=event.request_params)] * 3
+    )
     reports = [c[0] for c in ctx.mock_calls if c[0].startswith("report_execution_")]
     assert reports == [
         "report_execution_started",
@@ -222,6 +242,23 @@ def test_provider_failures_retry_with_exponential_wait_and_metrics(
     group = ctx.action_metric_group.get_sub_group.return_value
     group.get_counter("retryCount").inc.assert_called_once_with(2)
     group.get_counter("retryWaitSec").inc.assert_called_once_with(6)
+
+
+def test_request_parameters_are_specific_to_each_call():
+    first = _request()
+    second = DecisionRequestEvent(
+        first.model, first.request, request_params={"safety_identifier": "other-user"}
+    )
+    model = _Model([_result(), _result()])
+    for event in (first, second):
+        ctx, _ = _context(model)
+        asyncio.run(process_decision_request(event, ctx))
+        assert _response(ctx).is_success
+
+    assert model.decide.call_args_list == [
+        call(first.request, request_params=first.request_params),
+        call(second.request, request_params=second.request_params),
+    ]
 
 
 def test_exhausted_retries_emit_one_failure_without_extra_wait(monkeypatch):
@@ -329,6 +366,7 @@ def test_durable_failure_propagates_without_becoming_a_model_failure(
 
     def persist(function, *args: Any, **kwargs: Any) -> NoReturn:
         if after_call:
+            kwargs.pop("durable_id", None)
             function(*args, **kwargs)
         raise failure
 

@@ -232,8 +232,12 @@ def test_tool_bridge_preserves_explicit_blocks_in_both_directions() -> None:
 
 
 @pytest.mark.parametrize("model", [None, "selected-model"])
+@pytest.mark.parametrize(
+    "params", [None, {"timeout": 0.5, "extra_headers": {"x-request-id": "first"}}]
+)
 def test_call_decision_model_preserves_result_and_selected_model(
     model: str | None,
+    params,
 ) -> None:
     request = DecisionRequest(
         input={"text": "Refund requested"},
@@ -243,14 +247,16 @@ def test_call_decision_model_preserves_result_and_selected_model(
     resource = Mock()
     resource.decide.return_value = result
 
-    outcome = call_decision_model(resource, request.model_dump_json(), model)
+    outcome = call_decision_model(resource, request.model_dump_json(), model, params)
 
     assert outcome["status"] == "SUCCESS"
     assert DecisionResult.model_validate_json(outcome["result"]) == result
     if model is None:
-        resource.decide.assert_called_once_with(request)
+        resource.decide.assert_called_once_with(request, request_params=params)
     else:
-        resource.decide.assert_called_once_with(request, model=model)
+        resource.decide.assert_called_once_with(
+            request, model=model, request_params=params
+        )
 
 
 @pytest.mark.parametrize(
@@ -275,7 +281,7 @@ def test_call_decision_model_preserves_cancellation_type(
         "status": signal,
         "message": str(error),
     }
-    resource.decide.assert_called_once_with(request)
+    resource.decide.assert_called_once_with(request, request_params=None)
 
 
 @pytest.mark.parametrize(

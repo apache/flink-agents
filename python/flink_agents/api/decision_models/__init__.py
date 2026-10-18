@@ -23,21 +23,19 @@ from flink_agents.api.decision_models.decision_model import (
 )
 from flink_agents.api.decision_models.decision_request import (
     ChoiceQuestion,
-    DecisionInput,
     DecisionQuestion,
     DecisionRequest,
+    PredicateCriteria,
     PredicateQuestion,
     ScoreQuestion,
 )
 from flink_agents.api.decision_models.decision_result import (
     ChoiceAnswer,
-    ChoiceProbability,
     DecisionAnswer,
     DecisionResult,
     PredicateAnswer,
     RefusalAnswer,
     ScoreAnswer,
-    ScoreProbability,
     TokenUsage,
 )
 
@@ -45,18 +43,16 @@ __all__ = [
     "BaseDecisionModelConnection",
     "BaseDecisionModelSetup",
     "ChoiceAnswer",
-    "ChoiceProbability",
     "ChoiceQuestion",
     "DecisionAnswer",
-    "DecisionInput",
     "DecisionQuestion",
     "DecisionRequest",
     "DecisionResult",
     "PredicateAnswer",
+    "PredicateCriteria",
     "PredicateQuestion",
     "RefusalAnswer",
     "ScoreAnswer",
-    "ScoreProbability",
     "ScoreQuestion",
     "TokenUsage",
 ]

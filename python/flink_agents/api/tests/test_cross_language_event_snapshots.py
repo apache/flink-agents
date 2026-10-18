@@ -38,7 +38,6 @@ from flink_agents.api.chat_message import (
 from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.decision_models import (
     ChoiceAnswer,
-    ChoiceProbability,
     ChoiceQuestion,
     DecisionRequest,
     DecisionResult,
@@ -46,7 +45,6 @@ from flink_agents.api.decision_models import (
     PredicateQuestion,
     RefusalAnswer,
     ScoreAnswer,
-    ScoreProbability,
     ScoreQuestion,
     TokenUsage,
 )
@@ -701,16 +699,22 @@ def test_snapshot_directory_exists() -> None:
 
 
 # Decision snapshots cover the complete typed request/result payload, including
-# string/boolean choice identities, structured score labels and a successful refusal.
+# case-sensitive choices, original JSON score descriptions and a successful refusal.
 def _build_decision_events() -> dict[str, Event]:
     request = DecisionRequest(
         input={"receipt": True, "notes": ["first", "second"]},
         questions={
             "eligible": PredicateQuestion(
-                instructions="Has a receipt?", criteria={"true": {"receipt": True}}
+                instructions="Has a receipt?",
             ),
-            "route": ChoiceQuestion(criteria=[{"value": True}, {"value": "true"}]),
-            "severity": ScoreQuestion(criteria=["low", {"label": "medium"}, ["high"]]),
+            "route": ChoiceQuestion(
+                instructions="Choose a route.",
+                criteria={"Approve": None, "approve": None},
+            ),
+            "severity": ScoreQuestion(
+                instructions="Rate severity.",
+                criteria=["low", {"label": "medium"}, ["high"]],
+            ),
             "restricted": PredicateQuestion(instructions="May this be disclosed?"),
         },
     )
@@ -718,22 +722,14 @@ def _build_decision_events() -> dict[str, Event]:
         answers={
             "eligible": PredicateAnswer(probability_true=0.9),
             "route": ChoiceAnswer(
-                choice=True,
-                probabilities=[
-                    ChoiceProbability(value=True, probability=0.8),
-                    ChoiceProbability(value="true", probability=0.2),
-                ],
+                choice="Approve",
+                probabilities={"Approve": 0.8, "approve": 0.2},
                 provider_confidence=0.7,
             ),
             "severity": ScoreAnswer(
                 score=1.25,
-                probabilities=[
-                    ScoreProbability(value=0, label="low", probability=0.0),
-                    ScoreProbability(
-                        value=1, label={"label": "medium"}, probability=0.75
-                    ),
-                    ScoreProbability(value=2, label=["high"], probability=0.25),
-                ],
+                probabilities={0: 0.0, 1: 0.75, 2: 0.25},
+                legend=dict(enumerate(request.questions["severity"].criteria)),
             ),
             "restricted": RefusalAnswer(reason="Cannot answer"),
         },
@@ -743,7 +739,13 @@ def _build_decision_events() -> dict[str, Event]:
     )
     events = {
         "decision_request_event.json": DecisionRequestEvent(
-            "registered-model", request
+            "registered-model",
+            request,
+            request_params={
+                "timeout": 4.0,
+                "extra_headers": {"X-Trace-ID": "review-1"},
+                "safety_identifier": "review-user",
+            },
         ),
         "decision_response_event.json": DecisionResponseEvent.success(
             _FIXED_REQUEST_ID, result, 1, 2
@@ -779,8 +781,11 @@ def test_python_can_deserialize_decision_events_from_java_snapshots() -> None:
             assert isinstance(restored.request, DecisionRequest)
         elif restored.is_success:
             assert isinstance(restored.response, DecisionResult)
-            assert restored.response.answers["route"].choice is True
-            assert restored.response.answers["route"].probabilities[1].value == "true"
+            assert restored.response.answers["route"].choice == "Approve"
+            assert list(restored.response.answers["route"].probabilities) == [
+                "Approve",
+                "approve",
+            ]
             assert isinstance(restored.response.answers["restricted"], RefusalAnswer)
         else:
             with pytest.raises(RuntimeError, match="TimeoutError: timed out"):

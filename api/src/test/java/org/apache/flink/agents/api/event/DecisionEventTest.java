@@ -24,6 +24,9 @@ import org.apache.flink.agents.api.decision.DecisionRequest;
 import org.apache.flink.agents.api.decision.DecisionResult;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -39,7 +42,17 @@ class DecisionEventTest {
                 new DecisionRequest(
                         Map.of("receipt", true),
                         Map.of("eligible", DecisionRequest.Question.predicate("Has a receipt?")));
-        DecisionRequestEvent event = new DecisionRequestEvent("registered-model", request);
+        List<Object> thresholds = new ArrayList<>(List.of(0.4));
+        thresholds.add(null);
+        Map<String, Object> params =
+                new HashMap<>(
+                        Map.of(
+                                "timeout", 4.0,
+                                "extra_headers", Map.of("X-Trace-ID", "追踪-1"),
+                                "extra_body", Map.of("thresholds", thresholds)));
+        DecisionRequestEvent event = new DecisionRequestEvent("registered-model", request, params);
+        thresholds.add(0.9);
+        params.put("timeout", 9.0);
         event.setAttachment("reference", Map.of("key", "review"));
         event.setSourceTimestamp(123L);
         DecisionRequestEvent reconstructed = DecisionRequestEvent.fromEvent(event);
@@ -47,11 +60,66 @@ class DecisionEventTest {
         DecisionRequestEvent restored =
                 (DecisionRequestEvent) Event.fromJson(MAPPER.writeValueAsString(event));
         assertThat(restored.getModel()).isEqualTo("registered-model");
+        assertThat(restored.getRequestParams()).isEqualTo(event.getRequestParams());
+        assertThat(restored.getRequestParams().get("timeout")).isEqualTo(4.0);
+        assertThat(MAPPER.valueToTree(restored.getRequestParams()).at("/extra_body/thresholds"))
+                .isEqualTo(MAPPER.readTree("[0.4,null]"));
+        assertThatThrownBy(() -> event.getRequestParams().put("timeout", 10.0))
+                .isInstanceOf(UnsupportedOperationException.class);
         assertThat(MAPPER.<JsonNode>valueToTree(restored.getRequest()))
                 .isEqualTo(MAPPER.valueToTree(request));
         assertEnvelope(event, restored);
         assertThat(MAPPER.<JsonNode>valueToTree(DecisionRequestEvent.fromEvent(restored)))
                 .isEqualTo(MAPPER.valueToTree(restored));
+    }
+
+    @Test
+    void requestParametersDefaultToEmptyAfterRestore() throws Exception {
+        DecisionRequest request =
+                new DecisionRequest(
+                        "review", Map.of("q", DecisionRequest.Question.predicate("Approve?")));
+        DecisionRequestEvent event = new DecisionRequestEvent("registered-model", request);
+        assertThat(event.getRequestParams()).isEmpty();
+        event.getAttributes().remove("request_params");
+        DecisionRequestEvent restored =
+                (DecisionRequestEvent) Event.fromJson(MAPPER.writeValueAsString(event));
+        assertThat(restored.getRequestParams()).isEmpty();
+    }
+
+    @Test
+    void requestParametersRequireJsonObjectsAtEachEntryPoint() {
+        DecisionRequest request =
+                new DecisionRequest(
+                        "review", Map.of("q", DecisionRequest.Question.predicate("Approve?")));
+        for (Object invalid : List.of(Double.NaN, Map.of(1, "not a string key"), new Object())) {
+            Map<String, Object> params = Map.of("invalid", invalid);
+            assertThatThrownBy(() -> new DecisionRequestEvent("registered-model", request, params))
+                    .isInstanceOf(IllegalArgumentException.class);
+            Event event =
+                    new Event(
+                            DecisionRequestEvent.EVENT_TYPE,
+                            Map.of(
+                                    "model",
+                                    "registered-model",
+                                    "request",
+                                    request,
+                                    "request_params",
+                                    params));
+            assertThatThrownBy(() -> DecisionRequestEvent.fromEvent(event))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        Event event =
+                new Event(
+                        DecisionRequestEvent.EVENT_TYPE,
+                        Map.of(
+                                "model",
+                                "registered-model",
+                                "request",
+                                request,
+                                "request_params",
+                                List.of("timeout", 4)));
+        assertThatThrownBy(() -> DecisionRequestEvent.fromEvent(event))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -131,6 +199,29 @@ class DecisionEventTest {
                                                         "status",
                                                         "UNKNOWN"))))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void restoredResponseRejectsMalformedNestedUsage() throws Exception {
+        Event event =
+                new Event(
+                        DecisionResponseEvent.EVENT_TYPE,
+                        Map.of(
+                                "request_id",
+                                UUID.randomUUID(),
+                                "status",
+                                DecisionResponseEvent.SUCCESS,
+                                "response",
+                                Map.of(
+                                        "answers",
+                                        Map.of("a", Map.of("type", "refusal")),
+                                        "usage",
+                                        Map.of("input_tokens", 1.5))));
+        String json = MAPPER.writeValueAsString(event);
+
+        assertThatThrownBy(() -> Event.fromJson(json))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasRootCauseMessage("input_tokens must be a 64-bit integer");
     }
 
     private static void assertEnvelope(Event original, Event restored) {

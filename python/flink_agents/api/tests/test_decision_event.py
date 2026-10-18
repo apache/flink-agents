@@ -27,6 +27,7 @@ from flink_agents.api.decision_models import (
     DecisionResult,
     PredicateQuestion,
     RefusalAnswer,
+    ScoreAnswer,
 )
 from flink_agents.api.events.decision_event import (
     DecisionRequestEvent,
@@ -41,16 +42,63 @@ def test_request_restores_typed_payload_identity_and_attachments() -> None:
         input={"receipt": True},
         questions={"eligible": PredicateQuestion(instructions="Has a receipt?")},
     )
-    event = DecisionRequestEvent("registered-model", request)
+    params = {
+        "timeout": 4.0,
+        "extra_headers": {"X-Trace-ID": "追踪-1"},
+        "extra_body": {"thresholds": [0.4, None]},
+    }
+    event = DecisionRequestEvent("registered-model", request, request_params=params)
     event.set_attachment("reference", {"key": "review"})
+    params["extra_body"]["thresholds"].append(0.9)
 
     restored = Event.from_json(event.model_dump_json())
     assert isinstance(restored, DecisionRequestEvent)
     assert restored.model == "registered-model"
     assert restored.request == request
+    assert restored.request_params == {
+        "timeout": 4.0,
+        "extra_headers": {"X-Trace-ID": "追踪-1"},
+        "extra_body": {"thresholds": [0.4, None]},
+    }
     assert restored.id == event.id
     assert restored.attachments == event.attachments
     assert DecisionRequestEvent.from_event(restored) == restored
+
+
+def test_request_parameters_default_to_empty_after_restore() -> None:
+    request = DecisionRequest(
+        input="review", questions={"q": PredicateQuestion(instructions="Approve?")}
+    )
+    event = DecisionRequestEvent("registered-model", request)
+    assert event.request_params == {}
+    del event.attributes["request_params"]
+    assert Event.from_json(event.model_dump_json()).request_params == {}
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"timeout": float("inf")},
+        {"headers": {1: "not a string key"}},
+        [("timeout", 4)],
+    ],
+)
+def test_request_parameters_require_json_objects_at_each_entry_point(params) -> None:
+    request = DecisionRequest(
+        input="review", questions={"q": PredicateQuestion(instructions="Approve?")}
+    )
+    with pytest.raises((ValueError, TypeError)):
+        DecisionRequestEvent("registered-model", request, request_params=params)
+    event = Event(
+        type=DecisionRequestEvent.EVENT_TYPE,
+        attributes={
+            "model": "registered-model",
+            "request": request,
+            "request_params": params,
+        },
+    )
+    with pytest.raises((ValueError, TypeError)):
+        DecisionRequestEvent.from_event(event)
 
 
 def test_refusal_is_a_successful_result_not_a_failed_request() -> None:
@@ -68,6 +116,35 @@ def test_refusal_is_a_successful_result_not_a_failed_request() -> None:
     assert restored.total_retry_wait_sec == 2
     with pytest.raises(RuntimeError, match="no error"):
         _ = restored.error
+
+
+def test_score_response_restores_integer_indices_and_original_descriptions() -> None:
+    result = DecisionResult(
+        answers={
+            "impact": ScoreAnswer(
+                score=0.8,
+                probabilities={0: 0.2, 1: 0.8},
+                legend={
+                    0: "Low",
+                    1: {"label": "业务内容", "description": [True, None]},
+                },
+            )
+        }
+    )
+    event = DecisionResponseEvent.success(uuid4(), result)
+    event.set_attachment("reference", {"key": "review"})
+    wire_event = event.model_dump(mode="json")
+    decoded = Event(type=event.type, attributes=wire_event["attributes"])
+
+    for restored in (
+        Event.from_json(event.model_dump_json()),
+        DecisionResponseEvent.from_event(decoded),
+    ):
+        assert restored.response == result
+        answer = restored.response.answers["impact"]
+        assert list(answer.probabilities) == [0, 1]
+        assert list(answer.legend) == [0, 1]
+        assert answer.legend[1] == {"label": "业务内容", "description": [True, None]}
 
 
 def test_failure_serializes_without_reading_throwing_response_property() -> None:

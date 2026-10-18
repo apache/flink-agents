@@ -28,6 +28,8 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.annotation.Action;
+import org.apache.flink.agents.api.annotation.DecisionModelConnection;
+import org.apache.flink.agents.api.annotation.DecisionModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.decision.BaseDecisionModelConnection;
 import org.apache.flink.agents.api.decision.BaseDecisionModelSetup;
@@ -41,6 +43,7 @@ import org.apache.flink.agents.api.decision.DecisionResult.ScoreAnswer;
 import org.apache.flink.agents.api.event.DecisionRequestEvent;
 import org.apache.flink.agents.api.event.DecisionResponseEvent;
 import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.DecisionModelAction;
@@ -64,6 +67,7 @@ import pemja.core.PythonInterpreterConfig;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
@@ -79,27 +83,33 @@ public class DecisionModelCrossLanguageTest {
             "flink_agents.runtime.tests.decision_model_bridge_fixture";
 
     public static class DecisionAgent extends Agent {
-        public DecisionAgent() {
-            addResource(
-                    "connection",
-                    ResourceType.DECISION_MODEL_CONNECTION,
-                    new PythonResourceDescriptor(FIXTURE, "BridgeDecisionConnection", Map.of()));
-            for (String name : List.of("first", "second")) {
-                addResource(
-                        name,
-                        ResourceType.DECISION_MODEL,
-                        new PythonResourceDescriptor(
-                                "flink_agents.api.decision_models.decision_model",
-                                "BaseDecisionModelSetup",
-                                Map.of("connection", "connection", "model", name)));
-            }
+        @DecisionModelConnection
+        public static PythonResourceDescriptor connection() {
+            return new PythonResourceDescriptor(FIXTURE, "BridgeDecisionConnection", Map.of());
+        }
+
+        @DecisionModelSetup
+        public static ResourceDescriptor first() {
+            return ResourceDescriptor.Builder.newBuilder(BaseDecisionModelSetup.class.getName())
+                    .addInitialArgument("connection", "connection")
+                    .addInitialArgument("model", "first")
+                    .build();
+        }
+
+        @DecisionModelSetup
+        public static PythonResourceDescriptor second() {
+            return new PythonResourceDescriptor(
+                    "flink_agents.api.decision_models.decision_model",
+                    "BaseDecisionModelSetup",
+                    Map.of("connection", "connection", "model", "second"));
         }
 
         @Action(EventType.InputEvent)
         public static void decide(Event event, RunnerContext ctx) {
+            Object input = InputEvent.fromEvent(event).getInput();
             ctx.sendEvent(
                     new DecisionRequestEvent(
-                            "first", request(InputEvent.fromEvent(event).getInput())));
+                            "first", request(input), requestParams(input.toString())));
         }
 
         @Action(DecisionResponseEvent.EVENT_TYPE)
@@ -181,28 +191,54 @@ public class DecisionModelCrossLanguageTest {
                                         "connection", ResourceType.DECISION_MODEL_CONNECTION);
                 DecisionRequest structured =
                         request(Map.of("message", "请退款", "flags", List.of(true, "true")));
+                Map<String, Object> firstParams = requestParams("first-call");
+                Map<String, Object> secondParams = requestParams("second-call");
+                assertResult(
+                        first.decide(structured, firstParams), structured, "first", firstParams);
+                assertResult(
+                        first.decide(structured, secondParams), structured, "first", secondParams);
                 assertResult(first.decide(structured), structured, "first");
                 // Closing one setup must not close the shared connection.
                 first.close();
-                assertThatThrownBy(() -> first.decide(structured))
-                        .isInstanceOf(IllegalStateException.class)
-                        .hasMessageContaining("closed");
                 DecisionRequest text = request("{\"paid\": true}");
                 assertResult(second.decide(text), text, "second");
                 DecisionRequest array = request(List.of("evidence", Map.of("paid", true)));
+                assertResult(
+                        connection.decide(array, "direct", firstParams),
+                        array,
+                        "direct",
+                        firstParams);
+                assertResult(
+                        connection.decide(array, "direct", secondParams),
+                        array,
+                        "direct",
+                        secondParams);
                 assertResult(connection.decide(array, "direct"), array, "direct");
                 assertThatThrownBy(() -> second.decide(request("fail")))
                         .hasMessageContaining("decision provider failed");
-                DecisionRequest invalid =
-                        new DecisionRequest(
-                                "input", Map.of("bad", Question.score(List.of(42), null)));
-                assertThatThrownBy(() -> second.decide(invalid)).hasMessageContaining("validation");
                 JsonNode live =
                         MAPPER.readTree((String) interpreter.invoke("decision_fixture.snapshot"));
                 assertThat(live.get("opens").asInt()).isEqualTo(1);
                 assertThat(live.get("closes").asInt()).isZero();
-                assertThat(live.get("calls").asInt()).isEqualTo(4);
+                assertThat(live.get("calls").asInt()).isEqualTo(8);
+                assertThat(live.get("request_params"))
+                        .isEqualTo(
+                                MAPPER.valueToTree(
+                                        List.of(
+                                                firstParams,
+                                                secondParams,
+                                                Map.of(),
+                                                Map.of(),
+                                                firstParams,
+                                                secondParams,
+                                                Map.of(),
+                                                Map.of())));
                 verifyCancellationSignals(plan, cache, second, connection, interpreter);
+                second.close();
+                assertThatThrownBy(() -> second.decide(structured))
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("closed");
+                assertResult(connection.decide(structured, "direct"), structured, "direct");
             } finally {
                 try {
                     cache.close();
@@ -311,7 +347,7 @@ public class DecisionModelCrossLanguageTest {
             DecisionRequest original =
                     MAPPER.convertValue(result.getMetadata().get("request"), DecisionRequest.class);
             inputs.add(original.getInput());
-            assertResult(result, original, "first");
+            assertResult(result, original, "first", requestParams(original.getInput().toString()));
         }
         assertThat(inputs).containsExactlyInAnyOrder("请退款", "{\"paid\": true}");
     }
@@ -320,43 +356,49 @@ public class DecisionModelCrossLanguageTest {
         return new DecisionRequest(
                 input,
                 Map.of(
-                        "eligible",
-                                Question.predicate(
-                                        Map.of("condition", "Has a receipt"),
-                                        Map.of("true", "有收据")),
+                        "eligible", Question.predicate(Map.of("condition", "Has a receipt")),
                         "route",
                                 Question.choice(
-                                        List.of(Map.of("value", true), Map.of("value", "true")),
+                                        Map.of(
+                                                "true",
+                                                "Escalate",
+                                                "false",
+                                                "Resolve automatically"),
                                         "Choose"),
                         "impact",
                                 Question.score(
-                                        List.of(Map.of("description", "轻微"), List.of("严重")), null),
+                                        List.of(Map.of("description", "轻微"), List.of("严重")),
+                                        "Rate impact."),
                         "blocked", Question.predicate("Can this be answered?")));
     }
 
     private static void assertResult(DecisionResult result, DecisionRequest request, String model)
             throws Exception {
+        assertResult(result, request, model, Map.of());
+    }
+
+    private static void assertResult(
+            DecisionResult result,
+            DecisionRequest request,
+            String model,
+            Map<String, Object> requestParams)
+            throws Exception {
         assertThat(result.getAnswers()).containsOnlyKeys("eligible", "route", "impact", "blocked");
         assertThat(((PredicateAnswer) result.getAnswers().get("eligible")).getProbabilityTrue())
                 .isEqualTo(0.9);
         ChoiceAnswer choice = (ChoiceAnswer) result.getAnswers().get("route");
-        assertThat(choice.getChoice()).isEqualTo(true);
-        assertThat(choice.getProbabilities())
-                .extracting(DecisionResult.ChoiceProbability::getValue)
-                .containsExactly(true, "true");
-        assertThat(choice.getProbabilities())
-                .extracting(DecisionResult.ChoiceProbability::getProbability)
-                .containsExactly(0.75, 0.25);
+        assertThat(choice.getChoice()).isEqualTo("true");
+        assertThat(choice.getProbabilities().keySet()).containsExactly("true", "false");
+        assertThat(choice.getProbabilities().values()).containsExactly(0.75, 0.25);
         assertThat(choice.getProviderConfidence()).isEqualTo(0.5);
         ScoreAnswer score = (ScoreAnswer) result.getAnswers().get("impact");
         assertThat(score.getScore()).isEqualTo(0.75);
         assertThat(score.getProviderConfidence()).isNull();
         assertThat(score.getProbabilities())
-                .extracting(DecisionResult.ScoreProbability::getValue)
-                .containsExactly(0, 1);
-        assertThat(score.getProbabilities())
-                .extracting(DecisionResult.ScoreProbability::getLabel)
-                .containsExactly(Map.of("description", "轻微"), List.of("严重"));
+                .containsExactlyInAnyOrderEntriesOf(Map.of(0, 0.25, 1, 0.75));
+        assertThat(score.getLegend())
+                .containsExactlyInAnyOrderEntriesOf(
+                        Map.of(0, Map.of("description", "轻微"), 1, List.of("严重")));
         assertThat(((RefusalAnswer) result.getAnswers().get("blocked")).getReason()).isNull();
         assertThat(result.getModel()).isEqualTo("reported-" + model);
         assertThat(result.getUsage().getInputTokens()).isEqualTo(7L);
@@ -366,9 +408,21 @@ public class DecisionModelCrossLanguageTest {
         DecisionRequest echoed =
                 MAPPER.convertValue(result.getMetadata().get("request"), DecisionRequest.class);
         assertThat(MAPPER.<JsonNode>valueToTree(echoed)).isEqualTo(MAPPER.valueToTree(request));
+        assertThat(MAPPER.<JsonNode>valueToTree(result.getMetadata().get("request_params")))
+                .isEqualTo(MAPPER.valueToTree(requestParams));
         DecisionResult restored =
                 MAPPER.readValue(MAPPER.writeValueAsString(result), DecisionResult.class);
         assertThat(MAPPER.<JsonNode>valueToTree(restored)).isEqualTo(MAPPER.valueToTree(result));
+    }
+
+    private static Map<String, Object> requestParams(String requestId) {
+        return Map.of(
+                "extra_headers",
+                Map.of("x-request-id", requestId),
+                "extra_body",
+                Map.of("context", Arrays.asList("证据", true, null, Map.of("count", 3))),
+                "timeout",
+                2.5);
     }
 
     private static Path projectRoot() {

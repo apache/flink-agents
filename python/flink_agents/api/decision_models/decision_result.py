@@ -17,12 +17,22 @@
 ################################################################################
 """Typed answers and provider-reported usage for one decision call."""
 
-from typing import Annotated, Any, Dict, List, Literal
+import re
+from typing import Annotated, Any, Dict, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StrictStr,
+    ValidationInfo,
+    field_validator,
+)
 
 _Probability = Annotated[float, Field(ge=0.0, le=1.0, strict=True)]
 _TokenCount = Annotated[int, Field(ge=0, strict=True)]
+_LevelIndex = Annotated[int, Field(ge=0, strict=True)]
 
 
 class _DecisionData(BaseModel):
@@ -48,38 +58,19 @@ class PredicateAnswer(_DecisionData):
     probability_true: _Probability
 
 
-class ChoiceProbability(_DecisionData):
-    """Probability of one choice, preserving its string or boolean value."""
-
-    value: StrictStr | StrictBool
-    probability: _Probability
-
-
 class ChoiceAnswer(_DecisionData):
     """Selected choice and the full distribution over the requested choices.
 
     provider_confidence preserves the provider's separate confidence measure.
     It is not defined as the probability of the selected choice.
-    Distribution entries retain their provider order and distinguish boolean
-    values from strings, including after JSON serialization.
+    Probabilities map case-sensitive choice values to their probabilities,
+    retaining provider order.
     """
 
     type: Literal["choice"] = "choice"
-    choice: StrictStr | StrictBool
-    probabilities: List[ChoiceProbability] = Field(min_length=1)
+    choice: StrictStr
+    probabilities: dict[StrictStr, _Probability] = Field(min_length=1)
     provider_confidence: _Probability | None = None
-
-
-class ScoreProbability(_DecisionData):
-    """A score level's index, provider-reported description and probability.
-
-    The label may be text or structured JSON. Labels need not be unique;
-    the zero-based value identifies the level.
-    """
-
-    value: int = Field(ge=0, strict=True)
-    label: str | Dict[str, Any] | List[Any]
-    probability: _Probability
 
 
 class ScoreAnswer(_DecisionData):
@@ -87,12 +78,25 @@ class ScoreAnswer(_DecisionData):
 
     The score may lie between levels. provider_confidence retains the provider's
     own measure without translating it into a selected-level probability.
+    Probabilities are keyed by level index. Legend contains the original request
+    descriptions at those indices, independent of provider labels or encoding.
     """
 
     type: Literal["score"] = "score"
     score: float = Field(ge=0.0, strict=True)
-    probabilities: List[ScoreProbability] = Field(min_length=1)
+    probabilities: dict[_LevelIndex, _Probability] = Field(min_length=1)
+    legend: dict[_LevelIndex, JsonValue] = Field(default_factory=dict)
     provider_confidence: _Probability | None = None
+
+    @field_validator("probabilities", "legend", mode="before")
+    @classmethod
+    def _require_json_indices(cls, value: Any, info: ValidationInfo) -> Any:
+        if info.mode == "json" and isinstance(value, dict):
+            if any(re.fullmatch(r"0|[1-9][0-9]*", key) is None for key in value):
+                msg = "Score indices must be canonical nonnegative integers."
+                raise ValueError(msg)
+            return {int(key): item for key, item in value.items()}
+        return value
 
 
 class RefusalAnswer(_DecisionData):

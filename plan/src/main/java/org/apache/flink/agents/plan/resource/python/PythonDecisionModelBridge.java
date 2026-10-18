@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.resource.python;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.decision.DecisionJson;
 import org.apache.flink.agents.api.decision.DecisionRequest;
 import org.apache.flink.agents.api.decision.DecisionResult;
 import pemja.core.object.PyObject;
@@ -27,6 +28,7 @@ import pemja.core.object.PyObject;
 import javax.annotation.Nullable;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CancellationException;
 
 /** Owns the Python handle and the JSON boundary shared by decision setups and connections. */
@@ -45,7 +47,8 @@ final class PythonDecisionModelBridge implements AutoCloseable {
         adapter.callMethod(resource, "open", Map.of());
     }
 
-    DecisionResult decide(DecisionRequest request, @Nullable String model) {
+    DecisionResult decide(
+            DecisionRequest request, @Nullable String model, Map<String, Object> requestParams) {
         if (closed) {
             throw new IllegalStateException("DecisionModel is closed");
         }
@@ -58,7 +61,13 @@ final class PythonDecisionModelBridge implements AutoCloseable {
         }
         Object value =
                 adapter.invoke(
-                        "python_java_utils.call_decision_model", resource, requestJson, model);
+                        "python_java_utils.call_decision_model",
+                        resource,
+                        requestJson,
+                        model,
+                        DecisionJson.copy(
+                                Objects.requireNonNull(requestParams, "requestParams"),
+                                "request_params"));
         if (!(value instanceof Map)) {
             throw new IllegalStateException("Invalid DecisionModel invocation outcome from Python");
         }

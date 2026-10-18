@@ -22,14 +22,17 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import javax.annotation.Nullable;
 
 import java.io.Serializable;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Answers keyed by the original question identifiers. Model, usage and confidence contain only
@@ -37,24 +40,53 @@ import java.util.Map;
  * response errors raise exceptions rather than being represented as answers.
  */
 public final class DecisionResult implements Serializable {
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     private final Map<String, Answer> answers;
     @Nullable private final String model;
     @Nullable private final TokenUsage usage;
     private final Map<String, Object> metadata;
 
-    @JsonCreator
     public DecisionResult(
-            @JsonProperty("answers") Map<String, Answer> answers,
-            @JsonProperty("model") @Nullable String model,
-            @JsonProperty("usage") @Nullable TokenUsage usage,
-            @JsonProperty("metadata") Map<String, Object> metadata) {
-        this.answers = Collections.unmodifiableMap(new LinkedHashMap<>(answers));
+            Map<String, Answer> answers,
+            @Nullable String model,
+            @Nullable TokenUsage usage,
+            Map<String, Object> metadata) {
+        Objects.requireNonNull(answers, "answers");
+        if (answers.isEmpty()) {
+            throw new IllegalArgumentException("result requires at least one answer");
+        }
+        Map<String, Answer> validated = new LinkedHashMap<>();
+        answers.forEach(
+                (name, answer) ->
+                        validated.put(
+                                Objects.requireNonNull(name, "answer name"),
+                                Objects.requireNonNull(answer, "answer")));
+        this.answers = Collections.unmodifiableMap(validated);
         this.model = model;
         this.usage = usage;
         this.metadata =
+                Collections.unmodifiableMap(
+                        new LinkedHashMap<>(Objects.requireNonNull(metadata, "metadata")));
+    }
+
+    @JsonCreator
+    private static DecisionResult fromJson(
+            @JsonProperty(value = "answers", required = true) Map<String, Answer> answers,
+            @JsonProperty("model") @Nullable Object model,
+            @JsonProperty("usage") @Nullable TokenUsage usage,
+            @JsonProperty("metadata") @Nullable JsonNode metadata) {
+        if (metadata != null && !metadata.isObject()) {
+            throw new IllegalArgumentException("metadata must be an object");
+        }
+        return new DecisionResult(
+                answers,
+                DecisionJson.optionalString(model, "model"),
+                usage,
                 metadata == null
                         ? Map.of()
-                        : Collections.unmodifiableMap(new LinkedHashMap<>(metadata));
+                        : MAPPER.convertValue(
+                                metadata, new TypeReference<Map<String, Object>>() {}));
     }
 
     public Map<String, Answer> getAnswers() {
@@ -89,9 +121,15 @@ public final class DecisionResult implements Serializable {
     public static final class PredicateAnswer extends Answer {
         private final double probabilityTrue;
 
-        @JsonCreator
-        public PredicateAnswer(@JsonProperty("probability_true") double probabilityTrue) {
+        public PredicateAnswer(double probabilityTrue) {
+            DecisionJson.requireProbability(probabilityTrue, "probability_true");
             this.probabilityTrue = probabilityTrue;
+        }
+
+        @JsonCreator
+        private static PredicateAnswer fromJson(
+                @JsonProperty(value = "probability_true", required = true) Object probabilityTrue) {
+            return new PredicateAnswer(DecisionJson.number(probabilityTrue, "probability_true"));
         }
 
         @JsonProperty("probability_true")
@@ -100,27 +138,58 @@ public final class DecisionResult implements Serializable {
         }
     }
 
-    /** String or boolean choice, plus a distribution in provider order. */
+    /** String choice, plus case-sensitive choice probabilities in provider order. */
     public static final class ChoiceAnswer extends Answer {
-        private final Object choice;
-        private final List<ChoiceProbability> probabilities;
+        private final String choice;
+        private final Map<String, Double> probabilities;
         @Nullable private final Double providerConfidence;
 
-        @JsonCreator
         public ChoiceAnswer(
-                @JsonProperty("choice") Object choice,
-                @JsonProperty("probabilities") List<ChoiceProbability> probabilities,
-                @JsonProperty("provider_confidence") @Nullable Double providerConfidence) {
-            this.choice = choice;
-            this.probabilities = List.copyOf(probabilities);
+                String choice,
+                Map<String, Double> probabilities,
+                @Nullable Double providerConfidence) {
+            this.choice = Objects.requireNonNull(choice, "choice");
+            Objects.requireNonNull(probabilities, "probabilities");
+            if (probabilities.isEmpty()) {
+                throw new IllegalArgumentException("choice answer requires probabilities");
+            }
+            Map<String, Double> distribution = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : probabilities.entrySet()) {
+                String value = DecisionJson.string(entry.getKey(), "choice value");
+                double probability = DecisionJson.number(entry.getValue(), "probability");
+                DecisionJson.requireProbability(probability, "probability");
+                distribution.put(value, probability);
+            }
+            this.probabilities = Collections.unmodifiableMap(distribution);
+            if (providerConfidence != null) {
+                DecisionJson.requireProbability(providerConfidence, "provider_confidence");
+            }
             this.providerConfidence = providerConfidence;
         }
-        /** Returns a String or Boolean, preserving the provider value's identity. */
-        public Object getChoice() {
+
+        @JsonCreator
+        private static ChoiceAnswer fromJson(
+                @JsonProperty(value = "choice", required = true) Object choice,
+                @JsonProperty(value = "probabilities", required = true)
+                        Map<String, Object> probabilities,
+                @JsonProperty("provider_confidence") @Nullable Object providerConfidence) {
+            Objects.requireNonNull(probabilities, "probabilities");
+            Map<String, Double> distribution = new LinkedHashMap<>();
+            probabilities.forEach(
+                    (value, probability) ->
+                            distribution.put(
+                                    value, DecisionJson.number(probability, "probability")));
+            return new ChoiceAnswer(
+                    DecisionJson.string(choice, "choice"),
+                    distribution,
+                    DecisionJson.optionalNumber(providerConfidence, "provider_confidence"));
+        }
+
+        public String getChoice() {
             return choice;
         }
 
-        public List<ChoiceProbability> getProbabilities() {
+        public Map<String, Double> getProbabilities() {
             return probabilities;
         }
 
@@ -131,85 +200,99 @@ public final class DecisionResult implements Serializable {
         }
     }
 
-    /** A string or boolean value and its probability; true and "true" remain distinct. */
-    public static final class ChoiceProbability implements Serializable {
-        private final Object value;
-        private final double probability;
-
-        @JsonCreator
-        public ChoiceProbability(
-                @JsonProperty("value") Object value,
-                @JsonProperty("probability") double probability) {
-            this.value = value;
-            this.probability = probability;
-        }
-
-        public Object getValue() {
-            return value;
-        }
-
-        public double getProbability() {
-            return probability;
-        }
-    }
-
-    /** Expected zero-based level index, which may lie between levels. */
+    /** Expected zero-based level index and distributions over the original JSON descriptions. */
     public static final class ScoreAnswer extends Answer {
         private final double score;
-        private final List<ScoreProbability> probabilities;
+        private final Map<Integer, Double> probabilities;
+        private final Map<Integer, Object> legend;
         @Nullable private final Double providerConfidence;
 
-        @JsonCreator
         public ScoreAnswer(
-                @JsonProperty("score") double score,
-                @JsonProperty("probabilities") List<ScoreProbability> probabilities,
-                @JsonProperty("provider_confidence") @Nullable Double providerConfidence) {
+                double score,
+                Map<Integer, Double> probabilities,
+                Map<Integer, ?> legend,
+                @Nullable Double providerConfidence) {
+            if (!Double.isFinite(score) || score < 0) {
+                throw new IllegalArgumentException("score must be finite and nonnegative");
+            }
             this.score = score;
-            this.probabilities = List.copyOf(probabilities);
+            Objects.requireNonNull(probabilities, "probabilities");
+            if (probabilities.isEmpty()) {
+                throw new IllegalArgumentException("score answer requires probabilities");
+            }
+            Map<Integer, Double> distribution = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : probabilities.entrySet()) {
+                int index = DecisionJson.index(entry.getKey());
+                double probability = DecisionJson.number(entry.getValue(), "probability");
+                DecisionJson.requireProbability(probability, "probability");
+                distribution.put(index, probability);
+            }
+            this.probabilities = Collections.unmodifiableMap(distribution);
+            Objects.requireNonNull(legend, "legend");
+            Map<Integer, Object> descriptions = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : legend.entrySet()) {
+                int index = DecisionJson.index(entry.getKey());
+                descriptions.put(
+                        index, DecisionJson.copy(entry.getValue(), "legend[" + index + "]"));
+            }
+            this.legend = Collections.unmodifiableMap(descriptions);
+            if (providerConfidence != null) {
+                DecisionJson.requireProbability(providerConfidence, "provider_confidence");
+            }
             this.providerConfidence = providerConfidence;
+        }
+
+        @JsonCreator
+        private static ScoreAnswer fromJson(
+                @JsonProperty(value = "score", required = true) Object score,
+                @JsonProperty(value = "probabilities", required = true)
+                        Map<String, Object> probabilities,
+                @JsonProperty("legend") @Nullable JsonNode legend,
+                @JsonProperty("provider_confidence") @Nullable Object providerConfidence) {
+            Objects.requireNonNull(probabilities, "probabilities");
+            Map<Integer, Double> distribution = new LinkedHashMap<>();
+            probabilities.forEach(
+                    (key, value) ->
+                            distribution.put(
+                                    DecisionJson.indexKey(key),
+                                    DecisionJson.number(value, "probability")));
+            Map<Integer, Object> descriptions = new LinkedHashMap<>();
+            if (legend != null) {
+                if (!legend.isObject()) {
+                    throw new IllegalArgumentException("legend must be an object");
+                }
+                legend.fields()
+                        .forEachRemaining(
+                                entry ->
+                                        descriptions.put(
+                                                DecisionJson.indexKey(entry.getKey()),
+                                                MAPPER.convertValue(
+                                                        entry.getValue(), Object.class)));
+            }
+            return new ScoreAnswer(
+                    DecisionJson.number(score, "score"),
+                    distribution,
+                    descriptions,
+                    DecisionJson.optionalNumber(providerConfidence, "provider_confidence"));
         }
 
         public double getScore() {
             return score;
         }
 
-        public List<ScoreProbability> getProbabilities() {
+        public Map<Integer, Double> getProbabilities() {
             return probabilities;
+        }
+
+        /** Original request descriptions keyed by zero-based level indices. */
+        public Map<Integer, Object> getLegend() {
+            return legend;
         }
 
         @Nullable
         @JsonProperty("provider_confidence")
         public Double getProviderConfidence() {
             return providerConfidence;
-        }
-    }
-
-    /** A level index, its text or structured JSON label, and its probability. */
-    public static final class ScoreProbability implements Serializable {
-        private final int value;
-        private final Object label;
-        private final double probability;
-
-        @JsonCreator
-        public ScoreProbability(
-                @JsonProperty("value") int value,
-                @JsonProperty("label") Object label,
-                @JsonProperty("probability") double probability) {
-            this.value = value;
-            this.label = label;
-            this.probability = probability;
-        }
-
-        public int getValue() {
-            return value;
-        }
-
-        public Object getLabel() {
-            return label;
-        }
-
-        public double getProbability() {
-            return probability;
         }
     }
 
@@ -217,9 +300,13 @@ public final class DecisionResult implements Serializable {
     public static final class RefusalAnswer extends Answer {
         @Nullable private final String reason;
 
-        @JsonCreator
-        public RefusalAnswer(@JsonProperty("reason") @Nullable String reason) {
+        public RefusalAnswer(@Nullable String reason) {
             this.reason = reason;
+        }
+
+        @JsonCreator
+        private static RefusalAnswer fromJson(@JsonProperty("reason") @Nullable Object reason) {
+            return new RefusalAnswer(DecisionJson.optionalString(reason, "reason"));
         }
 
         @Nullable
@@ -236,14 +323,33 @@ public final class DecisionResult implements Serializable {
         @Nullable private final Long outputTokens;
         @Nullable private final Long totalTokens;
 
-        @JsonCreator
         public TokenUsage(
-                @JsonProperty("input_tokens") @Nullable Long inputTokens,
-                @JsonProperty("output_tokens") @Nullable Long outputTokens,
-                @JsonProperty("total_tokens") @Nullable Long totalTokens) {
+                @Nullable Long inputTokens,
+                @Nullable Long outputTokens,
+                @Nullable Long totalTokens) {
+            requireTokenCount(inputTokens);
+            requireTokenCount(outputTokens);
+            requireTokenCount(totalTokens);
             this.inputTokens = inputTokens;
             this.outputTokens = outputTokens;
             this.totalTokens = totalTokens;
+        }
+
+        @JsonCreator
+        private static TokenUsage fromJson(
+                @JsonProperty("input_tokens") @Nullable Object inputTokens,
+                @JsonProperty("output_tokens") @Nullable Object outputTokens,
+                @JsonProperty("total_tokens") @Nullable Object totalTokens) {
+            return new TokenUsage(
+                    DecisionJson.optionalTokenCount(inputTokens, "input_tokens"),
+                    DecisionJson.optionalTokenCount(outputTokens, "output_tokens"),
+                    DecisionJson.optionalTokenCount(totalTokens, "total_tokens"));
+        }
+
+        private static void requireTokenCount(@Nullable Long count) {
+            if (count != null && count < 0) {
+                throw new IllegalArgumentException("token count must be nonnegative");
+            }
         }
 
         @Nullable

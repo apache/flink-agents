@@ -17,12 +17,16 @@
 #################################################################################
 """Request and terminal response events for registered decision model resources."""
 
+import json
+from collections.abc import Mapping
 from typing import ClassVar, Tuple
 from uuid import UUID
 
+from pydantic import JsonValue
 from typing_extensions import override
 
 from flink_agents.api.decision_models import DecisionRequest, DecisionResult
+from flink_agents.api.decision_models.decision_model import _validate_request_params
 from flink_agents.api.events.event import BuiltInAttribute, Event
 
 
@@ -31,21 +35,34 @@ class DecisionRequestEvent(Event):
 
     ``model`` is the registered resource name, not a provider model identifier.
     ``request`` supplies the shared input and named questions for this call.
+    ``request_params`` supplies provider-specific parameters for this call.
     """
 
     EVENT_TYPE: ClassVar[str] = "_decision_request_event"
     _ATTRIBUTE_SCHEMA: ClassVar[Tuple[BuiltInAttribute, ...]] = (
         BuiltInAttribute.required("model", str),
         BuiltInAttribute.required_untyped("request"),
+        BuiltInAttribute.optional_untyped("request_params"),
     )
 
-    def __init__(self, model: str, request: DecisionRequest) -> None:
+    def __init__(
+        self,
+        model: str,
+        request: DecisionRequest,
+        *,
+        request_params: Mapping[str, JsonValue] | None = None,
+    ) -> None:
         """Create a decision request event."""
         if not isinstance(model, str) or not isinstance(request, DecisionRequest):
             msg = "Decision request requires a model resource name and DecisionRequest."
             raise TypeError(msg)
         super().__init__(
-            type=self.EVENT_TYPE, attributes={"model": model, "request": request}
+            type=self.EVENT_TYPE,
+            attributes={
+                "model": model,
+                "request": request,
+                "request_params": _validate_request_params(request_params),
+            },
         )
 
     @classmethod
@@ -58,6 +75,7 @@ class DecisionRequestEvent(Event):
         result = cls(
             model=attributes["model"],
             request=DecisionRequest.model_validate(attributes["request"]),
+            request_params=attributes.get("request_params"),
         )
         return result.reconstruct_from(event)
 
@@ -70,6 +88,11 @@ class DecisionRequestEvent(Event):
     def request(self) -> DecisionRequest:
         """Return the typed request with its input and named questions."""
         return self.get_attr("request")
+
+    @property
+    def request_params(self) -> dict[str, JsonValue]:
+        """Return provider-specific parameters for this request."""
+        return self.get_attr("request_params")
 
 
 class DecisionResponseError(RuntimeError):
@@ -202,7 +225,9 @@ class DecisionResponseEvent(Event):
         )
         response_raw = attributes.get(cls._RESPONSE)
         response = (
-            DecisionResult.model_validate(response_raw)
+            DecisionResult.model_validate_json(
+                json.dumps(response_raw, ensure_ascii=False, allow_nan=False)
+            )
             if isinstance(response_raw, dict)
             else response_raw
         )

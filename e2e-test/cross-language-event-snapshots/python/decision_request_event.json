@@ -3,6 +3,13 @@
   "type": "_decision_request_event",
   "attributes": {
     "model": "registered-model",
+    "request_params": {
+      "timeout": 4.0,
+      "extra_headers": {
+        "X-Trace-ID": "review-1"
+      },
+      "safety_identifier": "review-user"
+    },
     "request": {
       "input": {
         "receipt": true,
@@ -15,27 +22,19 @@
         "eligible": {
           "type": "predicate",
           "instructions": "Has a receipt?",
-          "criteria": {
-            "true": {
-              "receipt": true
-            }
-          }
+          "criteria": null
         },
         "route": {
           "type": "choice",
-          "instructions": null,
-          "criteria": [
-            {
-              "value": true
-            },
-            {
-              "value": "true"
-            }
-          ]
+          "instructions": "Choose a route.",
+          "criteria": {
+            "Approve": null,
+            "approve": null
+          }
         },
         "severity": {
           "type": "score",
-          "instructions": null,
+          "instructions": "Rate severity.",
           "criteria": [
             "low",
             {

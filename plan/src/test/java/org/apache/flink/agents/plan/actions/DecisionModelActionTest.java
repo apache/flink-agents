@@ -30,9 +30,13 @@ import org.apache.flink.agents.api.decision.DecisionResult;
 import org.apache.flink.agents.api.event.DecisionRequestEvent;
 import org.apache.flink.agents.api.event.DecisionResponseEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.plan.resource.python.PythonDecisionModelConnection;
 import org.apache.flink.agents.plan.resource.python.PythonDecisionModelSetup;
+import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.metrics.SimpleCounter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -41,6 +45,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
+import pemja.core.object.PyObject;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -65,7 +70,7 @@ class DecisionModelActionTest {
     @ValueSource(booleans = {false, true})
     void succeedsThroughConfiguredDurablePath(boolean async) throws Exception {
         Harness h = new Harness(async, 0);
-        when(h.model.decide(any()))
+        when(h.model.decide(any(), anyMap()))
                 .thenReturn(result("provider-model", new DecisionResult.TokenUsage(7L, 2L, 9L)));
 
         h.run();
@@ -79,7 +84,7 @@ class DecisionModelActionTest {
         assertThat(h.providerCounters.get("completionTokens").getCount()).isEqualTo(2);
         assertThat(h.providerCounters.get("totalTokens").getCount()).isEqualTo(9);
         assertThat(h.resourceCounters).isEmpty();
-        verify(h.model).decide(h.request.getRequest());
+        verify(h.model).decide(h.request.getRequest(), h.request.getRequestParams());
         ArgumentCaptor<String> executionId = ArgumentCaptor.forClass(String.class);
         verify(h.reporter)
                 .reportExecutionStarted(executionId.capture(), eq("llm"), eq(MODEL), eq(Map.of()));
@@ -88,15 +93,17 @@ class DecisionModelActionTest {
         verify(h.reporter, never())
                 .reportExecutionFailed(
                         anyString(), anyString(), anyString(), anyMap(), any(), any());
-        verify(h.ctx, times(async ? 0 : 1)).durableExecute(any());
-        verify(h.ctx, times(async ? 1 : 0)).durableExecuteAsync(any());
+        verify(h.ctx, times(async ? 0 : 1))
+                .durableExecute(argThat(call -> "decide".equals(call.getId())));
+        verify(h.ctx, times(async ? 1 : 0))
+                .durableExecuteAsync(argThat(call -> "decide".equals(call.getId())));
     }
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void retriesOrdinaryFailureThenEmitsOneSuccess(boolean async) throws Exception {
         Harness h = new Harness(async, 2);
-        when(h.model.decide(any()))
+        when(h.model.decide(any(), anyMap()))
                 .thenThrow(new IllegalStateException("temporarily unavailable"))
                 .thenReturn(result(null, null));
 
@@ -106,7 +113,7 @@ class DecisionModelActionTest {
         assertThat(h.response().getRetryCount()).isEqualTo(1);
         assertThat(h.resourceCounters.get("retryCount").getCount()).isEqualTo(1);
         assertThat(h.resourceCounters.get("retryWaitSec").getCount()).isZero();
-        verify(h.model, times(2)).decide(any());
+        verify(h.model, times(2)).decide(h.request.getRequest(), h.request.getRequestParams());
         ArgumentCaptor<String> executionIds = ArgumentCaptor.forClass(String.class);
         verify(h.reporter, times(2))
                 .reportExecutionStarted(executionIds.capture(), eq("llm"), eq(MODEL), eq(Map.of()));
@@ -126,9 +133,26 @@ class DecisionModelActionTest {
     }
 
     @Test
+    void requestParametersAreSpecificToEachCall() throws Exception {
+        Harness h = new Harness(false, 0);
+        when(h.model.decide(any(), anyMap())).thenReturn(result(null, null));
+        DecisionRequestEvent second =
+                new DecisionRequestEvent(
+                        MODEL, h.request.getRequest(), Map.of("safety_identifier", "other-user"));
+
+        h.run();
+        DecisionModelAction.processDecisionRequest(second, h.ctx);
+
+        verify(h.model).decide(h.request.getRequest(), h.request.getRequestParams());
+        verify(h.model).decide(second.getRequest(), second.getRequestParams());
+        assertThat(h.events).hasSize(2);
+    }
+
+    @Test
     void exhaustedRetriesEmitOneCorrelatedFailure() throws Exception {
         Harness h = new Harness(false, 2);
-        when(h.model.decide(any())).thenThrow(new IllegalArgumentException("bad response"));
+        when(h.model.decide(any(), anyMap()))
+                .thenThrow(new IllegalArgumentException("bad response"));
 
         h.run();
 
@@ -138,7 +162,7 @@ class DecisionModelActionTest {
                 .isEqualTo("java.lang.IllegalArgumentException: bad response");
         assertThat(h.response().getRetryCount()).isEqualTo(2);
         assertThat(h.resourceCounters.get("retryCount").getCount()).isEqualTo(2);
-        verify(h.model, times(3)).decide(any());
+        verify(h.model, times(3)).decide(any(), anyMap());
         verify(h.reporter, times(3))
                 .reportExecutionFailed(
                         anyString(),
@@ -154,20 +178,20 @@ class DecisionModelActionTest {
     @Test
     void nullProviderResultIsPersistedAsFailure() throws Exception {
         Harness h = new Harness(false, 0);
-        when(h.model.decide(any())).thenReturn(null);
+        when(h.model.decide(any(), anyMap())).thenReturn(null);
 
         h.run();
 
         assertThat(h.response().isFailed()).isTrue();
         assertThat(h.response().getError()).contains("DecisionModel returned a null response.");
         assertThat(h.stored).hasSize(1);
-        verify(h.model).decide(any());
+        verify(h.model).decide(any(), anyMap());
     }
 
     @Test
     void refusalIsSuccessfulAndDoesNotConsumeRetryBudget() throws Exception {
         Harness h = new Harness(false, 3);
-        when(h.model.decide(any()))
+        when(h.model.decide(any(), anyMap()))
                 .thenReturn(
                         new DecisionResult(
                                 Map.of(
@@ -183,7 +207,7 @@ class DecisionModelActionTest {
         assertThat(h.response().getResponse().getAnswers().get("damaged"))
                 .isInstanceOf(DecisionResult.RefusalAnswer.class);
         assertThat(h.response().getRetryCount()).isZero();
-        verify(h.model).decide(any());
+        verify(h.model).decide(any(), anyMap());
     }
 
     @Test
@@ -204,7 +228,7 @@ class DecisionModelActionTest {
     void replayUsesSerializedFailureAndSuccessWithoutCallingProviderAgain(boolean async)
             throws Exception {
         Harness h = new Harness(async, 1);
-        when(h.model.decide(any()))
+        when(h.model.decide(any(), anyMap()))
                 .thenThrow(new IllegalStateException("unavailable"))
                 .thenReturn(
                         result("provider-model", new DecisionResult.TokenUsage(7L, null, null)));
@@ -219,7 +243,7 @@ class DecisionModelActionTest {
         assertThat(h.response().isSuccess()).isTrue();
         assertThat(h.response().getRetryCount()).isEqualTo(1);
         assertThat(h.response().getResponse().getUsage().getInputTokens()).isEqualTo(7L);
-        verify(h.model, times(2)).decide(any());
+        verify(h.model, times(2)).decide(any(), anyMap());
     }
 
     @ParameterizedTest
@@ -228,7 +252,7 @@ class DecisionModelActionTest {
             boolean async, boolean afterCall) throws Exception {
         Harness h = new Harness(async, 3);
         IllegalStateException failure = new IllegalStateException("state persistence failed");
-        when(h.model.decide(any())).thenReturn(result(null, null));
+        when(h.model.decide(any(), anyMap())).thenReturn(result(null, null));
         if (async) {
             doAnswer(
                             invocation ->
@@ -260,7 +284,7 @@ class DecisionModelActionTest {
         assertThat(h.events).isEmpty();
         verify(h.ctx, times(async ? 0 : 1)).durableExecute(any());
         verify(h.ctx, times(async ? 1 : 0)).durableExecuteAsync(any());
-        verify(h.model, times(afterCall ? 1 : 0)).decide(any());
+        verify(h.model, times(afterCall ? 1 : 0)).decide(any(), anyMap());
         verify(h.reporter, never())
                 .reportExecutionFailed(
                         anyString(), anyString(), anyString(), anyMap(), any(), any());
@@ -278,7 +302,8 @@ class DecisionModelActionTest {
                 cancelled
                         ? new CancellationException("cancelled")
                         : new IllegalStateException("persistence failed");
-        when(h.model.decide(any())).thenThrow(new IllegalStateException("provider unavailable"));
+        when(h.model.decide(any(), anyMap()))
+                .thenThrow(new IllegalStateException("provider unavailable"));
         doAnswer(
                         invocation -> {
                             if (h.slot == 1) {
@@ -303,7 +328,7 @@ class DecisionModelActionTest {
         assertThatThrownBy(h::run).isSameAs(failure);
 
         assertThat(h.events).isEmpty();
-        verify(h.model).decide(any());
+        verify(h.model).decide(any(), anyMap());
         verify(h.ctx, times(async ? 0 : 2)).durableExecute(any());
         verify(h.ctx, times(async ? 2 : 0)).durableExecuteAsync(any());
         assertThat(h.resourceCounters).containsOnlyKeys("retryCount", "retryWaitSec");
@@ -326,7 +351,8 @@ class DecisionModelActionTest {
     void interruptedBackoffPreservesAccumulatedRetryMetrics(int failedAttempt) throws Exception {
         Harness h = new Harness(false, 3);
         when(h.ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)).thenReturn(1);
-        when(h.model.decide(any())).thenThrow(new IllegalStateException("provider unavailable"));
+        when(h.model.decide(any(), anyMap()))
+                .thenThrow(new IllegalStateException("provider unavailable"));
         doAnswer(
                         invocation -> {
                             Object outcome = h.execute(invocation.getArgument(0));
@@ -342,7 +368,7 @@ class DecisionModelActionTest {
 
         assertThat(Thread.currentThread().isInterrupted()).isTrue();
         assertThat(h.events).isEmpty();
-        verify(h.model, times(failedAttempt)).decide(any());
+        verify(h.model, times(failedAttempt)).decide(any(), anyMap());
         assertThat(h.resourceCounters).containsOnlyKeys("retryCount", "retryWaitSec");
         assertThat(h.resourceCounters.get("retryCount").getCount()).isEqualTo(failedAttempt);
         assertThat(h.resourceCounters.get("retryWaitSec").getCount()).isEqualTo(failedAttempt - 1);
@@ -357,14 +383,14 @@ class DecisionModelActionTest {
                 interrupted
                         ? new RuntimeException(new InterruptedException("cancelled"))
                         : new CancellationException("cancelled");
-        when(h.model.decide(any())).thenThrow(failure);
+        when(h.model.decide(any(), anyMap())).thenThrow(failure);
 
         assertThatThrownBy(h::run).isSameAs(failure);
 
         assertThat(Thread.currentThread().isInterrupted()).isEqualTo(interrupted);
         assertThat(h.events).isEmpty();
         assertThat(h.stored).isEmpty();
-        verify(h.model).decide(any());
+        verify(h.model).decide(any(), anyMap());
         verify(h.reporter, never())
                 .reportExecutionFailed(
                         anyString(), anyString(), anyString(), anyMap(), any(), any());
@@ -375,9 +401,10 @@ class DecisionModelActionTest {
     void terminalDeliveryFailurePropagatesOnce(boolean providerFails) throws Exception {
         Harness h = new Harness(false, 0);
         if (providerFails) {
-            when(h.model.decide(any())).thenThrow(new IllegalStateException("provider failed"));
+            when(h.model.decide(any(), anyMap()))
+                    .thenThrow(new IllegalStateException("provider failed"));
         } else {
-            when(h.model.decide(any())).thenReturn(result(null, null));
+            when(h.model.decide(any(), anyMap())).thenReturn(result(null, null));
         }
         IllegalStateException failure = new IllegalStateException("delivery failed");
         doThrow(failure).when(h.ctx).sendEvent(any());
@@ -385,14 +412,14 @@ class DecisionModelActionTest {
         assertThatThrownBy(h::run).isSameAs(failure);
 
         verify(h.ctx).sendEvent(any());
-        verify(h.model).decide(any());
+        verify(h.model).decide(any(), anyMap());
     }
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void recordsEachReportedTokenCountIncludingZero(boolean reportedModel) throws Exception {
         Harness h = new Harness(false, 0);
-        when(h.model.decide(any()))
+        when(h.model.decide(any(), anyMap()))
                 .thenReturn(
                         result(
                                 reportedModel ? "provider-model" : null,
@@ -410,7 +437,7 @@ class DecisionModelActionTest {
     @Test
     void reportingFailureCannotChangeSuccessfulResult() throws Exception {
         Harness h = new Harness(false, 0);
-        when(h.model.decide(any())).thenReturn(result(null, null));
+        when(h.model.decide(any(), anyMap())).thenReturn(result(null, null));
         doThrow(new IllegalStateException("reporter failed"))
                 .when(h.reporter)
                 .reportExecutionStarted(anyString(), anyString(), anyString(), anyMap());
@@ -421,23 +448,47 @@ class DecisionModelActionTest {
         h.run();
 
         assertThat(h.response().isSuccess()).isTrue();
-        verify(h.model).decide(any());
+        verify(h.model).decide(any(), anyMap());
     }
 
-    @Test
-    void pythonResourceFallsBackToSynchronousExecutionWhenRequired() throws Exception {
+    @ParameterizedTest
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void pythonCallsUseAsyncOnlyWhenSupported(boolean javaSetup, boolean asyncSupported)
+            throws Exception {
         Harness h = new Harness(true, 0);
-        PythonDecisionModelSetup pythonModel = mock(PythonDecisionModelSetup.class);
-        when(h.ctx.getResource(MODEL, ResourceType.DECISION_MODEL)).thenReturn(pythonModel);
-        when(pythonModel.decide(any())).thenReturn(result(null, null));
+        PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
+        PyObject pythonResource = mock(PyObject.class);
+        ResourceDescriptor descriptor =
+                new ResourceDescriptor(
+                        "unused", Map.of("connection", "shared", "model", "provider-model"));
+        when(adapter.invoke(anyString(), same(pythonResource), anyString(), any(), any()))
+                .thenReturn(
+                        Map.of(
+                                "status",
+                                "SUCCESS",
+                                "result",
+                                h.mapper.writeValueAsString(result(null, null))));
+        BaseDecisionModelSetup model;
+        if (javaSetup) {
+            PythonDecisionModelConnection connection =
+                    new PythonDecisionModelConnection(adapter, pythonResource, descriptor, null);
+            model =
+                    new BaseDecisionModelSetup(
+                            descriptor,
+                            ResourceContext.fromGetResource((name, type) -> connection));
+        } else {
+            model = new PythonDecisionModelSetup(adapter, pythonResource, descriptor, null);
+        }
+        model.open();
+        when(h.ctx.getResource(MODEL, ResourceType.DECISION_MODEL)).thenReturn(model);
         try (MockedStatic<Utils> utils = mockStatic(Utils.class)) {
-            utils.when(Utils::supportAsync).thenReturn(false);
+            utils.when(Utils::supportAsync).thenReturn(asyncSupported);
             h.run();
         }
 
         assertThat(h.response().isSuccess()).isTrue();
-        verify(h.ctx).durableExecute(any());
-        verify(h.ctx, never()).durableExecuteAsync(any());
+        verify(h.ctx, times(asyncSupported ? 0 : 1)).durableExecute(any());
+        verify(h.ctx, times(asyncSupported ? 1 : 0)).durableExecuteAsync(any());
     }
 
     private static DecisionResult result(String model, DecisionResult.TokenUsage usage) {
@@ -463,7 +514,8 @@ class DecisionModelActionTest {
                                 "The delivery arrived damaged",
                                 Map.of(
                                         "damaged",
-                                        DecisionRequest.Question.predicate("Is it damaged?"))));
+                                        DecisionRequest.Question.predicate("Is it damaged?"))),
+                        Map.of("safety_identifier", "review-user", "timeout", 4.0));
 
         private Harness(boolean async, int retries) throws Exception {
             ReadableConfiguration config = mock(ReadableConfiguration.class);
@@ -472,6 +524,7 @@ class DecisionModelActionTest {
             when(config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)).thenReturn(0);
             when(ctx.getConfig()).thenReturn(config);
             when(ctx.getResource(MODEL, ResourceType.DECISION_MODEL)).thenReturn(model);
+            when(model.supportsAsyncExecution()).thenReturn(true);
             doAnswer(invocation -> events.add(invocation.getArgument(0)))
                     .when(ctx)
                     .sendEvent(any());

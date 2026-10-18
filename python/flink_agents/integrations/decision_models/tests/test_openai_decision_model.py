@@ -25,15 +25,13 @@ from pydantic import ValidationError
 
 from flink_agents.api.decision_models import (
     ChoiceAnswer,
-    ChoiceProbability,
     ChoiceQuestion,
     DecisionRequest,
-    DecisionResult,
     PredicateAnswer,
+    PredicateCriteria,
     PredicateQuestion,
     RefusalAnswer,
     ScoreAnswer,
-    ScoreProbability,
     ScoreQuestion,
 )
 from flink_agents.integrations.decision_models import openai_decision_model
@@ -113,17 +111,14 @@ def mixed_request():
             "damaged": PredicateQuestion(instructions="Is the item damaged?"),
             "route": ChoiceQuestion(
                 instructions="Choose the team.",
-                criteria=[
-                    {"value": "support", "description": "Product support"},
-                    {"value": "billing", "description": "Billing questions"},
-                ],
+                criteria={"support": "Product support", "billing": "Billing questions"},
             ),
             "severity": ScoreQuestion(
                 instructions="Rate the impact.",
                 criteria=[
-                    {"label": "Impact", "description": "Cosmetic only"},
+                    "Cosmetic only",
                     {"label": "Impact", "description": "Workaround available"},
-                    {"label": "Blocked"},
+                    ["Blocked", {"workaround": False}],
                 ],
             ),
         },
@@ -140,9 +135,9 @@ def mixed_response():
             "name": "severity",
             "score": 1.1,
             "probabilities": [
-                {"value": 2, "label": "Blocked", "probability": 0.2},
-                {"value": 0, "label": "Impact", "probability": 0.1},
-                {"value": 1, "label": "Impact", "probability": 0.7},
+                {"value": 2, "label": "2", "probability": 0.2},
+                {"value": 0, "label": "0", "probability": 0.1},
+                {"value": 1, "label": "1", "probability": 0.7},
             ],
             "confidence": 0.55,
         },
@@ -163,19 +158,32 @@ def mixed_response():
 
 def test_sdk_payload_and_named_answers(sdk_transport):
     response = mixed_response()
-    response["answers"][0]["probabilities"][0]["label"] = "  Reported label  "
-    connection, requests, _ = sdk_transport(response)
+    connection, requests, _ = sdk_transport(response, timeout=19.0)
     request = mixed_request()
     setup = OpenAIDecisionModelSetup(connection=connection, model="gpt-6-luna")
-    result = setup.decide(request)
+    result = setup.decide(
+        request,
+        request_params={
+            "safety_identifier": "user-123",
+            "extra_headers": {"x-request-id": "first"},
+            "extra_query": {"tenant": "42"},
+            "extra_body": {"custom": {"items": [None, True, 2, "退款"]}},
+            "timeout": 0.5,
+        },
+    )
 
     assert requests[0].method == "POST"
-    assert str(requests[0].url) == "https://decision.example/v1/decisions"
+    assert str(requests[0].url) == "https://decision.example/v1/decisions?tenant=42"
     assert requests[0].headers["authorization"] == "Bearer test-key"
+    assert requests[0].headers["x-request-id"] == "first"
+    assert requests[0].url.params["tenant"] == "42"
+    assert requests[0].extensions["timeout"]["read"] == 0.5
     body = json.loads(requests[0].content)
     assert body == {
         "model": "gpt-6-luna",
         "input": request.input,
+        "safety_identifier": "user-123",
+        "custom": {"items": [None, True, 2, "退款"]},
         "questions": [
             {
                 "name": "damaged",
@@ -196,9 +204,19 @@ def test_sdk_payload_and_named_answers(sdk_transport):
                 "type": "score",
                 "instructions": "Rate the impact.",
                 "levels": [
-                    {"label": "Impact", "description": "Cosmetic only"},
-                    {"label": "Impact", "description": "Workaround available"},
-                    {"label": "Blocked"},
+                    {"label": "0", "description": "Cosmetic only"},
+                    {
+                        "label": "1",
+                        "description": json.dumps(
+                            request.questions["severity"].criteria[1]
+                        ),
+                    },
+                    {
+                        "label": "2",
+                        "description": json.dumps(
+                            request.questions["severity"].criteria[2]
+                        ),
+                    },
                 ],
             },
         ],
@@ -207,22 +225,17 @@ def test_sdk_payload_and_named_answers(sdk_transport):
         "damaged": PredicateAnswer(probability_true=0.95),
         "route": ChoiceAnswer(
             choice="support",
-            probabilities=[
-                ChoiceProbability(value="billing", probability=0.4),
-                ChoiceProbability(value="support", probability=0.6),
-            ],
+            probabilities={"billing": 0.4, "support": 0.6},
             provider_confidence=0.2,
         ),
         "severity": ScoreAnswer(
             score=1.1,
-            probabilities=[
-                ScoreProbability(value=0, label="Impact", probability=0.1),
-                ScoreProbability(value=1, label="Impact", probability=0.7),
-                ScoreProbability(value=2, label="  Reported label  ", probability=0.2),
-            ],
+            probabilities={0: 0.1, 1: 0.7, 2: 0.2},
+            legend=dict(enumerate(request.questions["severity"].criteria)),
             provider_confidence=0.55,
         ),
     }
+    assert list(result.answers["route"].probabilities) == ["billing", "support"]
     assert result.model == "gpt-6-luna"
     assert result.usage.model_dump() == {
         "input_tokens": 42,
@@ -236,132 +249,97 @@ def test_sdk_payload_and_named_answers(sdk_transport):
         },
     }
 
+    setup.decide(request)
+    assert "x-request-id" not in requests[1].headers
+    assert "tenant" not in requests[1].url.params
+    assert requests[1].extensions["timeout"]["read"] == 19.0
+    assert {"safety_identifier", "custom"}.isdisjoint(json.loads(requests[1].content))
 
-def test_native_message_input_and_choice_options_are_preserved(sdk_transport):
+
+def test_json_input_is_encoded_and_undescribed_choices_are_preserved(sdk_transport):
     input_data = [{"role": "user", "content": "导出失败"}]
-    criteria = [
-        {"value": "support", "description": ""},
-        {"value": "billing"},
-    ]
+    criteria = {"support": "", "billing": None}
     response = mixed_response()
     response["answers"] = [response["answers"][1]]
     connection, requests, _ = sdk_transport(response)
-    connection.decide(
-        DecisionRequest(
-            input=input_data,
-            questions={
-                "route": ChoiceQuestion(
-                    instructions="Choose the team.", criteria=criteria
-                )
-            },
-        ),
-        model="gpt-6-luna",
-    )
-    body = json.loads(requests[0].content)
-    assert body["input"] == input_data
-    assert body["questions"][0]["choices"] == criteria
-
-
-def test_boolean_and_string_choices_keep_typed_identity_and_response_order(
-    sdk_transport,
-):
-    criteria = [{"value": True}, {"value": "true"}, {"value": False}]
-    response = {
-        "answers": [
-            {
-                "name": "match",
-                "type": "choice",
-                "choice": True,
-                "probabilities": [
-                    {"value": "true", "probability": 0.2},
-                    {"value": False, "probability": 0.1},
-                    {"value": True, "probability": 0.7},
-                ],
-            }
-        ]
-    }
-    connection, requests, _ = sdk_transport(response)
-    result = connection.decide(
-        DecisionRequest(
-            input="Evidence",
-            questions={
-                "match": ChoiceQuestion(
-                    instructions="Choose a match.", criteria=criteria
-                )
-            },
-        ),
-        model="gpt-6-luna",
-    )
-    assert json.loads(requests[0].content)["questions"][0]["choices"] == criteria
-    expected = ChoiceAnswer(
-        choice=True,
-        probabilities=[
-            ChoiceProbability(value="true", probability=0.2),
-            ChoiceProbability(value=False, probability=0.1),
-            ChoiceProbability(value=True, probability=0.7),
-        ],
-    )
-    assert result.answers["match"] == expected
-    restored = DecisionResult.model_validate_json(result.model_dump_json())
-    assert restored == result
-    assert restored.answers["match"].choice is True
-    assert [type(item.value) for item in restored.answers["match"].probabilities] == [
-        str,
-        bool,
-        bool,
-    ]
-
-
-@pytest.mark.parametrize("duplicate", [True, "true"])
-def test_duplicate_choice_values_are_rejected(sdk_transport, duplicate):
-    response = {
-        "answers": [
-            {
-                "name": "match",
-                "type": "choice",
-                "choice": duplicate,
-                "probabilities": [
-                    {"value": duplicate, "probability": 0.5},
-                    {"value": duplicate, "probability": 0.5},
-                ],
-            }
-        ]
-    }
-    connection, _, _ = sdk_transport(response)
     request = DecisionRequest(
-        input="Evidence",
+        input=input_data,
         questions={
-            "match": ChoiceQuestion(
-                instructions="Choose a match.",
-                criteria=[{"value": True}, {"value": "true"}],
-            )
+            "route": ChoiceQuestion(instructions="Choose the team.", criteria=criteria)
         },
     )
-    with pytest.raises(ValueError):
-        connection.decide(request, model="gpt-6-luna")
+    before = request.model_dump()
+    connection.decide(request, model="gpt-6-luna")
+    body = json.loads(requests[0].content)
+    assert json.loads(body["input"]) == input_data
+    assert "导出失败" in body["input"]
+    assert body["questions"][0]["choices"] == [
+        {"value": "support", "description": ""},
+        {"value": "billing"},
+    ]
+    assert request.model_dump() == before
 
 
-def test_text_preserved_and_missing_usage_unknown(sdk_transport):
-    response = {
-        "answers": predicate_response()["answers"],
-    }
-    connection, requests, _ = sdk_transport(response)
-    request = predicate_request()
-    result = connection.decide(request, model="requested-model")
-    assert json.loads(requests[0].content)["input"] == request.input
-    assert result.model is None
-    assert result.usage is None
-    assert result.metadata == {}
+@pytest.mark.parametrize("field", ["model", "usage"])
+@pytest.mark.parametrize("missing", [True, False], ids=["missing", "null"])
+def test_required_response_fields_rejected_by_sdk(sdk_transport, field, missing):
+    response = predicate_response()
+    if missing:
+        del response[field]
+    else:
+        response[field] = None
+    connection, _, _ = sdk_transport(response)
+    with pytest.raises(ValidationError, match=field):
+        connection.decide(predicate_request(), model="gpt-6-luna")
 
 
-def test_partial_usage_does_not_infer_missing_counts(sdk_transport):
+@pytest.mark.parametrize("answer_index", [0, 1], ids=["score", "choice"])
+@pytest.mark.parametrize("missing", [True, False], ids=["missing", "null"])
+def test_required_confidence_rejected_by_sdk(sdk_transport, answer_index, missing):
+    response = mixed_response()
+    answer = response["answers"][answer_index]
+    if missing:
+        del answer["confidence"]
+    else:
+        answer["confidence"] = None
+    connection, _, _ = sdk_transport(response)
+    with pytest.raises(ValidationError, match="confidence"):
+        connection.decide(mixed_request(), model="gpt-6-luna")
+
+
+@pytest.mark.parametrize(
+    ("field", "details"),
+    [
+        ("input_tokens_details", {}),
+        ("input_tokens_details", None),
+        ("input_tokens_details", {"cached_tokens": "0", "cache_write_tokens": 0}),
+        ("output_tokens_details", {}),
+        ("output_tokens_details", {"reasoning_tokens": True}),
+    ],
+)
+def test_malformed_usage_details_rejected_by_sdk(sdk_transport, field, details):
+    response = predicate_response()
+    response["usage"][field] = details
+    connection, _, _ = sdk_transport(response)
+    with pytest.raises(ValidationError, match=field):
+        connection.decide(predicate_request(), model="gpt-6-luna")
+
+
+def test_partial_usage_rejected_by_sdk(sdk_transport):
     response = predicate_response()
     response["usage"] = {"input_tokens": 7}
     connection, _, _ = sdk_transport(response)
-    result = connection.decide(predicate_request(), model="gpt-6-luna")
-    assert result.usage.input_tokens == 7
-    assert result.usage.output_tokens is None
-    assert result.usage.total_tokens is None
+    with pytest.raises(ValidationError, match="output_tokens"):
+        connection.decide(predicate_request(), model="gpt-6-luna")
+
+
+@pytest.mark.parametrize("index", ["0", False, 0.0], ids=["string", "bool", "float"])
+def test_score_indices_are_not_coerced_by_sdk(sdk_transport, index):
+    response = mixed_response()
+    response["answers"][0]["probabilities"][1]["value"] = index
+    connection, _, _ = sdk_transport(response)
+    with pytest.raises(ValidationError, match="value"):
+        connection.decide(mixed_request(), model="gpt-6-luna")
 
 
 def test_refusal_keeps_other_answers_and_no_invented_reason(sdk_transport):
@@ -374,76 +352,130 @@ def test_refusal_keeps_other_answers_and_no_invented_reason(sdk_transport):
 
 
 @pytest.mark.parametrize(
+    ("answer", "field", "error_type"),
+    [
+        ({"type": "unsupported", "name": "damaged"}, "type", "literal_error"),
+        ({"type": "predicate", "name": "damaged"}, "probability", "missing"),
+        (
+            {"type": "predicate", "name": "damaged", "probability": "0.5"},
+            "probability",
+            "float_type",
+        ),
+        (
+            {"type": "predicate", "name": "damaged", "probability": True},
+            "probability",
+            "float_type",
+        ),
+    ],
+)
+def test_malformed_answer_fields_are_rejected_by_sdk(
+    sdk_transport, answer, field, error_type
+):
+    response = predicate_response()
+    response["answers"] = [answer]
+    connection, _, _ = sdk_transport(response)
+    with pytest.raises(ValidationError) as error:
+        connection.decide(predicate_request(), model="gpt-6-luna")
+    assert error.value.title == "Decision"
+    assert any(
+        item["loc"][:2] == ("answers", 0)
+        and item["loc"][-1] == field
+        and item["type"] == error_type
+        for item in error.value.errors()
+    )
+
+
+@pytest.mark.parametrize(
     "answers",
     [
-        [],
         [{"type": "predicate", "probability": 0.5}],
         [{"type": "predicate", "name": "unknown", "probability": 0.5}],
         [{"type": "predicate", "name": "damaged", "probability": 0.5}] * 2,
         [{"type": "refusal", "name": None}],
-        [{"type": "choice", "name": "damaged"}],
-        [{"type": "unsupported", "name": "damaged"}],
-        [{"type": "predicate", "name": "damaged"}],
-        [{"type": "predicate", "name": "damaged", "probability": 1.5}],
-        [{"type": "predicate", "name": "damaged", "probability": "0.5"}],
-        [{"type": "predicate", "name": "damaged", "probability": True}],
     ],
 )
-def test_malformed_answers_rejected(sdk_transport, answers):
-    connection, _, _ = sdk_transport({"answers": answers})
-    with pytest.raises(ValueError):
+def test_answer_names_must_map_unambiguously_to_questions(sdk_transport, answers):
+    response = predicate_response()
+    response["answers"] = answers
+    connection, _, _ = sdk_transport(response)
+    with pytest.raises(
+        ValueError, match="missing, unknown, or duplicate names"
+    ) as error:
         connection.decide(predicate_request(), model="gpt-6-luna")
+    assert type(error.value) is ValueError
 
 
 @pytest.mark.parametrize(
-    ("answer_index", "values", "requested_choices"),
+    ("mutation", "model_name", "field"),
     [
-        (0, [0, 0, 2], None),
-        (0, [0, 1, 3], None),
-        (0, [0, 1], None),
-        (0, [0, 1, "2"], None),
-        (0, [False, 1, 2], None),
-        (1, ["support", "support"], None),
-        (1, ["support", "unknown"], None),
-        (1, ["support"], None),
-        (1, ["support", True], None),
-        pytest.param(1, [True, "support"], [1, "support"], id="true-is-not-one"),
-        pytest.param(1, [False, "support"], [0, "support"], id="false-is-not-zero"),
+        ("empty_answers", "DecisionResult", "answers"),
+        ("predicate_probability", "PredicateAnswer", "probability_true"),
+        ("choice_value", "ChoiceAnswer", "choice"),
+        ("confidence", "ScoreAnswer", "provider_confidence"),
     ],
 )
-def test_distribution_identity_rejected(
-    sdk_transport, answer_index, values, requested_choices
+def test_sdk_answers_are_subject_to_common_value_constraints(
+    sdk_transport, mutation, model_name, field
 ):
-    request = mixed_request()
-    if requested_choices is not None:
-        request.questions["route"].criteria[:] = [
-            {"value": value} for value in requested_choices
-        ]
     response = mixed_response()
-    answer = response["answers"][answer_index]
-    answer["probabilities"] = [
-        {"value": value, "label": "Impact", "probability": 0.5} for value in values
-    ]
-    connection, requests, _ = sdk_transport(response)
-    with pytest.raises(ValueError):
-        connection.decide(request, model="gpt-6-luna")
-    assert len(requests) == 1
-    if requested_choices is not None:
-        choices = json.loads(requests[0].content)["questions"][1]["choices"]
-        assert choices == request.questions["route"].criteria
-        assert type(choices[0]["value"]) is int
-
-
-@pytest.mark.parametrize("mutation", ["out_of_range", "missing_label"])
-def test_invalid_score_answer_is_rejected(sdk_transport, mutation):
-    response = mixed_response()
-    if mutation == "out_of_range":
-        response["answers"][0]["score"] = 2.1
+    if mutation == "empty_answers":
+        response["answers"] = []
+    elif mutation == "predicate_probability":
+        response["answers"][2]["probability"] = 1.5
+    elif mutation == "choice_value":
+        response["answers"][1]["choice"] = True
     else:
-        del response["answers"][0]["probabilities"][0]["label"]
+        response["answers"][0]["confidence"] = 1.5
     connection, _, _ = sdk_transport(response)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValidationError) as error:
         connection.decide(mixed_request(), model="gpt-6-luna")
+    assert error.value.title == model_name
+    assert error.value.errors()[0]["loc"] == (field,)
+
+
+def test_score_probability_label_is_required_by_sdk(sdk_transport):
+    response = mixed_response()
+    del response["answers"][0]["probabilities"][0]["label"]
+    connection, _, _ = sdk_transport(response)
+    with pytest.raises(ValidationError) as error:
+        connection.decide(mixed_request(), model="gpt-6-luna")
+    assert error.value.title == "Decision"
+    assert any(
+        item["loc"][:2] == ("answers", 0)
+        and item["loc"][-3:] == ("probabilities", 0, "label")
+        and item["type"] == "missing"
+        for item in error.value.errors()
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    [
+        ("duplicate_index", "invalid score level index"),
+        ("wrong_label", "unexpected score level label"),
+    ],
+)
+def test_score_mapping_rejects_ambiguous_levels(sdk_transport, mutation, match):
+    response = mixed_response()
+    if mutation == "wrong_label":
+        response["answers"][0]["probabilities"][0]["label"] = "Unrequested label"
+    else:
+        response["answers"][0]["probabilities"][1]["value"] = 2
+    connection, _, _ = sdk_transport(response)
+    with pytest.raises(ValueError, match=match) as error:
+        connection.decide(mixed_request(), model="gpt-6-luna")
+    assert type(error.value) is ValueError
+
+
+def test_choice_mapping_rejects_duplicate_values_before_building_map(sdk_transport):
+    response = mixed_response()
+    response["answers"][1]["probabilities"].append(
+        {"value": "billing", "probability": 0.4}
+    )
+    connection, _, _ = sdk_transport(response)
+    with pytest.raises(ValueError, match="duplicate choices") as error:
+        connection.decide(mixed_request(), model="gpt-6-luna")
+    assert type(error.value) is ValueError
 
 
 @pytest.mark.parametrize("status", [400, 401, 429, 500])
@@ -507,12 +539,13 @@ def test_environment_key_and_zero_timeout(sdk_transport, monkeypatch):
     assert clients[0].timeout is None
 
 
-def test_model_name_is_required(sdk_transport):
-    connection, _, _ = sdk_transport(predicate_response())
-    with pytest.raises(ValidationError, match="model"):
-        OpenAIDecisionModelSetup(connection=connection)
-    with pytest.raises(ValueError, match="model"):
-        connection.decide(predicate_request(), model=" ")
+@pytest.mark.parametrize("model", ["", " ", None])
+def test_blank_model_is_rejected_before_sdk_or_network(sdk_transport, model):
+    connection, requests, clients = sdk_transport(predicate_response())
+    with pytest.raises(ValueError, match="model name"):
+        connection.decide(predicate_request(), model=model)
+    assert not requests
+    assert not clients
 
 
 def test_open_reuses_client_without_request(sdk_transport):
@@ -530,154 +563,349 @@ def test_open_reuses_client_without_request(sdk_transport):
             "question": "Evaluate the evidence",
             "policy": {"enabled": True, "locale": "中文"},
         },
-        ["Evaluate the evidence", {"policy": ["first", "second"], "fallback": None}],
+        ["Evaluate the evidence", {"fallback": None}],
+        3,
+        False,
     ],
 )
-def test_structured_instructions_are_passed_to_sdk_without_encoding(
+def test_json_instructions_are_encoded_for_every_question_without_mutation(
     sdk_transport, instructions
 ):
-    request = mixed_request()
+    original = mixed_request()
     request = DecisionRequest(
-        input=request.input,
+        input=original.input,
         questions={
             name: type(question)(
                 **{**question.model_dump(), "instructions": instructions}
             )
-            for name, question in request.questions.items()
+            for name, question in original.questions.items()
         },
     )
-    connection, requests, _ = sdk_transport(
-        {"error": {"message": "Invalid instructions"}}, status=400
-    )
-    with pytest.raises(APIStatusError):
-        connection.decide(request, model="gpt-6-luna")
+    before = request.model_dump()
+    connection, requests, _ = sdk_transport(mixed_response())
+    connection.decide(request, model="gpt-6-luna")
     wire = json.loads(requests[0].content)
-    assert {question["type"] for question in wire["questions"]} == {
-        "predicate",
-        "choice",
-        "score",
-    }
     for question in wire["questions"]:
-        assert question["instructions"] == instructions
+        assert json.loads(question["instructions"]) == instructions
+    assert request.model_dump() == before
 
 
-@pytest.mark.parametrize(
-    "criteria",
-    [
-        {
-            "true": {"condition": "A broken screen"},
-            "false": ["Intact item", "Damaged packaging only"],
-        },
-        {"true": None, "false": "The item is intact"},
-    ],
-)
-def test_predicate_criteria_are_ignored(sdk_transport, criteria):
-    instructions = "Is the item damaged?"
-    request = DecisionRequest(
-        input="Package evidence",
-        questions={
-            "damaged": PredicateQuestion(instructions=instructions, criteria=criteria)
-        },
-    )
-    connection, requests, _ = sdk_transport(predicate_response())
-    result = connection.decide(request, model="gpt-6-luna")
-    question = json.loads(requests[0].content)["questions"][0]
-    assert question == {
-        "name": "damaged",
-        "type": "predicate",
-        "instructions": instructions,
-    }
-    assert result.answers["damaged"] == PredicateAnswer(probability_true=0.95)
-
-
-@pytest.mark.parametrize(
-    "criterion",
-    [
-        "Blocked",
-        ["High severity", {"workaround": False}],
-        {"label": "Blocked", "description": {"workaround": False}},
-    ],
-)
-def test_score_format_errors_are_left_to_sdk_and_service(sdk_transport, criterion):
-    connection, requests, _ = sdk_transport(
-        {"error": {"message": "Invalid levels"}}, status=400
-    )
-    request = DecisionRequest(
-        input="Issue description",
-        questions={
-            "severity": ScoreQuestion(
-                instructions="Rate the impact.",
-                criteria=[{"label": "Minor"}, criterion],
-            )
-        },
-    )
-    with pytest.raises(APIStatusError):
-        connection.decide(request, model="gpt-6-luna")
-    assert (
-        json.loads(requests[0].content)["questions"][0]["levels"]
-        == request.questions["severity"].criteria
-    )
-
-
-@pytest.mark.parametrize(
-    "description",
-    [
-        {"policy": "退款", "days": 30, "notes": None},
-        ["退款", {"days": 30}],
-        None,
-    ],
-)
-def test_unsupported_choice_descriptions_reach_the_service_unchanged(
-    sdk_transport, description
-):
-    connection, requests, _ = sdk_transport(
-        {"error": {"message": "Invalid choices"}}, status=400
-    )
-    request = mixed_request()
-    request.questions["route"].criteria[0]["description"] = description
-    request.questions["route"].criteria[0]["extension"] = {"keep": True}
-    del request.questions["route"].criteria[1]["description"]
-    with pytest.raises(APIStatusError):
-        connection.decide(request, model="gpt-6-luna")
-    assert (
-        json.loads(requests[0].content)["questions"][1]["choices"]
-        == request.questions["route"].criteria
-    )
-
-
-@pytest.mark.parametrize("input_data", [{"ticket": "Evidence"}, ["Evidence", None]])
-def test_provider_request_formats_are_not_rewritten_or_validated(
-    sdk_transport, input_data
-):
-    connection, requests, _ = sdk_transport(
-        {"error": {"message": "Invalid request"}}, status=400
-    )
-    request = DecisionRequest(
-        input=input_data,
-        questions={
-            "route": ChoiceQuestion(
-                instructions="Choose a route.",
-                criteria={"a": None, "b": {"rule": "Evidence"}},
-            )
-        },
-    )
-    with pytest.raises(APIStatusError):
-        connection.decide(request, model="gpt-6-luna")
-    body = json.loads(requests[0].content)
-    assert body["input"] == input_data
-    assert body["questions"][0]["choices"] == request.questions["route"].criteria
-
-
-def test_json_looking_string_instructions_are_preserved_verbatim(sdk_transport):
-    instructions = '  {"question": "Is the item damaged?"}\n'
+@pytest.mark.parametrize("criteria", [None, PredicateCriteria()])
+def test_absent_predicate_criteria_are_not_sent(sdk_transport, criteria):
     connection, requests, _ = sdk_transport(predicate_response())
     connection.decide(
         DecisionRequest(
             input="Evidence",
-            questions={"damaged": PredicateQuestion(instructions=instructions)},
+            questions={
+                "damaged": PredicateQuestion(
+                    instructions="Is it damaged?", criteria=criteria
+                )
+            },
         ),
         model="gpt-6-luna",
     )
-    assert (
-        json.loads(requests[0].content)["questions"][0]["instructions"] == instructions
+    assert json.loads(requests[0].content)["questions"] == [
+        {"name": "damaged", "type": "predicate", "instructions": "Is it damaged?"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        PredicateQuestion(criteria=PredicateCriteria(true="Damaged")),
+        ChoiceQuestion(criteria={"a": None, "b": None}),
+        ScoreQuestion(criteria=["Low", "High"]),
+    ],
+)
+def test_missing_instructions_fail_before_sdk_or_network(sdk_transport, question):
+    connection, requests, clients = sdk_transport(predicate_response())
+    with pytest.raises(ValueError, match="instructions"):
+        connection.decide(
+            DecisionRequest(input="Evidence", questions={"classification": question}),
+            model="gpt-6-luna",
+        )
+    assert not requests
+    assert not clients
+
+
+@pytest.mark.parametrize("criterion", ["Damaged", "", {}, [], False])
+def test_effective_predicate_criteria_fail_before_network(sdk_transport, criterion):
+    connection, requests, clients = sdk_transport(predicate_response())
+    request = DecisionRequest(
+        input="Evidence",
+        questions={
+            "damaged": PredicateQuestion(
+                instructions="Is it damaged?",
+                criteria=PredicateCriteria(false=criterion),
+            )
+        },
     )
+    with pytest.raises(ValueError, match="criteria"):
+        connection.decide(request, model="gpt-6-luna")
+    assert not requests
+    assert not clients
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        ChoiceQuestion(instructions="Choose.", criteria={"only": None}),
+        ChoiceQuestion(
+            instructions="Choose.",
+            criteria={str(i): None for i in range(256)},
+        ),
+        ScoreQuestion(instructions="Rate.", criteria=["Only"]),
+        ScoreQuestion(instructions="Rate.", criteria=[str(i) for i in range(11)]),
+    ],
+)
+def test_unsupported_criterion_counts_fail_before_network(sdk_transport, question):
+    connection, requests, clients = sdk_transport(predicate_response())
+    with pytest.raises(ValueError, match="classification.*(choices|score levels)"):
+        connection.decide(
+            DecisionRequest(input="Evidence", questions={"classification": question}),
+            model="gpt-6-luna",
+        )
+    assert not requests
+    assert not clients
+
+
+@pytest.mark.parametrize(("choice_count", "level_count"), [(2, 2), (255, 10)])
+def test_supported_criterion_count_boundaries_preserve_every_option(
+    sdk_transport, choice_count, level_count
+):
+    choices = {f"team-{index}": f"Team {index}" for index in range(choice_count)}
+    levels = [f"Level {index}" for index in range(level_count)]
+    selected = f"team-{choice_count - 1}"
+    choice_probabilities = {value: float(value == selected) for value in choices}
+    score_probabilities = {
+        index: float(index == level_count - 1) for index in range(level_count)
+    }
+    request = DecisionRequest(
+        input="Evidence",
+        questions={
+            "route": ChoiceQuestion(instructions="Choose.", criteria=choices),
+            "severity": ScoreQuestion(instructions="Rate.", criteria=levels),
+        },
+    )
+    response = predicate_response()
+    response["answers"] = [
+        {
+            "name": "route",
+            "type": "choice",
+            "choice": selected,
+            "confidence": 1.0,
+            "probabilities": [
+                {"value": value, "probability": probability}
+                for value, probability in choice_probabilities.items()
+            ],
+        },
+        {
+            "name": "severity",
+            "type": "score",
+            "score": float(level_count - 1),
+            "confidence": 1.0,
+            "probabilities": [
+                {"value": index, "label": str(index), "probability": probability}
+                for index, probability in score_probabilities.items()
+            ],
+        },
+    ]
+    connection, requests, _ = sdk_transport(response)
+    result = connection.decide(request, model="gpt-6-luna")
+
+    assert len(requests) == 1
+    assert json.loads(requests[0].content)["questions"] == [
+        {
+            "name": "route",
+            "type": "choice",
+            "instructions": "Choose.",
+            "choices": [
+                {"value": value, "description": description}
+                for value, description in choices.items()
+            ],
+        },
+        {
+            "name": "severity",
+            "type": "score",
+            "instructions": "Rate.",
+            "levels": [
+                {"label": str(index), "description": description}
+                for index, description in enumerate(levels)
+            ],
+        },
+    ]
+    assert result.answers == {
+        "route": ChoiceAnswer(
+            choice=selected,
+            probabilities=choice_probabilities,
+            provider_confidence=1.0,
+        ),
+        "severity": ScoreAnswer(
+            score=float(level_count - 1),
+            probabilities=score_probabilities,
+            legend=dict(enumerate(levels)),
+            provider_confidence=1.0,
+        ),
+    }
+
+
+@pytest.mark.parametrize("count", [200, 201])
+def test_question_count_limit_is_checked_before_network(sdk_transport, count):
+    request = DecisionRequest(
+        input="Evidence",
+        questions={
+            str(index): PredicateQuestion(instructions="Is it damaged?")
+            for index in range(count)
+        },
+    )
+    response = predicate_response()
+    response["answers"] = [
+        {"name": name, "type": "predicate", "probability": 0.95}
+        for name in request.questions
+    ]
+    connection, requests, clients = sdk_transport(response)
+    if count == 201:
+        with pytest.raises(ValueError, match="at most 200 questions"):
+            connection.decide(request, model="gpt-6-luna")
+        assert not requests
+        assert not clients
+    else:
+        result = connection.decide(request, model="gpt-6-luna")
+        assert result.answers.keys() == request.questions.keys()
+        assert len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    "description", [{"policy": "退款", "days": 30}, ["退款", None], 3, False]
+)
+def test_choice_descriptions_are_json_encoded(sdk_transport, description):
+    request = mixed_request()
+    request.questions["route"].criteria["support"] = description
+    before = request.model_dump()
+    connection, requests, _ = sdk_transport(mixed_response())
+    connection.decide(request, model="gpt-6-luna")
+    choices = json.loads(requests[0].content)["questions"][1]["choices"]
+    assert json.loads(choices[0]["description"]) == description
+    assert request.model_dump() == before
+
+
+def test_score_uses_index_labels_and_returns_an_independent_original_legend(
+    sdk_transport,
+):
+    criteria = [
+        None,
+        {"label": "Business data", "description": {"enabled": True}},
+        ["Blocked", {"workaround": False}],
+        3,
+        False,
+    ]
+    response = predicate_response()
+    response["answers"] = [
+        {
+            "name": "severity",
+            "type": "score",
+            "score": 2.0,
+            "probabilities": [
+                {"value": index, "label": str(index), "probability": probability}
+                for index, probability in [
+                    (4, 0.1),
+                    (0, 0.1),
+                    (3, 0.2),
+                    (1, 0.2),
+                    (2, 0.4),
+                ]
+            ],
+            "confidence": 0.4,
+        }
+    ]
+    request = DecisionRequest(
+        input="Evidence",
+        questions={
+            "severity": ScoreQuestion(
+                instructions="Rate the impact.", criteria=criteria
+            )
+        },
+    )
+    before = request.model_dump()
+    connection, requests, _ = sdk_transport(response)
+    answer = connection.decide(request, model="gpt-6-luna").answers["severity"]
+    wire_levels = json.loads(requests[0].content)["questions"][0]["levels"]
+    assert wire_levels[0] == {"label": "0"}
+    for index in range(1, len(criteria)):
+        assert wire_levels[index]["label"] == str(index)
+        assert json.loads(wire_levels[index]["description"]) == criteria[index]
+    assert answer.probabilities == {0: 0.1, 1: 0.2, 2: 0.4, 3: 0.2, 4: 0.1}
+    assert answer.legend == dict(enumerate(criteria))
+    assert request.model_dump() == before
+    restored = ScoreAnswer.model_validate_json(answer.model_dump_json())
+    assert restored == answer
+    answer.legend[1]["description"]["enabled"] = False
+    assert request.questions["severity"].criteria[1]["description"]["enabled"] is True
+    request.questions["severity"].criteria[2][1]["workaround"] = True
+    assert answer.legend[2][1]["workaround"] is False
+
+
+@pytest.mark.parametrize("value", [{"ticket": "证据"}, ["Evidence", None], 3, True])
+def test_input_json_is_encoded_as_text(sdk_transport, value):
+    connection, requests, _ = sdk_transport(predicate_response())
+    connection.decide(
+        DecisionRequest(input=value, questions=predicate_request().questions),
+        model="gpt-6-luna",
+    )
+    assert json.loads(json.loads(requests[0].content)["input"]) == value
+
+
+def test_null_input_fails_before_network(sdk_transport):
+    connection, requests, clients = sdk_transport(predicate_response())
+    with pytest.raises(ValueError, match="input"):
+        connection.decide(
+            DecisionRequest(input=None, questions=predicate_request().questions),
+            model="gpt-6-luna",
+        )
+    assert not requests
+    assert not clients
+
+
+def test_json_looking_string_content_is_preserved_verbatim(sdk_transport):
+    text = '  {"question": "Is the item damaged?"}\n'
+    request = mixed_request()
+    request = DecisionRequest(
+        input=text,
+        questions={
+            "route": ChoiceQuestion(
+                instructions=text,
+                criteria={"support": text, "billing": None},
+            ),
+        },
+    )
+    response = mixed_response()
+    response["answers"] = [response["answers"][1]]
+    connection, requests, _ = sdk_transport(response)
+    connection.decide(request, model="gpt-6-luna")
+    body = json.loads(requests[0].content)
+    assert body["input"] == text
+    assert body["questions"][0]["instructions"] == text
+    assert body["questions"][0]["choices"][0]["description"] == text
+
+
+def test_sdk_response_reaches_common_request_validation(sdk_transport):
+    response = mixed_response()
+    response["answers"][0]["score"] = 1.5
+    connection, _, _ = sdk_transport(response)
+    with pytest.raises(
+        ValueError, match="score is inconsistent with its probabilities"
+    ) as error:
+        connection.decide(mixed_request(), model="gpt-6-luna")
+    assert type(error.value) is ValueError
+
+
+def test_request_params_cannot_replace_framework_request_fields(sdk_transport):
+    connection, requests, clients = sdk_transport(predicate_response())
+    with pytest.raises(ValueError, match="model"):
+        connection.decide(
+            predicate_request(),
+            model="gpt-6-luna",
+            request_params={"extra_body": {"model": "replacement"}},
+        )
+    assert not requests
+    assert not clients

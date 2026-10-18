@@ -18,14 +18,44 @@
 """Resources for making typed decisions from application-supplied evidence."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from collections.abc import Mapping
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    JsonValue,
+    StrictStr,
+    TypeAdapter,
+    field_validator,
+)
 from typing_extensions import override
 
 from flink_agents.api.decision_models.decision_request import DecisionRequest
 from flink_agents.api.decision_models.decision_result import DecisionResult
 from flink_agents.api.resource import Resource, ResourceType
+
+_REQUEST_PARAMS = TypeAdapter(
+    dict[StrictStr, JsonValue], config=ConfigDict(allow_inf_nan=False)
+)
+
+
+def _validate_request_params(
+    request_params: Mapping[str, JsonValue] | None,
+) -> dict[str, JsonValue]:
+    """Copy finite JSON parameters at a public invocation or event boundary."""
+    return (
+        {}
+        if request_params is None
+        else _REQUEST_PARAMS.validate_python(request_params)
+    )
+
+
+def _validate_model_name(model: str) -> str:
+    """Require an explicit non-blank provider model."""
+    if not isinstance(model, str) or not model.strip():
+        msg = "A non-blank decision model name is required."
+        raise ValueError(msg)
+    return model
 
 
 class BaseDecisionModelConnection(Resource, ABC):
@@ -44,12 +74,21 @@ class BaseDecisionModelConnection(Resource, ABC):
         return ResourceType.DECISION_MODEL_CONNECTION
 
     @abstractmethod
-    def decide(self, request: DecisionRequest, *, model: str) -> DecisionResult:
+    def decide(
+        self,
+        request: DecisionRequest,
+        *,
+        model: str,
+        request_params: Mapping[str, JsonValue] | None = None,
+    ) -> DecisionResult:
         """Evaluate all questions with the selected model.
 
         Return one answer per question, preserving identifiers, distributions and
         explicit refusals. Provider request errors and malformed answers raise
-        exceptions. This call does not apply business thresholds or routing.
+        exceptions. request_params supplies provider-specific options for this
+        call, using string keys and finite JSON values. Unsupported parameters
+        raise errors; parameters cannot replace the model, input or questions.
+        This call does not apply business thresholds or routing.
         """
 
 
@@ -71,10 +110,7 @@ class BaseDecisionModelSetup(Resource):
     @field_validator("model")
     @classmethod
     def _validate_model(cls, value: str) -> str:
-        if not value.strip():
-            msg = "Model must not be blank."
-            raise ValueError(msg)
-        return value
+        return _validate_model_name(value)
 
     @field_validator("connection")
     @classmethod
@@ -92,11 +128,6 @@ class BaseDecisionModelSetup(Resource):
         """Return the model setup resource type."""
         return ResourceType.DECISION_MODEL
 
-    @property
-    def model_kwargs(self) -> Dict[str, Any]:
-        """Return the parameters supplied to the provider connection."""
-        return {"model": self.model}
-
     @override
     def open(self) -> None:
         if isinstance(self.connection, str):
@@ -111,13 +142,22 @@ class BaseDecisionModelSetup(Resource):
                 raise TypeError(msg)
             self.connection = connection
 
-    def decide(self, request: DecisionRequest) -> DecisionResult:
+    def decide(
+        self,
+        request: DecisionRequest,
+        *,
+        request_params: Mapping[str, JsonValue] | None = None,
+    ) -> DecisionResult:
         """Evaluate the supplied questions using this setup's model.
 
         Questions are supplied for every call, so one model setup can serve
         multiple business actions with different policies and evidence.
+        request_params supplies provider-specific options for this call only;
+        it does not change the shared connection or this setup's configuration.
         """
         if isinstance(self.connection, str):
             msg = "Open the setup to resolve its named decision connection before calling decide."
             raise TypeError(msg)
-        return self.connection.decide(request, **self.model_kwargs)
+        return self.connection.decide(
+            request, model=self.model, request_params=request_params
+        )

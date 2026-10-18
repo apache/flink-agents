@@ -22,12 +22,61 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.annotation.Internal;
 
-/** A configured decision model. Each call supplies its own evidence and questions. */
-public abstract class BaseDecisionModelSetup extends Resource {
-    protected BaseDecisionModelSetup(
-            ResourceDescriptor descriptor, ResourceContext resourceContext) {
-        super(descriptor, resourceContext);
+import javax.annotation.Nullable;
+
+import java.util.Map;
+import java.util.Objects;
+
+/**
+ * A decision model configured with a connection and a model name.
+ *
+ * <p>Named connections are resolved through the resource context in {@link #open()}. Directly
+ * supplied connections remain the caller's responsibility. Closing a setup does not close a shared
+ * connection. Each call supplies its own evidence, questions, and provider request parameters.
+ */
+public class BaseDecisionModelSetup extends Resource {
+    @Nullable private final String connectionName;
+    private final String model;
+    @Nullable private BaseDecisionModelConnection connection;
+
+    /**
+     * Configure a decision model using the descriptor's {@code connection} and {@code model}.
+     *
+     * @param descriptor configuration containing a connection resource name or connection instance
+     *     and a non-blank provider model name
+     * @param resourceContext resource lookup context, required for a named connection
+     */
+    public BaseDecisionModelSetup(
+            ResourceDescriptor descriptor, @Nullable ResourceContext resourceContext) {
+        super(Objects.requireNonNull(descriptor, "descriptor"), resourceContext);
+        Object configuredConnection = descriptor.getArgument("connection");
+        if (configuredConnection instanceof BaseDecisionModelConnection) {
+            this.connectionName = null;
+            this.connection = (BaseDecisionModelConnection) configuredConnection;
+        } else {
+            this.connectionName = requireNonBlankString(configuredConnection, "connection");
+        }
+        this.model = requireNonBlankString(descriptor.getArgument("model"), "model");
+    }
+
+    @Override
+    public void open() throws Exception {
+        if (connection == null) {
+            if (resourceContext == null) {
+                throw new IllegalStateException(
+                        "A named decision connection requires a ResourceContext.");
+            }
+            Resource resolved =
+                    resourceContext.getResource(
+                            connectionName, ResourceType.DECISION_MODEL_CONNECTION);
+            if (!(resolved instanceof BaseDecisionModelConnection)) {
+                throw new IllegalArgumentException(
+                        "The referenced resource must be a decision model connection.");
+            }
+            connection = (BaseDecisionModelConnection) resolved;
+        }
     }
 
     @Override
@@ -35,6 +84,41 @@ public abstract class BaseDecisionModelSetup extends Resource {
         return ResourceType.DECISION_MODEL;
     }
 
+    /** Whether calls through this setup may run on managed asynchronous workers. */
+    @Internal
+    public boolean supportsAsyncExecution() {
+        return requireConnection().supportsAsyncExecution();
+    }
+
     /** Evaluate named independent questions, preserving typed answers and provider errors. */
-    public abstract DecisionResult decide(DecisionRequest request);
+    public DecisionResult decide(DecisionRequest request) {
+        return decide(request, Map.of());
+    }
+
+    /**
+     * Evaluate questions with provider request parameters for this call only.
+     *
+     * @param request evidence and named questions
+     * @param requestParams provider SDK request parameters containing JSON-compatible values;
+     *     parameters cannot override the model, evidence, or questions
+     */
+    public DecisionResult decide(DecisionRequest request, Map<String, Object> requestParams) {
+        return requireConnection().decide(request, model, requestParams);
+    }
+
+    private BaseDecisionModelConnection requireConnection() {
+        if (connection == null) {
+            throw new IllegalStateException(
+                    "Open the setup to resolve its named decision connection before use.");
+        }
+        return connection;
+    }
+
+    private static String requireNonBlankString(Object value, String field) {
+        if (!(value instanceof String) || ((String) value).isBlank()) {
+            throw new IllegalArgumentException(
+                    "Decision model setup " + field + " must be a non-blank string.");
+        }
+        return (String) value;
+    }
 }

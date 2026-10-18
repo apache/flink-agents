@@ -17,8 +17,6 @@
 ################################################################################
 """Call a registered decision model through built-in events in a real Flink job."""
 
-from typing import TYPE_CHECKING, cast
-
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decision_models import (
     ChoiceQuestion,
@@ -26,20 +24,18 @@ from flink_agents.api.decision_models import (
     PredicateQuestion,
     ScoreQuestion,
 )
-from flink_agents.api.decorators import action
+from flink_agents.api.decorators import (
+    action,
+    decision_model_connection,
+    decision_model_setup,
+)
 from flink_agents.api.events.decision_event import (
     DecisionRequestEvent,
     DecisionResponseEvent,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
-from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
+from flink_agents.api.resource import ResourceDescriptor, ResourceName
 from flink_agents.api.runner_context import RunnerContext
-from flink_agents.integrations.decision_models.openai_decision_model import (
-    OpenAIDecisionModelSetup,
-)
-
-if TYPE_CHECKING:
-    from flink_agents.api.decision_models import BaseDecisionModelSetup
 
 
 class DecisionModelTestAgent(Agent):
@@ -49,7 +45,7 @@ class DecisionModelTestAgent(Agent):
         self, provider: str, model: str, api_key: str, base_url: str | None = None
     ) -> None:
         super().__init__()
-        connection_class, setup_class = {
+        self._connection_class, self._setup_class = {
             "typesafe": (
                 ResourceName.DecisionModel.TYPESAFE_CONNECTION,
                 ResourceName.DecisionModel.TYPESAFE_SETUP,
@@ -63,39 +59,30 @@ class DecisionModelTestAgent(Agent):
                 ResourceName.DecisionModel.OPENAI_SETUP,
             ),
         }[provider]
-        options = {"api_key": api_key}
+        self._model = model
+        self._connection_options = {"api_key": api_key}
         if base_url:
-            options["base_url"] = base_url
-        self.add_resource(
-            "connection",
-            ResourceType.DECISION_MODEL_CONNECTION,
-            ResourceDescriptor(clazz=connection_class, **options),
+            self._connection_options["base_url"] = base_url
+
+    @decision_model_connection
+    def connection(self) -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=self._connection_class, **self._connection_options
         )
-        self.add_resource(
-            "decision",
-            ResourceType.DECISION_MODEL,
-            ResourceDescriptor(clazz=setup_class, connection="connection", model=model),
+
+    @decision_model_setup
+    def decision(self) -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=self._setup_class, connection="connection", model=self._model
         )
 
     @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def decide(event: Event, ctx: RunnerContext) -> None:
-        model = cast(
-            "BaseDecisionModelSetup",
-            ctx.get_resource("decision", ResourceType.DECISION_MODEL),
-        )
         departments = {
             "billing": "The stated department is billing.",
             "technical": "The stated department is technical.",
         }
-        choices = (
-            [
-                {"value": value, "description": description}
-                for value, description in departments.items()
-            ]
-            if isinstance(model, OpenAIDecisionModelSetup)
-            else departments
-        )
         text = InputEvent.from_event(event).input
         request_event = DecisionRequestEvent(
             model="decision",
@@ -107,23 +94,14 @@ class DecisionModelTestAgent(Agent):
                     ),
                     "department": ChoiceQuestion(
                         instructions="Select the department explicitly stated in the input.",
-                        criteria=choices,
+                        criteria=departments,
                     ),
                     "impact": ScoreQuestion(
                         instructions="Rate the impact explicitly stated in the input.",
                         criteria=[
-                            {
-                                "label": "low",
-                                "description": "The stated impact is low.",
-                            },
-                            {
-                                "label": "medium",
-                                "description": "The stated impact is medium.",
-                            },
-                            {
-                                "label": "high",
-                                "description": "The stated impact is high.",
-                            },
+                            "The stated impact is low.",
+                            "The stated impact is medium.",
+                            "The stated impact is high.",
                         ],
                     ),
                 },

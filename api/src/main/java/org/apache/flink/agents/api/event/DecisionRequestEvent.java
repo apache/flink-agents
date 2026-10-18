@@ -23,8 +23,12 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.decision.DecisionJson;
 import org.apache.flink.agents.api.decision.DecisionRequest;
 
+import javax.annotation.Nullable;
+
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -38,13 +42,21 @@ public class DecisionRequestEvent extends Event {
     private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
             List.of(
                     BuiltInAttribute.required("model", String.class),
-                    BuiltInAttribute.requiredUntyped("request"));
+                    BuiltInAttribute.requiredUntyped("request"),
+                    BuiltInAttribute.optionalUntyped("request_params"));
 
     /** The model is the registered resource name, not a provider model identifier. */
     public DecisionRequestEvent(String model, DecisionRequest request) {
+        this(model, request, Map.of());
+    }
+
+    /** Requests a decision with provider-specific parameters for this call. */
+    public DecisionRequestEvent(
+            String model, DecisionRequest request, @Nullable Map<String, Object> requestParams) {
         super(EVENT_TYPE);
         setAttr("model", Objects.requireNonNull(model, "model"));
         setAttr("request", Objects.requireNonNull(request, "request"));
+        setAttr("request_params", normalizeRequestParams(requestParams));
     }
 
     @JsonCreator
@@ -55,6 +67,7 @@ public class DecisionRequestEvent extends Event {
     }
 
     private static Map<String, Object> normalizeAttributes(Map<String, Object> attributes) {
+        attributes = new HashMap<>(attributes);
         Object request = attributes.get("request");
         if (request instanceof Map) {
             request = MAPPER.convertValue(request, DecisionRequest.class);
@@ -64,7 +77,18 @@ public class DecisionRequestEvent extends Event {
             throw new IllegalArgumentException(
                     "request must be a DecisionRequest or its serialized map");
         }
+        attributes.put("request_params", normalizeRequestParams(attributes.get("request_params")));
         return attributes;
+    }
+
+    private static Map<String, Object> normalizeRequestParams(@Nullable Object requestParams) {
+        if (requestParams == null) {
+            return Map.of();
+        }
+        if (!(requestParams instanceof Map)) {
+            throw new IllegalArgumentException("request_params must be a JSON object");
+        }
+        return (Map<String, Object>) DecisionJson.copy(requestParams, "request_params");
     }
 
     /** Restores the typed request while preserving event identity, lineage and attachments. */
@@ -81,5 +105,10 @@ public class DecisionRequestEvent extends Event {
     @JsonIgnore
     public DecisionRequest getRequest() {
         return (DecisionRequest) getAttr("request");
+    }
+
+    @JsonIgnore
+    public Map<String, Object> getRequestParams() {
+        return (Map<String, Object>) getAttr("request_params");
     }
 }

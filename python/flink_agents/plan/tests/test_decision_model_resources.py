@@ -33,38 +33,39 @@ from flink_agents.plan.resource_provider import PythonResourceProvider
 
 
 class DecisionAgent(Agent):
+    def __init__(self, model: str) -> None:
+        super().__init__()
+        self._model = model
+
     @decision_model_connection
-    @staticmethod
-    def connection() -> ResourceDescriptor:
+    def connection(self) -> ResourceDescriptor:
         return ResourceDescriptor(
             clazz=ResourceName.DecisionModel.TYPESAFE_CONNECTION,
             api_key="test-key",
         )
 
     @decision_model_setup
-    @staticmethod
-    def decision() -> ResourceDescriptor:
+    def decision(self) -> ResourceDescriptor:
         return ResourceDescriptor(
             clazz=ResourceName.DecisionModel.TYPESAFE_SETUP,
             connection="connection",
-            model="test-model",
+            model=self._model,
         )
 
 
 @pytest.mark.parametrize("declaration", ["decorators", "programmatic"])
 def test_decision_resources_survive_plan_round_trip(declaration: str) -> None:
+    declared = DecisionAgent(model="test-model")
     if declaration == "decorators":
-        agent = DecisionAgent()
+        agent = declared
     else:
         agent = Agent()
         agent.add_resource(
             "connection",
             ResourceType.DECISION_MODEL_CONNECTION,
-            DecisionAgent.connection(),
+            declared.connection(),
         )
-        agent.add_resource(
-            "decision", ResourceType.DECISION_MODEL, DecisionAgent.decision()
-        )
+        agent.add_resource("decision", ResourceType.DECISION_MODEL, declared.decision())
 
     plan = AgentPlan.from_agent(agent, AgentConfiguration())
     restored = AgentPlan.model_validate_json(plan.model_dump_json())

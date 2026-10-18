@@ -3,29 +3,25 @@
   "attributes" : {
     "request" : {
       "input" : {
-        "notes" : [ "first", "second" ],
-        "receipt" : true
+        "receipt" : true,
+        "notes" : [ "first", "second" ]
       },
       "questions" : {
         "eligible" : {
           "type" : "predicate",
-          "instructions" : "Has a receipt?",
-          "criteria" : {
-            "true" : {
-              "receipt" : true
-            }
-          }
+          "instructions" : "Has a receipt?"
         },
         "route" : {
           "type" : "choice",
-          "criteria" : [ {
-            "value" : true
-          }, {
-            "value" : "true"
-          } ]
+          "instructions" : "Choose a route.",
+          "criteria" : {
+            "Approve" : null,
+            "approve" : null
+          }
         },
         "severity" : {
           "type" : "score",
+          "instructions" : "Rate severity.",
           "criteria" : [ "low", {
             "label" : "medium"
           }, [ "high" ] ]
@@ -36,7 +32,14 @@
         }
       }
     },
-    "model" : "registered-model"
+    "model" : "registered-model",
+    "request_params" : {
+      "timeout" : 4.0,
+      "extra_headers" : {
+        "X-Trace-ID" : "review-1"
+      },
+      "safety_identifier" : "review-user"
+    }
   },
   "attachments" : {
     "reference" : {

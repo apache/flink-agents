@@ -29,13 +29,20 @@ It returns probabilities, a choice, or a score. The business Action supplies fac
 and criteria, chooses thresholds, and decides what to do with the answers.
 
 Decision models have Java and Python APIs and can be declared through either YAML
-loader. Providers are implemented in Python; Java Actions call them through the
-DecisionModel cross-language API.
+loader. Python Actions use Python connections and setups. Java Actions can use
+those providers through the cross-language API, or use native Java providers.
+Built-in providers are implemented in Python. Custom Java providers implement
+`BaseDecisionModelConnection` and use `BaseDecisionModelSetup` to select a
+connection and model.
+
+Call a model directly when the same Action will use its answers. Use
+[event-driven calls](#event-driven-calls) when you want the built-in Action to
+manage durable execution, retries, and execution reports.
 
 ## Direct Python call
 
 The following example uses TypeSafe's Jev model. Set `TYPESAFE_API_KEY` in the
-environment before running it.
+environment before running it. The same request can also be used with OpenAI.
 
 ```python
 from flink_agents.api.decision_models import (
@@ -51,30 +58,31 @@ from flink_agents.integrations.decision_models.typesafe_decision_model import (
 
 connection = TypeSafeDecisionModelConnection()
 model = TypeSafeDecisionModelSetup(connection=connection, model="jev-latest")
-
-try:
-    result = model.decide(
-        DecisionRequest(
-            input="I was charged twice for my order.",
-            questions={
-                "team": ChoiceQuestion(
-                    instructions="Which team should handle this ticket?",
-                    criteria={
-                        "billing": "Payments, invoices, and refunds.",
-                        "technical": "Problems using the product.",
-                        "other": "Requests outside these categories.",
-                    },
-                )
+request = DecisionRequest(
+    input="I was charged twice for my order.",
+    questions={
+        "team": ChoiceQuestion(
+            instructions="Which team should handle this ticket?",
+            criteria={
+                "billing": "Payments, invoices, and refunds.",
+                "technical": "Problems using the product.",
+                "other": "Requests outside these categories.",
             },
         )
+    },
+)
+try:
+    result = model.decide(
+        request,
+        request_params={"extra_headers": {"x-request-id": "ticket-42"}},
     )
     answer = result.answers["team"]
     if isinstance(answer, RefusalAnswer):
         print("Send to manual review")
     elif isinstance(answer, ChoiceAnswer):
         print(answer.choice)
-        for entry in answer.probabilities:
-            print(entry.value, entry.probability)
+        for value, probability in answer.probabilities.items():
+            print(value, probability)
     print(result.usage)
 finally:
     connection.close()
@@ -84,9 +92,8 @@ A connection owns the SDK client and can serve multiple model setups. For direct
 calls, close the connection when finished. Named connections registered with FA
 are opened and closed by the resource lifecycle; an Action should not close them.
 
-To use OpenAI, select its connection and setup and supply its native Choice
-criteria format. The adapter preserves request content; it does not convert a
-TypeSafe criteria map into an OpenAI choices array:
+To use OpenAI, select its connection and setup. Keep the same request; the
+adapter converts the criteria map into the provider's required choices array:
 
 ```python
 from flink_agents.integrations.decision_models.openai_decision_model import (
@@ -97,19 +104,6 @@ from flink_agents.integrations.decision_models.openai_decision_model import (
 # Reads OPENAI_API_KEY; OPENAI_BASE_URL is also supported by the SDK.
 connection = OpenAIDecisionModelConnection()
 model = OpenAIDecisionModelSetup(connection=connection, model="gpt-6-luna")
-request = DecisionRequest(
-    input="I was charged twice for my order.",
-    questions={
-        "team": ChoiceQuestion(
-            instructions="Which team should handle this ticket?",
-            criteria=[
-                {"value": "billing", "description": "Payments, invoices, and refunds."},
-                {"value": "technical", "description": "Problems using the product."},
-                {"value": "other"},
-            ],
-        )
-    },
-)
 try:
     result = model.decide(request)
     print(result.model_dump_json(indent=2))
@@ -141,39 +135,72 @@ regional endpoint available to your account. The Bailian example follows its
 [standard Decision API documentation](https://help.aliyun.com/zh/model-studio/decision-model-api);
 other gateway or fine-tuned deployment authentication must be checked separately.
 
+Optional `request_params` passes provider SDK parameters as a string-keyed JSON
+map for this call only. It cannot replace the configured model, input, or
+questions. Unsupported parameters raise errors rather than being ignored.
+
 ## Questions and results
 
 Questions are supplied to each `decide()` call rather than stored in the setup.
-A single request can contain several independent questions sharing the same input.
-Question identifiers and string choice values are case-sensitive. Each question
-produces one answer under the same identifier; an incomplete or inconsistent
-response raises an error.
+A request contains shared input and at least one named question. Question
+identifiers and string choice values are case-sensitive. Every question produces
+one answer under the same identifier; incomplete or inconsistent responses raise
+an error.
+
+The public models use `pydantic.JsonValue` for input, instructions, and
+descriptions. This permits JSON strings, objects, arrays, numbers, booleans, and
+null recursively, rather than arbitrary Python objects. Invalid content, unknown
+fields, and non-finite numbers raise errors. Providers impose additional content
+and size restrictions, described in
+[Provider conversion rules](#provider-conversion-rules).
 
 | Question | Definition | Answer |
 |---|---|---|
-| `PredicateQuestion` | Instructions and optional true/false criteria | `PredicateAnswer.probability_true` |
-| `ChoiceQuestion` | Provider-native Choice `criteria` and optional instructions | `ChoiceAnswer.choice`, full list of `ChoiceProbability` entries |
-| `ScoreQuestion` | Ordered level descriptions in `criteria` and optional instructions | `ScoreAnswer.score`, full list of `ScoreProbability` entries |
+| `PredicateQuestion` | Optional instructions and `PredicateCriteria(true=..., false=...)`; at least one non-null instruction or outcome description | `PredicateAnswer.probability_true` |
+| `ChoiceQuestion` | Nonempty `dict[str, JsonValue]` of choices and optional instructions | `ChoiceAnswer.choice`, `probabilities: dict[str, float]` |
+| `ScoreQuestion` | Nonempty `list[JsonValue]` of level descriptions ordered from lowest to highest, and optional instructions | `ScoreAnswer.score`, `probabilities: dict[int, float]`, `legend: dict[int, JsonValue]` |
 
-Each `ChoiceProbability` contains a `value` (`str` or `bool`) and a `probability`
-(`float`). `ChoiceAnswer.choice` preserves the selected value's type. For example,
-`True` and `"true"` are distinct choices and can occur in the same distribution.
-Choice probability entries retain the provider's order.
+`PredicateCriteria.true` and `.false` describe what makes the condition true or
+false. Either description may be omitted; an all-null criteria object has the
+same meaning as no criteria. The answer always estimates the probability of
+true, even when only the false outcome is described. OpenAI requires instructions
+and does not have a separate Predicate criteria field. Its adapter rejects
+non-null outcome descriptions rather than silently dropping or rewriting them.
 
-A score is the expected **zero-based level index** and can fall between levels.
-Level descriptions need not be unique; their positions identify them.
-Pass levels as a list of strings, dictionaries, or lists, choosing the format
-supported by the provider below.
+`ChoiceQuestion.criteria` maps each string choice value to its description. A
+`None` description leaves the value itself to define that option. Keys must be
+strings; boolean and numeric keys are rejected rather than converted.
+`ChoiceAnswer.choice` is a string, and `probabilities` maps every requested choice
+value to its probability.
 
-Each `ScoreProbability` contains a non-negative integer `value` (the input level
-index), a required `label` (string, dictionary, or list), and a `probability`
-(`float`). TypeSafe's `legend["i"]` and `probabilities["i"]` become one entry with
-`value=i`, `label=legend["i"]`, and `probability=probabilities["i"]`. OpenAI's
-`value`, `label`, and `probability` fields are preserved directly. Score entries
-are ordered by ascending level index, even if the provider returns them in a
-different order.
+`ScoreQuestion.criteria` is a list of complete level descriptions. Each entry is
+a `JsonValue`: it can be text or structured JSON. Objects are retained as whole
+descriptions. A level's **zero-based position** identifies it, so repeated
+descriptions are allowed. For example:
 
-Read the returned level content from `entry.label`, including structured labels:
+```python
+from flink_agents.api.decision_models import ScoreQuestion
+
+impact_question = ScoreQuestion(
+    instructions="Rate the operational impact of this issue.",
+    criteria=[
+        "A cosmetic issue that does not affect functionality.",
+        {"scope": "Some functions", "workaround": "Available"},
+        "All core functions are unavailable.",
+    ],
+)
+```
+
+A score is the expected zero-based level index and can fall between levels.
+For probabilities `0.2`, `0.5`, and `0.3` on indices `0`, `1`, and `2`, the score
+is `1.1`; FA does not round it or select a winning label.
+
+`ScoreAnswer.probabilities` maps each level index to its probability, and
+`ScoreAnswer.legend` maps each index to the **original request's criteria entry**.
+The example's `legend[1]` is the complete `{"scope": "Some functions", ...}`
+object. Both maps are ordered by ascending level index. Their keys are integers
+in Python and become object-key strings in JSON. Reading the JSON with
+`DecisionResult.model_validate_json(...)` restores integer indices.
 
 ```python
 from flink_agents.api.decision_models import ScoreAnswer
@@ -181,16 +208,23 @@ from flink_agents.api.decision_models import ScoreAnswer
 
 def print_score(answer: ScoreAnswer) -> None:
     print(answer.score)
-    for entry in answer.probabilities:
-        print(entry.value, entry.label, entry.probability)
+    for index, probability in answer.probabilities.items():
+        print(index, answer.legend[index], probability)
 ```
+
+Responses must cover every requested choice or score level exactly once, with
+finite probabilities in `[0, 1]` forming a valid distribution. Choice answers must
+select a requested value. Score answers must lie in `[0, number_of_levels - 1]`
+and agree with their probability distribution, allowing for provider rounding.
+FA does not normalize probabilities, infer missing entries, or apply business
+thresholds.
 
 Choice and score answers retain `provider_confidence` when reported. This is the
 provider's own measure, not a replacement for the full probability distribution.
 
 `RefusalAnswer` represents an explicit per-question provider refusal. OpenAI
-supports this answer type. Jev currently documents only Noul, Choice, and Score;
-an undocumented Jev answer type raises an error. Authentication failures,
+supports this answer type; TypeSafe does not currently define one. Unknown
+answer types and malformed responses raise errors. Authentication failures,
 timeouts, and other request failures raise exceptions rather than becoming
 refusals or low-confidence answers.
 
@@ -200,134 +234,113 @@ refusals or low-confidence answers.
 retains additional response-level and usage fields, such as request IDs, latency,
 and token usage details. There is no required response identifier.
 
-### Provider request formats
+### Provider conversion rules
 
-`DecisionInput` is `str | Dict[str, Any] | List[Any]`, used for `input` and question
-content. `PredicateQuestion.instructions` is required; Choice and Score
-instructions can be omitted or set to `None`. `ChoiceQuestion.criteria` accepts a
-dictionary or a list of dictionaries, and `ScoreQuestion.criteria` accepts a list.
-The request model imposes no minimum number of questions, choices, or levels.
-The SDK and service determine supported content and counts, including whether
-container values can be serialized; these types do not guarantee support for
-arbitrary Python objects.
+Use one typed request for all providers. Conversions preserve explicitly supplied
+content and reject unsupported fields before calling the provider. The
+[TypeSafe SDK reference](https://docs.typesafe.ai/sdk/python/api/types/questions)
+and [OpenAI API reference](https://developers.openai.com/api/reference/resources/decisions/methods/create)
+define the native formats.
 
-Choose content that matches the provider's native format, as described in the
-[TypeSafe API reference](https://docs.typesafe.ai/api) and
-[OpenAI API reference](https://developers.openai.com/api/reference/resources/decisions/methods/create):
-
-| FA field | TypeSafe / Jev | OpenAI |
+| FA content | TypeSafe / Jev adapter | OpenAI adapter |
 |---|---|---|
-| `input` | String, object, or array as `state` | String or native user-message list |
-| `instructions` | String, object, or array; the SDK permits omission for Choice and Score | Supply text instructions for every question |
-| Predicate `criteria` | Optional `true`/`false` descriptions, each string, object, array, or null | Omitted, as defined by the FA Predicate contract |
-| Choice `criteria` | Map from string choice IDs to string, object, array, or null descriptions | List of objects with string or boolean `value` and optional `description`, passed as `choices` |
-| Score `criteria` | Ordered strings, objects, or arrays | Ordered objects with `label` and optional `description`, passed as `levels` |
+| `input` | Text, object, or array becomes `state`; null, numbers, and booleans are rejected | Strings are preserved; other non-null JSON values are encoded as text; null is rejected |
+| `instructions` | Text, object, or array; omitted when `None`; unsupported root scalars are rejected | Required for every question; strings are preserved and other non-null JSON values are encoded as text |
+| Predicate `criteria` | Passes outcome descriptions to SDK `Noul`; omits null outcomes | Rejects any non-null true/false description; absent or all-null criteria is allowed |
+| Choice `criteria` | Preserves the map; descriptions are text, object, array, or null | Converts each map entry to a choice with its string key as `value`; descriptions are converted to text and omitted when null |
+| Score `criteria` | Preserves each complete description and its order; each entry must be text, an object, or an array | Converts each entry to a level with `label=str(index)`; non-null entries become text descriptions and null entries omit `description` |
 
-The adapters pass field content to the SDK without JSON-encoding input or
-instructions. OpenAI Choice and Score only rename `criteria` to `choices` and
-`levels`; maps and lists are not converted into one another, and descriptions
-are not added or rewritten. OpenAI ignores Predicate criteria, so instructions
-must contain the complete condition. TypeSafe receives Predicate criteria
-unchanged, and the answer always estimates the probability of true.
+Strings remain text even when they contain JSON. OpenAI text conversion
+JSON-encodes structured content with Unicode preserved; it does not add default
+instructions or merge Predicate criteria into instructions. Generated score
+labels identify level indices, while `ScoreAnswer.legend` retains the original
+descriptions. Jev receives the criteria list with its structure and order
+preserved.
 
-FA adds no provider-specific request validation. The SDK or service determines
-whether the supplied content is accepted; unsupported formats may be rejected
-only by the service. SDK acceptance does not establish service support for omitted
-instructions or single-entry criteria. Additional fields are not assigned
-portable semantics.
+TypeSafe Choice and Score questions can be defined by their criteria alone.
+A Predicate still needs instructions or at least one described outcome.
 
-## Review analysis Agent
-
-The runnable
-[`decision_review_analysis_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/decision_models/decision_review_analysis_example.py)
-uses the same `ProductReview` input as the workflow-agent quickstart. Its
-[`DecisionReviewAnalysisAgent`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/agents/decision_review_analysis_agent.py)
-submits a `DecisionRequestEvent` for each `InputEvent`. The built-in Decision
-Action calls the named model with three questions, using durable execution,
-retries, and execution reporting:
-
-| Question | Type | Business use |
+| Request constraint | TypeSafe / Jev | OpenAI |
 |---|---|---|
-| `satisfaction` | Score | Five levels from very dissatisfied to very satisfied |
-| `primary_reason` | Choice | Main complaint: shipping, quality, fit, other, or none |
-| `shipping_damage` | Predicate | Probability that the reviewer reports damage during shipping |
+| Question count | No adapter-specific limit | 1–200 |
+| Choice count | 1–255 | 2–255 |
+| Score level count | 1–10 | 2–10 |
 
-A response Action handles the correlated `DecisionResponseEvent`, retrieves the
-original review by `request_id`, and emits the product ID, satisfaction score,
-primary reason, and shipping probability. It adds one to the zero-based expected
-score to report a **1–5 score that can contain decimals**. The primary reason is a
-predefined category, not a
-free-text explanation. The output is a dictionary; it does not use the chat
-example's integer-valued `ProductReviewAnalysisRes`.
+TypeSafe's upper limits follow the [TypeSafe API](https://docs.typesafe.ai/api).
+Compatible endpoints can impose additional restrictions.
 
-When the shipping-damage probability is at least `0.8`, the Action calls the
-quickstart's `notify_shipping_manager` function, which prints a notification.
-This threshold is an example business policy. If any question returns a refusal,
-the response Action instead emits the product ID and refusals without notifying.
-Reading a failed response raises `DecisionResponseError`, so exhausted provider
-failures propagate from the response Action.
-
-Run the Flink job with the selected provider's API key and an accessible model:
-
-```bash
-TYPESAFE_API_KEY=... python -m flink_agents.examples.decision_models.decision_review_analysis_example \
-    --provider typesafe --model jev-latest
-OPENAI_API_KEY=... python -m flink_agents.examples.decision_models.decision_review_analysis_example \
-    --provider openai --model gpt-6-luna
-```
-
-The job processes three sample reviews and prints their analysis. It requires a
-TypeSafe or OpenAI account and the same Flink runtime setup as the quickstart
-jobs. Use `--base-url` to select another compatible endpoint. The launcher
-registers the connection and model setup on `AgentsExecutionEnvironment`; FA
-owns their lifecycle.
+To keep a request portable across both adapters, provide instructions for every
+question and supply at least two choices or score levels. Predicate criteria must
+be absent; put the complete condition in instructions. Structured descriptions
+must meet Jev's native content constraints.
 
 ## Use from a Python Action
 
 Obtain a named setup through `RunnerContext`, then supply input and questions for
-each direct call. To use the built-in Action's durable execution and retries,
-emit a `DecisionRequestEvent` as the review example does; see
-[Event-driven calls](#event-driven-calls). Direct calls use:
+each direct call. For durable execution and retries, use
+[event-driven calls](#event-driven-calls).
+
+Declare Agent resources with `@decision_model_connection` and
+`@decision_model_setup`. The decorated method's name becomes the resource name:
 
 ```python
 from typing import cast
 
-from flink_agents.api.decision_models import BaseDecisionModelSetup
-from flink_agents.api.resource import ResourceType
-
-model = cast(
+from flink_agents.api.agents.agent import Agent
+from flink_agents.api.decision_models import (
     BaseDecisionModelSetup,
-    ctx.get_resource("review_analysis_model", ResourceType.DECISION_MODEL),
+    DecisionRequest,
+    PredicateQuestion,
 )
-result = model.decide(request)
-```
-
-Register resources with `@decision_model_connection` and `@decision_model_setup`,
-or share them across Agents through `AgentsExecutionEnvironment.add_resource()`.
-For the TypeSafe version of the review example:
-
-```python
+from flink_agents.api.decorators import (
+    action,
+    decision_model_connection,
+    decision_model_setup,
+)
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
+from flink_agents.api.runner_context import RunnerContext
 
-agents_env.add_resource(
-    "decision_server",
-    ResourceType.DECISION_MODEL_CONNECTION,
-    ResourceDescriptor(clazz=ResourceName.DecisionModel.TYPESAFE_CONNECTION),
-)
-agents_env.add_resource(
-    "review_analysis_model",
-    ResourceType.DECISION_MODEL,
-    ResourceDescriptor(
-        clazz=ResourceName.DecisionModel.TYPESAFE_SETUP,
-        connection="decision_server",
-        model="jev-latest",
-    ),
-)
+
+class ReceiptAgent(Agent):
+    @decision_model_connection
+    @staticmethod
+    def decision_server() -> ResourceDescriptor:
+        return ResourceDescriptor(clazz=ResourceName.DecisionModel.TYPESAFE_CONNECTION)
+
+    @decision_model_setup
+    @staticmethod
+    def decision() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.DecisionModel.TYPESAFE_SETUP,
+            connection="decision_server",
+            model="jev-latest",
+        )
+
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    def classify(event: Event, ctx: RunnerContext) -> None:
+        model = cast(
+            BaseDecisionModelSetup,
+            ctx.get_resource("decision", ResourceType.DECISION_MODEL),
+        )
+        request = DecisionRequest(
+            input=InputEvent.from_event(event).input,
+            questions={
+                "eligible": PredicateQuestion(
+                    instructions="Does the customer have a valid receipt?"
+                )
+            },
+        )
+        result = model.decide(request)
+        ctx.send_event(OutputEvent(output=result.model_dump(mode="json")))
 ```
 
-The setup can also be registered with `Agent.add_resource()`. Python-loaded YAML
-supports `decision_model_connections` and `decision_model_setups` both at the
-top level for shared resources and in an Agent declaration:
+Apply `ReceiptAgent()` to the input stream. `Agent.add_resource()` also
+accepts these descriptors; `AgentsExecutionEnvironment.add_resource()` shares
+them across Agents, as in the runnable review example. Python-loaded YAML
+supports `decision_model_connections` and `decision_model_setups` at the top
+level for shared resources and in an Agent declaration:
 
 ```yaml
 decision_model_connections:
@@ -347,99 +360,156 @@ configure resources; the Action still supplies input and questions for each call
 
 ## Calling from a Java Action
 
-Register the Python connection and setup on the Java Agent. The runtime owns
-their lifecycle, and multiple setups can share one connection:
+Declare resources on the Java Agent with `@DecisionModelConnection` and
+`@DecisionModelSetup`. A Java setup can use a Java or Python connection; the
+following Agent uses the built-in Python TypeSafe connection with the common
+Java setup:
 
 ```java
+import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.annotation.Action;
+import org.apache.flink.agents.api.annotation.DecisionModelConnection;
+import org.apache.flink.agents.api.annotation.DecisionModelSetup;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.decision.BaseDecisionModelSetup;
 import org.apache.flink.agents.api.decision.DecisionRequest;
 import org.apache.flink.agents.api.decision.DecisionRequest.Question;
 import org.apache.flink.agents.api.decision.DecisionResult;
 import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.Map;
 
-agent.addResource("decision_server", ResourceType.DECISION_MODEL_CONNECTION,
-    PythonResourceDescriptor.Builder.newBuilder(
-        "flink_agents.integrations.decision_models.typesafe_decision_model.TypeSafeDecisionModelConnection")
-        .build());
-agent.addResource("decision", ResourceType.DECISION_MODEL,
-    PythonResourceDescriptor.Builder.newBuilder(
-        "flink_agents.integrations.decision_models.typesafe_decision_model.TypeSafeDecisionModelSetup")
-        .addInitialArgument("connection", "decision_server")
-        .addInitialArgument("model", "jev-latest")
-        .build());
+public class ReceiptAgent extends Agent {
+    @DecisionModelConnection
+    public static ResourceDescriptor decisionServer() {
+        return PythonResourceDescriptor.Builder.newBuilder(
+            ResourceName.DecisionModel.Python.TYPESAFE_CONNECTION)
+            .build();
+    }
 
-// Inside the Java Action, using its RunnerContext:
-BaseDecisionModelSetup model = (BaseDecisionModelSetup)
-    ctx.getResource("decision", ResourceType.DECISION_MODEL);
-DecisionResult result = model.decide(new DecisionRequest(
-    "The customer has a valid receipt.",
-    Map.of("eligible", Question.predicate("Does the customer have a receipt?"))));
-DecisionResult.Answer answer = result.getAnswers().get("eligible");
-if (answer instanceof DecisionResult.PredicateAnswer) {
-    double probability = ((DecisionResult.PredicateAnswer) answer).getProbabilityTrue();
-    // Apply the application's threshold here.
+    @DecisionModelSetup
+    public static ResourceDescriptor decision() {
+        return ResourceDescriptor.Builder.newBuilder(BaseDecisionModelSetup.class.getName())
+            .addInitialArgument("connection", "decisionServer")
+            .addInitialArgument("model", "jev-latest")
+            .build();
+    }
+
+    @Action(InputEvent.EVENT_TYPE)
+    public static void classify(Event event, RunnerContext ctx) throws Exception {
+        BaseDecisionModelSetup model = (BaseDecisionModelSetup)
+            ctx.getResource("decision", ResourceType.DECISION_MODEL);
+        DecisionRequest request = new DecisionRequest(
+            InputEvent.fromEvent(event).getInput(),
+            Map.of("eligible", Question.predicate("Does the customer have a valid receipt?")));
+        DecisionResult result = model.decide(request,
+            Map.of("extra_headers", Map.of("x-request-id", event.getId().toString())));
+        ctx.sendEvent(new OutputEvent(result));
+    }
 }
 ```
 
-The Python package and the selected provider SDK must be installed in the job's
-Python environment. Configure authentication there, as for a Python Action.
-Use the OpenAI implementation classes and native criteria for OpenAI; use the
-TypeSafe classes with the Bailian endpoint for Bailian. No Java provider SDK is
-required.
+Apply `new ReceiptAgent()` to the input stream. The method names identify the
+resources. The runtime resolves the setup's connection and owns the shared
+connection's lifecycle; closing a setup does not close it. `Agent.addResource()`
+accepts the same descriptors for programmatic registration.
 
-`Question.choice(criteria, instructions)` and `Question.score(levels, instructions)`
-accept null instructions when the provider supports omission. Structured input,
-instructions and labels retain their JSON shape. Choice values remain `String`
-or `Boolean`, including in the probability list; unreported usage and confidence
-remain null. Refusals are `DecisionResult.RefusalAnswer` values, while provider
-failures propagate as exceptions. An Action must not close framework-owned
-resources.
+For Python connections, the Python package and the selected provider SDK must be
+installed in the job's Python environment. Configure authentication there, as for
+a Python Action. Use the OpenAI implementation classes for OpenAI; use the
+TypeSafe classes with the Bailian endpoint for Bailian. The same typed question definitions are
+converted by the selected adapter. No Java provider SDK is required.
+
+Java questions have concrete `DecisionRequest.PredicateQuestion`,
+`ChoiceQuestion`, and `ScoreQuestion` types. The `Question.predicate`,
+`Question.choice`, and `Question.score` factories return these types. Construction
+validates the common request contract before a provider is called.
+`DecisionRequest.PredicateCriteria` expresses the same true/false fields as its
+Python counterpart. Choice criteria are a `Map<String, ?>` from choice values to
+JSON descriptions; Score criteria are a JSON-valued list of complete level
+descriptions. JSON content uses `Object` with recursive JSON validation. The
+question constraints and provider conversion rules are the same as in Python.
+Choice answers expose a `Map<String, Double>` from choice values to probabilities
+through `getProbabilities()`. Score answers expose index-keyed maps through
+`getProbabilities()` and `getLegend()`; the legend retains the original criteria
+content. Unreported usage and confidence remain null. Refusals are
+`DecisionResult.RefusalAnswer` values, while provider failures propagate as
+exceptions.
 
 ## Event-driven calls
 
 Emit a `DecisionRequestEvent` to use the built-in Decision Action's durable
-execution, retries, and observation. Its `model` field names a registered
+execution, retries, and execution reports. Its `model` field names a registered
 `DECISION_MODEL` resource; `request` is the same `DecisionRequest` used by direct
-calls. Handle the correlated `DecisionResponseEvent` in another Action:
+calls. The following Agent uses the same resource configuration as `ReceiptAgent`
+and handles the correlated `DecisionResponseEvent` in a separate Action:
 
 ```python
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decision_models import DecisionRequest, PredicateQuestion
-from flink_agents.api.decorators import action
+from flink_agents.api.decorators import (
+    action,
+    decision_model_connection,
+    decision_model_setup,
+)
 from flink_agents.api.events.decision_event import (
     DecisionRequestEvent,
     DecisionResponseEvent,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.resource import ResourceDescriptor, ResourceName
 from flink_agents.api.runner_context import RunnerContext
 
 
-@action(InputEvent.EVENT_TYPE)
-def request_decision(event: Event, ctx: RunnerContext) -> None:
-    ctx.send_event(DecisionRequestEvent(
-        model="decision",
-        request=DecisionRequest(
-            input=InputEvent.from_event(event).input,
-            questions={
-                "eligible": PredicateQuestion(
-                    instructions="Does the customer have a valid receipt?"
-                )
-            },
-        ),
-    ))
+class ReceiptEventAgent(Agent):
+    @decision_model_connection
+    @staticmethod
+    def decision_server() -> ResourceDescriptor:
+        return ResourceDescriptor(clazz=ResourceName.DecisionModel.TYPESAFE_CONNECTION)
 
+    @decision_model_setup
+    @staticmethod
+    def decision() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.DecisionModel.TYPESAFE_SETUP,
+            connection="decision_server",
+            model="jev-latest",
+        )
 
-@action(DecisionResponseEvent.EVENT_TYPE)
-def handle_decision(event: Event, ctx: RunnerContext) -> None:
-    response = DecisionResponseEvent.from_event(event)
-    # Accessing response on a failed event raises DecisionResponseError.
-    ctx.send_event(OutputEvent(output=response.response.model_dump(mode="json")))
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    def request_decision(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(
+            DecisionRequestEvent(
+                model="decision",
+                request=DecisionRequest(
+                    input=InputEvent.from_event(event).input,
+                    questions={
+                        "eligible": PredicateQuestion(
+                            instructions="Does the customer have a valid receipt?"
+                        )
+                    },
+                ),
+                request_params={"extra_headers": {"x-request-id": str(event.id)}},
+            )
+        )
+
+    @action(DecisionResponseEvent.EVENT_TYPE)
+    @staticmethod
+    def handle_decision(event: Event, ctx: RunnerContext) -> None:
+        response = DecisionResponseEvent.from_event(event)
+        # Accessing response on a failed event raises DecisionResponseError.
+        ctx.send_event(OutputEvent(output=response.response.model_dump(mode="json")))
 ```
 
-For Java, emit `new DecisionRequestEvent("decision", request)` and subscribe an
-Action to `DecisionResponseEvent.EVENT_TYPE`. Read the result with
+For Java, emit `new DecisionRequestEvent("decision", request, requestParams)` and
+subscribe an Action to `DecisionResponseEvent.EVENT_TYPE`. Read the result with
 `DecisionResponseEvent.fromEvent(event).getResponse()`. YAML subscriptions support
 the `decision_request` and `decision_response` aliases in both languages.
 
@@ -447,9 +517,8 @@ The response's `request_id` identifies the request event. A successful response
 contains the full `DecisionResult`, including any per-question refusals. Provider
 exceptions produce a failed response after retries are exhausted; applications
 can inspect `is_failed` / `isFailed()` and `error` / `getError()` instead of
-accessing the result. Resource lookup failures, cancellation, and failures in durable
-state or event delivery propagate to the runtime. Durable-state failures are not
-reported as model call failures.
+accessing the result. Resource lookup failures, cancellation, and failures in
+durable state or event delivery propagate to the runtime.
 
 The built-in Action uses the existing `max-retries` (default `0`) and
 `retry-wait-interval` (default `1` second) options. Each retry doubles the wait;
@@ -464,6 +533,41 @@ recovery. Each attempt emits model execution reports. Retry metrics and availabl
 token counts are recorded under the named model resource; missing token counts
 remain unreported. Accumulated retry metrics are also recorded when execution
 exits with an exception.
+
+## Run the review analysis example
+
+The runnable
+[`decision_review_analysis_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/decision_models/decision_review_analysis_example.py)
+uses the same `ProductReview` input as the workflow-agent quickstart. Its
+[`DecisionReviewAnalysisAgent`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/agents/decision_review_analysis_agent.py)
+submits three questions through the built-in Decision Action:
+
+| Question | Type | Business use |
+|---|---|---|
+| `satisfaction` | Score | Five levels from very dissatisfied to very satisfied |
+| `primary_reason` | Choice | Main complaint: shipping, quality, fit, other, or none |
+| `shipping_damage` | Predicate | Probability that the reviewer reports damage during shipping |
+
+The response Action uses `request_id` to retrieve the original review and emits
+the product ID and answers. Adding one to the expected level index produces a
+**1–5 satisfaction score that can contain decimals**. A shipping-damage
+probability of at least `0.8` triggers `notify_shipping_manager`, which prints a
+notification. This threshold is an example business policy. Refusals instead
+produce an output containing the product ID and refusal reasons.
+
+Run the Flink job with the selected provider's API key and an accessible model:
+
+```bash
+TYPESAFE_API_KEY=... python -m flink_agents.examples.decision_models.decision_review_analysis_example \
+    --provider typesafe --model jev-latest
+OPENAI_API_KEY=... python -m flink_agents.examples.decision_models.decision_review_analysis_example \
+    --provider openai --model gpt-6-luna
+```
+
+The job processes three sample reviews and prints their analysis. It requires the
+same Flink runtime setup as the quickstart jobs. Use `--base-url` to select another
+compatible endpoint. The launcher registers shared resources on
+`AgentsExecutionEnvironment`; both providers receive the same request format.
 
 ## SDK requirements
 

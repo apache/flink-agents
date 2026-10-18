@@ -12,43 +12,30 @@
         },
         "route": {
           "type": "choice",
-          "choice": true,
-          "probabilities": [
-            {
-              "value": true,
-              "probability": 0.8
-            },
-            {
-              "value": "true",
-              "probability": 0.2
-            }
-          ],
+          "choice": "Approve",
+          "probabilities": {
+            "Approve": 0.8,
+            "approve": 0.2
+          },
           "provider_confidence": 0.7
         },
         "severity": {
           "type": "score",
           "score": 1.25,
-          "probabilities": [
-            {
-              "value": 0,
-              "label": "low",
-              "probability": 0.0
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.75,
+            "2": 0.25
+          },
+          "legend": {
+            "0": "low",
+            "1": {
+              "label": "medium"
             },
-            {
-              "value": 1,
-              "label": {
-                "label": "medium"
-              },
-              "probability": 0.75
-            },
-            {
-              "value": 2,
-              "label": [
-                "high"
-              ],
-              "probability": 0.25
-            }
-          ],
+            "2": [
+              "high"
+            ]
+          },
           "provider_confidence": null
         },
         "restricted": {

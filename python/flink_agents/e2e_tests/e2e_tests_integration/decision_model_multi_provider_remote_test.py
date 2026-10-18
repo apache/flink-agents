@@ -25,6 +25,7 @@ Built Flink Agents dist JARs must be available, as for the ChatModel remote E2E
 tests.
 """
 
+import json
 import os
 import sysconfig
 from pathlib import Path
@@ -124,7 +125,7 @@ def test_decision_model_integration_remote(
     assert {record["input"] for record in records} == set(cases)
     for record in records:
         requires_refund, department, impact = cases[record["input"]]
-        result = DecisionResult.model_validate(record["result"])
+        result = DecisionResult.model_validate_json(json.dumps(record["result"]))
         assert set(result.answers) == {"refund", "department", "impact"}
         refund_answer = result.answers["refund"]
         assert isinstance(refund_answer, PredicateAnswer)
@@ -136,27 +137,30 @@ def test_decision_model_integration_remote(
         department_answer = result.answers["department"]
         assert isinstance(department_answer, ChoiceAnswer)
         assert department_answer.choice == department
-        assert {entry.value for entry in department_answer.probabilities} == {
+        assert set(department_answer.probabilities) == {
             "billing",
             "technical",
         }
-        assert sum(
-            entry.probability for entry in department_answer.probabilities
-        ) == pytest.approx(1.0, abs=1e-3)
+        assert sum(department_answer.probabilities.values()) == pytest.approx(
+            1.0, abs=1e-3
+        )
 
         impact_answer = result.answers["impact"]
         assert isinstance(impact_answer, ScoreAnswer)
-        assert [entry.value for entry in impact_answer.probabilities] == [0, 1, 2]
+        assert list(impact_answer.probabilities) == [0, 1, 2]
+        assert impact_answer.legend == {
+            index: f"The stated impact is {level}."
+            for index, level in enumerate(("low", "medium", "high"))
+        }
         assert (
-            max(impact_answer.probabilities, key=lambda entry: entry.probability).value
+            max(impact_answer.probabilities.items(), key=lambda entry: entry[1])[0]
             == impact
         )
-        assert sum(
-            entry.probability for entry in impact_answer.probabilities
-        ) == pytest.approx(1.0, abs=1e-3)
+        assert sum(impact_answer.probabilities.values()) == pytest.approx(1.0, abs=1e-3)
         assert impact_answer.score == pytest.approx(
             sum(
-                entry.value * entry.probability for entry in impact_answer.probabilities
+                index * probability
+                for index, probability in impact_answer.probabilities.items()
             ),
             abs=1e-3,
         )

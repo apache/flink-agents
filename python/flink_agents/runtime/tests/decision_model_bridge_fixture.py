@@ -19,27 +19,28 @@
 
 import json
 from asyncio import CancelledError as AsyncCancelledError
+from collections.abc import Mapping
 from concurrent.futures import CancelledError
+
+from pydantic import JsonValue
 
 from flink_agents.api.decision_models import (
     BaseDecisionModelConnection,
     ChoiceAnswer,
-    ChoiceProbability,
     DecisionRequest,
     DecisionResult,
     PredicateAnswer,
     RefusalAnswer,
     ScoreAnswer,
-    ScoreProbability,
     TokenUsage,
 )
+from flink_agents.api.decision_models.decision_model import _validate_request_params
 
-_lifecycle = {"opens": 0, "closes": 0, "calls": 0}
+_lifecycle = {"opens": 0, "closes": 0, "calls": 0, "request_params": []}
 
 
 def reset() -> None:
-    for key in _lifecycle:
-        _lifecycle[key] = 0
+    _lifecycle.update(opens=0, closes=0, calls=0, request_params=[])
 
 
 def snapshot() -> str:
@@ -53,8 +54,16 @@ class BridgeDecisionConnection(BaseDecisionModelConnection):
     def close(self) -> None:
         _lifecycle["closes"] += 1
 
-    def decide(self, request: DecisionRequest, *, model: str) -> DecisionResult:
+    def decide(
+        self,
+        request: DecisionRequest,
+        *,
+        model: str,
+        request_params: Mapping[str, JsonValue] | None = None,
+    ) -> DecisionResult:
+        params = _validate_request_params(request_params)
         _lifecycle["calls"] += 1
+        _lifecycle["request_params"].append(params)
         if request.input == "fail":
             msg = "decision provider failed"
             raise RuntimeError(msg)
@@ -70,25 +79,21 @@ class BridgeDecisionConnection(BaseDecisionModelConnection):
             answers={
                 "eligible": PredicateAnswer(probability_true=0.9),
                 "route": ChoiceAnswer(
-                    choice=True,
-                    probabilities=[
-                        ChoiceProbability(value=True, probability=0.75),
-                        ChoiceProbability(value="true", probability=0.25),
-                    ],
+                    choice="true",
+                    probabilities={"true": 0.75, "false": 0.25},
                     provider_confidence=0.5,
                 ),
                 "impact": ScoreAnswer(
                     score=0.75,
-                    probabilities=[
-                        ScoreProbability(
-                            value=0, label={"description": "轻微"}, probability=0.25
-                        ),
-                        ScoreProbability(value=1, label=["严重"], probability=0.75),
-                    ],
+                    probabilities={0: 0.25, 1: 0.75},
+                    legend=dict(enumerate(request.questions["impact"].criteria)),
                 ),
                 "blocked": RefusalAnswer(),
             },
             model="reported-" + model,
             usage=TokenUsage(input_tokens=7),
-            metadata={"request": request.model_dump(mode="json")},
+            metadata={
+                "request": request.model_dump(mode="json"),
+                "request_params": params,
+            },
         )

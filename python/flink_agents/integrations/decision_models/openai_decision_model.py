@@ -17,110 +17,166 @@
 ################################################################################
 """Decision resources backed by the official OpenAI Python SDK."""
 
-from typing import Any
+import json
+from collections.abc import Mapping
+from typing import Any, ClassVar
 
 from openai import OpenAI
-from pydantic import Field, PrivateAttr
+from openai.types import Decision as OpenAIDecision
+from openai.types.decision import Answer as OpenAIAnswer
+from pydantic import Field, JsonValue, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.decision_models import (
     BaseDecisionModelConnection,
     BaseDecisionModelSetup,
     ChoiceAnswer,
-    ChoiceProbability,
     ChoiceQuestion,
     DecisionAnswer,
     DecisionQuestion,
     DecisionRequest,
     DecisionResult,
     PredicateAnswer,
+    PredicateQuestion,
     RefusalAnswer,
     ScoreAnswer,
-    ScoreProbability,
     ScoreQuestion,
 )
+from flink_agents.api.decision_models.decision_model import _validate_model_name
 from flink_agents.integrations.decision_models.decision_model_utils import (
     create_result,
-    validate_model_name,
+    prepare_request_params,
 )
+
+
+def _text(value: JsonValue, field: str) -> str:
+    if value is None:
+        msg = f"OpenAI {field} is required."
+        raise ValueError(msg)
+    return (
+        value
+        if isinstance(value, str)
+        else json.dumps(value, ensure_ascii=False, allow_nan=False)
+    )
+
+
+def _description(value: JsonValue, field: str) -> dict[str, str]:
+    return {} if value is None else {"description": _text(value, field)}
 
 
 def _questions(request: DecisionRequest) -> list[dict[str, Any]]:
+    max_questions = OpenAIDecisionModelConnection._MAX_QUESTIONS
+    if len(request.questions) > max_questions:
+        msg = f"OpenAI supports at most {max_questions} questions per decision request."
+        raise ValueError(msg)
     questions = []
     for name, question in request.questions.items():
         entry: dict[str, Any] = {
             "name": name,
             "type": question.type,
-            "instructions": question.instructions,
+            "instructions": _text(
+                question.instructions, f"question {name!r} instructions"
+            ),
         }
-        if isinstance(question, ChoiceQuestion):
-            entry["choices"] = question.criteria
+        if isinstance(question, PredicateQuestion):
+            criteria = question.criteria
+            if criteria is not None and (
+                criteria.true is not None or criteria.false is not None
+            ):
+                msg = f"OpenAI question {name!r} does not support predicate criteria."
+                raise ValueError(msg)
+        elif isinstance(question, ChoiceQuestion):
+            min_choices = OpenAIDecisionModelConnection._MIN_CHOICE_OPTIONS
+            max_choices = OpenAIDecisionModelConnection._MAX_CHOICE_OPTIONS
+            if not min_choices <= len(question.criteria) <= max_choices:
+                msg = (
+                    f"OpenAI question {name!r} requires between "
+                    f"{min_choices} and {max_choices} choices."
+                )
+                raise ValueError(msg)
+            entry["choices"] = [
+                {
+                    "value": value,
+                    **_description(
+                        meaning, f"question {name!r} choice {value!r} description"
+                    ),
+                }
+                for value, meaning in question.criteria.items()
+            ]
         elif isinstance(question, ScoreQuestion):
-            entry["levels"] = question.criteria
+            min_levels = OpenAIDecisionModelConnection._MIN_SCORE_LEVELS
+            max_levels = OpenAIDecisionModelConnection._MAX_SCORE_LEVELS
+            if not min_levels <= len(question.criteria) <= max_levels:
+                msg = (
+                    f"OpenAI question {name!r} requires between "
+                    f"{min_levels} and {max_levels} score levels."
+                )
+                raise ValueError(msg)
+            entry["levels"] = [
+                {
+                    "label": str(index),
+                    **_description(
+                        meaning,
+                        f"question {name!r} score level {index} description",
+                    ),
+                }
+                for index, meaning in enumerate(question.criteria)
+            ]
         questions.append(entry)
     return questions
 
 
-def _answer(answer: dict[str, Any], question: DecisionQuestion) -> DecisionAnswer:
-    kind = answer.get("type")
+def _answer(answer: OpenAIAnswer, question: DecisionQuestion) -> DecisionAnswer:
+    kind = answer.type
     if kind == "refusal":
-        return RefusalAnswer(reason=answer.get("reason"))
-    if kind != question.type:
-        msg = "OpenAI decision answer has a different type from its question."
-        raise ValueError(msg)
+        return RefusalAnswer(reason=getattr(answer, "reason", None))
     if kind == "predicate":
-        return PredicateAnswer(probability_true=answer["probability"])
+        return PredicateAnswer(probability_true=answer.probability)
     if kind == "choice":
+        probabilities = {
+            entry.value: entry.probability for entry in answer.probabilities
+        }
+        if len(probabilities) != len(answer.probabilities):
+            msg = "OpenAI decision answer contains duplicate choices."
+            raise ValueError(msg)
         return ChoiceAnswer(
-            choice=answer["choice"],
-            probabilities=[
-                ChoiceProbability(
-                    value=entry["value"], probability=entry["probability"]
-                )
-                for entry in answer["probabilities"]
-            ],
-            provider_confidence=answer.get("confidence"),
+            choice=answer.choice,
+            probabilities=probabilities,
+            provider_confidence=answer.confidence,
         )
     if kind == "score" and isinstance(question, ScoreQuestion):
+        probabilities = {}
+        for entry in answer.probabilities:
+            index = entry.value
+            if index in probabilities:
+                msg = "OpenAI decision answer contains an invalid score level index."
+                raise ValueError(msg)
+            if entry.label != str(index):
+                msg = "OpenAI decision answer contains an unexpected score level label."
+                raise ValueError(msg)
+            probabilities[index] = entry.probability
         return ScoreAnswer(
-            score=answer["score"],
-            probabilities=sorted(
-                (
-                    ScoreProbability(
-                        value=entry["value"],
-                        label=entry["label"],
-                        probability=entry["probability"],
-                    )
-                    for entry in answer["probabilities"]
-                ),
-                key=lambda entry: entry.value,
-            ),
-            provider_confidence=answer.get("confidence"),
+            score=answer.score,
+            probabilities=dict(sorted(probabilities.items())),
+            legend=dict(enumerate(question.criteria)),
+            provider_confidence=answer.confidence,
         )
-    msg = f"Unsupported OpenAI decision answer type: {kind!r}."
+    msg = "OpenAI decision answer has a different type from its question."
     raise ValueError(msg)
 
 
-def _result(request: DecisionRequest, response: dict[str, Any]) -> DecisionResult:
+def _result(request: DecisionRequest, response: OpenAIDecision) -> DecisionResult:
     answers = {}
-    raw_answers = response.get("answers")
-    if not isinstance(raw_answers, list):
-        msg = "OpenAI decision response must contain an answers array."
-        raise TypeError(msg)
-    for answer in raw_answers:
-        name = answer.get("name")
-        if (
-            not isinstance(name, str)
-            or name not in request.questions
-            or name in answers
-        ):
+    for answer in response.answers:
+        name = answer.name
+        if name not in request.questions or name in answers:
             msg = (
                 "OpenAI decision answers contain missing, unknown, or duplicate names."
             )
             raise ValueError(msg)
         answers[name] = _answer(answer, request.questions[name])
 
-    return create_result(request, response, answers)
+    return create_result(request, response.model_dump(exclude={"answers"}), answers)
 
 
 class OpenAIDecisionModelConnection(BaseDecisionModelConnection):
@@ -128,14 +184,26 @@ class OpenAIDecisionModelConnection(BaseDecisionModelConnection):
 
     api_key and base_url fall back to the SDK's environment configuration, including
     OPENAI_API_KEY and OPENAI_BASE_URL. The client is created by open or the first
-    call and reused until close. Input and question content are passed unchanged
-    to the SDK. Choice and Score criteria become choices and levels without
-    converting their contents. Predicate criteria are ignored; instructions must
-    contain the complete decision rule. The SDK and service determine whether
-    the supplied format is supported; FA adds no provider request validation.
+    call and reused until close. Strings are preserved; structured input,
+    instructions and descriptions are JSON encoded as text. Instructions are
+    required, and effective predicate criteria are rejected rather than embedded
+    in instructions. Choice values remain case-sensitive strings. Score labels
+    are the zero-based indices; returned legends retain the original JSON level
+    descriptions after response validation. Unsupported requests
+    raise ValueError before a provider call.
+    Responses are strictly validated against the SDK schema before conversion.
     Request errors retain their SDK exception types. Unset timeout and retry
     limits use the SDK defaults. Set timeout to 0 to disable timeouts.
     """
+
+    _MAX_QUESTIONS: ClassVar[int] = 200
+    _MIN_CHOICE_OPTIONS: ClassVar[int] = 2
+    _MAX_CHOICE_OPTIONS: ClassVar[int] = 255
+    _MIN_SCORE_LEVELS: ClassVar[int] = 2
+    _MAX_SCORE_LEVELS: ClassVar[int] = 10
+    _RESERVED_REQUEST_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"model", "input", "questions"}
+    )
 
     api_key: str | None = Field(default=None, repr=False)
     base_url: str | None = None
@@ -164,19 +232,25 @@ class OpenAIDecisionModelConnection(BaseDecisionModelConnection):
         self._get_client()
 
     @override
-    def decide(self, request: DecisionRequest, *, model: str) -> DecisionResult:
+    def decide(
+        self,
+        request: DecisionRequest,
+        *,
+        model: str,
+        request_params: Mapping[str, JsonValue] | None = None,
+    ) -> DecisionResult:
         """Evaluate named questions and return answers matched by their names."""
-        validate_model_name(model)
-        response = self._get_client().decisions.with_raw_response.create(
-            model=model, input=request.input, questions=_questions(request)
+        _validate_model_name(model)
+        decision_input = _text(request.input, "input")
+        questions = _questions(request)
+        params = prepare_request_params(
+            request_params, reserved_fields=self._RESERVED_REQUEST_FIELDS
         )
-        try:
-            # Preserve exact JSON identities: SDK model coercion can turn a boolean or
-            # string level index into an integer before FA can validate the response.
-            return _result(request, response.parse(to=dict))
-        except (AttributeError, KeyError, TypeError) as exc:
-            msg = "Malformed OpenAI decision response."
-            raise ValueError(msg) from exc
+        response = self._get_client().decisions.with_raw_response.create(
+            model=model, input=decision_input, questions=questions, **params
+        )
+        decision = OpenAIDecision.model_validate_json(response.content, strict=True)
+        return _result(request, decision)
 
     @override
     def close(self) -> None:

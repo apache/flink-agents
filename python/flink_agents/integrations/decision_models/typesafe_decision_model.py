@@ -17,120 +17,126 @@
 ################################################################################
 """Decision models using the TypeSafe System One SDK and compatible services."""
 
-from typing import Any
+import json
+from collections.abc import Mapping
+from typing import Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
-from typesafe_sdk import Choice, Noul, Score, TypeSafeClient
-from typing_extensions import override
+from pydantic import Field, JsonValue, PrivateAttr, RootModel, TypeAdapter
+from typesafe_sdk import Answer as TypeSafeAnswer
+from typesafe_sdk import Choice, Noul, RetryPolicy, Score, TypeSafeClient
+from typesafe_sdk import ChoiceAnswer as TypeSafeChoiceAnswer
+from typesafe_sdk import NoulAnswer as TypeSafeNoulAnswer
+from typesafe_sdk import SystemOneResponse as TypeSafeSystemOneResponse
+from typing_extensions import Self, override
 
 from flink_agents.api.decision_models import (
     BaseDecisionModelConnection,
     BaseDecisionModelSetup,
     ChoiceAnswer,
-    ChoiceProbability,
+    ChoiceQuestion,
     DecisionRequest,
     DecisionResult,
     PredicateAnswer,
+    PredicateQuestion,
     ScoreAnswer,
-    ScoreProbability,
     ScoreQuestion,
 )
+from flink_agents.api.decision_models.decision_model import _validate_model_name
 from flink_agents.integrations.decision_models.decision_model_utils import (
     create_result,
-    validate_model_name,
+    prepare_request_params,
 )
 
+_RETRY_POLICY = TypeAdapter(RetryPolicy)
 
-class _SystemOneResponse(BaseModel):
-    """Keep JSON extensions and every answer for validation by the adapter."""
 
-    # The SDK's default SystemOneResponse drops unknown answer types. Its public
-    # response_model parameter instead validates this schema without that filtering.
+class _SystemOneResponse(RootModel[TypeSafeSystemOneResponse]):
+    """Validate the SDK schema while preserving wire identities and extensions."""
+
+    # A custom response_model uses Pydantic parsing rather than the SDK's default
+    # decoder, which filters unknown answer types before validating its schema.
     # https://docs.typesafe.ai/sdk/python/api/clients/sync#system-one
-    model_config = ConfigDict(extra="allow", strict=True)
+    _raw_response: dict[str, Any] = PrivateAttr()
 
-    model: str
-    answers: dict[str, dict[str, Any]]
-    usage: dict[str, Any] | None = None
+    @classmethod
+    @override
+    def model_validate_json(
+        cls, json_data: str | bytes | bytearray, **kwargs: Any
+    ) -> Self:
+        # Keep JSON-mode validation so strict integer score keys can be decoded
+        # from JSON object keys without loosening the SDK's field validation.
+        response = super().model_validate_json(json_data, **kwargs)
+        response._raw_response = json.loads(json_data)
+        return response
 
 
 def _questions(request: DecisionRequest) -> dict[str, Noul | Choice | Score]:
-    question_types = {"predicate": Noul, "choice": Choice, "score": Score}
-    return {
-        name: question_types[question.type](
-            instructions=question.instructions, criteria=question.criteria
-        )
-        for name, question in request.questions.items()
-    }
+    questions = {}
+    for name, question in request.questions.items():
+        if isinstance(question, PredicateQuestion):
+            criteria = (
+                question.criteria.model_dump(exclude_none=True)
+                if question.criteria is not None
+                else None
+            )
+            questions[name] = Noul(
+                instructions=question.instructions, criteria=criteria or None
+            )
+        elif isinstance(question, ChoiceQuestion):
+            max_choices = TypeSafeDecisionModelConnection._MAX_CHOICE_OPTIONS
+            if len(question.criteria) > max_choices:
+                msg = f"TypeSafe question {name!r} supports at most {max_choices} choices."
+                raise ValueError(msg)
+            questions[name] = Choice(
+                instructions=question.instructions, criteria=question.criteria
+            )
+        elif isinstance(question, ScoreQuestion):
+            max_levels = TypeSafeDecisionModelConnection._MAX_SCORE_LEVELS
+            if len(question.criteria) > max_levels:
+                msg = f"TypeSafe question {name!r} supports at most {max_levels} score levels."
+                raise ValueError(msg)
+            questions[name] = Score(
+                instructions=question.instructions, criteria=question.criteria
+            )
+    return questions
 
 
 def _answer(
     question_id: str,
-    answer: dict[str, Any],
-    request: DecisionRequest,
+    answer: TypeSafeAnswer,
+    raw_answer: dict[str, Any],
 ) -> PredicateAnswer | ChoiceAnswer | ScoreAnswer:
-    answer_type = answer.get("type")
-    if answer_type == "noul":
-        return PredicateAnswer(probability_true=answer["noul"])
-    if answer_type == "choice":
-        probabilities = answer["probabilities"]
-        if not isinstance(probabilities, dict):
-            msg = (
-                f"TypeSafe returned an invalid choice distribution for {question_id!r}."
-            )
-            raise ValueError(msg)
+    if isinstance(answer, TypeSafeNoulAnswer):
+        return PredicateAnswer(probability_true=answer.noul)
+    if isinstance(answer, TypeSafeChoiceAnswer):
         return ChoiceAnswer(
-            choice=answer["choice"],
-            probabilities=[
-                ChoiceProbability(value=value, probability=probability)
-                for value, probability in probabilities.items()
-            ],
-            provider_confidence=answer.get("confidence"),
+            choice=answer.choice,
+            probabilities=answer.probabilities,
+            provider_confidence=answer.confidence,
         )
-    if answer_type == "score":
-        question = request.questions.get(question_id)
-        if not isinstance(question, ScoreQuestion):
-            msg = f"TypeSafe returned a score for non-score question {question_id!r}."
-            raise ValueError(msg)
-        indices = {str(index) for index in range(len(question.criteria))}
-        probabilities = answer["probabilities"]
-        legend = answer["legend"]
-        if (
-            not isinstance(probabilities, dict)
-            or set(probabilities) != indices
-            or not isinstance(legend, dict)
-            or set(legend) != indices
-        ):
-            msg = f"TypeSafe returned invalid score level indices for {question_id!r}."
-            raise ValueError(msg)
-        return ScoreAnswer(
-            score=answer["score"],
-            probabilities=[
-                ScoreProbability(
-                    value=index,
-                    label=legend[str(index)],
-                    probability=probabilities[str(index)],
-                )
-                for index in range(len(question.criteria))
-            ],
-            provider_confidence=answer.get("confidence"),
-        )
-    # Jev documents noul/choice/score only; an undocumented refusal is a
-    # protocol error, not enough evidence to construct a RefusalAnswer.
-    msg = f"TypeSafe returned unsupported answer type {answer_type!r}."
-    raise ValueError(msg)
+    # The SDK converts score keys to integers. Check their original spelling so
+    # aliases such as "01" cannot collapse onto another level during parsing.
+    if any(
+        set(raw_answer[field]) != {str(index) for index in getattr(answer, field)}
+        for field in ("probabilities", "legend")
+    ):
+        msg = f"TypeSafe returned invalid score level indices for {question_id!r}."
+        raise ValueError(msg)
+    return ScoreAnswer(
+        score=answer.score,
+        probabilities=dict(sorted(answer.probabilities.items())),
+        legend=dict(sorted(answer.legend.items())),
+        provider_confidence=answer.confidence,
+    )
 
 
 def _result(request: DecisionRequest, response: _SystemOneResponse) -> DecisionResult:
-    answers = {}
-    try:
-        for question_id, answer in response.answers.items():
-            answers[question_id] = _answer(question_id, answer, request)
-    except KeyError as error:
-        msg = f"TypeSafe answer {question_id!r} is missing field {error.args[0]!r}."
-        raise ValueError(msg) from error
-
-    return create_result(request, response.model_dump(), answers)
+    raw_response = response._raw_response
+    answers = {
+        question_id: _answer(question_id, answer, raw_response["answers"][question_id])
+        for question_id, answer in response.root.answers.items()
+    }
+    return create_result(request, raw_response, answers)
 
 
 class TypeSafeDecisionModelConnection(BaseDecisionModelConnection):
@@ -143,9 +149,20 @@ class TypeSafeDecisionModelConnection(BaseDecisionModelConnection):
     leaving it unset uses the SDK default.
 
     One SDK client is reused across calls and released by ``close()``. SDK
-    failures retain their exception types. Malformed answer values or answers
-    inconsistent with the requested questions raise ``ValueError`` or a subclass.
+    transport and response-schema failures retain their exception types. Answers
+    outside the common value constraints or inconsistent with the requested
+    questions raise ``ValueError`` or a subclass.
+    Choice values must be strings. Score criteria are complete JSON descriptions
+    passed to the provider without interpreting object fields. Returned legends
+    retain the original descriptions after response validation. Unsupported
+    content is rejected before sending.
     """
+
+    _MAX_CHOICE_OPTIONS: ClassVar[int] = 255
+    _MAX_SCORE_LEVELS: ClassVar[int] = 10
+    _RESERVED_REQUEST_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"model", "state", "questions", "response_model"}
+    )
 
     api_key: str | None = Field(default=None, repr=False)
     base_url: str = Field(default="https://api.typesafe.ai", min_length=1)
@@ -169,20 +186,38 @@ class TypeSafeDecisionModelConnection(BaseDecisionModelConnection):
         self._get_client()
 
     @override
-    def decide(self, request: DecisionRequest, *, model: str) -> DecisionResult:
+    def decide(
+        self,
+        request: DecisionRequest,
+        *,
+        model: str,
+        request_params: Mapping[str, JsonValue] | None = None,
+    ) -> DecisionResult:
         """Evaluate all questions against the supplied text or JSON state.
 
-        Score criteria retain their native structure and order. Returned score
-        probabilities follow this same order. Additional response-level fields
-        and usage details are retained in result metadata.
+        Returned score probabilities retain the original level definitions in
+        request order. Additional response-level fields and usage details are
+        retained in result metadata. request_params accepts SDK call options;
+        supply retry as a JSON object containing RetryPolicy fields.
         """
-        validate_model_name(model)
+        _validate_model_name(model)
+        if not isinstance(request.input, str | dict | list):
+            msg = "TypeSafe input must be text, a JSON object, or a JSON array."
+            raise TypeError(msg)
         questions = _questions(request)
+        params = prepare_request_params(
+            request_params, reserved_fields=self._RESERVED_REQUEST_FIELDS
+        )
+        if params.get("retry") is not None:
+            params["retry"] = _RETRY_POLICY.validate_json(
+                json.dumps(params["retry"]), strict=True, extra="forbid"
+            )
         response = self._get_client().system_one(
             state=request.input,
             questions=questions,
             model=model,
             response_model=_SystemOneResponse,
+            **params,
         )
         return _result(request, response)
 

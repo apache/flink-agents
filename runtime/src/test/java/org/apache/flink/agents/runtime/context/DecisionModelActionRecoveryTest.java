@@ -52,6 +52,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -68,7 +69,8 @@ class DecisionModelActionRecoveryTest {
                             Map.of("receipt", true),
                             Map.of(
                                     "eligible",
-                                    DecisionRequest.Question.predicate("Has a receipt?"))));
+                                    DecisionRequest.Question.predicate("Has a receipt?"))),
+                    Map.of("timeout", 4.0, "extra_headers", Map.of("X-Trace-ID", "review-1")));
     private final DecisionResult result =
             new DecisionResult(
                     Map.of("eligible", new DecisionResult.PredicateAnswer(0.9)),
@@ -97,6 +99,8 @@ class DecisionModelActionRecoveryTest {
 
         ActionState restored = ActionStateSerde.deserialize(persisted.get());
         assertThat(restored.getCallResultCount()).isEqualTo(2);
+        assertThat(((DecisionRequestEvent) restored.getTaskEvent()).getRequestParams())
+                .isEqualTo(request.getRequestParams());
         RunnerContextImpl replay = context(restored, model, async, false);
         runAction(restored.getTaskEvent(), replay);
 
@@ -130,13 +134,16 @@ class DecisionModelActionRecoveryTest {
     void asyncCancellationDoesNotPersistAndRecoveryInvokesProviderAgain(boolean interruption)
             throws Exception {
         BaseDecisionModelSetup model = mock(BaseDecisionModelSetup.class);
+        when(model.supportsAsyncExecution()).thenReturn(true);
         RuntimeException cancellation =
                 interruption
                         ? new RuntimeException(new InterruptedException("cancelled"))
                         : new CancellationException("cancelled");
-        when(model.decide(any()))
+        when(model.decide(any(), anyMap()))
                 .thenAnswer(
                         invocation -> {
+                            assertThat(invocation.<Map<String, Object>>getArgument(1))
+                                    .isEqualTo(request.getRequestParams());
                             providerThreads.add(Thread.currentThread());
                             if (calls.incrementAndGet() == 1) {
                                 throw cancellation;
@@ -166,9 +173,12 @@ class DecisionModelActionRecoveryTest {
 
     private BaseDecisionModelSetup model(boolean alwaysFail) {
         BaseDecisionModelSetup model = mock(BaseDecisionModelSetup.class);
-        when(model.decide(any()))
+        when(model.supportsAsyncExecution()).thenReturn(true);
+        when(model.decide(any(), anyMap()))
                 .thenAnswer(
                         invocation -> {
+                            assertThat(invocation.<Map<String, Object>>getArgument(1))
+                                    .isEqualTo(request.getRequestParams());
                             providerThreads.add(Thread.currentThread());
                             if (calls.incrementAndGet() == 1 || alwaysFail) {
                                 throw new IllegalArgumentException("provider unavailable");

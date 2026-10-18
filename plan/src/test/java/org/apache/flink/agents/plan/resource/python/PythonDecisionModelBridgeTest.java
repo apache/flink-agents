@@ -18,7 +18,10 @@
 
 package org.apache.flink.agents.plan.resource.python;
 
+import com.fasterxml.jackson.databind.JsonMappingException;
 import org.apache.flink.agents.api.decision.DecisionRequest;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -34,13 +37,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class PythonDecisionModelBridgeTest {
     private final PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
+    private final PyObject resource = mock(PyObject.class);
     private final PythonDecisionModelBridge bridge =
-            new PythonDecisionModelBridge(adapter, mock(PyObject.class));
+            new PythonDecisionModelBridge(adapter, resource);
     private final DecisionRequest request =
             new DecisionRequest(
                     "input", Map.of("eligible", DecisionRequest.Question.predicate("Eligible?")));
@@ -54,7 +63,96 @@ class PythonDecisionModelBridgeTest {
                         "result",
                         "{\"answers\":{\"eligible\":{\"type\":\"predicate\",\"probability_true\":0.9}}}"));
 
-        assertThat(bridge.decide(request, null).getAnswers()).containsOnlyKeys("eligible");
+        assertThat(bridge.decide(request, null, Map.of()).getAnswers())
+                .containsOnlyKeys("eligible");
+    }
+
+    @Test
+    void setupPassesParametersForOnlyTheCurrentCall() {
+        returnFromPython(
+                Map.of(
+                        "status",
+                        "SUCCESS",
+                        "result",
+                        "{\"answers\":{\"eligible\":{\"type\":\"predicate\",\"probability_true\":0.9}}}"));
+        PythonDecisionModelSetup setup =
+                new PythonDecisionModelSetup(
+                        adapter,
+                        resource,
+                        new ResourceDescriptor(
+                                "unused", Map.of("connection", "shared", "model", "decision")),
+                        mock(ResourceContext.class));
+        Map<String, Object> params =
+                Map.of("extra_headers", Map.of("x-request-id", "setup-call"), "timeout", 2.5);
+
+        setup.decide(request, params);
+        setup.decide(request);
+
+        verify(adapter)
+                .invoke(
+                        eq("python_java_utils.call_decision_model"),
+                        same(resource),
+                        anyString(),
+                        isNull(),
+                        eq(params));
+        verify(adapter)
+                .invoke(
+                        eq("python_java_utils.call_decision_model"),
+                        same(resource),
+                        anyString(),
+                        isNull(),
+                        eq(Map.of()));
+    }
+
+    @Test
+    void connectionPassesModelAndParametersForOnlyTheCurrentCall() {
+        returnFromPython(
+                Map.of(
+                        "status",
+                        "SUCCESS",
+                        "result",
+                        "{\"answers\":{\"eligible\":{\"type\":\"predicate\",\"probability_true\":0.9}}}"));
+        PythonDecisionModelConnection connection =
+                new PythonDecisionModelConnection(
+                        adapter,
+                        resource,
+                        new ResourceDescriptor("unused", Map.of()),
+                        mock(ResourceContext.class));
+        Map<String, Object> params =
+                Map.of("extra_headers", Map.of("x-request-id", "connection-call"));
+
+        connection.decide(request, "first", params);
+        connection.decide(request, "second");
+
+        verify(adapter)
+                .invoke(
+                        eq("python_java_utils.call_decision_model"),
+                        same(resource),
+                        anyString(),
+                        eq("first"),
+                        eq(params));
+        verify(adapter)
+                .invoke(
+                        eq("python_java_utils.call_decision_model"),
+                        same(resource),
+                        anyString(),
+                        eq("second"),
+                        eq(Map.of()));
+    }
+
+    @Test
+    void rejectsMalformedResultWithinSuccessfulOutcome() {
+        returnFromPython(
+                Map.of(
+                        "status",
+                        "SUCCESS",
+                        "result",
+                        "{\"answers\":{\"eligible\":{\"type\":\"refusal\"}},\"usage\":{\"input_tokens\":\"3\"}}"));
+
+        assertThatThrownBy(() -> bridge.decide(request, null, Map.of()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Invalid DecisionModel result from Python")
+                .hasCauseInstanceOf(JsonMappingException.class);
     }
 
     @ParameterizedTest
@@ -62,7 +160,7 @@ class PythonDecisionModelBridgeTest {
     void restoresTypedCancellationSignal(String status) {
         returnFromPython(Map.of("status", status, "message", "provider stopped"));
 
-        assertThatThrownBy(() -> bridge.decide(request, null))
+        assertThatThrownBy(() -> bridge.decide(request, null, Map.of()))
                 .isInstanceOf(CancellationException.class)
                 .hasMessage("provider stopped")
                 .satisfies(
@@ -76,8 +174,24 @@ class PythonDecisionModelBridgeTest {
     void rejectsMalformedOutcomeInsteadOfGuessingItsMeaning(Object outcome) {
         returnFromPython(outcome);
 
-        assertThatThrownBy(() -> bridge.decide(request, null))
+        assertThatThrownBy(() -> bridge.decide(request, null, Map.of()))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @ParameterizedTest
+    @MethodSource("invalidParameters")
+    void rejectsNonJsonParametersBeforeEnteringPython(Map<String, Object> requestParams) {
+        assertThatThrownBy(() -> bridge.decide(request, null, requestParams))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("request_params");
+        verifyNoInteractions(adapter);
+    }
+
+    private static Stream<Map<String, Object>> invalidParameters() {
+        return Stream.of(
+                Map.of("timeout", Double.NaN),
+                Map.of("extra_body", Map.of(42, "not a string key")),
+                Map.of("extra_body", Map.of("unsupported", new Object())));
     }
 
     private static Stream<Object> invalidOutcomes() {
@@ -92,6 +206,6 @@ class PythonDecisionModelBridgeTest {
     }
 
     private void returnFromPython(Object outcome) {
-        when(adapter.invoke(anyString(), any(), any(), any())).thenReturn(outcome);
+        when(adapter.invoke(anyString(), any(), any(), any(), any())).thenReturn(outcome);
     }
 }

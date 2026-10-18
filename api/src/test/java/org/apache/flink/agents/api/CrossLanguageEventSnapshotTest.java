@@ -739,18 +739,13 @@ class CrossLanguageEventSnapshotTest {
 
     private static Map<String, Event> buildDecisionEvents() {
         Map<String, DecisionRequest.Question> questions = new LinkedHashMap<>();
-        questions.put(
-                "eligible",
-                DecisionRequest.Question.predicate(
-                        "Has a receipt?", Map.of("true", Map.of("receipt", true))));
-        questions.put(
-                "route",
-                DecisionRequest.Question.choice(
-                        List.of(Map.of("value", true), Map.of("value", "true")), null));
-        questions.put(
-                "severity",
-                DecisionRequest.Question.score(
-                        List.of("low", Map.of("label", "medium"), List.of("high")), null));
+        questions.put("eligible", DecisionRequest.Question.predicate("Has a receipt?"));
+        Map<String, Object> routes = new LinkedHashMap<>();
+        routes.put("Approve", null);
+        routes.put("approve", null);
+        questions.put("route", DecisionRequest.Question.choice(routes, "Choose a route."));
+        List<?> levels = List.of("low", Map.of("label", "medium"), List.of("high"));
+        questions.put("severity", DecisionRequest.Question.score(levels, "Rate severity."));
         questions.put("restricted", DecisionRequest.Question.predicate("May this be disclosed?"));
         DecisionRequest request =
                 new DecisionRequest(
@@ -758,24 +753,19 @@ class CrossLanguageEventSnapshotTest {
 
         Map<String, DecisionResult.Answer> answers = new LinkedHashMap<>();
         answers.put("eligible", new DecisionResult.PredicateAnswer(0.9));
-        answers.put(
-                "route",
-                new DecisionResult.ChoiceAnswer(
-                        true,
-                        List.of(
-                                new DecisionResult.ChoiceProbability(true, 0.8),
-                                new DecisionResult.ChoiceProbability("true", 0.2)),
-                        0.7));
-        answers.put(
-                "severity",
-                new DecisionResult.ScoreAnswer(
-                        1.25,
-                        List.of(
-                                new DecisionResult.ScoreProbability(0, "low", 0.0),
-                                new DecisionResult.ScoreProbability(
-                                        1, Map.of("label", "medium"), 0.75),
-                                new DecisionResult.ScoreProbability(2, List.of("high"), 0.25)),
-                        null));
+        Map<String, Double> routeProbabilities = new LinkedHashMap<>();
+        routeProbabilities.put("Approve", 0.8);
+        routeProbabilities.put("approve", 0.2);
+        answers.put("route", new DecisionResult.ChoiceAnswer("Approve", routeProbabilities, 0.7));
+        Map<Integer, Object> legend = new LinkedHashMap<>();
+        for (int index = 0; index < levels.size(); index++) {
+            legend.put(index, levels.get(index));
+        }
+        Map<Integer, Double> probabilities = new LinkedHashMap<>();
+        probabilities.put(0, 0.0);
+        probabilities.put(1, 0.75);
+        probabilities.put(2, 0.25);
+        answers.put("severity", new DecisionResult.ScoreAnswer(1.25, probabilities, legend, null));
         answers.put("restricted", new DecisionResult.RefusalAnswer("Cannot answer"));
         DecisionResult result =
                 new DecisionResult(
@@ -790,7 +780,16 @@ class CrossLanguageEventSnapshotTest {
         Map<String, Event> events = new LinkedHashMap<>();
         events.put(
                 "decision_request_event.json",
-                new DecisionRequestEvent("registered-model", request));
+                new DecisionRequestEvent(
+                        "registered-model",
+                        request,
+                        Map.of(
+                                "timeout",
+                                4.0,
+                                "extra_headers",
+                                Map.of("X-Trace-ID", "review-1"),
+                                "safety_identifier",
+                                "review-user")));
         events.put(
                 "decision_response_event.json",
                 DecisionResponseEvent.success(FIXED_REQUEST_ID, result, 1, 2));
@@ -838,8 +837,11 @@ class CrossLanguageEventSnapshotTest {
                     DecisionResult result = response.getResponse();
                     DecisionResult.ChoiceAnswer choice =
                             (DecisionResult.ChoiceAnswer) result.getAnswers().get("route");
-                    assertEquals(Boolean.TRUE, choice.getChoice());
-                    assertEquals("true", choice.getProbabilities().get(1).getValue());
+                    assertEquals("Approve", choice.getChoice());
+                    assertEquals(
+                            List.of("Approve", "approve"),
+                            List.copyOf(choice.getProbabilities().keySet()));
+                    assertEquals(0.2, choice.getProbabilities().get("approve"));
                     assertInstanceOf(
                             DecisionResult.RefusalAnswer.class,
                             result.getAnswers().get("restricted"));

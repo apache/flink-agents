@@ -25,12 +25,11 @@ import pytest
 from flink_agents.api.decision_models import (
     BaseDecisionModelSetup,
     ChoiceAnswer,
-    ChoiceProbability,
+    DecisionRequest,
     DecisionResult,
     PredicateAnswer,
     RefusalAnswer,
     ScoreAnswer,
-    ScoreProbability,
 )
 from flink_agents.api.events.decision_event import (
     DecisionRequestEvent,
@@ -42,9 +41,6 @@ from flink_agents.api.memory_object import validate_memory_value
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.examples.quickstart.agents.decision_review_analysis_agent import (
     DecisionReviewAnalysisAgent,
-)
-from flink_agents.integrations.decision_models.openai_decision_model import (
-    OpenAIDecisionModelSetup,
 )
 from flink_agents.plan.actions.decision_model_action import process_decision_request
 from flink_agents.plan.configuration import AgentConfiguration
@@ -58,7 +54,9 @@ def _context(model: MagicMock) -> tuple[MagicMock, list[Event]]:
     ctx.action_metric_group = None
     ctx.get_resource.return_value = model
     ctx.send_event.side_effect = events.append
-    ctx.durable_execute.side_effect = lambda function, *args: function(*args)
+    ctx.durable_execute.side_effect = lambda function, *args, durable_id=None: function(
+        *args
+    )
 
     def remember(path: str, value: object) -> None:
         validate_memory_value(path, value)
@@ -69,29 +67,32 @@ def _context(model: MagicMock) -> tuple[MagicMock, list[Event]]:
     return ctx, events
 
 
-def _analysis(score: float, reason: str, damage: float) -> DecisionResult:
+def _analysis(
+    request: DecisionRequest, score: float, reason: str, damage: float
+) -> DecisionResult:
     lower_level = int(score)
     return DecisionResult(
         answers={
             "satisfaction": ScoreAnswer(
                 score=score,
-                probabilities=[
-                    ScoreProbability(
-                        value=level,
-                        label=f"Level {level}",
-                        probability=0.5
-                        if level in (lower_level, lower_level + 1)
-                        else 0.0,
+                probabilities={
+                    level: (
+                        1 - (score - lower_level)
+                        if level == lower_level
+                        else score - lower_level
+                        if level == lower_level + 1
+                        else 0.0
                     )
                     for level in range(5)
-                ],
+                },
+                legend=dict(enumerate(request.questions["satisfaction"].criteria)),
             ),
             "primary_reason": ChoiceAnswer(
                 choice=reason,
-                probabilities=[
-                    ChoiceProbability(value=value, probability=float(value == reason))
+                probabilities={
+                    value: float(value == reason)
                     for value in ("none", "shipping", "quality", "fit", "other")
-                ],
+                },
             ),
             "shipping_damage": PredicateAnswer(probability_true=damage),
         }
@@ -112,34 +113,44 @@ def _resolve(request, ctx, events) -> DecisionResponseEvent:
     return response
 
 
-@pytest.mark.parametrize("openai", [False, True])
-def test_review_responses_remain_correlated_when_they_arrive_out_of_order(
-    openai, monkeypatch
-):
+def test_review_responses_remain_correlated_when_they_arrive_out_of_order(monkeypatch):
     notify = MagicMock()
     monkeypatch.setattr(
         "flink_agents.examples.quickstart.agents.decision_review_analysis_agent.notify_shipping_manager",
         notify,
     )
-    model = MagicMock(
-        spec=OpenAIDecisionModelSetup if openai else BaseDecisionModelSetup
-    )
+    model = MagicMock(spec=BaseDecisionModelSetup)
     reviews = [
         {"id": "book", "review": "The package arrived crushed."},
         {"id": "headphones", "review": "The headphones stopped working."},
     ]
     results = {
-        reviews[0]["review"]: _analysis(0.5, "shipping", 0.8),
-        reviews[1]["review"]: _analysis(1.5, "quality", 0.79),
+        reviews[0]["review"]: (0.5, "shipping", 0.8),
+        reviews[1]["review"]: (1.5, "quality", 0.79),
     }
-    model.decide.side_effect = lambda request: results[request.input]
+    model.decide.side_effect = lambda request, *, request_params=None: _analysis(
+        request, *results[request.input]
+    )
     ctx, events = _context(model)
     requests = [_submit(review, ctx, events) for review in reviews]
     model.decide.assert_not_called()
     for request in requests:
         assert request.model == "review_analysis_model"
         criteria = request.request.questions["primary_reason"].criteria
-        assert isinstance(criteria, list if openai else dict)
+        assert list(criteria) == [
+            "none",
+            "shipping",
+            "quality",
+            "fit",
+            "other",
+        ]
+        assert request.request.questions["satisfaction"].criteria == [
+            "Very dissatisfied: strongly negative.",
+            "Dissatisfied: mostly negative.",
+            "Neutral: mixed or neutral.",
+            "Satisfied: mostly positive.",
+            "Very satisfied: strongly positive.",
+        ]
 
     responses = [_resolve(request, ctx, events) for request in reversed(requests)]
     for response in responses:
@@ -162,8 +173,8 @@ def test_review_responses_remain_correlated_when_they_arrive_out_of_order(
     ]
     notify.assert_called_once_with(**reviews[0])
     assert model.decide.call_args_list == [
-        call(requests[1].request),
-        call(requests[0].request),
+        call(requests[1].request, request_params={}),
+        call(requests[0].request, request_params={}),
     ]
 
 
@@ -174,12 +185,12 @@ def test_review_refusal_emits_correlated_refusals_without_notification(monkeypat
         notify,
     )
     model = MagicMock(spec=BaseDecisionModelSetup)
-    answers = _analysis(0.5, "shipping", 0.9).answers
+    ctx, events = _context(model)
+    request = _submit({"id": "book", "review": "Damaged package"}, ctx, events)
+    answers = _analysis(request.request, 0.5, "shipping", 0.9).answers
     model.decide.return_value = DecisionResult(
         answers={**answers, "satisfaction": RefusalAnswer(reason="Not enough evidence")}
     )
-    ctx, events = _context(model)
-    request = _submit({"id": "book", "review": "Damaged package"}, ctx, events)
     response = _resolve(request, ctx, events)
 
     DecisionReviewAnalysisAgent.process_decision_response(response, ctx)
