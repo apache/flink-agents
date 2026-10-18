@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.integrations.observability.otel;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.MappingIterator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.opentelemetry.exporter.otlp.http.trace.OtlpHttpSpanExporter;
@@ -110,35 +111,55 @@ public class TraceLogOTelExporter implements AutoCloseable {
         List<TraceRecord> records = new ArrayList<>();
         List<ConverterDiagnostic> diagnostics = new ArrayList<>();
         for (Path file : expandDirectories(files)) {
-            try (InputStream in = Files.newInputStream(file);
-                    MappingIterator<TraceRecord> it =
-                            MAPPER.readerFor(TraceRecord.class).readValues(in)) {
-                int malformedInFile = 0;
-                boolean fileAborted = false;
-                while (!fileAborted) {
-                    try {
-                        if (!it.hasNext()) {
-                            break;
-                        }
-                        records.add(it.next());
-                    } catch (RuntimeException e) {
-                        // A malformed record must not abort the whole export. Value-level errors
-                        // allow the iterator to continue; a structurally broken stream (or a
-                        // parser that stops making progress) aborts just this file, with the
-                        // diagnostic naming it either way.
-                        diagnostics.add(
-                                new ConverterDiagnostic(
-                                        ConverterDiagnostic.MALFORMED_RECORD,
-                                        null,
-                                        "Could not decode a Trace Log record: " + e.getMessage(),
-                                        file.toString()));
-                        malformedInFile++;
-                        fileAborted = malformedInFile >= MAX_MALFORMED_PER_FILE || !canContinue(it);
-                    }
+            try (InputStream in = Files.newInputStream(file)) {
+                MappingIterator<TraceRecord> it;
+                try {
+                    it = MAPPER.readerFor(TraceRecord.class).readValues(in);
+                } catch (JsonProcessingException e) {
+                    // The stream is broken from its first token: skip this file, keep the others.
+                    diagnostics.add(malformed(e, file));
+                    continue;
                 }
+                readRecords(it, file, records, diagnostics);
             }
         }
         return export(records, diagnostics);
+    }
+
+    private static void readRecords(
+            MappingIterator<TraceRecord> it,
+            Path file,
+            List<TraceRecord> records,
+            List<ConverterDiagnostic> diagnostics)
+            throws IOException {
+        try (it) {
+            int malformedInFile = 0;
+            boolean fileAborted = false;
+            while (!fileAborted) {
+                try {
+                    if (!it.hasNext()) {
+                        break;
+                    }
+                    records.add(it.next());
+                } catch (RuntimeException e) {
+                    // A malformed record must not abort the whole export. Value-level errors
+                    // allow the iterator to continue; a structurally broken stream (or a
+                    // parser that stops making progress) aborts just this file, with the
+                    // diagnostic naming it either way.
+                    diagnostics.add(malformed(e, file));
+                    malformedInFile++;
+                    fileAborted = malformedInFile >= MAX_MALFORMED_PER_FILE || !canContinue(it);
+                }
+            }
+        }
+    }
+
+    private static ConverterDiagnostic malformed(Exception e, Path file) {
+        return new ConverterDiagnostic(
+                ConverterDiagnostic.MALFORMED_RECORD,
+                null,
+                "Could not decode a Trace Log record: " + e.getMessage(),
+                file.toString());
     }
 
     private static boolean canContinue(MappingIterator<TraceRecord> it) {
