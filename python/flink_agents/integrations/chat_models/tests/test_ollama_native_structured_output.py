@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, List, Mapping
+from typing import Any, Callable, Dict, List, Mapping
 from unittest.mock import MagicMock
 
 import pytest
@@ -45,6 +45,12 @@ class Company(BaseModel):
 
     name: str
     owner: Person
+
+
+class Unrenderable(BaseModel):
+    """A schema carrying a member that no JSON Schema can express."""
+
+    cb: Callable[[int], int]
 
 
 def _connection() -> OllamaChatModelConnection:
@@ -111,6 +117,18 @@ def test_schema_is_model_json_schema() -> None:
         _messages(), model="qwen3", output_schema=OutputSchema(output_schema=Company)
     )
     assert _chat_call_kwargs(conn)["format"] == Company.model_json_schema()
+
+
+def test_unrenderable_schema_raises_naming_the_model() -> None:
+    """A schema that cannot be rendered fails here, named, not at the provider."""
+    conn = _connection()
+    with pytest.raises(TypeError, match="Unrenderable cannot be rendered"):
+        conn.chat(
+            _messages(),
+            model="qwen3",
+            output_schema=OutputSchema(output_schema=Unrenderable),
+        )
+    conn.client.chat.assert_not_called()
 
 
 def test_schema_not_passed_as_sampling_option() -> None:

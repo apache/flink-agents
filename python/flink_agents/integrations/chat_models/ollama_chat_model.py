@@ -24,7 +24,7 @@ from ollama import Client, Image, Message
 from pydantic import BaseModel, Field
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.agents.types import OutputSchema, render_output_schema
 from flink_agents.api.chat_message import (
     Base64Source,
     ChatMessage,
@@ -74,12 +74,13 @@ def _native_format(output_schema: Any) -> Dict[str, Any] | None:
 
     Returns ``None`` (leaving the request unconstrained) unless the schema is a
     ``BaseModel`` subclass. A ``RowTypeInfo`` schema is skipped so it keeps the
-    prompt-engineering fallback.
+    prompt-engineering fallback. A schema that cannot be rendered raises through
+    ``render_output_schema``, naming the model, like the other connections.
     """
     model = _native_output_model(output_schema)
     if model is None:
         return None
-    return model.model_json_schema()
+    return render_output_schema(model, lambda m: m.model_json_schema())
 
 
 class OllamaChatModelConnection(BaseChatModelConnection):
