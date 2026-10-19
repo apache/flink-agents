@@ -99,7 +99,7 @@ def ask(event: Event, ctx: RunnerContext) -> None:
     diff = task["code"] if isinstance(task, dict) else str(task)
     ctx.send_event(
         ChatRequestEvent(
-            model="review_model",
+            model="ollama_chat_model",
             messages=[ChatMessage.user(f"Review this diff:\n{diff}")],
         )
     )
@@ -121,7 +121,7 @@ public static void ask(Event event, RunnerContext ctx) throws Exception {
                     : String.valueOf(task);
     ctx.sendEvent(
             new ChatRequestEvent(
-                    "reviewModel",
+                    "ollamaChatModel",
                     List.of(new ChatMessage(MessageRole.USER, "Review this diff:\n" + diff))));
 }
 ```
@@ -143,13 +143,19 @@ While a call runs, the child behaves like a scoped agent of its own:
 - It may register and await sub-agents of its own, so nesting is unbounded in
   depth.
 
-Registering the child takes one of two forms. You register a descriptor, or you
-register the `Agent` itself. Which one you need follows from who calls it. A chat
-model can delegate only to a sub-agent it can describe and build arguments for. So a
-child exposed to a model needs the descriptor form, and that descriptor carries a
-description plus an input declaration, as a type or as a schema. A child that your own
-actions call needs neither, so registering the `Agent` itself is enough. The
-registration wraps it in a descriptor that carries nothing else.
+Registering the child takes one of two forms, and which one you need follows from who
+calls it, the model or one of your actions. A model can delegate only to a sub-agent
+it can describe and build arguments for, so a child exposed to a model needs the
+descriptor form. A child that only your actions call can register as-is, and that
+registration wraps it in a descriptor carrying nothing else.
+
+Which parameters the descriptor must carry depends on the same thing.
+
+| Parameter | Model-driven calls | Caller-driven calls |
+|---|---|---|
+| `agent` | Required | Required |
+| `description` | Optional, recommended | Optional |
+| `input_type` or `input_schema` | Exactly one required | Optional |
 
 {{< tabs "Register an Internal Sub-agent" >}}
 
@@ -260,8 +266,7 @@ parent.addResource("reviewer", ResourceType.AGENT, new ReviewAgent());
 {{< /tabs >}}
 
 This form carries no description and no input declaration, so a chat model rejects
-the sub-agent at setup time rather than calling it with no arguments. Only the
-descriptor form exposes a child to a model.
+the sub-agent at setup time rather than calling it with no arguments.
 
 A YAML file names the child instead of instantiating it. Its entry carries an
 `agent` field holding the name of another Agent in the same document, along with the
@@ -1006,7 +1011,7 @@ action must be `async`. In Java `submit` returns the handle directly and `await(
 yields the result. The same two calls drive `remote_reviewer` and `remote_runner`
 unchanged. Only the registration differs.
 
-## Work with open handles
+## Manage sub-agent calls
 
 A `SubagentFuture` is live from `submit` until it is awaited or cancelled. Awaiting
 it yields the call's `SubagentResult`. It also carries the call's `session_id` and
@@ -1017,7 +1022,10 @@ your own records.
 
 `combine` groups handles into a `SubagentFutures`, and resolving the batch resolves
 every handle in it. `gather` does not accept a `SubagentFuture`, so handles batch this
-way instead. The results come back in the order the handles were added.
+way instead. The batch prepares every handle before it runs any of them. Preparing an
+internal child starts that child, so the children's work can overlap. An external
+deferred setup issues its request only when the batch runs it, so those requests do
+not overlap. The results come back in the order the handles were added.
 
 {{< tabs "Fan Out to Several Sub-agents" >}}
 
@@ -1124,7 +1132,7 @@ try {
 
 `cancel()` on a deferred handle takes effect only before the request is issued.
 
-## The outcome of a call
+## Results and failures
 
 ### The result
 
@@ -1191,7 +1199,7 @@ triggers recovery.
   rather than for the message.
 - A result that is not JSON-compatible fails the delegation rather than the job.
 
-### Durability and failover
+## Durability and failover
 
 A sub-agent call always runs through
 [durable execution]({{< ref "docs/development/create-agent/actions#durable-execution" >}}).
@@ -1214,7 +1222,7 @@ a failover. There is no durability toggle and no sub-agent timeout option.
 - An internal sub-agent's child actions have their own persisted state, so a replay
   reuses the recorded child output instead of running the child again.
 
-### Metrics and Trace Log
+## Metrics and Trace Log
 
 Only the delegations a model requests are reported. A sub-agent you drive yourself
 from an action emits no sub-agent metrics and no sub-agent trace records. Add
@@ -1259,7 +1267,8 @@ The same delegations appear in
   enabled with `async.batch.parallelism` above 1, the framework submits every call
   before awaiting any of them. An async sub-agent starts its remote run during that
   submit, so those runs overlap. A deferred or internal call does its work while it
-  is awaited, so it does not overlap this way, and batching handles yourself with
-  [combine](#fan-out-to-several-sub-agents) does not change that. Results still land
-  on their own call ids, in the model's call order. See
+  is awaited, so it does not overlap on this path. Batching handles yourself differs
+  for an internal child, as
+  [Fan out to several sub-agents](#fan-out-to-several-sub-agents) describes. Results
+  still land on their own call ids, in the model's call order. See
   [Configuration]({{< ref "docs/operations/configuration" >}}).
