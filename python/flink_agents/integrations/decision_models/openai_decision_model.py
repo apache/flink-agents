@@ -64,6 +64,26 @@ def _description(value: JsonValue, field: str) -> dict[str, str]:
     return {} if value is None else {"description": _text(value, field)}
 
 
+def _predicate_instructions(question: PredicateQuestion) -> JsonValue:
+    """Include outcome meanings in the instructions accepted by OpenAI."""
+    instructions = question.instructions
+    criteria = question.criteria
+    if criteria is None:
+        return instructions
+    meanings = {
+        key: value
+        for key, value in (("yes", criteria.true), ("no", criteria.false))
+        if value is not None
+    }
+    if not meanings:
+        return instructions
+    if instructions is None:
+        return meanings
+    if isinstance(instructions, dict):
+        return {**instructions, **meanings}
+    return {"question": instructions, **meanings}
+
+
 def _questions(request: DecisionRequest) -> list[dict[str, Any]]:
     max_questions = OpenAIDecisionModelConnection._MAX_QUESTIONS
     if len(request.questions) > max_questions:
@@ -71,21 +91,17 @@ def _questions(request: DecisionRequest) -> list[dict[str, Any]]:
         raise ValueError(msg)
     questions = []
     for name, question in request.questions.items():
+        instructions = (
+            _predicate_instructions(question)
+            if isinstance(question, PredicateQuestion)
+            else question.instructions
+        )
         entry: dict[str, Any] = {
             "name": name,
             "type": question.type,
-            "instructions": _text(
-                question.instructions, f"question {name!r} instructions"
-            ),
+            "instructions": _text(instructions, f"question {name!r} instructions"),
         }
-        if isinstance(question, PredicateQuestion):
-            criteria = question.criteria
-            if criteria is not None and (
-                criteria.true is not None or criteria.false is not None
-            ):
-                msg = f"OpenAI question {name!r} does not support predicate criteria."
-                raise ValueError(msg)
-        elif isinstance(question, ChoiceQuestion):
+        if isinstance(question, ChoiceQuestion):
             min_choices = OpenAIDecisionModelConnection._MIN_CHOICE_OPTIONS
             max_choices = OpenAIDecisionModelConnection._MAX_CHOICE_OPTIONS
             if not min_choices <= len(question.criteria) <= max_choices:
@@ -185,13 +201,14 @@ class OpenAIDecisionModelConnection(BaseDecisionModelConnection):
     api_key and base_url fall back to the SDK's environment configuration, including
     OPENAI_API_KEY and OPENAI_BASE_URL. The client is created by open or the first
     call and reused until close. Strings are preserved; structured input,
-    instructions and descriptions are JSON encoded as text. Instructions are
-    required, and effective predicate criteria are rejected rather than embedded
-    in instructions. Choice values remain case-sensitive strings. Score labels
+    instructions and descriptions are JSON encoded as text. Predicate outcome
+    descriptions become yes/no meanings in instructions. Choice and Score require
+    explicit instructions. Choice values remain case-sensitive strings. Score labels
     are the zero-based indices; returned legends retain the original JSON level
     descriptions after response validation. Unsupported requests
     raise ValueError before a provider call.
     Responses are strictly validated against the SDK schema before conversion.
+    Probabilities and scores are preserved as reported by the provider.
     Request errors retain their SDK exception types. Unset timeout and retry
     limits use the SDK defaults. Set timeout to 0 to disable timeouts.
     """

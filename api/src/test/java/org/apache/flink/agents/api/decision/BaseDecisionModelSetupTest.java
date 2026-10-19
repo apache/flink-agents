@@ -89,16 +89,19 @@ class BaseDecisionModelSetupTest {
     }
 
     @Test
-    void directSetupsShareConnectionWithoutOwningItsLifecycle() throws Exception {
+    void setupsShareNamedConnectionWithoutOwningItsLifecycle() throws Exception {
         BaseDecisionModelConnection connection = mock(BaseDecisionModelConnection.class);
-        BaseDecisionModelSetup first = setup(connection, "first-model", null);
-        BaseDecisionModelSetup second = setup(connection, "second-model", null);
+        ResourceContext context = mock(ResourceContext.class);
+        when(context.getResource("shared", ResourceType.DECISION_MODEL_CONNECTION))
+                .thenReturn(connection);
+        BaseDecisionModelSetup first = setup("shared", "first-model", context);
+        BaseDecisionModelSetup second = setup("shared", "second-model", context);
         when(connection.decide(firstRequest, "first-model", Map.of())).thenReturn(firstResult);
         when(connection.decide(firstRequest, "second-model", Map.of())).thenReturn(firstResult);
 
-        assertThat(first.decide(firstRequest)).isSameAs(firstResult);
         first.open();
         second.open();
+        assertThat(first.decide(firstRequest)).isSameAs(firstResult);
         first.close();
         assertThat(second.decide(firstRequest)).isSameAs(firstResult);
         second.close();
@@ -127,15 +130,18 @@ class BaseDecisionModelSetupTest {
 
     @ParameterizedTest
     @MethodSource("invalidConfiguration")
-    void configurationRequiresConnectionAndModel(Map<String, Object> arguments) {
-        assertThatThrownBy(
-                        () ->
-                                new BaseDecisionModelSetup(
-                                        new ResourceDescriptor(
-                                                BaseDecisionModelSetup.class.getName(), arguments),
-                                        null))
+    void openRequiresConnectionAndModel(Map<String, Object> arguments) {
+        BaseDecisionModelSetup setup =
+                new BaseDecisionModelSetup(
+                        new ResourceDescriptor(BaseDecisionModelSetup.class.getName(), arguments),
+                        null);
+
+        assertThatThrownBy(setup::open)
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must be a non-blank string");
+        assertThatThrownBy(() -> setup.decide(firstRequest))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Open the setup");
     }
 
     private static Stream<Map<String, Object>> invalidConfiguration() {
@@ -149,7 +155,7 @@ class BaseDecisionModelSetupTest {
     }
 
     private static BaseDecisionModelSetup setup(
-            Object connection, String model, ResourceContext context) {
+            String connection, String model, ResourceContext context) {
         return new BaseDecisionModelSetup(
                 new ResourceDescriptor(
                         BaseDecisionModelSetup.class.getName(),

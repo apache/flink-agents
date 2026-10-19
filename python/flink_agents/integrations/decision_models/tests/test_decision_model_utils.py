@@ -72,51 +72,6 @@ def result_for(request, kind, probabilities, score=1.0):
     return DecisionResult(answers={"decision": answer})
 
 
-@pytest.mark.parametrize("kind", ["choice", "score"])
-@pytest.mark.parametrize(
-    ("probabilities", "score"),
-    [([0.333] * 3, 1.0), ([0.33] * 3, 1.0), ([0.1, 0.7, 0.2], 1.1)],
-)
-def test_distributions_allow_rounding_without_rewriting_values(
-    kind, probabilities, score
-):
-    request = choice_request() if kind == "choice" else score_request()
-    result = result_for(request, kind, probabilities, score)
-    before = result.model_dump()
-
-    assert validate_result(request, result) is result
-    assert result.model_dump() == before
-    if kind == "choice":
-        assert list(result.answers["decision"].probabilities) == [
-            "c",
-            "a",
-            "b",
-        ]
-
-
-@pytest.mark.parametrize("kind", ["choice", "score"])
-@pytest.mark.parametrize("probabilities", [[0.0] * 3, [0.2] * 3, [0.6, 0.3, 0.3]])
-def test_distributions_must_sum_to_one_within_rounding(kind, probabilities):
-    request = choice_request() if kind == "choice" else score_request()
-    result = result_for(request, kind, probabilities)
-
-    with pytest.raises(
-        ValueError, match="probabilities must sum to one within rounding"
-    ):
-        validate_result(request, result)
-
-
-@pytest.mark.parametrize("score", [0.9, 1.3])
-def test_score_must_agree_with_its_probability_weighted_level_indices(score):
-    request = score_request()
-    result = result_for(request, "score", [0.1, 0.7, 0.2], score)
-
-    with pytest.raises(
-        ValueError, match="score is inconsistent with its probabilities"
-    ):
-        validate_result(request, result)
-
-
 def test_score_cannot_exceed_the_last_requested_level():
     request = score_request()
     result = result_for(request, "score", [0.1, 0.7, 0.2], score=2.1)

@@ -75,6 +75,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertAll;
 
 /** Exercises actual Pemja calls and a Flink job without requiring a remote model service. */
 public class DecisionModelCrossLanguageTest {
@@ -86,6 +87,12 @@ public class DecisionModelCrossLanguageTest {
         @DecisionModelConnection
         public static PythonResourceDescriptor connection() {
             return new PythonResourceDescriptor(FIXTURE, "BridgeDecisionConnection", Map.of());
+        }
+
+        @DecisionModelConnection
+        public static PythonResourceDescriptor alternateConnection() {
+            return new PythonResourceDescriptor(
+                    FIXTURE, "BridgeDecisionConnection", Map.of("connection_id", "alternate"));
         }
 
         @DecisionModelSetup
@@ -102,6 +109,37 @@ public class DecisionModelCrossLanguageTest {
                     "flink_agents.api.decision_models.decision_model",
                     "BaseDecisionModelSetup",
                     Map.of("connection", "connection", "model", "second"));
+        }
+
+        @DecisionModelSetup
+        public static PythonResourceDescriptor defaultModel() {
+            return new PythonResourceDescriptor(
+                    FIXTURE, "BridgeDecisionSetup", Map.of("connection", "connection"));
+        }
+
+        @DecisionModelSetup
+        public static PythonResourceDescriptor defaultConnection() {
+            return new PythonResourceDescriptor(
+                    FIXTURE, "BridgeDecisionSetup", Map.of("model", "configured-model"));
+        }
+
+        @DecisionModelSetup
+        public static PythonResourceDescriptor defaultConfiguration() {
+            return new PythonResourceDescriptor(FIXTURE, "BridgeDecisionSetup", Map.of());
+        }
+
+        @DecisionModelSetup
+        public static PythonResourceDescriptor configuredDefaults() {
+            return new PythonResourceDescriptor(
+                    FIXTURE,
+                    "BridgeDecisionSetup",
+                    Map.of("connection", "alternateConnection", "model", "configured-model"));
+        }
+
+        @DecisionModelSetup
+        public static PythonResourceDescriptor invalidConfiguration() {
+            return new PythonResourceDescriptor(
+                    FIXTURE, "BridgeDecisionSetup", Map.of("model", " "));
         }
 
         @Action(EventType.InputEvent)
@@ -234,6 +272,7 @@ public class DecisionModelCrossLanguageTest {
                                                 Map.of(),
                                                 Map.of())));
                 verifyCancellationSignals(plan, cache, second, connection, interpreter);
+                verifyPythonSetupConfiguration(cache);
                 second.close();
                 assertThatThrownBy(() -> second.decide(structured))
                         .isInstanceOf(IllegalStateException.class)
@@ -248,8 +287,42 @@ public class DecisionModelCrossLanguageTest {
             }
             JsonNode closed =
                     MAPPER.readTree((String) interpreter.invoke("decision_fixture.snapshot"));
-            assertThat(closed.get("closes").asInt()).isEqualTo(1);
+            assertThat(closed.get("closes").asInt()).isEqualTo(2);
         }
+    }
+
+    private static void verifyPythonSetupConfiguration(ResourceCache cache) {
+        assertAll(
+                () -> assertPythonSetup(cache, "defaultModel", "default-model", "connection"),
+                () ->
+                        assertPythonSetup(
+                                cache, "defaultConnection", "configured-model", "connection"),
+                () ->
+                        assertPythonSetup(
+                                cache, "defaultConfiguration", "default-model", "connection"),
+                () ->
+                        assertPythonSetup(
+                                cache, "configuredDefaults", "configured-model", "alternate"),
+                () ->
+                        assertThatThrownBy(
+                                        () ->
+                                                cache.getResource(
+                                                        "invalidConfiguration",
+                                                        ResourceType.DECISION_MODEL))
+                                .hasMessageContaining(
+                                        "A non-blank decision model name is required."));
+    }
+
+    private static void assertPythonSetup(
+            ResourceCache cache, String name, String expectedModel, String expectedConnection)
+            throws Exception {
+        BaseDecisionModelSetup setup =
+                (BaseDecisionModelSetup) cache.getResource(name, ResourceType.DECISION_MODEL);
+        DecisionRequest input = request("setup configuration");
+        Map<String, Object> params = requestParams(name);
+        DecisionResult result = setup.decide(input, params);
+        assertResult(result, input, expectedModel, params);
+        assertThat(result.getMetadata().get("connection")).isEqualTo(expectedConnection);
     }
 
     private static void verifyCancellationSignals(

@@ -26,6 +26,7 @@ from pydantic import JsonValue
 
 from flink_agents.api.decision_models import (
     BaseDecisionModelConnection,
+    BaseDecisionModelSetup,
     ChoiceAnswer,
     DecisionRequest,
     DecisionResult,
@@ -48,6 +49,8 @@ def snapshot() -> str:
 
 
 class BridgeDecisionConnection(BaseDecisionModelConnection):
+    connection_id: str = "connection"
+
     def open(self) -> None:
         _lifecycle["opens"] += 1
 
@@ -93,7 +96,13 @@ class BridgeDecisionConnection(BaseDecisionModelConnection):
             model="reported-" + model,
             usage=TokenUsage(input_tokens=7),
             metadata={
+                "connection": self.connection_id,
                 "request": request.model_dump(mode="json"),
                 "request_params": params,
             },
         )
+
+
+class BridgeDecisionSetup(BaseDecisionModelSetup):
+    connection: str = "connection"
+    model: str = "default-model"

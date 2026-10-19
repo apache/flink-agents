@@ -93,7 +93,7 @@ def test_python_flink_context_owns_decision_resources() -> None:
         connection = ctx.get_resource(
             "connection", ResourceType.DECISION_MODEL_CONNECTION, metric_group
         )
-        assert setup.connection is connection
+        assert setup.connection == "connection"
         assert connection.opens == 1
         assert setup.metric_group is metric_group
         request = DecisionRequest(

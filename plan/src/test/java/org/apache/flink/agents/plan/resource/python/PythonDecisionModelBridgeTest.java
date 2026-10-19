@@ -79,12 +79,12 @@ class PythonDecisionModelBridgeTest {
                 new PythonDecisionModelSetup(
                         adapter,
                         resource,
-                        new ResourceDescriptor(
-                                "unused", Map.of("connection", "shared", "model", "decision")),
+                        new ResourceDescriptor("unused", Map.of()),
                         mock(ResourceContext.class));
         Map<String, Object> params =
                 Map.of("extra_headers", Map.of("x-request-id", "setup-call"), "timeout", 2.5);
 
+        setup.open();
         setup.decide(request, params);
         setup.decide(request);
 

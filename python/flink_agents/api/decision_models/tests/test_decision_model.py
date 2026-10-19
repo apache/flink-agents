@@ -408,6 +408,7 @@ def test_setup_resolves_shared_connection_and_accepts_new_questions_each_call():
     context.get_resource.assert_called_once_with(
         "shared", ResourceType.DECISION_MODEL_CONNECTION
     )
+    assert setup.connection == "shared"
     assert setup.decide(request).answers == {
         "first": PredicateAnswer(probability_true=0.8)
     }
@@ -420,18 +421,13 @@ def test_setup_resolves_shared_connection_and_accepts_new_questions_each_call():
     }
 
 
-def test_direct_setup_uses_connection_without_resource_context():
-    setup = BaseDecisionModelSetup(connection=_Connection(), model="decision-model")
-    setup.open()
-    request = DecisionRequest(
-        input="ticket",
-        questions={"first": PredicateQuestion(instructions="First condition?")},
-    )
-    assert setup.decide(request).metadata == {"requested_model": "decision-model"}
-
-
 def test_setup_request_params_apply_only_to_the_current_call():
-    setup = BaseDecisionModelSetup(connection=_Connection(), model="decision-model")
+    context = Mock(spec=ResourceContext)
+    context.get_resource.return_value = _Connection()
+    setup = BaseDecisionModelSetup(
+        connection="shared", model="decision-model", resource_context=context
+    )
+    setup.open()
     request = DecisionRequest(
         input="Evidence",
         questions={"damaged": PredicateQuestion(instructions="Is it damaged?")},
@@ -445,19 +441,28 @@ def test_setup_request_params_apply_only_to_the_current_call():
     assert setup.decide(request).metadata == {"requested_model": "decision-model"}
 
 
-def test_closing_one_setup_keeps_its_shared_connection_usable(monkeypatch):
+def test_setup_lifecycle_does_not_manage_shared_connection(monkeypatch):
     connection = _Connection()
+    open_connection = Mock()
     close = Mock()
+    monkeypatch.setattr(_Connection, "open", open_connection)
     monkeypatch.setattr(_Connection, "close", close)
-    first = BaseDecisionModelSetup(connection=connection, model="first-model")
-    second = BaseDecisionModelSetup(connection=connection, model="second-model")
+    context = Mock(spec=ResourceContext)
+    context.get_resource.return_value = connection
+    first = BaseDecisionModelSetup(
+        connection="shared", model="first-model", resource_context=context
+    )
+    second = BaseDecisionModelSetup(
+        connection="shared", model="second-model", resource_context=context
+    )
     request = DecisionRequest(
         input="Evidence",
         questions={"damaged": PredicateQuestion(instructions="Is it damaged?")},
     )
     first.open()
     second.open()
-    assert first.connection is second.connection is connection
+    open_connection.assert_not_called()
+    assert first.connection == second.connection == "shared"
     assert first.decide(request).metadata == {"requested_model": "first-model"}
 
     first.close()

@@ -24,6 +24,7 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    PrivateAttr,
     StrictStr,
     TypeAdapter,
     field_validator,
@@ -95,17 +96,16 @@ class BaseDecisionModelConnection(Resource, ABC):
 class BaseDecisionModelSetup(Resource):
     """A decision model configured with a connection and a model name.
 
-    Registered setups resolve named connections through the ResourceContext.
-    For direct use, pass a connection instance and manage its lifecycle yourself.
+    Call open before decide. Connections are referenced by resource name and
+    resolved through the ResourceContext when the setup is opened.
     Closing a setup does not close a shared connection.
     """
 
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
-    connection: str | BaseDecisionModelConnection = Field(
-        description="Connection resource name or a connection instance."
-    )
+    connection: str = Field(description="The referenced connection name.")
     model: str = Field(description="Provider model name.")
+    _resolved_connection: BaseDecisionModelConnection | None = PrivateAttr(default=None)
 
     @field_validator("model")
     @classmethod
@@ -114,10 +114,8 @@ class BaseDecisionModelSetup(Resource):
 
     @field_validator("connection")
     @classmethod
-    def _validate_connection(
-        cls, value: str | BaseDecisionModelConnection
-    ) -> str | BaseDecisionModelConnection:
-        if isinstance(value, str) and not value.strip():
+    def _validate_connection(cls, value: str) -> str:
+        if not value.strip():
             msg = "Connection name must not be blank."
             raise ValueError(msg)
         return value
@@ -130,17 +128,16 @@ class BaseDecisionModelSetup(Resource):
 
     @override
     def open(self) -> None:
-        if isinstance(self.connection, str):
-            if self.resource_context is None:
-                msg = "A named decision connection requires a ResourceContext."
-                raise RuntimeError(msg)
-            connection = self.resource_context.get_resource(
-                self.connection, ResourceType.DECISION_MODEL_CONNECTION
-            )
-            if not isinstance(connection, BaseDecisionModelConnection):
-                msg = "The referenced resource must be a decision model connection."
-                raise TypeError(msg)
-            self.connection = connection
+        if self.resource_context is None:
+            msg = "A decision model setup requires a ResourceContext."
+            raise RuntimeError(msg)
+        connection = self.resource_context.get_resource(
+            self.connection, ResourceType.DECISION_MODEL_CONNECTION
+        )
+        if not isinstance(connection, BaseDecisionModelConnection):
+            msg = "The referenced resource must be a decision model connection."
+            raise TypeError(msg)
+        self._resolved_connection = connection
 
     def decide(
         self,
@@ -155,9 +152,9 @@ class BaseDecisionModelSetup(Resource):
         request_params supplies provider-specific options for this call only;
         it does not change the shared connection or this setup's configuration.
         """
-        if isinstance(self.connection, str):
-            msg = "Open the setup to resolve its named decision connection before calling decide."
+        if self._resolved_connection is None:
+            msg = "Open the setup before calling decide."
             raise TypeError(msg)
-        return self.connection.decide(
+        return self._resolved_connection.decide(
             request, model=self.model, request_params=request_params
         )

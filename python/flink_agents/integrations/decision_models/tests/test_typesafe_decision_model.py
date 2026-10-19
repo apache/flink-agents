@@ -41,7 +41,6 @@ from flink_agents.api.decision_models import (
 from flink_agents.integrations.decision_models import typesafe_decision_model
 from flink_agents.integrations.decision_models.typesafe_decision_model import (
     TypeSafeDecisionModelConnection,
-    TypeSafeDecisionModelSetup,
 )
 
 
@@ -133,8 +132,7 @@ def test_jev_sdk_request_and_typed_answers(
 
     sdk_transport(handle)
     connection = TypeSafeDecisionModelConnection(api_key="test-key", **options)
-    setup = TypeSafeDecisionModelSetup(connection=connection, model="jev-latest")
-    result = setup.decide(request_data)
+    result = connection.decide(request_data, model="jev-latest")
 
     assert len(seen) == 1
     assert str(seen[0].url) == "https://api.typesafe.ai/v1/systemone"
@@ -193,7 +191,7 @@ def test_jev_sdk_request_and_typed_answers(
     assert DecisionResult.model_validate_json(result.model_dump_json()) == result
 
 
-def test_request_params_reach_sdk_without_changing_shared_setup_or_later_calls(
+def test_request_params_reach_sdk_without_changing_connection_or_later_calls(
     sdk_transport, request_data, response_data
 ):
     seen = []
@@ -204,7 +202,6 @@ def test_request_params_reach_sdk_without_changing_shared_setup_or_later_calls(
 
     clients = sdk_transport(handle)
     connection = TypeSafeDecisionModelConnection(api_key="test-key", timeout=11)
-    setup = TypeSafeDecisionModelSetup(connection=connection, model="jev-latest")
     request_params = {
         "timeout": 0.25,
         "extra_headers": {"X-Request-Tag": "first-call"},
@@ -212,12 +209,15 @@ def test_request_params_reach_sdk_without_changing_shared_setup_or_later_calls(
     }
     before = deepcopy(request_params)
 
-    first = setup.decide(request_data, request_params=request_params)
-    second = setup.decide(
+    first = connection.decide(
+        request_data, model="jev-latest", request_params=request_params
+    )
+    second = connection.decide(
         request_data,
+        model="jev-latest",
         request_params={"extra_headers": {"X-Request-Tag": "second-call"}},
     )
-    third = setup.decide(request_data)
+    third = connection.decide(request_data, model="jev-latest")
 
     assert first == second == third
     assert len(clients) == 1
@@ -917,18 +917,37 @@ def test_sdk_answers_are_subject_to_common_value_constraints(
     assert error.value.errors()[0]["loc"] == (field,)
 
 
-def test_sdk_response_reaches_common_request_validation(
-    sdk_transport, request_data, response_data
+@pytest.mark.parametrize(
+    ("probabilities", "score"),
+    [
+        ([0.0] * 3, 1.0),
+        ([0.2] * 3, 1.5),
+        ([0.6] * 3, 1.0),
+        ([0.44962867851783656, 0.5503713214821633, 0.0], 0.5503713214821633),
+        ([0.1, 0.7, 0.2], 1.5),
+    ],
+)
+def test_sdk_numeric_answers_preserve_provider_values(
+    sdk_transport, request_data, response_data, probabilities, score
 ):
-    response_data["answers"]["frustration"]["score"] = 1.5
+    choice_probabilities = dict(
+        zip(("sales", "technical", "billing"), probabilities, strict=True)
+    )
+    response_data["answers"]["department"]["probabilities"] = choice_probabilities
+    response_data["answers"]["frustration"]["probabilities"] = {
+        str(index): probability for index, probability in enumerate(probabilities)
+    }
+    response_data["answers"]["frustration"]["score"] = score
     sdk_transport(lambda request: httpx2.Response(200, json=response_data))
-    with pytest.raises(
-        ValueError, match="score is inconsistent with its probabilities"
-    ) as error:
-        TypeSafeDecisionModelConnection(api_key="test-key").decide(
-            request_data, model="jev-latest"
-        )
-    assert type(error.value) is ValueError
+    result = TypeSafeDecisionModelConnection(api_key="test-key").decide(
+        request_data, model="jev-latest"
+    )
+    assert result.answers["department"].probabilities == choice_probabilities
+    assert result.answers["frustration"].probabilities == dict(enumerate(probabilities))
+    assert result.answers["frustration"].score == score
+    assert result.answers["frustration"].legend == dict(
+        enumerate(request_data.questions["frustration"].criteria)
+    )
 
 
 def test_score_legend_is_independent_of_request_and_provider_data(sdk_transport):

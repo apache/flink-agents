@@ -32,51 +32,49 @@ import java.util.Objects;
 /**
  * A decision model configured with a connection and a model name.
  *
- * <p>Named connections are resolved through the resource context in {@link #open()}. Directly
- * supplied connections remain the caller's responsibility. Closing a setup does not close a shared
- * connection. Each call supplies its own evidence, questions, and provider request parameters.
+ * <p>Call {@link #open()} before using the setup. Registered setups are opened by the framework.
+ * Connections are referenced by resource name and resolved through the resource context. Closing a
+ * setup does not close a shared connection. Each call supplies its own evidence, questions, and
+ * provider request parameters.
  */
 public class BaseDecisionModelSetup extends Resource {
-    @Nullable private final String connectionName;
-    private final String model;
+    private final ResourceDescriptor descriptor;
+    @Nullable private String model;
     @Nullable private BaseDecisionModelConnection connection;
 
     /**
-     * Configure a decision model using the descriptor's {@code connection} and {@code model}.
+     * Configure a decision model using the descriptor's {@code connection} and {@code model}. The
+     * configuration is validated by {@link #open()}.
      *
-     * @param descriptor configuration containing a connection resource name or connection instance
-     *     and a non-blank provider model name
-     * @param resourceContext resource lookup context, required for a named connection
+     * @param descriptor configuration containing a connection resource name and a non-blank
+     *     provider model name
+     * @param resourceContext resource lookup context, required when opening the setup
      */
     public BaseDecisionModelSetup(
             ResourceDescriptor descriptor, @Nullable ResourceContext resourceContext) {
         super(Objects.requireNonNull(descriptor, "descriptor"), resourceContext);
-        Object configuredConnection = descriptor.getArgument("connection");
-        if (configuredConnection instanceof BaseDecisionModelConnection) {
-            this.connectionName = null;
-            this.connection = (BaseDecisionModelConnection) configuredConnection;
-        } else {
-            this.connectionName = requireNonBlankString(configuredConnection, "connection");
-        }
-        this.model = requireNonBlankString(descriptor.getArgument("model"), "model");
+        this.descriptor = descriptor;
     }
 
     @Override
     public void open() throws Exception {
-        if (connection == null) {
-            if (resourceContext == null) {
-                throw new IllegalStateException(
-                        "A named decision connection requires a ResourceContext.");
-            }
-            Resource resolved =
-                    resourceContext.getResource(
-                            connectionName, ResourceType.DECISION_MODEL_CONNECTION);
-            if (!(resolved instanceof BaseDecisionModelConnection)) {
-                throw new IllegalArgumentException(
-                        "The referenced resource must be a decision model connection.");
-            }
-            connection = (BaseDecisionModelConnection) resolved;
+        if (connection != null) {
+            return;
         }
+        String configuredModel = requireNonBlankString(descriptor.getArgument("model"), "model");
+        String connectionName =
+                requireNonBlankString(descriptor.getArgument("connection"), "connection");
+        if (resourceContext == null) {
+            throw new IllegalStateException("A decision model setup requires a ResourceContext.");
+        }
+        Resource resolved =
+                resourceContext.getResource(connectionName, ResourceType.DECISION_MODEL_CONNECTION);
+        if (!(resolved instanceof BaseDecisionModelConnection)) {
+            throw new IllegalArgumentException(
+                    "The referenced resource must be a decision model connection.");
+        }
+        model = configuredModel;
+        connection = (BaseDecisionModelConnection) resolved;
     }
 
     @Override
@@ -108,8 +106,7 @@ public class BaseDecisionModelSetup extends Resource {
 
     private BaseDecisionModelConnection requireConnection() {
         if (connection == null) {
-            throw new IllegalStateException(
-                    "Open the setup to resolve its named decision connection before use.");
+            throw new IllegalStateException("Open the setup before using the decision model.");
         }
         return connection;
     }

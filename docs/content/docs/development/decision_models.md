@@ -33,7 +33,7 @@ loader. Python Actions use Python connections and setups. Java Actions can use
 those providers through the cross-language API, or use native Java providers.
 Built-in providers are implemented in Python. Custom Java providers implement
 `BaseDecisionModelConnection` and use `BaseDecisionModelSetup` to select a
-connection and model.
+registered connection by name and a model.
 
 Call a model directly when the same Action will use its answers. Use
 [event-driven calls](#event-driven-calls) when you want the built-in Action to
@@ -53,11 +53,9 @@ from flink_agents.api.decision_models import (
 )
 from flink_agents.integrations.decision_models.typesafe_decision_model import (
     TypeSafeDecisionModelConnection,
-    TypeSafeDecisionModelSetup,
 )
 
 connection = TypeSafeDecisionModelConnection()
-model = TypeSafeDecisionModelSetup(connection=connection, model="jev-latest")
 request = DecisionRequest(
     input="I was charged twice for my order.",
     questions={
@@ -72,8 +70,10 @@ request = DecisionRequest(
     },
 )
 try:
-    result = model.decide(
+    connection.open()
+    result = connection.decide(
         request,
+        model="jev-latest",
         request_params={"extra_headers": {"x-request-id": "ticket-42"}},
     )
     answer = result.answers["team"]
@@ -88,24 +88,26 @@ finally:
     connection.close()
 ```
 
-A connection owns the SDK client and can serve multiple model setups. For direct
-calls, close the connection when finished. Named connections registered with FA
-are opened and closed by the resource lifecycle; an Action should not close them.
+A connection owns the SDK client. For standalone use, open the connection, pass
+the model to `decide()`, and close the connection when finished. In an Agent,
+setups select a registered connection by name and fix the model for subsequent
+calls. Multiple setups can share a connection. FA opens registered resources
+before use and closes them when finished; an Action should not manage their
+lifecycle.
 
-To use OpenAI, select its connection and setup. Keep the same request; the
+To use OpenAI, select its connection and model. Keep the same request; the
 adapter converts the criteria map into the provider's required choices array:
 
 ```python
 from flink_agents.integrations.decision_models.openai_decision_model import (
     OpenAIDecisionModelConnection,
-    OpenAIDecisionModelSetup,
 )
 
 # Reads OPENAI_API_KEY; OPENAI_BASE_URL is also supported by the SDK.
 connection = OpenAIDecisionModelConnection()
-model = OpenAIDecisionModelSetup(connection=connection, model="gpt-6-luna")
 try:
-    result = model.decide(request)
+    connection.open()
+    result = connection.decide(request, model="gpt-6-luna")
     print(result.model_dump_json(indent=2))
 finally:
     connection.close()
@@ -124,10 +126,11 @@ connection = TypeSafeDecisionModelConnection(
         + ".cn-beijing.maas.aliyuncs.com/compatible-mode"
     ),
 )
-model = TypeSafeDecisionModelSetup(
-    connection=connection,
-    model="decision-model-preview",
-)
+try:
+    connection.open()
+    result = connection.decide(request, model="decision-model-preview")
+finally:
+    connection.close()
 ```
 
 The SDK appends `/v1/systemone` to the TypeSafe API root. Choose a model and
@@ -163,9 +166,8 @@ and size restrictions, described in
 `PredicateCriteria.true` and `.false` describe what makes the condition true or
 false. Either description may be omitted; an all-null criteria object has the
 same meaning as no criteria. The answer always estimates the probability of
-true, even when only the false outcome is described. OpenAI requires instructions
-and does not have a separate Predicate criteria field. Its adapter rejects
-non-null outcome descriptions rather than silently dropping or rewriting them.
+true, even when only the false outcome is described. Both adapters accept these
+descriptions; OpenAI embeds them in instructions as described below.
 
 `ChoiceQuestion.criteria` maps each string choice value to its description. A
 `None` description leaves the value itself to define that option. Keys must be
@@ -213,11 +215,11 @@ def print_score(answer: ScoreAnswer) -> None:
 ```
 
 Responses must cover every requested choice or score level exactly once, with
-finite probabilities in `[0, 1]` forming a valid distribution. Choice answers must
-select a requested value. Score answers must lie in `[0, number_of_levels - 1]`
-and agree with their probability distribution, allowing for provider rounding.
-FA does not normalize probabilities, infer missing entries, or apply business
-thresholds.
+finite probabilities in `[0, 1]`. Choice answers must select a requested value.
+Score answers must lie in `[0, number_of_levels - 1]`. FA preserves the provider's
+probabilities and scores without checking probability sums or whether a score
+agrees with its probabilities. It does not normalize probabilities, infer missing
+entries, or apply business thresholds.
 
 Choice and score answers retain `provider_confidence` when reported. This is the
 provider's own measure, not a replacement for the full probability distribution.
@@ -236,8 +238,8 @@ and token usage details. There is no required response identifier.
 
 ### Provider conversion rules
 
-Use one typed request for all providers. Conversions preserve explicitly supplied
-content and reject unsupported fields before calling the provider. The
+Use one typed request for all providers. Each adapter translates the common
+questions to its provider's format using the rules below. The
 [TypeSafe SDK reference](https://docs.typesafe.ai/sdk/python/api/types/questions)
 and [OpenAI API reference](https://developers.openai.com/api/reference/resources/decisions/methods/create)
 define the native formats.
@@ -245,17 +247,21 @@ define the native formats.
 | FA content | TypeSafe / Jev adapter | OpenAI adapter |
 |---|---|---|
 | `input` | Text, object, or array becomes `state`; null, numbers, and booleans are rejected | Strings are preserved; other non-null JSON values are encoded as text; null is rejected |
-| `instructions` | Text, object, or array; omitted when `None`; unsupported root scalars are rejected | Required for every question; strings are preserved and other non-null JSON values are encoded as text |
-| Predicate `criteria` | Passes outcome descriptions to SDK `Noul`; omits null outcomes | Rejects any non-null true/false description; absent or all-null criteria is allowed |
+| `instructions` | Text, object, or array; omitted when `None`; unsupported root scalars are rejected | Required for Choice and Score; Predicate may use criteria alone. Strings are preserved and other non-null JSON values are encoded as text |
+| Predicate `criteria` | Passes outcome descriptions to SDK `Noul`; omits null outcomes | Combines non-null outcome descriptions with instructions using `yes`/`no`, then JSON-encodes the result |
 | Choice `criteria` | Preserves the map; descriptions are text, object, array, or null | Converts each map entry to a choice with its string key as `value`; descriptions are converted to text and omitted when null |
 | Score `criteria` | Preserves each complete description and its order; each entry must be text, an object, or an array | Converts each entry to a level with `label=str(index)`; non-null entries become text descriptions and null entries omit `description` |
 
 Strings remain text even when they contain JSON. OpenAI text conversion
-JSON-encodes structured content with Unicode preserved; it does not add default
-instructions or merge Predicate criteria into instructions. Generated score
-labels identify level indices, while `ScoreAnswer.legend` retains the original
-descriptions. Jev receives the criteria list with its structure and order
-preserved.
+JSON-encodes structured content with Unicode preserved. With Predicate criteria,
+`true` becomes `yes` and `false` becomes `no`. These keys are merged into object
+instructions, taking precedence over existing keys of the same name. Other
+non-null instructions are placed under `question`; omitted instructions leave
+only the outcome meanings. Absent or all-null criteria leave instructions unchanged.
+
+Generated score labels identify level indices, while `ScoreAnswer.legend`
+retains the original descriptions. Jev receives the criteria list with its
+structure and order preserved.
 
 TypeSafe Choice and Score questions can be defined by their criteria alone.
 A Predicate still needs instructions or at least one described outcome.
@@ -269,10 +275,10 @@ A Predicate still needs instructions or at least one described outcome.
 TypeSafe's upper limits follow the [TypeSafe API](https://docs.typesafe.ai/api).
 Compatible endpoints can impose additional restrictions.
 
-To keep a request portable across both adapters, provide instructions for every
-question and supply at least two choices or score levels. Predicate criteria must
-be absent; put the complete condition in instructions. Structured descriptions
-must meet Jev's native content constraints.
+To keep a request portable across both adapters, provide instructions for Choice
+and Score and supply at least two choices or score levels. Predicate accepts
+instructions, outcome descriptions, or both. Structured descriptions must meet
+Jev's native content constraints.
 
 ## Use from a Python Action
 

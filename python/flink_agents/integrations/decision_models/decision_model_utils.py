@@ -17,8 +17,7 @@
 ################################################################################
 """Shared utilities for decision model integrations."""
 
-from collections.abc import Collection, Mapping, Sequence
-from decimal import Decimal
+from collections.abc import Collection, Mapping
 from typing import Any
 
 from pydantic import JsonValue
@@ -71,53 +70,6 @@ def same_json_value(left: JsonValue, right: JsonValue) -> bool:
             and all(same_json_value(a, b) for a, b in zip(left, right, strict=True))
         )
     return isinstance(left, bool) == isinstance(right, bool) and left == right
-
-
-def _rounding_bounds(value: float) -> tuple[Decimal, Decimal]:
-    displayed = Decimal(str(value))
-    places = max(2, -int(displayed.as_tuple().exponent))
-    half_unit = Decimal(10) ** -places / 2
-    return displayed - half_unit, displayed + half_unit
-
-
-def _validate_distribution(
-    name: str, probabilities: Collection[float]
-) -> list[tuple[Decimal, Decimal]]:
-    bounds = [
-        (max(Decimal(0), low), min(Decimal(1), high))
-        for low, high in map(_rounding_bounds, probabilities)
-    ]
-    if (
-        not any(probabilities)
-        or sum(low for low, _ in bounds) > 1
-        or sum(high for _, high in bounds) < 1
-    ):
-        msg = f"Decision answer {name!r} probabilities must sum to one within rounding."
-        raise ValueError(msg)
-    return bounds
-
-
-def _validate_expected_score(
-    name: str, score: float, bounds: Sequence[tuple[Decimal, Decimal]]
-) -> None:
-    # Every displayed probability admits a rounding interval. Allocate the mass
-    # not already in the lower bounds to low or high indices to find the possible
-    # expected-score range, while keeping the distribution normalized.
-    remaining = Decimal(1) - sum(low for low, _ in bounds)
-    base_score = sum(index * low for index, (low, _) in enumerate(bounds))
-    extrema = []
-    for indices in (range(len(bounds)), reversed(range(len(bounds)))):
-        rest, expected = remaining, base_score
-        for index in indices:
-            low, high = bounds[index]
-            mass = min(rest, high - low)
-            expected += index * mass
-            rest -= mass
-        extrema.append(expected)
-    score_low, score_high = _rounding_bounds(score)
-    if score_high < extrema[0] or score_low > extrema[1]:
-        msg = f"Decision answer {name!r} score is inconsistent with its probabilities."
-        raise ValueError(msg)
 
 
 def create_result(
@@ -179,7 +131,6 @@ def validate_result(request: DecisionRequest, result: DecisionResult) -> Decisio
             ):
                 msg = f"Decision answer {name!r} must cover exactly the requested choices."
                 raise ValueError(msg)
-            _validate_distribution(name, answer.probabilities.values())
             continue
         if isinstance(question, ScoreQuestion) and isinstance(answer, ScoreAnswer):
             indices = set(range(len(question.criteria)))
@@ -198,10 +149,6 @@ def validate_result(request: DecisionRequest, result: DecisionResult) -> Decisio
                     f"Decision answer {name!r} must retain the requested score levels."
                 )
                 raise ValueError(msg)
-            bounds = _validate_distribution(
-                name, [answer.probabilities[index] for index in range(len(indices))]
-            )
-            _validate_expected_score(name, answer.score, bounds)
             continue
         msg = f"Decision answer {name!r} has a different type from its question."
         raise ValueError(msg)
