@@ -549,6 +549,26 @@ class PojoJsonSchemaGeneratorTest {
                 .isTrue();
     }
 
+    /** Output schema fixture holding a map beside enums the generator defines itself. */
+    public static class TaggedOrder {
+        public PartlyMapped status;
+        public Sign sign;
+        public Map<String, String> tags;
+    }
+
+    @Test
+    @DisplayName("An enum the generator defines itself does not hide a map beside it")
+    void reachesMapBesideEnumDefinition() {
+        // The check is offered only the types no earlier definition provider claims. The enum
+        // definition claims each enum, so the fields beside an enum must still be reached.
+        List<Class<?>> openKeyed = List.of(Map.class, JsonNode.class);
+        Option strict = Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT;
+
+        assertThat(PojoJsonSchemaGenerator.reachesAny(Order.class, openKeyed, strict)).isFalse();
+        assertThat(PojoJsonSchemaGenerator.reachesAny(TaggedOrder.class, openKeyed, strict))
+                .isTrue();
+    }
+
     private static List<String> fieldNames(JsonNode node) {
         List<String> names = new ArrayList<>();
         node.fieldNames().forEachRemaining(names::add);
