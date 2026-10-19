@@ -270,6 +270,17 @@ export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["pu
 **Note:** You can add the `export PYTHONPATH=...` line to your shell profile (`~/.bash_profile`, `~/.bashrc`, `~/.zprofile`, or `~/.zshrc`) to set it permanently. This way, it will be automatically configured in all future terminal sessions.
 {{< /hint >}}
 
+### Known Limitation: Successive Python Jobs on a Session Cluster
+
+Restart the session cluster before you submit another Flink Agents job that uses the Python
+runtime, including Java jobs whose Agents have Python components. For the local cluster,
+run `$FLINK_HOME/bin/stop-cluster.sh` and then `$FLINK_HOME/bin/start-cluster.sh`.
+
+Successive jobs on the same TaskManager have known Python import and cache limitations.
+When the Flink Agents distribution JAR is not in `$FLINK_HOME/lib`, a later job can also
+fail to start with `NoSuchFieldException: loadedLibraryNames` or a `ClassCastException`
+on `pemja.core.object.PyObject`.
+
 ### Install Flink Agents Java Library (Java Flink jobs)
 
 {{< hint info >}}

@@ -108,4 +108,7 @@ in `$FLINK_HOME/conf/config.yaml` before you start the cluster. Both the Python 
 Quickstarts need it. See
 [JDK and Scheduling Requirements]({{< ref "docs/development/create-agent/actions#jdk-and-scheduling-requirements" >}}).
 
+Restart the cluster before you submit each Python Quickstart after the first. See
+[Known Limitation: Successive Python Jobs on a Session Cluster]({{< ref "docs/get-started/setup#known-limitation-successive-python-jobs-on-a-session-cluster" >}}).
+
 To stop the cluster again, run `$FLINK_HOME/bin/stop-cluster.sh`.
