@@ -177,10 +177,10 @@ Ollama provides local embedding models that run on your machine, offering privac
 
 {{< tab "Java" >}}
 
-| Parameter           | Type   | Default  | Description                                     |
-|---------------------|--------|----------|-------------------------------------------------|
-| `connection`        | String | Required | Registered connection Resource name             |
-| `model`             | String | Required | Name of the embedding model to use              |
+| Parameter           | Type   | Default  | Description                                                 |
+|---------------------|--------|----------|-------------------------------------------------------------|
+| `connection`        | String | Required | Registered connection Resource name                         |
+| `model`             | String | None     | Overrides the default embedding model from the connection   |
 
 {{< /tab >}}
 

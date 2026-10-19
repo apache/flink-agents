@@ -427,7 +427,7 @@ public class MyAgent extends Agent {
     public static void searchDocuments(Event event, RunnerContext ctx) {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         // Option 1: Manual search via the vector store
-        VectorStore vectorStore = (VectorStore) ctx.getResource("vectorStore", ResourceType.VECTOR_STORE);
+        BaseVectorStore vectorStore = (BaseVectorStore) ctx.getResource("vectorStore", ResourceType.VECTOR_STORE);
         String queryText = (String) inputEvent.getInput();
         VectorStoreQuery query = new VectorStoreQuery(queryText, 3);
         VectorStoreQueryResult result = vectorStore.query(query);

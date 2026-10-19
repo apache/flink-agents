@@ -72,7 +72,7 @@ agents_env.get_config().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2)
 {{< /tab >}}
 
 {{< tab "Java" >}}
-```Java
+```java
 // Set up the Flink streaming environment and the Agents execution environment.
 StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 AgentsExecutionEnvironment agentsEnv =
@@ -114,7 +114,7 @@ agents_env.add_resource(
 {{< /tab >}}
 
 {{< tab "Java" >}}
-```Java
+```java
 // Add Ollama chat model connection and notify shipping manager tool to be used
 // by the Agent.
 agentsEnv
@@ -162,7 +162,7 @@ review_analysis_react_agent = ReActAgent(
 {{< /tab >}}
 
 {{< tab "Java" >}}
-```Java
+```java
 // Create react agent
 ReActAgent reviewAnalysisReactAgent = new ReActAgent(
         ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
@@ -225,7 +225,7 @@ agents_env.execute("ReAct Agent Example Job")
 {{< /tab >}}
 
 {{< tab "Java" >}}
-```Java
+```java
 // Read product reviews from input_data.txt file as a streaming source.
 // Each element represents a ProductReview.
 File inputDataFile = copyResource("input_data.txt");

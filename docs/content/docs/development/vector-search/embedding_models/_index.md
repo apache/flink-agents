@@ -180,7 +180,7 @@ public class MyAgent extends Agent {
         // Get the embedding model from the runtime context
         BaseEmbeddingModelSetup embeddingModel =
                 (BaseEmbeddingModelSetup)
-                        ctx.getResource("embeddingModel", ResourceType.EMBEDDING_MODEL);
+                        ctx.getResource("ollamaEmbedding", ResourceType.EMBEDDING_MODEL);
 
         // Use the embedding model to generate embeddings
         String input = (String) inputEvent.getInput();

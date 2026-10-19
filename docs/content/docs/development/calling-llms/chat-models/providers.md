@@ -195,6 +195,7 @@ Anthropic provides cloud-based chat models featuring the Claude family, known fo
 | `api_key` | String | Required | Anthropic API key for authentication |
 | `timeout` | int | None | Timeout in seconds for API requests |
 | `max_retries` | int | `2` | Maximum number of API retry attempts |
+| `model` | String | None | Default model to use if not specified in setup |
 
 {{< /tab >}}
 
@@ -894,7 +895,7 @@ that the upstream Responses API lacks multimodal support.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `api_key` | String | Required | OpenAI API key for authentication |
-| `api_base_url` | String | None | Base URL for OpenAI API (useful for proxies) |
+| `api_base_url` | String | `"https://api.openai.com/v1"` | Base URL for OpenAI API (useful for proxies) |
 | `max_retries` | int | `3` | Maximum number of API retry attempts; must be non-negative |
 | `timeout` | float | `60` | Timeout in seconds for API requests; `0` disables timeouts; must be 0–2,147,483.647 |
 | `default_headers` | Map<String, String> | None | Default headers for API requests |
@@ -1078,8 +1079,8 @@ Model availability and specifications may change. Always check the official Alib
 |-----------|------|---------|-------------|
 | `api_base_url` | String | `"http://localhost:8000/v1"` | vLLM server URL |
 | `api_key` | String | `"EMPTY"` | Only needed when the server is started with `--api-key`; the placeholder default works for unauthenticated servers |
-| `timeout` | int | SDK default | Seconds before an API call times out |
-| `max_retries` | int | SDK default | Retry attempts on failure |
+| `timeout` | float | `60` | Seconds before an API call times out |
+| `max_retries` | int | `3` | Retry attempts on failure |
 
 {{< /tab >}}
 

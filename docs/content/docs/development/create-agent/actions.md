@@ -789,8 +789,9 @@ There are two forms of concurrency: running several calls within one Action usin
 are supported in Java and Python on all supported JDK versions, within the configured
 worker and batch limits. Concurrency between Actions has additional requirements:
 
-- **Java on JDK 21+:** add `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to the JVM
+- **JDK 21+:** add `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to the JVM
   options, including `env.java.opts.all` on a cluster, to enable continuation-based execution.
+  Plans with Python Actions need it too, not only plans whose Actions are all Java.
 - **Java on JDK 11–20:** the experimental parallel execution engine is enabled by default
   for plans whose Actions are all Java. Setting `parallel-execution.enabled` to `false`,
   or including Python Actions, disables it. A Java single-call await then runs synchronously;

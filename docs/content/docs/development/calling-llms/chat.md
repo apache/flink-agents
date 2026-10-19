@@ -222,11 +222,13 @@ tool timeouts apply; `ctx.chat` adds no whole-call timeout.
 <span id="java-runtime-requirements"></span>
 
 {{< hint warning >}}
-Java `ctx.chat` calls require JDK 21 and
-`--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` in `env.java.opts.all`.
+Java `ctx.chat` calls require JDK 21.
 Earlier JDK versions are not supported: awaiting the call throws before sending
 the request. Use [Chat Events](#chat-events) on those versions.
 Python `ctx.chat` calls do not require JDK 21.
+A job that runs on JDK 21 also needs
+`--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` in `env.java.opts.all`,
+whether its Actions are Java or Python.
 {{< /hint >}}
 
 <span id="custom-response-producers"></span>

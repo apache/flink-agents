@@ -189,7 +189,7 @@ public class ReActAgent extends Agent {
             this.addAction(new String[] {InputEvent.EVENT_TYPE}, method, actionConfig);
         } catch (NoSuchMethodException e) {
             throw new IllegalStateException(
-                    "Can't find the method stopAction, this must be a bug.");
+                    "Can't find the method startAction, this must be a bug.");
         }
     }
 

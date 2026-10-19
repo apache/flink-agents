@@ -163,7 +163,7 @@ The Amazon S3 Vectors integration currently has a Java implementation only. To u
 {{< /hint >}}
 
 {{< hint warning >}}
-Amazon S3 Vectors does **not** implement `CollectionManageableVectorStore`, so it does not support [Long-Term Memory]({{< ref "docs/development/memory/long_term_memory" >}}) features. It also does not support `size()` or get-all operations: explicit document IDs are required for `get()` and `delete()`.
+Amazon S3 Vectors does **not** implement `CollectionManageableVectorStore`, so it does not support [Long-Term Memory]({{< ref "docs/development/memory/long_term_memory" >}}) features. Get-all and delete-all operations are not supported either: explicit document IDs are required for `get()` and `delete()`.
 {{< /hint >}}
 
 #### Prerequisites
@@ -386,6 +386,9 @@ The Elasticsearch integration currently has a Java implementation only. To use E
 | `index`           | str  | None                      | Default target Elasticsearch index name                            |
 | `vector_field`    | str  | `"_vector"`               | Name of the dense vector field used for KNN                        |
 | `dims`            | int  | `768`                     | Vector dimensionality                                              |
+| `content_field`   | str  | `"_content"`              | Name of the field storing document content                         |
+| `metadata_field`  | str  | `"_metadata"`             | Name of the field storing document metadata                        |
+| `store_in_content_field` | bool | `true`                | Whether document content is stored in the content field            |
 | `k`               | int  | None                      | Number of nearest neighbors to return; can be overridden per query |
 | `num_candidates`  | int  | None                      | Candidate set size for ANN search; can be overridden per query     |
 | `filter_query`    | str  | None                      | Raw JSON Elasticsearch filter query (DSL) restricting which documents a KNN query can match |
