@@ -26,12 +26,13 @@ from openai import NOT_GIVEN, AzureOpenAI
 # has existed at this path since the structured-output support in openai 1.66.3 (the
 # pinned minimum). A future openai bump that moves it will fail loudly on import here.
 from openai.lib._pydantic import to_strict_json_schema
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import Field, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.agents.types import (
     OutputSchema,
     contains_open_object,
+    native_output_model,
     render_output_schema,
 )
 from flink_agents.api.chat_message import ChatMessage
@@ -99,25 +100,6 @@ _MIN_STRUCTURED_OUTPUT_API_VERSION = "2024-08-01"
 _API_VERSION_DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}", re.ASCII)
 
 
-def _native_output_model(output_schema: Any) -> type[BaseModel] | None:
-    """The model a schema translates natively to, or ``None`` where none applies.
-
-    ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
-    translation and keeps the prompt-engineering fallback.
-
-    Separate from the render below because the caller-conflict check needs to know
-    whether a schema will be sent, and under what name, before anything is rendered.
-    """
-    if output_schema is None:
-        return None
-    model = (
-        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
-    )
-    if not (isinstance(model, type) and issubclass(model, BaseModel)):
-        return None
-    return model
-
-
 def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
     """Build the ``response_format`` for a native structured-output request.
 
@@ -131,7 +113,7 @@ def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
     but declares no fields is sent as it is, leaving the provider to accept or refuse
     the document it receives.
     """
-    model = _native_output_model(output_schema)
+    model = native_output_model(output_schema)
     if model is None:
         return None
     return {
@@ -344,7 +326,7 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             admits no undeclared keys, and the configured api-version reaches the
             structured-output floor.
         """
-        model = _native_output_model(output_schema)
+        model = native_output_model(output_schema)
         return (
             model is not None
             and self._api_version_supports_structured_output()
@@ -421,7 +403,7 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         # INFEASIBLE. Model capability is not asked: a caller that hands this
         # connection a schema has already chosen to send it.
         if self._can_apply_native_structured_output(output_schema, tools, raw_kwargs):
-            native_model = _native_output_model(output_schema)
+            native_model = native_output_model(output_schema)
             # Tested before the schema is rendered. A caller who supplies both a schema
             # and a response_format has a conflict to resolve whatever the schema turns
             # out to render to, and reporting a render failure instead would describe

@@ -28,10 +28,14 @@ import httpx
 from ibm_watsonx_ai import APIClient, Credentials
 from ibm_watsonx_ai.foundation_models import ModelInference
 from ibm_watsonx_ai.wml_client_error import ApiRequestFailure
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import Field, PrivateAttr
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema, render_output_schema
+from flink_agents.api.agents.types import (
+    OutputSchema,
+    native_output_model,
+    render_output_schema,
+)
 from flink_agents.api.chat_message import (
     ChatMessage,
     MessageRole,
@@ -167,25 +171,6 @@ def _convert_to_watsonx_tool_call(tool_call: ToolCallBlock) -> Dict[str, Any]:
     }
 
 
-def _native_output_model(
-    output_schema: OutputSchema | None,
-) -> type[BaseModel] | None:
-    """The model a schema translates natively to, or ``None`` where none applies.
-
-    ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
-    translation here and keeps the prompt-engineering fallback.
-
-    Separate from the render below because the caller-conflict check needs to know
-    whether a schema will be sent, and under what name, before anything is rendered.
-    """
-    model = (
-        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
-    )
-    if not (isinstance(model, type) and issubclass(model, BaseModel)):
-        return None
-    return model
-
-
 def _native_response_format(
     output_schema: OutputSchema | None,
 ) -> Dict[str, Any] | None:
@@ -197,7 +182,7 @@ def _native_response_format(
     Rendering goes through the shared helper, which raises ``TypeError`` naming the
     schema class and the remedy when the model has no JSON Schema.
     """
-    model = _native_output_model(output_schema)
+    model = native_output_model(output_schema)
     if model is None:
         return None
     return {
@@ -451,7 +436,7 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
         bool
             ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass.
         """
-        return _native_output_model(output_schema) is not None
+        return native_output_model(output_schema) is not None
 
     def chat(
         self,
@@ -512,7 +497,7 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
         # Feasibility is asked rather than restated, so a caller asking the same
         # question gets the answer this branch acts on.
         if self._can_apply_native_structured_output(output_schema, tools, raw_kwargs):
-            native_model = _native_output_model(output_schema)
+            native_model = native_output_model(output_schema)
             # A caller reaches the same request field through either channel, and both
             # have already merged into request_params. Only the branch that sends a
             # derived schema may reject the caller's value; every path that skips it
