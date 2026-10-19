@@ -206,7 +206,7 @@ class ParallelChatAgent(Agent):
         ...
 ```
 
-The complete source including `_build_output_event` and other supporting functions can be found in [`parallel_chat_agent.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/agents/parallel_chat_agent.py).
+The complete source including `_build_output_event` and other supporting functions can be found in {{< gh_link file="python/flink_agents/examples/quickstart/agents/parallel_chat_agent.py" name="`parallel_chat_agent.py`" >}}.
 {{< /tab >}}
 
 {{< tab "Java" >}}
@@ -313,7 +313,7 @@ public class ParallelChatAgent extends Agent {
 }
 ```
 
-Other private helpers (`buildOutputEvent`) are omitted above; the full source is at [`ParallelChatAgent.java`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/agents/ParallelChatAgent.java).
+Other private helpers (`buildOutputEvent`) are omitted above; the full source is at {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/agents/ParallelChatAgent.java" name="`ParallelChatAgent.java`" >}}.
 {{< /tab >}}
 
 {{< /tabs >}}

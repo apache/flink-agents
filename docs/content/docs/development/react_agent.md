@@ -31,7 +31,7 @@ For guidance on choosing Java or Python, see [Should I choose Java or Python?]({
 {{< /hint >}}
 
 {{< hint info >}}
-The snippets on this page are fragments that each focus on a single concept. For an end-to-end runnable walkthrough, see the [ReAct Agent Quickstart]({{< ref "docs/get-started/quickstart/react_agent" >}}) and the full source: [`react_agent_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/react_agent_example.py) (Python) and [`ReActAgentExample.java`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/ReActAgentExample.java) (Java).
+The snippets on this page are fragments that each focus on a single concept. For an end-to-end runnable walkthrough, see the [ReAct Agent Quickstart]({{< ref "docs/get-started/quickstart/react_agent" >}}) and the full source: {{< gh_link file="python/flink_agents/examples/quickstart/react_agent_example.py" name="`react_agent_example.py`" >}} (Python) and {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/ReActAgentExample.java" name="`ReActAgentExample.java`" >}} (Java).
 {{< /hint >}}
 
 The snippets below assume the following imports:

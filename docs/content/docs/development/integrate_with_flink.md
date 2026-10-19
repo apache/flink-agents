@@ -121,7 +121,7 @@ outputStream.print();
 
 The input `DataStream` must be `KeyedStream`, or user should provide `KeySelector` to tell how to convert the input `DataStream` to `KeyedStream`.
 
-For complete, runnable examples, see [`WorkflowSingleAgentExample.java`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/WorkflowSingleAgentExample.java) (Java) and [`workflow_single_agent_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/workflow_single_agent_example.py) (Python).
+For complete, runnable examples, see {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/WorkflowSingleAgentExample.java" name="`WorkflowSingleAgentExample.java`" >}} (Java) and {{< gh_link file="python/flink_agents/examples/quickstart/workflow_single_agent_example.py" name="`workflow_single_agent_example.py`" >}} (Python).
 
 ## From/To Flink Table API
 
@@ -258,4 +258,4 @@ The two languages also name the output columns differently:
 In Python, `to_table()` currently requires both `Schema` and `TypeInformation`; we plan to support providing only one of them in the future.
 {{< /hint >}}
 
-For complete, runnable examples, see [`WorkflowMultipleAgentExample.java`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/WorkflowMultipleAgentExample.java) (Java) and [`workflow_multiple_agent_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/workflow_multiple_agent_example.py) (Python).
+For complete, runnable examples, see {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/WorkflowMultipleAgentExample.java" name="`WorkflowMultipleAgentExample.java`" >}} (Java) and {{< gh_link file="python/flink_agents/examples/quickstart/workflow_multiple_agent_example.py" name="`workflow_multiple_agent_example.py`" >}} (Python).
