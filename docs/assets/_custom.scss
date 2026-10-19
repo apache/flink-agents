@@ -241,3 +241,20 @@ pre.chroma code {
 .table-inline {
     background: white;
 }
+
+.docs-home .book-columns > div:last-child {
+    display: flex;
+    flex-direction: column;
+}
+
+.docs-home-meta {
+    margin-top: auto;
+    padding-top: 1rem;
+    border-top: 1px solid var(--gray-200);
+    font-size: 0.875rem;
+    color: #666;
+
+    p {
+        margin: 0 0 0.5rem;
+    }
+}

@@ -52,7 +52,7 @@ Flink release you deploy. Concurrency and integration requirements depend on the
 feature:
 
 - Java Action scheduling differs between JDK 21+ and earlier JDKs. See
-  [Async Execution]({{< ref "docs/development/create-agent/actions#async-execution" >}})
+  [JDK and Scheduling Requirements]({{< ref "docs/development/create-agent/actions#jdk-and-scheduling-requirements" >}})
   for configuration and the JDK 21+ JVM option.
 - Java-native MCP requires JDK 17+; on earlier supported JDKs, it uses the Python SDK
   and requires its Python dependencies. See [MCP SDK]({{< ref "docs/development/calling-llms/mcp#mcp-sdk" >}}).

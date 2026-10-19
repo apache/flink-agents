@@ -18,10 +18,8 @@
  */
 package org.apache.flink.agents.runtime.metrics;
 
-import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.EventContext;
-import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.api.trace.TraceContext;
+import org.apache.flink.agents.api.trace.TraceRecord;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -30,7 +28,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Predicate;
 
-/** Derives built-in LLM, tool, and sub-agent metrics from execution lifecycle events. */
+/** Derives built-in LLM, tool, and sub-agent metrics from {@link TraceRecord} observations. */
 final class BuiltInExecutionMetrics {
 
     private final FlinkAgentsMetricGroupImpl agentMetricGroup;
@@ -54,11 +52,8 @@ final class BuiltInExecutionMetrics {
                         subagentMetricRecorder);
     }
 
-    void executionEventObserved(
-            String actionName,
-            EventContext eventContext,
-            Event event,
-            ExecutionTraceContext traceContext) {
+    void executionRecordObserved(String actionName, TraceRecord record) {
+        TraceContext traceContext = record.getContext();
         ExecutionMetricRecorder recorder =
                 metricRecordersByEntityType.get(traceContext.getEntityType());
         if (isBlank(actionName) || recorder == null) {
@@ -67,8 +62,8 @@ final class BuiltInExecutionMetrics {
 
         String executionId = traceContext.getExecutionId();
         String actionExecutionId = traceContext.getParentExecutionId();
-        if (ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(event.getType())) {
-            Instant startTime = parseTimestamp(eventContext);
+        if (TraceRecord.Statuses.STARTED.equals(record.getStatus())) {
+            Instant startTime = parseTimestamp(record.getTimestamp());
             if (startTime != null && !isBlank(actionExecutionId) && !isBlank(executionId)) {
                 startTimesByActionExecutionId
                         .computeIfAbsent(actionExecutionId, ignored -> new HashMap<>())
@@ -77,16 +72,14 @@ final class BuiltInExecutionMetrics {
             return;
         }
 
-        boolean succeeded =
-                ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE.equals(event.getType());
-        boolean failed =
-                ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE.equals(event.getType());
+        boolean succeeded = TraceRecord.Statuses.SUCCESS.equals(record.getStatus());
+        boolean failed = TraceRecord.Statuses.FAILED.equals(record.getStatus());
         if (!succeeded && !failed) {
             return;
         }
 
         Instant startTime = removeExecutionStart(actionExecutionId, executionId);
-        Instant terminalTime = parseTimestamp(eventContext);
+        Instant terminalTime = parseTimestamp(record.getTimestamp());
         Long latencyMs = latencyBetween(startTime, terminalTime);
 
         FlinkAgentsMetricGroupImpl actionMetricGroup =
@@ -122,9 +115,9 @@ final class BuiltInExecutionMetrics {
         return startTime;
     }
 
-    private static Instant parseTimestamp(EventContext eventContext) {
+    private static Instant parseTimestamp(String timestamp) {
         try {
-            return Instant.parse(eventContext.getTimestamp());
+            return Instant.parse(timestamp);
         } catch (DateTimeParseException | NullPointerException ignored) {
             return null;
         }

@@ -181,6 +181,7 @@ In the request, `ollama_chat_model` (Python) or `ollamaChatModel` (Java) names t
 - On failure, `event.getError()` (Java) or `event.error` (Python) provides an error
   description. Check `event.isFailed()` / `event.is_failed` before reading the
   response: accessing the response of a failed event raises an exception.
+  Serialization and trace logging do not invoke these accessors.
 
 If you requested structured output, read the parsed result from
 `event.getStructuredOutput()` (Java) or `event.structured_output` (Python). See
@@ -218,10 +219,12 @@ For tools that return text or media, see
 **Provider support:** The OpenAI Chat Completions integration, and the Azure OpenAI
 and vLLM integrations built on it, send media blocks to the model; see
 [Multimodal Input]({{< ref "docs/development/calling-llms/chat-models/providers#multimodal-input" >}}) for what each block becomes. Ollama sends
-Base64 images; see the [Ollama provider section]({{< ref "docs/development/calling-llms/chat-models/providers#ollama" >}}). The Anthropic, Gemini, Amazon Bedrock, IBM
-watsonx.ai, DashScope and OpenAI Responses integrations do not send media yet: a
-message with a media block raises `UnsupportedContentBlockException` (Java) or
-`UnsupportedContentBlockError` (Python).
+Base64 images, and Anthropic sends images and PDF or plain-text documents; see the
+[Ollama]({{< ref "docs/development/calling-llms/chat-models/providers#ollama" >}}) and
+[Anthropic]({{< ref "docs/development/calling-llms/chat-models/providers#anthropic" >}}) provider
+sections. The Gemini, Amazon Bedrock, IBM watsonx.ai, DashScope and OpenAI Responses
+integrations do not send media yet: a message with a media block raises
+`UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python).
 
 For example, a message can contain a question followed by an image:
 
@@ -296,7 +299,7 @@ the text blocks and exclude media.
 
 ## Tool Calling {#built-in-events-and-actions}
 
-A chat model can use tools to perform operations while answering a request. To enable this, define or register the tools and reference their names in the model setup's `tools` list. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use" >}}) for configuration and examples.
+A chat model can use tools to perform operations while answering a request. To enable this, define or register the tools and reference their names in the model setup's `tools` list. See [Local Function as Tool]({{< ref "docs/development/calling-llms/tool_use#local-function-as-tool" >}}) for declaration and registration examples, [Tool Parameter Injection]({{< ref "docs/development/calling-llms/tool_use#tool-parameter-injection" >}}) for framework-provided arguments, and [Parallel tool-call batches]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}}) for execution settings and concurrency limits.
 
 Send a `ChatRequestEvent` as usual. The model decides whether to answer directly or request tool calls:
 

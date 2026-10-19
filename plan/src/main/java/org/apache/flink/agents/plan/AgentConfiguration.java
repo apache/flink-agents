@@ -17,13 +17,17 @@
  */
 package org.apache.flink.agents.plan;
 
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.apache.flink.agents.api.configuration.Configuration;
+import org.apache.flink.agents.api.logger.TraceLogTarget;
 import org.apache.flink.configuration.ConfigurationUtils;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /** Agent configuration which stores key/value pairs. */
 public class AgentConfiguration implements Configuration {
@@ -35,6 +39,10 @@ public class AgentConfiguration implements Configuration {
 
     public AgentConfiguration(Map<String, Object> confData) {
         this.confData = flatten(confData, "", ".");
+        String targetsKey = AgentConfigOptions.TRACE_LOG_TARGETS.getKey();
+        if (this.confData.containsKey(targetsKey)) {
+            this.confData.put(targetsKey, traceLogTargetConfig(this.confData.get(targetsKey)));
+        }
     }
 
     public Map<String, Object> getConfData() {
@@ -73,6 +81,10 @@ public class AgentConfiguration implements Configuration {
 
     @Override
     public <T> void set(ConfigOption<T> option, T value) {
+        if (AgentConfigOptions.TRACE_LOG_TARGETS.equals(option)) {
+            confData.put(option.getKey(), traceLogTargetConfig(value));
+            return;
+        }
         if (value == null && option.getDefaultValue() != null) {
             return;
         }
@@ -125,7 +137,13 @@ public class AgentConfiguration implements Configuration {
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public <T> T get(ConfigOption<T> option) {
+        if (AgentConfigOptions.TRACE_LOG_TARGETS.equals(option)) {
+            return (T)
+                    TraceLogTarget.parseTargets(
+                            confData.getOrDefault(option.getKey(), option.getDefaultValue()));
+        }
         Object rawValue = confData.get(option.getKey());
         if (rawValue == null) {
             return option.getDefaultValue();
@@ -158,6 +176,12 @@ public class AgentConfiguration implements Configuration {
         }
     }
 
+    private static List<Map<String, Object>> traceLogTargetConfig(Object value) {
+        return TraceLogTarget.parseTargets(value).stream()
+                .map(TraceLogTarget::toConfig)
+                .collect(Collectors.toList());
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> flatten(
             Map<String, Object> config, String keyPrefix, String keySeparator) {
@@ -166,7 +190,7 @@ public class AgentConfiguration implements Configuration {
         config.forEach(
                 (key, value) -> {
                     String flattenedKey = keyPrefix + key;
-                    if (value instanceof Map) {
+                    if (value instanceof Map && !((Map<?, ?>) value).isEmpty()) {
                         Map<String, Object> e = (Map<String, Object>) value;
                         flattenedMap.putAll(flatten(e, flattenedKey + keySeparator, keySeparator));
                     } else {

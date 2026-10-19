@@ -19,6 +19,7 @@
 environment.
 """
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
@@ -42,6 +43,7 @@ from flink_agents.api.resource import (
     ResourceType,
 )
 from flink_agents.api.skills import Skills, SkillSourceSpec
+from flink_agents.api.subagent import InternalSubagentResourceDescriptorBuilder
 from flink_agents.api.tools.function_tool import FunctionTool
 from flink_agents.api.yaml.aliases import (
     resolve_clazz,
@@ -54,6 +56,7 @@ from flink_agents.api.yaml.specs import (
     Language,
     PromptSpec,
     SkillsSpec,
+    SubagentSpec,
     ToolSpec,
     YamlAgentsDocument,
 )
@@ -65,7 +68,6 @@ _DESCRIPTOR_TYPES: Dict[str, ResourceType] = {
     "embedding_model_setups": ResourceType.EMBEDDING_MODEL,
     "vector_stores": ResourceType.VECTOR_STORE,
     "mcp_servers": ResourceType.MCP_SERVER,
-    "subagents": ResourceType.AGENT,
 }
 
 
@@ -152,6 +154,27 @@ def _build_descriptor(
     return ResourceDescriptor(clazz=python_fqn, **kwargs)
 
 
+def _build_subagent(spec: SubagentSpec, agents: Dict[str, Agent]) -> ResourceDescriptor:
+    if isinstance(spec, DescriptorSpec):
+        return _build_descriptor(spec, ResourceType.AGENT)
+    child = agents.get(spec.agent)
+    if child is None:
+        msg = (
+            f"Sub-agent {spec.name!r} references unknown agent {spec.agent!r}; "
+            "the child must be declared in the same YAML file or already "
+            "registered in this environment."
+        )
+        raise ValueError(msg)
+    builder = (
+        InternalSubagentResourceDescriptorBuilder()
+        .agent(child)
+        .description(spec.description or "")
+    )
+    if spec.input_schema is not None:
+        builder.input_schema(json.dumps(spec.input_schema))
+    return builder.build()
+
+
 def _add_descriptors_to_agent(
     agent: Agent, attr_name: str, descriptors: list[DescriptorSpec]
 ) -> None:
@@ -196,7 +219,7 @@ def _build_tool(spec: ToolSpec) -> FunctionTool:
 
 
 def _build_prompt(spec: PromptSpec) -> Prompt:
-    if spec.text is not None:
+    if spec.text:
         return Prompt.from_text(spec.text)
     messages = [
         ChatMessage.of(MessageRole(m.role.value), m.content)
@@ -266,6 +289,7 @@ def _build_agent(agent_spec: AgentSpec) -> Agent:
 
 def _build_in_file_state(
     path: Path | str,
+    registered_agents: Dict[str, Agent] | None = None,
 ) -> Tuple[
     Dict[str, Agent],
     Dict[ResourceType, Dict[str, Any]],
@@ -273,8 +297,10 @@ def _build_in_file_state(
     Dict[str, AgentSpec],
     YamlAgentsDocument,
 ]:
-    """Parse one YAML file, perform in-file duplicate detection, and build
-    the in-memory state without touching any execution environment.
+    """Parse one YAML file and build its state without modifying the environment.
+
+    Registered Agents are available for child references; their names must not
+    collide with declarations in this file.
 
     Returns:
         agents: name -> Agent
@@ -288,16 +314,38 @@ def _build_in_file_state(
     exactly one place.
     """
     doc = _load_document(path)
+    registered_agents = registered_agents or {}
     agent_specs: Dict[str, AgentSpec] = {}
     agents: Dict[str, Agent] = {}
     for spec in doc.agents:
         if spec.name in agents:
             msg = f"Duplicate agent name {spec.name!r} in {path}"
             raise ValueError(msg)
+        if spec.name in registered_agents:
+            msg = f"Duplicate agent name {spec.name!r} (loading {path})"
+            raise ValueError(msg)
         agent_specs[spec.name] = spec
         agents[spec.name] = _build_agent(spec)
 
+    # Include previously loaded Agents without modifying the environment's registry.
+    available_agents = {**registered_agents, **agents}
+    # Create every in-file Agent before binding, allowing forward references.
+    for spec in doc.agents:
+        for subagent in spec.subagents:
+            agents[spec.name].add_resource(
+                subagent.name,
+                ResourceType.AGENT,
+                _build_subagent(subagent, available_agents),
+            )
+
     shared_resources: Dict[ResourceType, Dict[str, Any]] = {t: {} for t in ResourceType}
+    for spec in doc.subagents:
+        if spec.name in shared_resources[ResourceType.AGENT]:
+            msg = f"Duplicate shared resource name {spec.name!r} in {path}"
+            raise ValueError(msg)
+        shared_resources[ResourceType.AGENT][spec.name] = _build_descriptor(
+            spec, ResourceType.AGENT
+        )
     for attr, resource_type in _DESCRIPTOR_TYPES.items():
         for spec in getattr(doc, attr):
             if spec.name in shared_resources[resource_type]:
@@ -386,8 +434,9 @@ def load_yaml(
     resources on the environment.
 
     Multiple calls accumulate. Duplicate names — both within a single file
-    and across the current environment — raise ``ValueError``. In-file
-    duplicate detection is delegated to :func:`_build_in_file_state` so
+    and across the current environment — raise ``ValueError``. Files are loaded
+    in order, so child references can use Agents from earlier files or calls.
+    Agent name checks are delegated to :func:`_build_in_file_state` so
     that ``load_yaml`` and :func:`build_agents` share the same rules.
     """
     if isinstance(paths, str | Path):
@@ -395,15 +444,10 @@ def load_yaml(
 
     for path in paths:
         agents, shared_resources, shared_actions, agent_specs, _ = _build_in_file_state(
-            path
+            path, env._agents
         )
 
-        # Cross-environment duplicate checks. In-file duplicates were
-        # already caught inside ``_build_in_file_state``.
-        for name in agents:
-            if name in env._agents:
-                msg = f"Duplicate agent name {name!r} (loading {path})"
-                raise ValueError(msg)
+        # Agent name conflicts were already caught inside ``_build_in_file_state``.
         for resource_type, name_to_resource in shared_resources.items():
             for name in name_to_resource:
                 if name in env.resources[resource_type]:

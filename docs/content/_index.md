@@ -36,11 +36,16 @@ It provides a step by step introduction on how to install Flink Agents and build
 - [Use the Built-in ReAct Agent]({{< ref "docs/get-started/quickstart/react_agent" >}})
 - [Define an Agent with YAML]({{< ref "docs/get-started/quickstart/yaml_agent" >}})
 
-### Build and Operate
+### How to Build an Agent
 
-* [Calling LLMs]({{< ref "docs/development/calling-llms" >}}), [Tool Use]({{< ref "docs/development/calling-llms/tool_use" >}}) and [Memory]({{< ref "docs/development/memory/overview" >}}) - The building blocks of an agent
-* [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}) - Run an agent inside a Flink job
-* [Deployment]({{< ref "docs/operations/deployment" >}}) and [Monitoring]({{< ref "docs/operations/monitoring" >}}) - Take an agent to production
+* [Create an Agent]({{< ref "docs/development/create-agent" >}}) and [Built-in ReAct Agent]({{< ref "docs/development/react_agent" >}}) - Define an agent or use the built-in ReAct agent
+* [Calling LLMs]({{< ref "docs/development/calling-llms" >}}) - Work with models, prompts, tools, MCP, and runtime Skills
+* [Memory]({{< ref "docs/development/memory" >}}) and [Vector Search]({{< ref "docs/development/vector-search" >}}) - Manage context and retrieve relevant information
+* [Multi-Agent]({{< ref "docs/development/multi-agent" >}}) and [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}) - Compose agents and connect them to Flink jobs
+
+### How to Operate an Agent
+
+* [Deployment]({{< ref "docs/operations/deployment" >}}), [Configuration]({{< ref "docs/operations/configuration" >}}), and [Monitoring]({{< ref "docs/operations/monitoring" >}}) - Deploy, configure, and monitor agents
 
 <--->
 
@@ -58,8 +63,9 @@ See the [Apache Flink website](https://flink.apache.org/what-is-flink/community/
 
 There is a weekly online sync. Everyone is welcome to join. Please find the schedule, agenda for the next sync, and records of previous syncs in this [github discussion page](https://github.com/apache/flink-agents/discussions/419).
 
-{{< /columns >}}
-
-Flink Agents is developed under the umbrella of [Apache Flink](https://flink.apache.org/).
-
+<footer class="docs-home-meta">
+<p>Flink Agents is developed under the umbrella of <a href="https://flink.apache.org/">Apache Flink</a>.</p>
 {{< build_time >}}
+</footer>
+
+{{< /columns >}}

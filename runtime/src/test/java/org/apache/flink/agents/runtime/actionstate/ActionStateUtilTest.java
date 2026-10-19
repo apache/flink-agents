@@ -19,7 +19,10 @@ package org.apache.flink.agents.runtime.actionstate;
 
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -56,6 +59,22 @@ public class ActionStateUtilTest {
 
         // Keys should be the same for the same input
         assertEquals(key1, key2);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void subgraphStateKeyIgnoresDelegateIdButSeparatesInvocations(boolean bootstrap)
+            throws Exception {
+        Action action = new NoOpAction("child-action");
+        SubgraphEvent original = new SubgraphEvent("call", new InputEvent("p"), bootstrap);
+        SubgraphEvent replay = new SubgraphEvent("call", new InputEvent("p"), bootstrap);
+        SubgraphEvent otherCall = new SubgraphEvent("other-call", new InputEvent("p"), bootstrap);
+
+        assertNotEquals(original.getDelegate().getId(), replay.getDelegate().getId());
+        assertFalse(original.getAttributes().containsKey("delegate_id"));
+        String stateKey = generateKey("key", 1, action, original, MAX_PARALLELISM);
+        assertEquals(stateKey, generateKey("key", 1, action, replay, MAX_PARALLELISM));
+        assertNotEquals(stateKey, generateKey("key", 1, action, otherCall, MAX_PARALLELISM));
     }
 
     @Test

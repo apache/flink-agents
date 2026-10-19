@@ -34,10 +34,12 @@ import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.runtime.env.RemoteExecutionEnvironment;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,7 +47,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledForJreRange;
 import org.junit.jupiter.api.condition.JRE;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -243,6 +250,55 @@ public class InternalSubagentCallTest {
     }
 
     // --- tests ---
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    @Timeout(60)
+    void yamlParentInvokesChildAfterPlanSerialization(
+            boolean separateFiles, @TempDir Path directory) throws Exception {
+        Path path = directory.resolve("agents.yaml");
+        String targets = InternalSubagentCallTest.class.getName();
+        Files.writeString(
+                path,
+                "agents:\n"
+                        + "  - name: parent\n"
+                        + "    subagents: [{name: child, agent: echo}]\n"
+                        + "    actions:\n"
+                        + "      - name: call\n        type: java\n        trigger_conditions: [input]\n"
+                        + "        function: "
+                        + targets
+                        + ":callOnce\n"
+                        + "  - name: echo\n    actions: [echo]\n"
+                        + "actions:\n"
+                        + "  - name: echo\n    type: java\n    trigger_conditions: [input]\n"
+                        + "    function: "
+                        + targets
+                        + "$EchoChildAgent:echo\n");
+        StreamExecutionEnvironment flink = StreamExecutionEnvironment.getExecutionEnvironment();
+        RemoteExecutionEnvironment env = new RemoteExecutionEnvironment(flink, null);
+        if (separateFiles) {
+            String yaml = Files.readString(path);
+            int childStart = yaml.indexOf("  - name: echo\n");
+            Path childPath =
+                    Files.writeString(
+                            directory.resolve("child.yaml"),
+                            "agents:\n" + yaml.substring(childStart));
+            Files.writeString(path, yaml.substring(0, childStart));
+            env.loadYaml(List.of(childPath, path));
+        } else {
+            env.loadYaml(path);
+        }
+        // The child remains independently applicable, including between two parent compilations.
+        for (String name : List.of("parent", "echo", "parent")) {
+            env.fromDataStream(flink.fromElements(7L), value -> value).apply(name);
+        }
+        AgentPlan original = new AgentPlan(env.getAgents().get("parent"));
+        ObjectMapper mapper = new ObjectMapper();
+        AgentPlan transferred =
+                mapper.readValue(mapper.writeValueAsString(original), AgentPlan.class);
+        assertThat(run(transferred, 7L)).containsExactly("echo:7");
+        assertThat(CHILD_INVOCATIONS).containsExactly("7");
+    }
 
     @Test
     @Timeout(60)

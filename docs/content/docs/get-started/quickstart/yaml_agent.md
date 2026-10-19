@@ -24,7 +24,11 @@ under the License.
 
 ## Overview
 
-The YAML API lets you declare a Flink Agents application — the agent's actions, tools, prompts, chat models, and other resources — as a single declarative file, and load it into an `AgentsExecutionEnvironment` with one call. Your action and tool implementations still live in Python or Java; the YAML file only describes how those pieces are wired together.
+The YAML API lets you declare an Agent's Actions and named Resources in a file and load it
+into an `AgentsExecutionEnvironment`. It uses the same
+[core concepts]({{< ref "docs/development/create-agent/overview#core-concepts" >}})
+as the Java and Python APIs. Your Action and tool implementations still live in Python or Java;
+the YAML file declares their configuration and connections.
 
 This quickstart runs the same **Review Analysis** workflow as the [Build Your First Agent]({{< ref "docs/get-started/quickstart/create-agent/single-agent" >}}) — extracting a satisfaction score and dissatisfaction reasons from a stream of product reviews — but declares the agent in YAML and loads it with `load_yaml` / `loadYaml`. The action functions and the `notify_shipping_manager` tool are reused from the single-Agent example as static methods, so this quickstart shows the **smallest possible delta** between a code-defined agent and a YAML-declared agent.
 
@@ -187,10 +191,17 @@ agents:
 
 A few things to notice in the YAML above:
 
+- A Resource's `name` is the name used by Actions and other Resources to find it. Its section
+  determines the resource type; for example, `chat_model_setups` declares chat model Resources.
+  See [Registering and Referencing Resources]({{< ref "docs/development/create-agent/overview#registering-and-referencing-resources" >}}).
+- The chat model setup's `connection`, `prompt`, and `tools` fields reference registered
+  Resource names. Its `model: qwen3:8b` field selects the model on the Ollama server.
+- The reused input Action sends a `ChatRequestEvent` naming the chat model setup. The
+  [built-in chat Action]({{< ref "docs/development/calling-llms/chat#chat-events" >}})
+  gets and calls that Resource, then sends a response Event.
 - `clazz: ollama` is an alias resolved by the loader to the full Ollama chat-model class — see the alias table in the [YAML API]({{< ref "docs/development/create-agent/yaml#class-aliases" >}}) doc.
 - `trigger_conditions: [input]` / `[chat_response]` use **event aliases** for the framework's built-in events. An alias replaces only a complete event-type entry; it never rewrites text inside a condition expression or quoted event type.
 - `function:` strings use the `<module-or-class>:<qualname>` format. The right side is the class-qualified method name, so the YAML reuses the same `process_input` / `processInput` static methods the original `ReviewAnalysisAgent` already defines.
-- The prompt is declared inline as a `messages:` list and referenced from the chat-model setup by name.
 
 ### Load and Run
 

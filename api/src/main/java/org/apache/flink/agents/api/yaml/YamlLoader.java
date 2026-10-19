@@ -32,14 +32,17 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
+import org.apache.flink.agents.api.subagent.InternalSubagentResourceDescriptorBuilder;
 import org.apache.flink.agents.api.tools.FunctionTool;
 import org.apache.flink.agents.api.yaml.spec.ActionSpec;
 import org.apache.flink.agents.api.yaml.spec.AgentActionRef;
 import org.apache.flink.agents.api.yaml.spec.AgentSpec;
 import org.apache.flink.agents.api.yaml.spec.DescriptorSpec;
+import org.apache.flink.agents.api.yaml.spec.InternalSubagentSpec;
 import org.apache.flink.agents.api.yaml.spec.PackageSkillSpec;
 import org.apache.flink.agents.api.yaml.spec.PromptSpec;
 import org.apache.flink.agents.api.yaml.spec.SkillsSpec;
+import org.apache.flink.agents.api.yaml.spec.SubagentSpec;
 import org.apache.flink.agents.api.yaml.spec.ToolSpec;
 import org.apache.flink.agents.api.yaml.spec.UrlSkillSpec;
 import org.apache.flink.agents.api.yaml.spec.YamlAgentsDocument;
@@ -159,7 +162,7 @@ public final class YamlLoader {
 
     /** Build a {@link Prompt} from a parsed {@link PromptSpec}. */
     public static Prompt buildPrompt(PromptSpec spec) {
-        if (spec.getText() != null) {
+        if (spec.getText() != null && !spec.getText().isEmpty()) {
             return Prompt.fromText(spec.getText());
         }
         List<ChatMessage> messages =
@@ -167,6 +170,37 @@ public final class YamlLoader {
                         .map(m -> new ChatMessage(m.getRole(), m.getContent()))
                         .collect(Collectors.toList());
         return Prompt.fromMessages(messages);
+    }
+
+    private static ResourceDescriptor buildSubagent(SubagentSpec spec, Map<String, Agent> agents) {
+        if (spec.getExternal() != null) {
+            return buildDescriptor(spec.getExternal(), ResourceType.AGENT);
+        }
+        InternalSubagentSpec internal = spec.getInternal();
+        Agent child = agents.get(internal.getAgent());
+        if (child == null) {
+            throw new IllegalArgumentException(
+                    "Sub-agent '"
+                            + internal.getName()
+                            + "' references unknown agent '"
+                            + internal.getAgent()
+                            + "'; the child must be declared in the same YAML file or already"
+                            + " registered in this environment.");
+        }
+        InternalSubagentResourceDescriptorBuilder builder =
+                new InternalSubagentResourceDescriptorBuilder()
+                        .agent(child)
+                        .description(internal.getDescription());
+        if (internal.getInputSchema() != null) {
+            try {
+                builder.inputSchema(
+                        new ObjectMapper().writeValueAsString(internal.getInputSchema()));
+            } catch (IOException e) {
+                throw new IllegalArgumentException(
+                        "Invalid input schema for sub-agent '" + internal.getName() + "'", e);
+            }
+        }
+        return builder.build();
     }
 
     /** Build a {@link Skills} resource from a parsed {@link SkillsSpec}. */
@@ -250,6 +284,10 @@ public final class YamlLoader {
 
     /** Parse one YAML file and build the agents it declares. */
     public static LoadedFile buildAgents(Path path) {
+        return buildAgents(path, Collections.emptyMap());
+    }
+
+    private static LoadedFile buildAgents(Path path, Map<String, Agent> registeredAgents) {
         YamlAgentsDocument doc;
         try {
             doc = YAML_MAPPER.readValue(Files.readString(path), YamlAgentsDocument.class);
@@ -267,8 +305,25 @@ public final class YamlLoader {
                 throw new IllegalArgumentException(
                         "Duplicate agent name '" + spec.getName() + "' in " + path);
             }
+            if (registeredAgents.containsKey(spec.getName())) {
+                throw new IllegalArgumentException(
+                        "Duplicate agent name '" + spec.getName() + "' (loading " + path + ")");
+            }
             agentSpecs.put(spec.getName(), spec);
             agents.put(spec.getName(), buildAgent(spec));
+        }
+
+        Map<String, Agent> availableAgents = new LinkedHashMap<>(registeredAgents);
+        availableAgents.putAll(agents);
+        // Bind after all in-file Agents exist, including references to previously loaded Agents.
+        for (AgentSpec spec : doc.getAgents()) {
+            for (SubagentSpec subagent : spec.getSubagents()) {
+                agents.get(spec.getName())
+                        .addResource(
+                                subagent.getName(),
+                                ResourceType.AGENT,
+                                buildSubagent(subagent, availableAgents));
+            }
         }
 
         Map<ResourceType, Map<String, Object>> sharedResources = new EnumMap<>(ResourceType.class);
@@ -334,11 +389,12 @@ public final class YamlLoader {
     /**
      * Load multiple YAML files. Multiple calls accumulate. Duplicate names — both within a single
      * file (caught by {@link #buildAgents(Path)}) and across the current environment — raise {@link
-     * IllegalArgumentException}.
+     * IllegalArgumentException}. Files are loaded in order; child references may resolve Agents
+     * registered by earlier files or calls.
      */
     public static void loadYaml(AgentsExecutionEnvironment env, List<Path> paths) {
         for (Path path : paths) {
-            LoadedFile loaded = buildAgents(path);
+            LoadedFile loaded = buildAgents(path, env.getAgents());
 
             for (Map.Entry<String, Agent> entry : loaded.getAgents().entrySet()) {
                 AgentSpec spec = loaded.getAgentSpecs().get(entry.getKey());
@@ -365,14 +421,6 @@ public final class YamlLoader {
                 entry.getValue().getActions().clear();
                 for (ActionSpec actionSpec : orderedActions) {
                     addActionToAgent(entry.getValue(), actionSpec);
-                }
-            }
-
-            // Cross-environment agent name uniqueness check.
-            for (String name : loaded.getAgents().keySet()) {
-                if (env.getAgents().containsKey(name)) {
-                    throw new IllegalArgumentException(
-                            "Duplicate agent name '" + name + "' (loading " + path + ")");
                 }
             }
 
@@ -413,7 +461,6 @@ public final class YamlLoader {
         addAgentDescriptors(agent, ResourceType.EMBEDDING_MODEL, spec.getEmbeddingModelSetups());
         addAgentDescriptors(agent, ResourceType.VECTOR_STORE, spec.getVectorStores());
         addAgentDescriptors(agent, ResourceType.MCP_SERVER, spec.getMcpServers());
-        addAgentDescriptors(agent, ResourceType.AGENT, spec.getSubagents());
 
         for (ToolSpec t : spec.getTools()) {
             agent.addResource(t.getName(), ResourceType.TOOL, buildTool(t));

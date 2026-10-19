@@ -28,6 +28,10 @@ This example builds on [Build Your First Agent]({{< ref "docs/get-started/quicks
 
 Reuse the [environment and connection setup]({{< ref "docs/get-started/quickstart/create-agent/single-agent#prepare-agents-execution-environment" >}}) and [example preparation]({{< ref "docs/get-started/quickstart/create-agent/single-agent#run-the-example" >}}) from the first walkthrough.
 
+Both Agents can reference the connection Resource registered on that environment by name.
+See [Registering and Referencing Resources]({{< ref "docs/development/create-agent/overview#registering-and-referencing-resources" >}})
+for how environment-level Resources are made available to Agents.
+
 The code for the `ProductSuggestionAgent`, which is used to generate product improvement suggestions based on the aggregated analysis results, is similar to the `ReviewAnalysisAgent`.
 
 ### Read Input via the Table API

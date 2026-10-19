@@ -19,6 +19,9 @@ import os
 from enum import Enum
 
 from flink_agents.api.configuration import ConfigOption
+from flink_agents.api.trace_log import TraceLogLevel as TraceLogLevel
+from flink_agents.api.trace_log import TraceLogScope as TraceLogScope
+from flink_agents.api.trace_log import TraceLogTarget
 
 
 class ShortTermMemoryTtlUpdate(Enum):
@@ -36,10 +39,10 @@ class ShortTermMemoryTtlVisibility(Enum):
 
 
 class LoggerType(Enum):
-    """Built-in event logger types.
+    """Built-in trace log output types.
 
     Mirrors the Java ``LoggerType`` enum so Python users can configure the
-    logger type via ``AgentConfigOptions.EVENT_LOGGER_TYPE`` without using
+    output via ``AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE`` without using
     raw strings.
     """
 
@@ -57,17 +60,6 @@ class ConditionEvaluationFailureStrategy(Enum):
     FAIL = "FAIL"
 
 
-class EventLogLevel(Enum):
-    """Log level for event logging.
-
-    Mirrors the Java ``EventLogLevel`` enum.
-    """
-
-    OFF = "OFF"
-    STANDARD = "STANDARD"
-    VERBOSE = "VERBOSE"
-
-
 class AgentConfigOptions:
     """CoreOptions to manage core configuration parameters for Flink Agents.
 
@@ -75,8 +67,8 @@ class AgentConfigOptions:
     Java ``AgentConfigOptions`` class.
     """
 
-    EVENT_LOGGER_TYPE = ConfigOption(
-        key="eventLoggerType",
+    TRACE_LOG_OUTPUT_TYPE = ConfigOption(
+        key="trace-log.output-type",
         config_type=LoggerType,
         default=LoggerType.SLF4J,
     )
@@ -87,14 +79,14 @@ class AgentConfigOptions:
         default=ConditionEvaluationFailureStrategy.WARN_AND_SKIP,
     )
 
-    BASE_LOG_DIR = ConfigOption(
-        key="baseLogDir",
+    TRACE_LOG_OUTPUT_BASE_DIR = ConfigOption(
+        key="trace-log.base-dir",
         config_type=str,
         default=None,
     )
 
-    PRETTY_PRINT = ConfigOption(
-        key="prettyPrint",
+    TRACE_LOG_OUTPUT_PRETTY_PRINT = ConfigOption(
+        key="trace-log.pretty-print",
         config_type=bool,
         default=False,
     )
@@ -201,32 +193,42 @@ class AgentConfigOptions:
         default=None,
     )
 
-    EVENT_LOG_LEVEL = ConfigOption(
-        key="event-log.level",
-        config_type=EventLogLevel,
-        default=EventLogLevel.STANDARD,
+    # Targets may be TraceLogTarget objects or maps with scope: EVENT_ONLY/ALL,
+    # a category selector (e.g. {event: OrderCreated}), or entityType and optional
+    # entityName. Names match exactly, except "com.foo.*",
+    # which also matches "com.foo" and its descendants. Level is OFF (do not
+    # record), STANDARD (truncate attributes), or VERBOSE (full attributes).
+    # Matching order: exact name, matching namespace prefixes longest to shortest,
+    # entity type, then ALL. EVENT_ONLY aliases the Event type scope. The first
+    # explicit level applies; omitted level inherits from the next matching
+    # scope. A match without any explicit level uses STANDARD; no match records
+    # nothing. Explicit OFF stops inheritance; a more specific explicit STANDARD
+    # or VERBOSE can enable recording. Target order does not affect the result.
+    # Duplicate scopes (including EVENT_ONLY and its Event type alias) merge
+    # omitted with explicit level and accept identical explicit levels;
+    # differing explicit levels for the same scope are rejected at startup.
+    # Omitting targets defaults to EVENT_ONLY at STANDARD. An explicit list
+    # replaces that default; an empty list selects none.
+    TRACE_LOG_TARGETS = ConfigOption(
+        key="trace-log.targets",
+        config_type=list,
+        default=[TraceLogTarget.events(TraceLogLevel.STANDARD)],
     )
 
-    EVENT_LOG_TRACE_ENABLED = ConfigOption(
-        key="event-log.trace.enabled",
-        config_type=bool,
-        default=False,
-    )
-
-    EVENT_LOG_MAX_STRING_LENGTH = ConfigOption(
-        key="event-log.standard.max-string-length",
+    TRACE_LOG_MAX_STRING_LENGTH = ConfigOption(
+        key="trace-log.standard.max-string-length",
         config_type=int,
         default=2000,
     )
 
-    EVENT_LOG_MAX_ARRAY_ELEMENTS = ConfigOption(
-        key="event-log.standard.max-array-elements",
+    TRACE_LOG_MAX_ARRAY_ELEMENTS = ConfigOption(
+        key="trace-log.standard.max-array-elements",
         config_type=int,
         default=20,
     )
 
-    EVENT_LOG_MAX_DEPTH = ConfigOption(
-        key="event-log.standard.max-depth",
+    TRACE_LOG_MAX_DEPTH = ConfigOption(
+        key="trace-log.standard.max-depth",
         config_type=int,
         default=5,
     )

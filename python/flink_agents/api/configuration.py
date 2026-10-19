@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from typing import Any, Type
 
 
@@ -47,8 +48,8 @@ class ConfigOption:
         return self._type
 
     def get_default_value(self) -> Any:
-        """Returns the default value."""
-        return self._default_value
+        """Return the default value without sharing mutable state between callers."""
+        return deepcopy(self._default_value)
 
 
 class WritableConfiguration(ABC):

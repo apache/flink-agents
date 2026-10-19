@@ -16,13 +16,38 @@
 # limitations under the License.
 #################################################################################
 from typing import Any
-from uuid import UUID
+from unittest.mock import Mock
 
-import pytest
-
-from flink_agents.api.events.event import Event, InputEvent
+from flink_agents.api.events.event import Event
 from flink_agents.api.memory_reference import MemoryRef
 from flink_agents.runtime.flink_runner_context import FlinkRunnerContext
+
+
+def test_action_config_follows_resource_scope_across_task_switches() -> None:
+    """A chat inside a child graph uses the child config, then restores root config."""
+    ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)
+    java_context = Mock()
+    java_context.getActionName.return_value = "chat_model_action"
+    ctx._j_runner_context = java_context
+    root_plan, child_plan = Mock(), Mock()
+    root_plan.get_action_config.return_value = {"model": "root"}
+    root_plan.get_action_config_value.return_value = "root"
+    child_plan.get_action_config.return_value = {"model": "child"}
+    child_plan.get_action_config_value.return_value = "child"
+    ctx._FlinkRunnerContext__agent_plan = root_plan
+    ctx._FlinkRunnerContext__scoped_resource_caches = {
+        "child-json": (child_plan, Mock())
+    }
+
+    for scope, expected in [(None, "root"), ("child-json", "child"), (None, "root")]:
+        java_context.getActiveScopePlanJson.return_value = scope
+        assert ctx.action_config == {"model": expected}
+        assert ctx.get_action_config_value("model") == expected
+
+    child_plan.get_action_config.assert_called_once_with("chat_model_action")
+    child_plan.get_action_config_value.assert_called_once_with(
+        action_name="chat_model_action", key="model"
+    )
 
 
 class _FakeJavaMemoryRef:
@@ -76,49 +101,14 @@ def test_send_event_offloads_attachments_before_forwarding() -> None:
     assert forwarded_event.get_attachment("payload") == attachment
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("upstream_event_id", UUID("00000000-0000-0000-0000-000000000001")),
-        ("upstream_action_name", "user_action"),
-    ],
-)
-def test_send_event_rejects_preset_lineage(field: str, value: Any) -> None:
-    ctx, java_context = _send_event_context()
-    event = Event(type="result", **{field: value})
-
-    with pytest.raises(ValueError, match=f"carries {field}=") as raised:
-        ctx.send_event(event)
-
-    other = ({"upstream_event_id", "upstream_action_name"} - {field}).pop()
-    assert f"{other}=" not in str(raised.value)
-
-    assert java_context.sent_event_json is None
-
-
-def test_send_event_rejects_reconstructed_event_with_lineage() -> None:
-    ctx, java_context = _send_event_context()
-    received = Event(
-        type="generic",
-        attributes={"input": 1},
-        upstream_event_id=UUID("00000000-0000-0000-0000-000000000002"),
-        upstream_action_name="upstream_action",
-    )
-    reconstructed = InputEvent(input=1).reconstruct_from(received)
-
-    with pytest.raises(ValueError, match="new Event"):
-        ctx.send_event(reconstructed)
-
-    assert java_context.sent_event_json is None
-
-
-def test_send_event_forwards_fresh_event_without_lineage() -> None:
+def test_send_event_preserves_identity_and_payload() -> None:
     ctx, java_context = _send_event_context()
 
-    ctx.send_event(Event(type="result", attributes={"source": "user"}))
+    event = Event(type="result", attributes={"source": "user"})
+    ctx.send_event(event)
 
     assert java_context.sent_event_json is not None
     forwarded = Event.from_json(java_context.sent_event_json)
-    assert forwarded.upstream_event_id is None
-    assert forwarded.upstream_action_name is None
+    assert forwarded.id == event.id
+    assert forwarded.get_type() == event.get_type()
     assert forwarded.get_attr("source") == "user"

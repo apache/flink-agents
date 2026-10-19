@@ -20,7 +20,7 @@
 import asyncio
 import time
 from typing import Any, Callable, Sequence
-from unittest.mock import MagicMock, call
+from unittest.mock import ANY, MagicMock, call
 from uuid import uuid4
 
 import pytest
@@ -311,16 +311,76 @@ class TestChatModelActionRetry:
         # No retry metrics should be recorded
         assert len(metric_group._sub_groups) == 0
         ctx.report_execution_started.assert_called_once_with(
+            ANY,
             ExecutionEntityTypes.LLM,
             chat_model.connection,
             _LLM_METADATA,
         )
         ctx.report_execution_succeeded.assert_called_once_with(
+            ANY,
             ExecutionEntityTypes.LLM,
             chat_model.connection,
             _LLM_METADATA,
         )
         ctx.report_execution_failed.assert_not_called()
+
+    @pytest.mark.parametrize("metrics_available", [False, True])
+    @pytest.mark.parametrize(
+        ("usage", "expected_usage", "records_metrics"),
+        [
+            (
+                TokenUsage(prompt_tokens=100, completion_tokens=50),
+                {"promptTokens": 100, "completionTokens": 50},
+                True,
+            ),
+            (
+                TokenUsage(prompt_tokens=5, completion_tokens=0),
+                {"promptTokens": 5, "completionTokens": 0},
+                True,
+            ),
+            (TokenUsage(completion_tokens=0), {"completionTokens": 0}, False),
+            (TokenUsage(prompt_tokens=5), {"promptTokens": 5}, False),
+            (TokenUsage(), {}, False),
+            (None, {}, False),
+        ],
+    )
+    def test_usage_and_token_metrics_share_response_counts(
+        self,
+        usage: TokenUsage | None,
+        expected_usage: dict,
+        records_metrics: bool,
+        metrics_available: bool,
+    ) -> None:
+        chat_model = MagicMock()
+        chat_model.chat.return_value = ChatResult(
+            message=ChatMessage.assistant("hello"),
+            model="metric-model",
+            usage=usage,
+        )
+        ctx, events, metric_group, _ = _create_mock_runner_context(chat_model)
+        if not metrics_available:
+            ctx.action_metric_group = None
+        asyncio.run(chat(uuid4(), "test-model", [], {}, None, ctx))
+        expected_metadata = dict(_LLM_METADATA)
+        if expected_usage:
+            expected_metadata["usage"] = expected_usage
+        ctx.report_execution_started.assert_called_once_with(
+            ANY, ExecutionEntityTypes.LLM, "test-model", _LLM_METADATA
+        )
+        ctx.report_execution_succeeded.assert_called_once_with(
+            ANY, ExecutionEntityTypes.LLM, "test-model", expected_metadata
+        )
+        if records_metrics and metrics_available:
+            chat_model._record_token_metrics.assert_called_once_with(
+                "metric-model",
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                metric_group,
+            )
+        else:
+            chat_model._record_token_metrics.assert_not_called()
+        _assert_report_identities(ctx)
+        assert not events[0].is_failed
 
     @pytest.mark.parametrize("chat_async", [False, True])
     def test_every_attempt_uses_the_chat_durable_id(self, chat_async: bool) -> None:
@@ -424,13 +484,15 @@ class TestChatModelActionRetry:
         )
         assert model_resource_group.get_counter("retryCount").get_count() == 1
         assert model_resource_group.get_counter("retryWaitSec").get_count() == 1
+        _assert_report_identities(ctx)
         assert ctx.report_execution_started.call_count == 2
         ctx.report_execution_failed.assert_called_once()
         failed_args = ctx.report_execution_failed.call_args.args
-        assert failed_args[0] == ExecutionEntityTypes.LLM
-        assert failed_args[2] == _LLM_METADATA
+        assert failed_args[1] == ExecutionEntityTypes.LLM
+        assert failed_args[3] == _LLM_METADATA
         assert failed_args[-1] == ExecutionProblemCategories.MODEL_CALL_FAILED
         ctx.report_execution_succeeded.assert_called_once_with(
+            ANY,
             ExecutionEntityTypes.LLM,
             "test-model",
             _LLM_METADATA,
@@ -461,11 +523,12 @@ class TestChatModelActionRetry:
         assert "persistent error" in sent_events[0].error
         assert len(sent_events) == 1
         assert sent_events[0].is_failed
+        _assert_report_identities(ctx)
         assert ctx.report_execution_started.call_count == 3
         assert ctx.report_execution_failed.call_count == 3
         for failed_call in ctx.report_execution_failed.call_args_list:
-            assert failed_call.args[0] == ExecutionEntityTypes.LLM
-            assert failed_call.args[2] == _LLM_METADATA
+            assert failed_call.args[1] == ExecutionEntityTypes.LLM
+            assert failed_call.args[3] == _LLM_METADATA
             assert failed_call.args[-1] == ExecutionProblemCategories.MODEL_CALL_FAILED
         ctx.report_execution_succeeded.assert_not_called()
         model_resource_group = metric_group.get_sub_group(
@@ -474,20 +537,41 @@ class TestChatModelActionRetry:
         assert model_resource_group.get_counter("retryCount").get_count() == 2
         assert model_resource_group.get_counter("retryWaitSec").get_count() == 0
 
+    @pytest.mark.parametrize("asynchronous", [False, True])
     def test_structured_output_parse_error_retries_without_failing_llm(
-        self,
+        self, asynchronous: bool
     ) -> None:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
             side_effect=[
-                _response_fixture(MessageRole.ASSISTANT, "not-json"),
-                _response_fixture(MessageRole.ASSISTANT, '{"result": 42}'),
+                _response_fixture(
+                    MessageRole.ASSISTANT, "not-json", extra_args={"promptTokens": 11}
+                ),
+                _response_fixture(
+                    MessageRole.ASSISTANT,
+                    '{"result": 42}',
+                    extra_args={"completionTokens": 0},
+                ),
             ]
         )
 
         ctx, sent_events, _, _ = _create_mock_runner_context(
             chat_model, max_retries=1, retry_wait_interval_sec=0
         )
+        configured_value = ctx.config.get.side_effect
+        ctx.config.get.side_effect = (
+            lambda option: asynchronous
+            if option is AgentExecutionOptions.CHAT_ASYNC
+            else configured_value(option)
+        )
+
+        async def execute_async(
+            func: Any, *args: Any, durable_id: str | None = None, **kwargs: Any
+        ) -> Any:
+            await asyncio.sleep(0)
+            return func(*args, **kwargs)
+
+        ctx.durable_execute_async = execute_async
 
         asyncio.run(
             chat(
@@ -507,22 +591,22 @@ class TestChatModelActionRetry:
 
         ctx.report_execution_failed.assert_called_once()
         failed_args = ctx.report_execution_failed.call_args.args
-        assert failed_args[0] == ExecutionEntityTypes.PARSER
-        assert failed_args[1] == STRUCTURED_OUTPUT
+        assert failed_args[1] == ExecutionEntityTypes.PARSER
+        assert failed_args[2] == STRUCTURED_OUTPUT
         assert failed_args[-1] == ExecutionProblemCategories.MODEL_OUTPUT_PARSE_ERROR
 
+        _assert_report_identities(ctx)
         assert ctx.report_execution_started.call_count == 4
         assert ctx.report_execution_succeeded.call_count == 3
-        assert (
-            ctx.report_execution_succeeded.call_args_list.count(
-                call(
-                    ExecutionEntityTypes.LLM,
-                    "test-model",
-                    _LLM_METADATA,
-                )
-            )
-            == 2
-        )
+        llm_successes = [
+            report.args[3]
+            for report in ctx.report_execution_succeeded.call_args_list
+            if report.args[1] == ExecutionEntityTypes.LLM
+        ]
+        assert llm_successes == [
+            {**_LLM_METADATA, "usage": {"promptTokens": 11}},
+            {**_LLM_METADATA, "usage": {"completionTokens": 0}},
+        ]
 
 
 class TestChatModelActionFinishReason:
@@ -726,7 +810,10 @@ class TestChatModelActionFinishReason:
         # The model call itself succeeded and spent its full token budget, so
         # both must be recorded before the response is rejected.
         ctx.report_execution_succeeded.assert_called_once_with(
-            ExecutionEntityTypes.LLM, "test-model", _LLM_METADATA
+            ANY,
+            ExecutionEntityTypes.LLM,
+            "test-model",
+            {**_LLM_METADATA, "usage": {"promptTokens": 100, "completionTokens": 50}},
         )
         chat_model._record_token_metrics.assert_called_once_with(
             "provider-model", 100, 50, metric_group
@@ -734,7 +821,7 @@ class TestChatModelActionFinishReason:
         # The parse is never attempted, so nothing about it is reported and no
         # response leaves the action.
         ctx.report_execution_started.assert_called_once_with(
-            ExecutionEntityTypes.LLM, "test-model", _LLM_METADATA
+            ANY, ExecutionEntityTypes.LLM, "test-model", _LLM_METADATA
         )
         ctx.report_execution_failed.assert_not_called()
         assert len(sent_events) == 1
@@ -889,6 +976,22 @@ class TestProcessToolResponsePromptArgsForwarding:
         assert tool_message.blocks[0].text == "Tool `query_order` execute failed."
 
 
+def _assert_report_identities(ctx: MagicMock) -> None:
+    starts = {
+        report.args[0]: report.args[1:3]
+        for report in ctx.report_execution_started.call_args_list
+    }
+    assert len(starts) == ctx.report_execution_started.call_count
+    assert all(isinstance(identity, str) and identity for identity in starts)
+    terminals = (
+        ctx.report_execution_succeeded.call_args_list
+        + ctx.report_execution_failed.call_args_list
+    )
+    assert {report.args[0] for report in terminals} == set(starts)
+    for report in terminals:
+        assert report.args[1:3] == starts[report.args[0]]
+
+
 # Spelled out rather than imported from the action, so the assertion pins the exact
 # words a provider receives.
 _FINALIZE_DIRECTIVE_TEXT = (
@@ -896,7 +999,7 @@ _FINALIZE_DIRECTIVE_TEXT = (
     " Preserve its meaning and do not add or infer any new information.\n\n"
     "Response:\n"
 )
-_LLM_SPAN = call(ExecutionEntityTypes.LLM, "test-model", _LLM_METADATA)
+_LLM_SPAN = call(ANY, ExecutionEntityTypes.LLM, "test-model", _LLM_METADATA)
 
 
 def _assistant(content: str, **extra_args: Any) -> ChatResult:
@@ -1043,7 +1146,7 @@ class TestNativeStructuredOutputFinalization:
 
         ctx.report_execution_failed.assert_called_once()
         failed_args = ctx.report_execution_failed.call_args.args
-        assert failed_args[:3] == (
+        assert failed_args[1:4] == (
             ExecutionEntityTypes.LLM,
             "test-model",
             _LLM_METADATA,
@@ -1054,6 +1157,7 @@ class TestNativeStructuredOutputFinalization:
         assert len(sent_events) == 1
         assert sent_events[0].is_failed
         assert "conversion call exploded" in sent_events[0].error
+        _assert_report_identities(ctx)
 
     def test_finalization_failure_consumes_the_retry_budget(self) -> None:
         chat_model = _native_chat_model(
@@ -1072,11 +1176,15 @@ class TestNativeStructuredOutputFinalization:
         assert chat_model.final_chat.call_count == 2
         assert sent_events[0].retry_count == 1
         assert sent_events[0].structured_output.result == 42
+        _assert_report_identities(ctx)
 
     def test_parse_failure_after_native_call_consumes_the_retry_budget(self) -> None:
         chat_model = _native_chat_model(
             loop_responses=[_assistant("first"), _assistant("second")],
-            final_responses=[_assistant("not-json"), _assistant('{"result": 42}')],
+            final_responses=[
+                _assistant("not-json", promptTokens=11),
+                _assistant('{"result": 42}', completionTokens=0),
+            ],
         )
         ctx, sent_events, _, _ = _native_context(chat_model, max_retries=1)
 
@@ -1085,10 +1193,22 @@ class TestNativeStructuredOutputFinalization:
         assert chat_model.final_chat.call_count == 2
         assert sent_events[0].retry_count == 1
         assert sent_events[0].structured_output.result == 42
+        _assert_report_identities(ctx)
         ctx.report_execution_failed.assert_called_once()
         failed_args = ctx.report_execution_failed.call_args.args
-        assert failed_args[0] == ExecutionEntityTypes.PARSER
+        assert failed_args[1] == ExecutionEntityTypes.PARSER
         assert failed_args[-1] == ExecutionProblemCategories.MODEL_OUTPUT_PARSE_ERROR
+
+        assert [
+            report.args[3]
+            for report in ctx.report_execution_succeeded.call_args_list
+            if report.args[1] == ExecutionEntityTypes.LLM
+        ] == [
+            _LLM_METADATA,
+            {**_LLM_METADATA, "usage": {"promptTokens": 11}},
+            _LLM_METADATA,
+            {**_LLM_METADATA, "usage": {"completionTokens": 0}},
+        ]
 
     def test_truncated_finalization_response_is_rejected(self) -> None:
         chat_model = _native_chat_model(
@@ -1110,7 +1230,13 @@ class TestNativeStructuredOutputFinalization:
         assert sent_events[0].is_failed
         assert "truncat" in sent_events[0].error.lower()
         # The call itself succeeded and spent its budget before being rejected.
-        assert ctx.report_execution_succeeded.call_args_list.count(_LLM_SPAN) == 2
+        assert [
+            report.args[3] for report in ctx.report_execution_succeeded.call_args_list
+        ] == [
+            _LLM_METADATA,
+            {**_LLM_METADATA, "usage": {"promptTokens": 10, "completionTokens": 5}},
+        ]
+        _assert_report_identities(ctx)
         chat_model._record_token_metrics.assert_called_once_with(
             "provider-model", 10, 5, metric_group
         )
@@ -1141,6 +1267,15 @@ class TestNativeStructuredOutputFinalization:
         assert chat_model._record_token_metrics.call_args_list == [
             call("provider-model", 100, 50, metric_group),
             call("provider-model", 7, 3, metric_group),
+        ]
+        _assert_report_identities(ctx)
+        assert [
+            report.args[3]
+            for report in ctx.report_execution_succeeded.call_args_list
+            if report.args[1] == ExecutionEntityTypes.LLM
+        ] == [
+            {**_LLM_METADATA, "usage": {"promptTokens": 100, "completionTokens": 50}},
+            {**_LLM_METADATA, "usage": {"promptTokens": 7, "completionTokens": 3}},
         ]
 
     def test_gate_is_evaluated_once_across_retries(self) -> None:

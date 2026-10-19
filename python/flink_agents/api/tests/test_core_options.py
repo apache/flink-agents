@@ -100,17 +100,14 @@ def test_agent_config_options_are_explicitly_declared() -> None:
     from flink_agents.api.core_options import (
         AgentConfigOptions,
         ConditionEvaluationFailureStrategy,
-        EventLogLevel,
     )
 
     options = _collect_config_options(AgentConfigOptions)
-    assert options["BASE_LOG_DIR"].get_key() == "baseLogDir"
+    assert options["TRACE_LOG_OUTPUT_BASE_DIR"].get_key() == "trace-log.base-dir"
     assert options["KAFKA_BOOTSTRAP_SERVERS"].get_default_value() == "localhost:9092"
     cleanup_control_topic = options["KAFKA_ACTION_STATE_CLEANUP_CONTROL_TOPIC"]
     assert cleanup_control_topic.get_key() == "kafkaActionStateCleanupControlTopic"
     assert cleanup_control_topic.get_default_value() is None
-    assert options["EVENT_LOG_LEVEL"].get_default_value() is EventLogLevel.STANDARD
-    assert options["EVENT_LOG_TRACE_ENABLED"].get_default_value() is False
     condition_failure = options["CONDITION_EVALUATION_FAILURE_STRATEGY"]
     assert (
         condition_failure.get_key()

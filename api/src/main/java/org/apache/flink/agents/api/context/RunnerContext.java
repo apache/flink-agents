@@ -19,7 +19,10 @@ package org.apache.flink.agents.api.context;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
@@ -37,9 +40,7 @@ public interface RunnerContext {
     /**
      * Sends an event.
      *
-     * @param event the event to be sent; a new Event without upstream lineage
-     * @throws IllegalArgumentException if the event already carries {@code upstreamEventId} or
-     *     {@code upstreamActionName}, which the runtime sets when the Action emits it
+     * @param event the event to be sent
      */
     void sendEvent(Event event);
 
@@ -205,6 +206,29 @@ public interface RunnerContext {
      * {@link AgentExecutionOptions#ASYNC_BATCH_PARALLELISM} and the shared async worker pool.
      */
     <T> AsyncFuture<List<Outcome<T>>> gather(List<? extends AsyncFuture<T>> futures);
+
+    /**
+     * Creates a lazy event-backed chat call using this action's resources and memory. The runtime
+     * privately routes the built-in chat/tool loop and records the terminal response when durable
+     * execution is enabled. No additional durable-execute wrapper is needed.
+     *
+     * <p>Await the returned future only within the action execution that created it. Do not store
+     * it for a later event or pass it to another action execution. Cross-execution use is
+     * unsupported and is not checked at runtime. Suspending and resuming the creating action is
+     * still the same execution. Repeated awaits within that execution reuse the terminal response;
+     * a failed response throws {@link
+     * org.apache.flink.agents.api.event.ChatResponseEvent.ChatResponseException}. Chat handles are
+     * not supported by {@link #gather} yet. Java chat awaits require the JDK 21 continuation
+     * runtime and reject unsupported runtimes before dispatching a request.
+     */
+    default DurableFuture<ChatResult> chat(ChatRequestEvent request) {
+        throw new UnsupportedOperationException("Chat calls require an event-backed runtime");
+    }
+
+    /** Convenience overload for a chat without prompt arguments or an output schema. */
+    default DurableFuture<ChatResult> chat(String model, List<ChatMessage> messages) {
+        return chat(new ChatRequestEvent(model, messages));
+    }
 
     /** Clean up the resource. */
     void close() throws Exception;

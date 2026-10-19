@@ -24,206 +24,162 @@ specific language governing permissions and limitations
 under the License.
 -->
 
-## Overview
+## What Is an Agent?
 
-An Agent in Flink-Agents is an agent whose reasoning and behavior are organized as a directed workflow of modular steps, called actions, connected by events. This design is inspired by the need to orchestrate complex, multi-stage tasks in a transparent, extensible, and data-centric way, leveraging Apache Flink's streaming architecture.
+An AI agent uses a language model to reason about a task, decide what to do next, and
+take actions toward a goal. It can use tools to interact with external systems and
+memory to retain context, adapting its next steps based on the results.
 
-In Flink-Agents, an Agent is a class that inherits from the `Agent` base class. Its workflow
-is defined by actions: functions decorated with `@action(...)` in Python or methods annotated with
-`@Action(...)` in Java. Each action declares one or more trigger conditions, which may be exact event
-types or condition expressions. Actions consume events, perform reasoning or tool calls, and emit new
-events that may trigger other actions. This event-driven workflow forms a directed graph that may
-contain cycles. Each node is an action, and each edge represents an event flow between actions.
+Flink Agents provides an event-driven model for building and orchestrating these agents
+on Apache Flink. **Actions** define the work to perform, **Events** carry data and connect
+steps, and **Resources** provide reusable capabilities such as models, tools, and prompts.
+You can explicitly define the workflow, let a model choose the next steps within it,
+or combine both approaches.
 
-An Agent is well-suited for scenarios where the solution requires explicit orchestration, branching, or multi-step reasoning, such as data enrichment, multi-tool pipelines, or complex business logic.
+## Core Concepts
 
-## Agent Example
+| Concept | Role in an Agent | Example |
+| --- | --- | --- |
+| **Event** | Carries data between Actions. Its type and attributes determine which Actions react to it. | A `ChatRequestEvent` carries messages and the name of a model to call. |
+| **Action** | Reacts to matching Events, performs work, and can send new Events. One Event can trigger multiple Actions. | An Action reads a review and sends a request for a summary. |
+| **Resource** | A reusable, named runtime component that Actions or other Resources can use. | A chat model configured for summarizing reviews. |
 
-{{< tabs "Agent Example" >}}
+Common Resources include:
+
+- [Chat Models]({{< ref "docs/development/calling-llms/chat-models" >}}) for model calls.
+- [Tools]({{< ref "docs/development/calling-llms/tool_use" >}}) for callable operations.
+- [Prompts]({{< ref "docs/development/calling-llms/prompts" >}}) for reusable message templates.
+- [MCP Servers]({{< ref "docs/development/calling-llms/mcp" >}}) for accessing tools and prompts provided by external MCP servers.
+- [Vector Stores]({{< ref "docs/development/vector-search/vector_stores" >}}) for storing and retrieving embeddings and related data.
+- [Skills]({{< ref "docs/development/calling-llms/skills" >}}) for reusable instructions and supporting files.
+
+[Memory]({{< ref "docs/development/memory/overview" >}}) lets Actions retain and retrieve
+information through the execution context. It is a separate API, not a Resource type.
+
+## How an Agent Runs
+
+Consider an Agent that summarizes product reviews. You define two Actions: one to prepare
+the request and one to emit the result. The framework supplies the chat Action between them.
+
+{{< mermaid >}}
+flowchart TD
+    input[Input review] -->|InputEvent| request[Your Action: request summary]
+    request -->|ChatRequestEvent| chat[Built-in chat Action]
+    chat -. uses .-> model[Resource: review model]
+    chat -->|ChatResponseEvent| output[Your Action: emit summary]
+    output -->|OutputEvent| downstream[Downstream output]
+{{< /mermaid >}}
+
+1. The framework wraps each input record in an `InputEvent`.
+2. Your input Action reacts to that Event and sends a `ChatRequestEvent`, referencing
+   the registered model by name.
+3. The built-in chat Action calls the model and sends a `ChatResponseEvent` with the result.
+4. Your response Action sends an `OutputEvent`. The framework emits its payload downstream;
+   `OutputEvent` bypasses Action matching.
+
+Actions are connected by the Events they send and react to, rather than by direct calls to
+one another. The example is a linear flow, but an Event can trigger several matching Actions,
+and an Action can send Events that lead to different branches or another iteration of a loop.
+
+## Define Your Agent
+
+To define this workflow:
+
+1. Extend `Agent` and declare the Resources it needs.
+2. Register Actions with `@action(...)` in Python or `@Action(...)` in Java, specifying
+   the Events they react to.
+3. Use the `RunnerContext` passed to each Action to send Events and access runtime services.
+
+### Registering and Referencing Resources
+
+Register a Resource with a name and a resource type. For example, `@chat_model_setup`
+in Python or `@ChatModelSetup` in Java registers a chat model under the declaration's method
+name. You can also use `add_resource` / `addResource` to supply the name and type explicitly.
+Register a Resource on the agents execution environment to make it available to multiple Agents.
+
+Inside an Action, use the execution context to get a Resource instance by its name and type,
+then use the instance's methods. For the model declared in the example below:
+
+- **Python:** `model = ctx.get_resource("review_model", ResourceType.CHAT_MODEL)`
+- **Java:** `Resource model = ctx.getResource("reviewModel", ResourceType.CHAT_MODEL)`
+
+Built-in Actions handle some Resource operations for you. For example, when you send a
+`ChatRequestEvent`, the [built-in chat Action]({{< ref "docs/development/calling-llms/chat#chat-events" >}})
+gets the named chat model Resource from the
+context, calls it, and sends a `ChatResponseEvent`. The example below uses this built-in
+Action, so your own Actions do not need to get and call the model directly. Sending an Event
+works here because an Action handles that Event and performs the Resource operation.
+
+Here, `review_model` / `reviewModel` names the Resource within your application;
+`qwen3:8b` selects the model on the Ollama server.
+
+### Review Summary Example
+
+The examples below accept a review as a **string** and output the model's summary as a string.
+They assume an Ollama connection named `ollama_server` is registered in the agents execution
+environment and the `qwen3:8b` model is available on that server. See the
+[Quickstart]({{< ref "docs/get-started/quickstart/create-agent/single-agent#prepare-agents-execution-environment" >}})
+for environment registration (use `ollama_server` as the connection name in either language),
+and [Chat Model Providers]({{< ref "docs/development/calling-llms/chat-models/providers" >}})
+for provider configuration. Imports and job setup are omitted here to focus on the Agent definition.
+
+{{< tabs "Define Your Agent" >}}
 
 {{< tab "Python" >}}
 ```python
-class ReviewAnalysisAgent(Agent):
-    """An agent that uses a large language model (LLM) to analyze product reviews
-    and generate a satisfaction score and potential reasons for dissatisfaction.
-
-    This agent receives a product review and produces a satisfaction score and a list
-    of reasons for dissatisfaction. It handles prompt construction, LLM interaction,
-    and output parsing.
-    """
-
-    @prompt
-    @staticmethod
-    def review_analysis_prompt() -> Prompt:
-        """Prompt for review analysis."""
-        return review_analysis_prompt
-
-    @tool
-    @staticmethod
-    def notify_shipping_manager(id: str, review: str) -> None:
-        """Notify the shipping manager when product received a negative review due to
-        shipping damage.
-
-        Parameters
-        ----------
-        id : str
-            The id of the product that received a negative review due to shipping damage
-        review: str
-            The negative review content
-        """
-        # reuse the declared function, but for parsing the tool metadata, we write doc
-        # string here again.
-        notify_shipping_manager(id=id, review=review)
-
+class ReviewSummaryAgent(Agent):
     @chat_model_setup
     @staticmethod
-    def review_analysis_model() -> ResourceDescriptor:
-        """ChatModel which focus on review analysis."""
+    def review_model() -> ResourceDescriptor:
         return ResourceDescriptor(
             clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_server",
             model="qwen3:8b",
-            prompt="review_analysis_prompt",
-            tools=["notify_shipping_manager"],
-            extract_reasoning=True,
         )
 
     @action(EventType.InputEvent)
     @staticmethod
-    def process_input(event: Event, ctx: RunnerContext) -> None:
-        """Process input event and send chat request for review analysis."""
-        input_event = InputEvent.from_event(event)
-        input: ProductReview = input_event.input
-        ctx.short_term_memory.set("id", input.id)
-
-        content = f"""
-            "id": {input.id},
-            "review": {input.review}
-        """
-        msg = ChatMessage(role=MessageRole.USER)
+    def request_summary(event: Event, ctx: RunnerContext) -> None:
+        review = InputEvent.from_event(event).input
         ctx.send_event(
             ChatRequestEvent(
-                model="review_analysis_model",
-                messages=[msg],
-                prompt_args={"input": content},
+                model="review_model",
+                messages=[ChatMessage.user(f"Summarize this review: {review}")],
             )
         )
 
     @action(EventType.ChatResponseEvent)
     @staticmethod
-    def process_chat_response(event: Event, ctx: RunnerContext) -> None:
-        """Process chat response event and send output event."""
-        chat_response = ChatResponseEvent.from_event(event)
-        try:
-            json_content = json.loads(chat_response.response.text)
-            ctx.send_event(
-                OutputEvent(
-                    output=ProductReviewAnalysisRes(
-                        id=ctx.short_term_memory.get("id"),
-                        score=json_content["score"],
-                        reasons=json_content["reasons"],
-                    )
-                )
-            )
-        except Exception:
-            logging.exception(
-                f"Error processing chat response {chat_response.response.text}"
-            )
-
-            # To fail the agent, you can raise an exception here.
+    def emit_summary(event: Event, ctx: RunnerContext) -> None:
+        response = ChatResponseEvent.from_event(event).response
+        ctx.send_event(OutputEvent(output=response.text))
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```java
-/**
- * An agent that uses a large language model (LLM) to analyze product reviews and generate a
- * satisfaction score and potential reasons for dissatisfaction.
- *
- * <p>This agent receives a product review and produces a satisfaction score and a list of reasons
- * for dissatisfaction. It handles prompt construction, LLM interaction, and output parsing.
- */
-public class ReviewAnalysisAgent extends Agent {
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
-    @Prompt
-    public static org.apache.flink.agents.api.prompt.Prompt reviewAnalysisPrompt() {
-        return REVIEW_ANALYSIS_PROMPT;
-    }
-
+public class ReviewSummaryAgent extends Agent {
     @ChatModelSetup
-    public static ResourceDescriptor reviewAnalysisModel() {
+    public static ResourceDescriptor reviewModel() {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
-                .addInitialArgument("connection", "ollamaChatModelConnection")
+                .addInitialArgument("connection", "ollama_server")
                 .addInitialArgument("model", "qwen3:8b")
-                .addInitialArgument("prompt", "reviewAnalysisPrompt")
-                .addInitialArgument("tools", Collections.singletonList("notifyShippingManager"))
-                .addInitialArgument("extract_reasoning", true)
                 .build();
     }
 
-    /**
-     * Tool for notifying the shipping manager when product received a negative review due to
-     * shipping damage.
-     *
-     * @param id The id of the product that received a negative review due to shipping damage
-     * @param review The negative review content
-     */
-    @Tool(
-            description =
-                    "Notify the shipping manager when product received a negative review due to shipping damage.")
-    public static void notifyShippingManager(
-            @ToolParam(name = "id") String id, @ToolParam(name = "review") String review) {
-        CustomTypesAndResources.notifyShippingManager(id, review);
-    }
-
-    /** Process input event and send chat request for review analysis. */
     @Action(EventType.InputEvent)
-    public static void processInput(Event event, RunnerContext ctx) throws Exception {
-        InputEvent inputEvent = InputEvent.fromEvent(event);
-        String input = (String) inputEvent.getInput();
-        MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-        CustomTypesAndResources.ProductReview inputObj =
-                MAPPER.readValue(input, CustomTypesAndResources.ProductReview.class);
-
-        ctx.getShortTermMemory().set("id", inputObj.getId());
-
-        String content =
-                String.format(
-                        "{\n" + "\"id\": %s,\n" + "\"review\": \"%s\"\n" + "}",
-                        inputObj.getId(), inputObj.getReview());
-        ChatMessage msg = new ChatMessage(MessageRole.USER, "");
-
+    public static void requestSummary(Event event, RunnerContext ctx) {
+        String review = (String) InputEvent.fromEvent(event).getInput();
         ctx.sendEvent(
                 new ChatRequestEvent(
-                        "reviewAnalysisModel", List.of(msg), Map.of("input", content), null));
+                        "reviewModel",
+                        List.of(ChatMessage.user("Summarize this review: " + review))));
     }
 
     @Action(EventType.ChatResponseEvent)
-    public static void processChatResponse(Event event, RunnerContext ctx)
-            throws Exception {
-        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
-        JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getText());
-        JsonNode scoreNode = jsonNode.findValue("score");
-        JsonNode reasonsNode = jsonNode.findValue("reasons");
-        if (scoreNode == null || reasonsNode == null) {
-            throw new IllegalStateException(
-                    "Invalid response from LLM: missing 'score' or 'reasons' field.");
-        }
-        List<String> result = new ArrayList<>();
-        if (reasonsNode.isArray()) {
-            for (JsonNode node : reasonsNode) {
-                result.add(node.asText());
-            }
-        }
-
-        ctx.sendEvent(
-                new OutputEvent(
-                        new CustomTypesAndResources.ProductReviewAnalysisRes(
-                                ctx.getShortTermMemory().get("id").getValue().toString(),
-                                scoreNode.asInt(),
-                                result)));
+    public static void emitSummary(Event event, RunnerContext ctx) {
+        String summary = ChatResponseEvent.fromEvent(event).getResponse().getText();
+        ctx.sendEvent(new OutputEvent(summary));
     }
 }
 ```
@@ -231,9 +187,13 @@ public class ReviewAnalysisAgent extends Agent {
 
 {{< /tabs >}}
 
-Next, learn how [Actions]({{< ref "docs/development/create-agent/actions" >}})
-process incoming Events and emit new Events, and how
-[Events]({{< ref "docs/development/create-agent/events" >}}) carry data and trigger
-Actions. Then see
-[Choose APIs and Languages]({{< ref "docs/development/create-agent/choose-apis-and-languages" >}})
-to choose among the Java, Python, and YAML APIs and combine Java and Python components.
+## Next Steps
+
+- Learn how to register Actions, define trigger conditions, and use async or durable execution
+  in [Actions]({{< ref "docs/development/create-agent/actions" >}}).
+- Learn how to define and pass data in [Events]({{< ref "docs/development/create-agent/events" >}}).
+- [Choose APIs and Languages]({{< ref "docs/development/create-agent/choose-apis-and-languages" >}})
+  for your application, or define an Agent with the
+  [YAML API]({{< ref "docs/development/create-agent/yaml" >}}).
+- Follow the [Quickstart]({{< ref "docs/get-started/quickstart/create-agent/single-agent" >}})
+  to connect an Agent to a Flink job and build a complete review-analysis application.

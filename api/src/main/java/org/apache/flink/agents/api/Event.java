@@ -20,7 +20,6 @@ package org.apache.flink.agents.api;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationContext;
@@ -29,8 +28,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import org.apache.flink.agents.api.context.MemoryRef;
-
-import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -57,9 +54,6 @@ public class Event {
     @JsonDeserialize(contentUsing = AttachmentValueDeserializer.class)
     private final Map<String, Object> attachments;
 
-    @Nullable private UUID upstreamEventId;
-    @Nullable private String upstreamActionName;
-
     /**
      * Runtime-internal timestamp from the source record. Not part of the cross-language event
      * contract; used by the Flink runtime for timestamp propagation.
@@ -77,18 +71,12 @@ public class Event {
     }
 
     /**
-     * Reconstructs an Event with an existing identity and optional framework-managed lineage.
-     *
-     * <p>The lineage values support deserialization and reconstruction. {@code
-     * RunnerContext#sendEvent} rejects an Event that carries them; the runtime sets lineage to the
-     * current trigger Event ID and Action name when it finalizes the Action's outputs.
+     * Reconstructs an Event with an existing identity, data, and attachments.
      *
      * @param id the existing Event ID
      * @param type the Event type used for routing
      * @param attributes the Event payload
      * @param attachments key-value data passed between Actions through sensory memory
-     * @param upstreamEventId the ID of the direct upstream Event, or {@code null}
-     * @param upstreamActionName the name of the emitting Action, or {@code null}
      */
     @JsonCreator
     public Event(
@@ -97,9 +85,7 @@ public class Event {
             @JsonProperty("attributes") Map<String, Object> attributes,
             @JsonProperty("attachments")
                     @JsonDeserialize(contentUsing = AttachmentValueDeserializer.class)
-                    Map<String, Object> attachments,
-            @JsonProperty("upstreamEventId") @Nullable UUID upstreamEventId,
-            @JsonProperty("upstreamActionName") @Nullable String upstreamActionName) {
+                    Map<String, Object> attachments) {
         if (type == null || type.isEmpty()) {
             throw new IllegalArgumentException("Event 'type' must not be null or empty.");
         }
@@ -108,29 +94,11 @@ public class Event {
         this.type = type;
         this.attributes = attributes != null ? new HashMap<>(attributes) : new HashMap<>();
         this.attachments = attachments != null ? new HashMap<>(attachments) : new HashMap<>();
-        this.upstreamEventId = upstreamEventId;
-        this.upstreamActionName = upstreamActionName;
     }
 
-    /** Reconstructs an Event with an existing identity, attachments, and no upstream lineage. */
-    public Event(
-            UUID id, String type, Map<String, Object> attributes, Map<String, Object> attachments) {
-        this(id, type, attributes, attachments, null, null);
-    }
-
-    /** Reconstructs an Event with an existing identity and optional framework-managed lineage. */
-    public Event(
-            UUID id,
-            String type,
-            Map<String, Object> attributes,
-            @Nullable UUID upstreamEventId,
-            @Nullable String upstreamActionName) {
-        this(id, type, attributes, new HashMap<>(), upstreamEventId, upstreamActionName);
-    }
-
-    /** Reconstructs an Event with an existing identity and no upstream lineage. */
+    /** Reconstructs an Event with an existing identity and data. */
     public Event(UUID id, String type, Map<String, Object> attributes) {
-        this(id, type, attributes, new HashMap<>(), null, null);
+        this(id, type, attributes, new HashMap<>());
     }
 
     public UUID getId() {
@@ -149,40 +117,6 @@ public class Event {
 
     public Map<String, Object> getAttachments() {
         return attachments;
-    }
-
-    /** Returns the ID of the Event consumed by the Action that emitted this Event. */
-    @Nullable
-    @JsonInclude(JsonInclude.Include.NON_NULL)
-    public UUID getUpstreamEventId() {
-        return upstreamEventId;
-    }
-
-    /**
-     * Sets the framework-managed ID of the Event consumed by the emitting Action.
-     *
-     * <p>The runtime sets this value when it finalizes an Action's outputs. {@code
-     * RunnerContext#sendEvent} rejects an Event that already carries it.
-     */
-    public void setUpstreamEventId(@Nullable UUID upstreamEventId) {
-        this.upstreamEventId = upstreamEventId;
-    }
-
-    /** Returns the name of the Action that emitted this Event. */
-    @Nullable
-    @JsonInclude(JsonInclude.Include.NON_NULL)
-    public String getUpstreamActionName() {
-        return upstreamActionName;
-    }
-
-    /**
-     * Sets the framework-managed name of the Action that emitted this Event.
-     *
-     * <p>The runtime sets this value when it finalizes an Action's outputs. {@code
-     * RunnerContext#sendEvent} rejects an Event that already carries it.
-     */
-    public void setUpstreamActionName(@Nullable String upstreamActionName) {
-        this.upstreamActionName = upstreamActionName;
     }
 
     public Object getAttr(String name) {
@@ -254,8 +188,6 @@ public class Event {
         reconstructedEvent.attachments.clear();
         reconstructedEvent.attachments.putAll(source.attachments);
         reconstructedEvent.sourceTimestamp = source.sourceTimestamp;
-        reconstructedEvent.upstreamEventId = source.upstreamEventId;
-        reconstructedEvent.upstreamActionName = source.upstreamActionName;
         return reconstructed;
     }
 

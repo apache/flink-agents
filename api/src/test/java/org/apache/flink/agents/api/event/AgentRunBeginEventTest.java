@@ -26,7 +26,6 @@ import org.junit.jupiter.api.Test;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -96,21 +95,16 @@ public class AgentRunBeginEventTest {
 
     @Test
     void testFromEventPreservesFrameworkMetadata() {
-        UUID upstreamEventId = UUID.randomUUID();
         Event generic =
                 new Event(
                         AgentRunBeginEvent.EVENT_TYPE,
                         Map.of("key", "k", "value", Map.of("profile.name", "Alice")));
         generic.setSourceTimestamp(123456789L);
-        generic.setUpstreamEventId(upstreamEventId);
-        generic.setUpstreamActionName("start_agent_run");
 
         AgentRunBeginEvent restored = AgentRunBeginEvent.fromEvent(generic);
 
         assertEquals(generic.getId(), restored.getId());
         assertEquals(123456789L, restored.getSourceTimestamp());
-        assertEquals(upstreamEventId, restored.getUpstreamEventId());
-        assertEquals("start_agent_run", restored.getUpstreamActionName());
     }
 
     @Test

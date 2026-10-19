@@ -151,7 +151,14 @@
         },
         "subagents": {
           "items": {
-            "$ref": "#/$defs/DescriptorSpec"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InternalSubagentSpec"
+              },
+              {
+                "$ref": "#/$defs/DescriptorSpec"
+              }
+            ]
           },
           "title": "Subagents",
           "type": "array"
@@ -234,6 +241,52 @@
         }
       },
       "title": "InjectedArg",
+      "type": "object"
+    },
+    "InternalSubagentSpec": {
+      "additionalProperties": false,
+      "description": "Reference a child Agent in this file or already registered in the environment.",
+      "properties": {
+        "agent": {
+          "pattern": "\\S",
+          "title": "Agent",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "input_schema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Schema"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "agent"
+      ],
+      "title": "InternalSubagentSpec",
       "type": "object"
     },
     "MessageRole": {

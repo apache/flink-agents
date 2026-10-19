@@ -18,20 +18,25 @@
  */
 package org.apache.flink.agents.runtime.metrics;
 
-import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.EventContext;
-import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
+import org.apache.flink.agents.api.trace.TraceContext;
+import org.apache.flink.agents.api.trace.TraceRecord;
+import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl.ExecutionReportingContext;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -52,19 +57,90 @@ class BuiltInExecutionMetricsTest {
     }
 
     @Test
-    void recordsLlmOutcomeByModelResource() {
-        ExecutionTraceContext success =
-                execution(ExecutionReporter.EntityTypes.LLM, "primary_model", Map.of());
-        observe(ExecutionLifecycleEvents.executionStarted(), success, 0);
-        observe(ExecutionLifecycleEvents.executionFinished(), success, 25);
+    void overlappingReportsWithIdenticalMetadataMeasureTheirOwnCallLatency() throws Exception {
+        RunnerContextImpl runner =
+                new RunnerContextImpl(
+                        null,
+                        () -> {},
+                        new AgentPlan(new HashMap<>(), new HashMap<>()),
+                        null,
+                        "job");
+        TraceContext action =
+                TraceContext.forAction(
+                        TraceContext.forInputRun("key", "agent"), ACTION_NAME, "trigger-event");
+        runner.switchActionContext(
+                ACTION_NAME,
+                null,
+                new ArrayList<>(),
+                "key",
+                "obs",
+                false,
+                new ExecutionReportingContext(
+                        action,
+                        List.of(record -> metrics.executionRecordObserved(ACTION_NAME, record))));
 
-        ExecutionTraceContext failure =
+        runner.reportExecutionStartedAt(
+                "call-a", "llm", "primary_model", Map.of(), Instant.EPOCH.toString());
+        runner.reportExecutionStartedAt(
+                "call-b",
+                "llm",
+                "primary_model",
+                Map.of(),
+                Instant.EPOCH.plusMillis(10).toString());
+        runner.reportExecutionSucceededAt(
+                "call-b",
+                "llm",
+                "primary_model",
+                Map.of("responseModel", "resolved"),
+                Instant.EPOCH.plusMillis(40).toString());
+        runner.reportExecutionSucceededAt(
+                "call-a",
+                "llm",
+                "primary_model",
+                Map.of(),
+                Instant.EPOCH.plusMillis(100).toString());
+
+        FlinkAgentsMetricGroupImpl model =
+                actionMetricGroup().getSubGroup("model_resource", "primary_model");
+        assertThat(model.getCounter(LlmExecutionMetricRecorder.NUM_LLM_CALLS_SUCCEEDED).getCount())
+                .isEqualTo(2);
+        assertThat(model.getHistogram(LlmExecutionMetricRecorder.LLM_CALL_LATENCY_MS).getCount())
+                .isEqualTo(2);
+        assertThat(
+                        model.getHistogram(LlmExecutionMetricRecorder.LLM_CALL_LATENCY_MS)
+                                .getStatistics()
+                                .getMin())
+                .isEqualTo(30);
+        assertThat(
+                        model.getHistogram(LlmExecutionMetricRecorder.LLM_CALL_LATENCY_MS)
+                                .getStatistics()
+                                .getMax())
+                .isEqualTo(100);
+
+        // Outcome counting remains observation-based; identity does not introduce deduplication.
+        runner.reportExecutionSucceededAt(
+                "call-a",
+                "llm",
+                "primary_model",
+                Map.of(),
+                Instant.EPOCH.plusMillis(110).toString());
+        assertThat(model.getCounter(LlmExecutionMetricRecorder.NUM_LLM_CALLS_SUCCEEDED).getCount())
+                .isEqualTo(3);
+        assertThat(model.getHistogram(LlmExecutionMetricRecorder.LLM_CALL_LATENCY_MS).getCount())
+                .isEqualTo(2);
+    }
+
+    @Test
+    void recordsLlmOutcomeByModelResource() {
+        TraceContext success =
                 execution(ExecutionReporter.EntityTypes.LLM, "primary_model", Map.of());
-        observe(ExecutionLifecycleEvents.executionStarted(), failure, 100);
-        observe(
-                ExecutionLifecycleEvents.executionFailed(new RuntimeException("failed")),
-                failure,
-                140);
+        observe(TraceRecord.Statuses.STARTED, success, 0);
+        observe(TraceRecord.Statuses.SUCCESS, success, 25);
+
+        TraceContext failure =
+                execution(ExecutionReporter.EntityTypes.LLM, "primary_model", Map.of());
+        observe(TraceRecord.Statuses.STARTED, failure, 100);
+        observe(TraceRecord.Statuses.FAILED, failure, 140);
 
         FlinkAgentsMetricGroupImpl modelResource =
                 actionMetricGroup().getSubGroup("model_resource", "primary_model");
@@ -87,18 +163,13 @@ class BuiltInExecutionMetricsTest {
 
     @Test
     void recordsToolOutcomeByToolName() {
-        ExecutionTraceContext success =
-                execution(ExecutionReporter.EntityTypes.TOOL, "search", Map.of());
-        observe(ExecutionLifecycleEvents.executionStarted(), success, 0);
-        observe(ExecutionLifecycleEvents.executionFinished(), success, 15);
+        TraceContext success = execution(ExecutionReporter.EntityTypes.TOOL, "search", Map.of());
+        observe(TraceRecord.Statuses.STARTED, success, 0);
+        observe(TraceRecord.Statuses.SUCCESS, success, 15);
 
-        ExecutionTraceContext failure =
-                execution(ExecutionReporter.EntityTypes.TOOL, "search", Map.of());
-        observe(ExecutionLifecycleEvents.executionStarted(), failure, 5);
-        observe(
-                ExecutionLifecycleEvents.executionFailed(new RuntimeException("failed")),
-                failure,
-                25);
+        TraceContext failure = execution(ExecutionReporter.EntityTypes.TOOL, "search", Map.of());
+        observe(TraceRecord.Statuses.STARTED, failure, 5);
+        observe(TraceRecord.Statuses.FAILED, failure, 25);
 
         FlinkAgentsMetricGroupImpl tool = actionMetricGroup().getSubGroup("tool", "search");
         assertThat(tool.getCounter(ToolExecutionMetricRecorder.NUM_TOOL_CALLS_SUCCEEDED).getCount())
@@ -116,18 +187,15 @@ class BuiltInExecutionMetricsTest {
 
     @Test
     void recordsSubagentOutcomeByRegisteredAgentName() {
-        ExecutionTraceContext success =
+        TraceContext success =
                 execution(ExecutionReporter.EntityTypes.SUBAGENT, "reviewer", Map.of());
-        observe(ExecutionLifecycleEvents.executionStarted(), success, 0);
-        observe(ExecutionLifecycleEvents.executionFinished(), success, 25);
+        observe(TraceRecord.Statuses.STARTED, success, 0);
+        observe(TraceRecord.Statuses.SUCCESS, success, 25);
 
-        ExecutionTraceContext failure =
+        TraceContext failure =
                 execution(ExecutionReporter.EntityTypes.SUBAGENT, "reviewer", Map.of());
-        observe(ExecutionLifecycleEvents.executionStarted(), failure, 100);
-        observe(
-                ExecutionLifecycleEvents.executionFailed(new RuntimeException("failed")),
-                failure,
-                140);
+        observe(TraceRecord.Statuses.STARTED, failure, 100);
+        observe(TraceRecord.Statuses.FAILED, failure, 140);
 
         FlinkAgentsMetricGroupImpl subagent =
                 actionMetricGroup().getSubGroup("subagent", "reviewer");
@@ -157,19 +225,13 @@ class BuiltInExecutionMetricsTest {
 
     @Test
     void aggregatesUnregisteredToolNamesIntoUnknownScope() {
-        ExecutionTraceContext first =
+        TraceContext first =
                 execution(ExecutionReporter.EntityTypes.TOOL, "hallucinated_one", Map.of());
-        ExecutionTraceContext second =
+        TraceContext second =
                 execution(ExecutionReporter.EntityTypes.TOOL, "hallucinated_two", Map.of());
 
-        observe(
-                ExecutionLifecycleEvents.executionFailed(new RuntimeException("missing")),
-                first,
-                0);
-        observe(
-                ExecutionLifecycleEvents.executionFailed(new RuntimeException("missing")),
-                second,
-                1);
+        observe(TraceRecord.Statuses.FAILED, first, 0);
+        observe(TraceRecord.Statuses.FAILED, second, 1);
 
         FlinkAgentsMetricGroupImpl unknown =
                 actionMetricGroup()
@@ -180,7 +242,7 @@ class BuiltInExecutionMetricsTest {
 
     @Test
     void recordsExplicitSkillLoads() {
-        ExecutionTraceContext loadSkill =
+        TraceContext loadSkill =
                 execution(
                         ExecutionReporter.EntityTypes.TOOL,
                         "load_skill",
@@ -189,8 +251,8 @@ class BuiltInExecutionMetricsTest {
                                 "calculator",
                                 ToolExecutionMetadataKeys.SKILL_REGISTERED,
                                 true));
-        observe(ExecutionLifecycleEvents.executionStarted(), loadSkill, 0);
-        observe(ExecutionLifecycleEvents.executionFinished(), loadSkill, 12);
+        observe(TraceRecord.Statuses.STARTED, loadSkill, 0);
+        observe(TraceRecord.Statuses.SUCCESS, loadSkill, 12);
 
         FlinkAgentsMetricGroupImpl skill = actionMetricGroup().getSubGroup("skill", "calculator");
         assertThat(skill.getCounter(ToolExecutionMetricRecorder.NUM_SKILL_LOADS).getCount())
@@ -208,7 +270,7 @@ class BuiltInExecutionMetricsTest {
 
     @Test
     void aggregatesUnregisteredSkillNamesIntoUnknownScope() {
-        ExecutionTraceContext first =
+        TraceContext first =
                 execution(
                         ExecutionReporter.EntityTypes.TOOL,
                         "load_skill",
@@ -217,7 +279,7 @@ class BuiltInExecutionMetricsTest {
                                 "hallucinated_one",
                                 ToolExecutionMetadataKeys.SKILL_REGISTERED,
                                 false));
-        ExecutionTraceContext second =
+        TraceContext second =
                 execution(
                         ExecutionReporter.EntityTypes.TOOL,
                         "load_skill",
@@ -227,8 +289,8 @@ class BuiltInExecutionMetricsTest {
                                 ToolExecutionMetadataKeys.SKILL_REGISTERED,
                                 false));
 
-        observe(ExecutionLifecycleEvents.executionFinished(), first, 0);
-        observe(ExecutionLifecycleEvents.executionFinished(), second, 1);
+        observe(TraceRecord.Statuses.SUCCESS, first, 0);
+        observe(TraceRecord.Statuses.SUCCESS, second, 1);
 
         FlinkAgentsMetricGroupImpl unknown =
                 actionMetricGroup()
@@ -239,24 +301,21 @@ class BuiltInExecutionMetricsTest {
 
     @Test
     void aggregatesMcpToolOutcomesByServer() {
-        ExecutionTraceContext success =
+        TraceContext success =
                 execution(
                         ExecutionReporter.EntityTypes.TOOL,
                         "search",
                         Map.of(ToolExecutionMetadataKeys.MCP_SERVER, "search_server"));
-        observe(ExecutionLifecycleEvents.executionStarted(), success, 0);
-        observe(ExecutionLifecycleEvents.executionFinished(), success, 30);
+        observe(TraceRecord.Statuses.STARTED, success, 0);
+        observe(TraceRecord.Statuses.SUCCESS, success, 30);
 
-        ExecutionTraceContext failure =
+        TraceContext failure =
                 execution(
                         ExecutionReporter.EntityTypes.TOOL,
                         "fetch",
                         Map.of(ToolExecutionMetadataKeys.MCP_SERVER, "search_server"));
-        observe(ExecutionLifecycleEvents.executionStarted(), failure, 10);
-        observe(
-                ExecutionLifecycleEvents.executionFailed(new RuntimeException("failed")),
-                failure,
-                60);
+        observe(TraceRecord.Statuses.STARTED, failure, 10);
+        observe(TraceRecord.Statuses.FAILED, failure, 60);
 
         FlinkAgentsMetricGroupImpl mcpServer =
                 actionMetricGroup().getSubGroup("mcp_server", "search_server");
@@ -279,10 +338,9 @@ class BuiltInExecutionMetricsTest {
     }
 
     @Test
-    void terminalEventWithoutLocalStartDoesNotRecordLatency() {
-        ExecutionTraceContext llm =
-                execution(ExecutionReporter.EntityTypes.LLM, "restored_model", Map.of());
-        observe(ExecutionLifecycleEvents.executionFinished(), llm, 0);
+    void terminalRecordWithoutLocalStartDoesNotRecordLatency() {
+        TraceContext llm = execution(ExecutionReporter.EntityTypes.LLM, "restored_model", Map.of());
+        observe(TraceRecord.Statuses.SUCCESS, llm, 0);
 
         FlinkAgentsMetricGroupImpl modelResource =
                 actionMetricGroup().getSubGroup("model_resource", "restored_model");
@@ -300,13 +358,10 @@ class BuiltInExecutionMetricsTest {
 
     @Test
     void toolFailureAfterCreationWithoutStartCountsFailureWithoutLatency() {
-        ExecutionTraceContext traceContext =
+        TraceContext traceContext =
                 execution(ExecutionReporter.EntityTypes.TOOL, "search", Map.of());
-        observe(ExecutionLifecycleEvents.executionCreated(), traceContext, 0);
-        observe(
-                ExecutionLifecycleEvents.executionFailed(new RuntimeException("timed out")),
-                traceContext,
-                1000);
+        observe(TraceRecord.Statuses.CREATED, traceContext, 0);
+        observe(TraceRecord.Statuses.FAILED, traceContext, 1000);
 
         FlinkAgentsMetricGroupImpl tool = actionMetricGroup().getSubGroup("tool", "search");
         assertThat(tool.getCounter(ToolExecutionMetricRecorder.NUM_TOOL_CALLS_FAILED).getCount())
@@ -315,24 +370,74 @@ class BuiltInExecutionMetricsTest {
                 .isZero();
     }
 
-    private void observe(Event event, ExecutionTraceContext traceContext, long timestampMillis) {
-        metrics.executionEventObserved(
+    @Test
+    void createdAndReusedRecordsDoNotCountAsComponentOutcomes() {
+        TraceContext tool = execution(ExecutionReporter.EntityTypes.TOOL, "search", Map.of());
+
+        observe(TraceRecord.Statuses.CREATED, tool, 0);
+        observe(TraceRecord.Statuses.REUSED, tool, 25);
+
+        FlinkAgentsMetricGroupImpl toolMetrics = actionMetricGroup().getSubGroup("tool", "search");
+        assertThat(
+                        toolMetrics
+                                .getCounter(ToolExecutionMetricRecorder.NUM_TOOL_CALLS_SUCCEEDED)
+                                .getCount())
+                .isZero();
+        assertThat(
+                        toolMetrics
+                                .getCounter(ToolExecutionMetricRecorder.NUM_TOOL_CALLS_FAILED)
+                                .getCount())
+                .isZero();
+        assertThat(
+                        toolMetrics
+                                .getHistogram(ToolExecutionMetricRecorder.TOOL_CALL_LATENCY_MS)
+                                .getCount())
+                .isZero();
+    }
+
+    @Test
+    void invalidRecordTimestampStillCountsOutcomeWithoutLatency() {
+        TraceContext tool = execution(ExecutionReporter.EntityTypes.TOOL, "search", Map.of());
+        observe(TraceRecord.Statuses.STARTED, tool, 0);
+
+        metrics.executionRecordObserved(
                 ACTION_NAME,
-                new EventContext(
-                        event.getType(), Instant.EPOCH.plusMillis(timestampMillis).toString()),
-                event,
-                traceContext);
+                new TraceRecord(tool, "invalid", TraceRecord.Statuses.FAILED, null, Map.of()));
+
+        FlinkAgentsMetricGroupImpl toolMetrics = actionMetricGroup().getSubGroup("tool", "search");
+        assertThat(
+                        toolMetrics
+                                .getCounter(ToolExecutionMetricRecorder.NUM_TOOL_CALLS_FAILED)
+                                .getCount())
+                .isEqualTo(1L);
+        assertThat(
+                        toolMetrics
+                                .getHistogram(ToolExecutionMetricRecorder.TOOL_CALL_LATENCY_MS)
+                                .getCount())
+                .isZero();
+    }
+
+    private void observe(String status, TraceContext traceContext, long timestampMillis) {
+        metrics.executionRecordObserved(
+                ACTION_NAME,
+                new TraceRecord(
+                        traceContext,
+                        Instant.EPOCH.plusMillis(timestampMillis).toString(),
+                        status,
+                        null,
+                        Map.of()));
     }
 
     private FlinkAgentsMetricGroupImpl actionMetricGroup() {
         return metricGroup.getSubGroup("action", ACTION_NAME);
     }
 
-    private static ExecutionTraceContext execution(
+    private static TraceContext execution(
             String entityType, String entityName, Map<String, Object> metadata) {
-        ExecutionTraceContext action =
-                ExecutionTraceContext.forAction(
-                        ExecutionTraceContext.forInputRun("key", "agent"), ACTION_NAME);
-        return action.childExecution(entityType, entityName, metadata);
+        TraceContext action =
+                TraceContext.forAction(
+                        TraceContext.forInputRun("key", "agent"), ACTION_NAME, "trigger-event");
+        return action.childExecution(
+                UUID.randomUUID().toString(), entityType, entityName, metadata);
     }
 }

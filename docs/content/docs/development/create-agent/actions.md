@@ -22,37 +22,38 @@ specific language governing permissions and limitations
 under the License.
 -->
 
-## Action
+An Action reacts to Events that match its trigger conditions. It receives the triggering
+`Event` and a `RunnerContext`, which it uses to access Resources, work with Memory, and
+send new Events. Several Actions can react to the same Event; handling an Event does not
+prevent other matching Actions from receiving it.
 
-An action is a piece of code that can be executed. It declares one or more trigger conditions and is
-triggered when an event matches one of them.
+Define an Action with `@action(...)` in Python or `@Action(...)` in Java. The function or
+method sends its output through the context, so its return type is `None` in Python or
+`void` in Java. A native Java Action must be `public static`.
 
-Use `@action(*trigger_conditions, name=None)` to decorate a Python function or `@Action({...})` to
-annotate a Java method. The function or method accepts the triggering `Event` and a `RunnerContext`.
-It sends events through the context rather than returning a result, so declare its return type as
-`None` in Python or `void` in Java. A native Java action must be `public static`. Python actions can
-also be defined as `async def` when using async execution (see [Async Execution](#async-execution)).
+This example accepts a review as a string, removes surrounding whitespace, and sends the
+cleaned text downstream. Imports and Flink job setup are omitted.
 
 {{< tabs "Action Function" >}}
 
 {{< tab "Python" >}}
 ```python
-class ReviewAnalysisAgent(Agent):
+class ReviewTextAgent(Agent):
     @action(EventType.InputEvent)
     @staticmethod
-    def process_input(event: Event, ctx: RunnerContext) -> None:
-        # the action logic
+    def clean_review(event: Event, ctx: RunnerContext) -> None:
+        review = InputEvent.from_event(event).input
+        ctx.send_event(OutputEvent(output=review.strip()))
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```java
-public class ReviewAnalysisAgent extends Agent {
-    /** Process input event and send chat request for review analysis. */
+public class ReviewTextAgent extends Agent {
     @Action(EventType.InputEvent)
-    public static void processInput(Event event, RunnerContext ctx) throws Exception {
-        InputEvent inputEvent = InputEvent.fromEvent(event);
-        // the action logic
+    public static void cleanReview(Event event, RunnerContext ctx) {
+        String review = (String) InputEvent.fromEvent(event).getInput();
+        ctx.sendEvent(new OutputEvent(review.trim()));
     }
 }
 ```
@@ -60,34 +61,114 @@ public class ReviewAnalysisAgent extends Agent {
 
 {{< /tabs >}}
 
-### Registering Actions Programmatically
+The framework creates an `InputEvent` for each input record. `OutputEvent` sends a result
+downstream; other Events can connect Actions, as shown in [Sending Events](#sending-events).
+For calls to external services, see [Async Execution](#async-execution), including how to
+write Python Actions with `async def`.
 
-As an alternative to annotations, register an action through the `Agent` API:
+By default, an Action uses its Python function name or Java method name: `clean_review`
+in the Python example and `cleanReview` in the Java example. Set `name` in the decorator
+or annotation to choose a different name, for example:
+
+| Python | Java |
+| --- | --- |
+| `@action(EventType.InputEvent, name="process_review")` | `@Action(value = EventType.InputEvent, name = "process_review")` |
+
+Action names must be unique within an Agent.
+
+## Registering Actions Programmatically
+
+You can also create an `Agent` instance and register a function or method with its trigger
+conditions. These examples perform the same text cleanup as above without an Agent subclass
+or an Action decorator or annotation:
 
 {{< tabs "Programmatic Action" >}}
 
 {{< tab "Python" >}}
 ```python
-agent.add_action(
-    "process_event",
-    [EventType.InputEvent],
-    process_event,
-)
+def clean_review(event: Event, ctx: RunnerContext) -> None:
+    review = InputEvent.from_event(event).input
+    ctx.send_event(OutputEvent(output=review.strip()))
+
+
+agent = Agent()
+agent.add_action("clean_review", [EventType.InputEvent], clean_review)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+Define the handler as a static method:
+
+```java
+public class ReviewActions {
+    public static void cleanReview(Event event, RunnerContext ctx) {
+        String review = (String) InputEvent.fromEvent(event).getInput();
+        ctx.sendEvent(new OutputEvent(review.trim()));
+    }
+}
+```
+
+Then register it when setting up your job (the enclosing method must handle or declare
+`NoSuchMethodException`):
+
+```java
+Agent agent = new Agent();
+agent.addAction(
+        "clean_review",
+        new String[] {EventType.InputEvent},
+        JavaFunction.fromMethod(
+                ReviewActions.class.getMethod("cleanReview", Event.class, RunnerContext.class)),
+        null);
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+Both examples register the Action as `clean_review` through the first argument.
+In Java, `JavaFunction` is imported from `org.apache.flink.agents.api.function`;
+the final `null` means no Action-specific configuration is supplied.
+
+## Trigger Conditions
+
+Trigger conditions determine which Events an Action reacts to.
+
+### Exact Event Type
+
+The simplest way to register an Action is to specify one Event type. The Action runs
+whenever an Event with that type arrives:
+
+| Event Type | Python | Java |
+| --- | --- | --- |
+| Input records | `@action(EventType.InputEvent)` | `@Action(EventType.InputEvent)` |
+| Custom `review_ready` Events | `@action("review_ready")` | `@Action("review_ready")` |
+
+Use a built-in `EventType` constant for framework Events, or the type string you chose
+for a custom Event. No attribute check is needed when you want to handle every Event
+of that type.
+
+### Single Condition
+
+To select Events by their data, use a Boolean expression as the trigger condition.
+This Action forwards an Event's attributes downstream when its `urgent` attribute is `true`:
+
+{{< tabs "Single Condition" >}}
+
+{{< tab "Python" >}}
+```python
+class ReviewRoutingAgent(Agent):
+    @action("has(attributes.urgent) && attributes.urgent == true")
+    @staticmethod
+    def forward_review(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(OutputEvent(output=event.attributes))
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```java
-public class ProgrammaticAgent extends Agent {
-    public ProgrammaticAgent() throws NoSuchMethodException {
-        addAction(
-                new String[] {EventType.InputEvent},
-                ProgrammaticAgent.class.getMethod(
-                        "processEvent", Event.class, RunnerContext.class));
-    }
-
-    public static void processEvent(Event event, RunnerContext ctx) {
-        // Handle the input event.
+public class ReviewRoutingAgent extends Agent {
+    @Action("has(attributes.urgent) && attributes.urgent == true")
+    public static void forwardReview(Event event, RunnerContext ctx) {
+        ctx.sendEvent(new OutputEvent(event.getAttributes()));
     }
 }
 ```
@@ -95,515 +176,719 @@ public class ProgrammaticAgent extends Agent {
 
 {{< /tabs >}}
 
-### Trigger Conditions
+`has(attributes.urgent)` checks that the optional attribute exists before reading it.
+Expressions use the supported subset of
+[Common Expression Language (CEL)](https://cel.dev/).
 
-A trigger condition is either:
+### Multiple Conditions
 
-- An **exact event type**, such as `EventType.InputEvent` or a custom event's `EVENT_TYPE` constant.
-- A **condition expression** that evaluates event data to `true` or `false`. Expressions are written
-  in [Common Expression Language (CEL)](https://cel.dev/); Flink Agents supports the subset described
-  in [Trigger Condition Reference](#trigger-condition-reference).
+Conditions on the same Action are alternatives (**OR**). The following Action forwards
+an Event's attributes downstream if its type is `review_ready` **or** its `urgent`
+attribute is `true`:
 
-Conditions on the same action are alternatives (OR). For example, separate conditions for
-`EventType.InputEvent` and `attributes.urgent == true` allow any input event to trigger the action,
-even when `urgent` is false. To require both, combine them in one expression:
+{{< tabs "Multiple Trigger Conditions" >}}
+
+{{< tab "Python" >}}
+```python
+class ReviewRoutingAgent(Agent):
+    @action("review_ready", "has(attributes.urgent) && attributes.urgent == true")
+    @staticmethod
+    def forward_review(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(OutputEvent(output=event.attributes))
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class ReviewRoutingAgent extends Agent {
+    @Action({"review_ready", "has(attributes.urgent) && attributes.urgent == true"})
+    public static void forwardReview(Event event, RunnerContext ctx) {
+        ctx.sendEvent(new OutputEvent(event.getAttributes()));
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+| Event type | `urgent` attribute | Does the Action run? |
+| --- | --- | --- |
+| `review_ready` | Absent or `false` | Yes: the Event type matches. |
+| `review_updated` | `true` | Yes: the expression matches. |
+| `review_ready` | `true` | Yes, once: matching both conditions does not cause a second execution. |
+| `review_updated` | Absent or `false` | No. |
+
+To require **both** the type and the attribute to match, put them in a single expression:
 
 ```text
-type == EventType.InputEvent && attributes.urgent == true
+type == 'review_ready' && has(attributes.urgent) && attributes.urgent == true
 ```
 
-When passed directly to `@action` or `@Action`, `EventType.InputEvent` declares an exact event-type
-condition. Within an expression, it is a value and must be compared with `type`, as shown above. A
-bare identifier or dotted path is treated as an exact event type, so write attribute checks
-explicitly, for example `ready == true` or `attributes.ready == true`.
+### Matching Behavior
 
-#### Matching Behavior
+For each Event, the framework selects every Action with a matching trigger condition.
+Each selected Action runs once for that Event, even if several of its conditions match.
+Different Actions can all respond to the same Event.
 
-When an event arrives:
+For supported names, attribute access, and evaluation failures, see the
+[Trigger Condition Reference](#trigger-condition-reference).
 
-1. The runtime selects every action with an exact event-type condition that matches the event's type.
-2. For each remaining action, it evaluates expressions in declaration order and stops at the first
-   `true` result.
-3. Every selected action is executed once, even if more than one of its conditions matches.
+## Sending Events
 
-### Sending Events
+Use `ctx.send_event(...)` in Python or `ctx.sendEvent(...)` in Java to send an Event.
+The Event's type and attributes determine which Actions react to it.
 
-An action can send an event to trigger another action or emit output downstream.
+To split the text cleanup example into two steps, have the first Action send a
+`review_ready` Event carrying the cleaned text. A second Action listens for that type
+and sends the text downstream:
 
-**Trigger another action** — send a built-in or custom event that matches another action's trigger
-conditions:
-
-{{< tabs "Trigger Another Action" >}}
+{{< tabs "Connect Actions with Events" >}}
 
 {{< tab "Python" >}}
 ```python
-@action(EventType.InputEvent)
-@staticmethod
-def process_input(event: Event, ctx: RunnerContext) -> None:
-    ctx.send_event(ChatRequestEvent(model="my_model", messages=messages))
+class ReviewTextAgent(Agent):
+    @action(EventType.InputEvent)
+    @staticmethod
+    def clean_review(event: Event, ctx: RunnerContext) -> None:
+        review = InputEvent.from_event(event).input
+        ctx.send_event(
+            Event(type="review_ready", attributes={"text": review.strip()})
+        )
+
+    @action("review_ready")
+    @staticmethod
+    def emit_review(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(OutputEvent(output=event.get_attr("text")))
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```java
-@Action(EventType.InputEvent)
-public static void processInput(Event event, RunnerContext ctx) throws Exception {
-    ctx.sendEvent(new ChatRequestEvent("my_model", messages));
+public class ReviewTextAgent extends Agent {
+    @Action(EventType.InputEvent)
+    public static void cleanReview(Event event, RunnerContext ctx) {
+        String review = (String) InputEvent.fromEvent(event).getInput();
+        ctx.sendEvent(new Event("review_ready", Map.of("text", review.trim())));
+    }
+
+    @Action("review_ready")
+    public static void emitReview(Event event, RunnerContext ctx) {
+        ctx.sendEvent(new OutputEvent(event.getAttr("text")));
+    }
 }
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
 
-**Emit downstream output** — send an `OutputEvent`:
+Flink Agents automatically registers [built-in Actions]({{< ref "docs/development/create-agent/events#built-in-events-and-actions" >}})
+to handle common request Events. For example, a `ChatRequestEvent`
+asks the [built-in chat Action]({{< ref "docs/development/calling-llms/chat#chat-events" >}})
+to call a registered model and send a `ChatResponseEvent`.
 
-{{< tabs "Emit Output" >}}
-
-{{< tab "Python" >}}
-```python
-@action(EventType.ChatResponseEvent)
-@staticmethod
-def emit_output(event: Event, ctx: RunnerContext) -> None:
-    ctx.send_event(OutputEvent(output=result))
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-```java
-@Action(EventType.ChatResponseEvent)
-public static void emitOutput(Event event, RunnerContext ctx) {
-    ctx.sendEvent(new OutputEvent(result));
-}
-```
-{{< /tab >}}
-
-{{< /tabs >}}
+You can also define your own Events to pass data between Actions. See
+[Creating and Handling Events]({{< ref "docs/development/create-agent/events#unified-event" >}})
+for examples, or use [Custom Event Subclasses]({{< ref "docs/development/create-agent/events#custom-event-subclasses" >}})
+to add typed access and validation.
 
 {{< hint info >}}
-`OutputEvent` is emitted directly downstream and bypasses action matching. Therefore, an
-`OutputEvent` trigger never invokes an action. Other events go through action matching as usual.
+`OutputEvent` is emitted directly downstream and bypasses Action matching. Therefore, an
+`OutputEvent` trigger never invokes an Action. Other Events go through Action matching as usual.
 {{< /hint >}}
+
+## Cross-language Actions
+
+An Agent can register Actions implemented in another language. A Python Agent can use
+a Java method as an Action, and a Java Agent can use a Python function as an Action.
+The handler still receives an `Event` and a `RunnerContext` and sends its output through
+the context.
+
+The following examples perform the same text cleanup as above. Each example shows the
+handler and how to register it from the other language. Flink job setup is omitted.
+
+{{< tabs "Cross-language Actions" >}}
+
+{{< tab "Python Agent" >}}
+
+Define the Java handler in `com/example/ReviewActions.java`:
+
+```java
+package com.example;
+
+import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.context.RunnerContext;
+
+public class ReviewActions {
+    public static void cleanReview(Event event, RunnerContext ctx) {
+        String review = (String) InputEvent.fromEvent(event).getInput();
+        ctx.sendEvent(new OutputEvent(review.trim()));
+    }
+}
+```
+
+Then register that method in the Python Agent. `JavaFunction.for_action` takes the fully
+qualified Java class name and method name:
+
+```python
+from flink_agents.api.agents.agent import Agent
+from flink_agents.api.decorators import action
+from flink_agents.api.events.event_type import EventType
+from flink_agents.api.function import JavaFunction
+
+
+class ReviewTextAgent(Agent):
+    clean_review = action(EventType.InputEvent)(
+        JavaFunction.for_action("com.example.ReviewActions", "cleanReview")
+    )
+```
+{{< /tab >}}
+
+{{< tab "Java Agent" >}}
+
+Define the Python handler in `my_pkg/handlers.py`:
+
+```python
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.runner_context import RunnerContext
+
+
+def clean_review(event: Event, ctx: RunnerContext) -> None:
+    review = InputEvent.from_event(event).input
+    ctx.send_event(OutputEvent(output=review.strip()))
+```
+
+Then register that function in the Java Agent. `PythonFunction.of` takes the Python
+module name and function name. Apply `@Action` to the `static final` field:
+
+```java
+import org.apache.flink.agents.api.EventType;
+import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.annotation.Action;
+import org.apache.flink.agents.api.function.PythonFunction;
+
+public class ReviewTextAgent extends Agent {
+    @Action(EventType.InputEvent)
+    private static final PythonFunction cleanReview =
+            PythonFunction.of("my_pkg.handlers", "clean_review");
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+For cross-language Actions, the default Action name comes from the field used to
+register it: `clean_review` in Python and `cleanReview` in Java. You can override it
+with `name`, as with a native Action.
+
+For dependency setup and supported payload types, see
+[Choose APIs and Languages]({{< ref "docs/development/create-agent/choose-apis-and-languages" >}}).
+
+## Async and Durable Execution
+
+When an Action calls an external system, you can control how it waits for the call
+and whether the call's outcome is saved for recovery:
+
+- **[Async Execution](#async-execution)** lets the Action yield while waiting for external
+  work, allowing other Actions to run. It also supports running multiple calls concurrently.
+- **[Durable Execution](#durable-execution)** saves a call's outcome so it can be reused
+  during recovery.
+- **[Durable Async Execution](#durable-async-execution)** combines both capabilities.
+
+See [Execution Requirements](#execution-requirements) for runtime prerequisites.
+
+### Async Execution
+
+Use async execution for calls that spend time waiting for external systems, such as
+looking up a user profile. Async execution controls how calls run and how your Action
+waits for them. To also save their results for recovery, see [Durable Async Execution](#durable-async-execution).
+
+#### Single Call
+
+The examples below accept a user ID as a string. `profile_service.get_profile` in Python
+and `ProfileService.getProfile` in Java represent your application's synchronous client
+function: each takes a user ID and returns a profile as a string. Supply your own client
+implementation; framework imports and job setup are omitted.
+
+{{< tabs "Single Async Call" >}}
+{{< tab "Python" >}}
+```python
+class ProfileAgent(Agent):
+    @action(EventType.InputEvent)
+    @staticmethod
+    async def process_input(event: Event, ctx: RunnerContext) -> None:
+        user_id = InputEvent.from_event(event).input
+        future = ctx.execute_async(profile_service.get_profile, user_id)
+        profile = await future
+        ctx.send_event(OutputEvent(output=profile))
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+public class ProfileAgent extends Agent {
+    @Action(EventType.InputEvent)
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        String userId = (String) InputEvent.fromEvent(event).getInput();
+        AsyncFuture<String> future = ctx.executeAsync(() -> ProfileService.getProfile(userId));
+        String profile = future.await();
+        ctx.sendEvent(new OutputEvent(profile));
+    }
+}
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+Creating an `AsyncFuture` does not start the call. Awaiting it starts the work and waits
+for its result. A future that is never awaited performs no work. Awaiting the same future
+again reuses its result or exception within the current Action execution.
+
+In Python, the Action uses `async def`, but the function passed to `execute_async` must
+be synchronous. Use the framework's futures and `gather`; standard `asyncio` functions
+such as `asyncio.gather` and `asyncio.create_task` are not supported.
+
+#### Concurrent Calls
+
+To look up a profile and preferences concurrently, create both futures and await them
+with `ctx.gather(...)`. Here, `get_preferences` / `getPreferences` is another synchronous
+application function that takes a user ID and returns a string.
+
+{{< tabs "Concurrent Async Calls" >}}
+{{< tab "Python" >}}
+```python
+class ProfileAgent(Agent):
+    @action(EventType.InputEvent)
+    @staticmethod
+    async def process_input(event: Event, ctx: RunnerContext) -> None:
+        user_id = InputEvent.from_event(event).input
+        profile = ctx.execute_async(profile_service.get_profile, user_id)
+        preferences = ctx.execute_async(profile_service.get_preferences, user_id)
+        outcomes = await ctx.gather(profile, preferences)
+        for outcome in outcomes:
+            if outcome.is_failure():
+                raise outcome.error
+        ctx.send_event(OutputEvent(output=f"{outcomes[0].value}\n{outcomes[1].value}"))
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+public class ProfileAgent extends Agent {
+    @Action(EventType.InputEvent)
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        String userId = (String) InputEvent.fromEvent(event).getInput();
+        AsyncFuture<String> profile = ctx.executeAsync(() -> ProfileService.getProfile(userId));
+        AsyncFuture<String> preferences =
+                ctx.executeAsync(() -> ProfileService.getPreferences(userId));
+        List<Outcome<String>> outcomes = ctx.gather(List.of(profile, preferences)).await();
+        for (Outcome<String> outcome : outcomes) {
+            if (outcome.isFailure()) {
+                throw outcome.getError();
+            }
+        }
+        ctx.sendEvent(
+                new OutputEvent(outcomes.get(0).getValue() + "\n" + outcomes.get(1).getValue()));
+    }
+}
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+Awaiting the futures individually, one after another, runs these calls sequentially.
+Awaiting the gathered future allows them to run concurrently, subject to
+`async.batch.parallelism` and the available worker threads.
+
+#### Results and Failures
+
+- Awaiting a single call returns its result or throws its exception.
+- `gather` returns an `Outcome` for each call in input order, regardless of completion
+  order. An individual call's failure is represented by a failed `Outcome`. Inspect the
+  outcomes before using their values; the example propagates any individual failure.
+- A batch may itself fail, for example because of a timeout or cancellation. It does not
+  always return a list of outcomes.
+
+Keep futures within the Action execution that created them. Do not pass them to another
+Action or await them inside a submitted function. `gather` accepts distinct single-call
+futures from the same context; nested gathered futures are not supported.
+
+#### Using Resources and Memory
+
+Distinguish the **Action body**, including code before and after await, from the
+**function submitted to `execute_async` / `executeAsync`**:
+
+| Operation | Action body | Submitted function |
+| --- | --- | --- |
+| Read or write Sensory Memory / Short-term Memory | Supported | Unsupported, including through a previously obtained `MemoryObject` |
+| Look up a Resource with `ctx.get_resource` / `ctx.getResource` | Supported | Unsupported; obtain the Resource in the Action first |
+| Send Events or invoke other `RunnerContext` operations | Supported | Unsupported |
+| Get or delete a Long-term Memory set | Supported | Unsupported |
+| Call `add`, `get`, `search`, or `delete` on a Long-term Memory `MemorySet` obtained in this Action | Supported | Supported |
+
+Read the data you need and obtain Resources in the Action body, pass them to the call,
+then update Sensory/Short-term Memory or send Events after awaiting the result. Clients
+and Resources shared by concurrent calls must support concurrent use.
+
+For Long-term Memory, obtain a `MemorySet` in each Action that needs one. The set retains
+that Action's partition key, so its operations can run in the submitted function. For
+example, inside an async Action with Long-term Memory configured:
+
+{{< tabs "Async Long-term Memory Search" >}}
+{{< tab "Python" >}}
+```python
+memory_set = ctx.long_term_memory.get_memory_set("conversations")
+items = await ctx.execute_async(memory_set.search, query="user preferences", limit=5)
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+MemorySet memorySet = ctx.getLongTermMemory().getMemorySet("conversations");
+List<MemorySetItem> items =
+        ctx.executeAsync(() -> memorySet.search("user preferences", 5, null, Map.of())).await();
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+Do not cache a `MemorySet` across Actions, or call `get_memory_set` / `getMemorySet` or
+`delete_memory_set` / `deleteMemorySet` inside the submitted function. See
+[Long-term Memory]({{< ref "docs/development/memory/long_term_memory" >}}) for configuration
+and the scope of memory sets.
+
+### Durable Execution
+
+Use durable execution when a call's result should be saved and reused during recovery.
+For example, if an Action fails after a profile lookup has completed and its result has
+been persisted, recovery can reuse that profile instead of querying the service again.
+Code outside the durable call may still run again when the Action is re-executed.
+
+Durable execution requires an external action state store. Configure it as described in
+[Exactly-Once Action Consistency]({{< ref "docs/operations/deployment#exactly-once-action-consistency" >}}).
+
+#### A Durable Call
+
+The following examples make the profile lookup from [Single Call](#single-call) durable.
+The synchronous API waits for the result before continuing the Action.
+
+{{< tabs "Synchronous Durable Call" >}}
+{{< tab "Python" >}}
+```python
+class ProfileAgent(Agent):
+    @action(EventType.InputEvent)
+    @staticmethod
+    def process_input(event: Event, ctx: RunnerContext) -> None:
+        user_id = InputEvent.from_event(event).input
+        profile = ctx.durable_execute(
+            profile_service.get_profile,
+            user_id,
+            durable_id=f"profile:{user_id}",
+        )
+        ctx.send_event(OutputEvent(output=profile))
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+class ProfileLookup implements DurableCallable<String> {
+    private final String userId;
+
+    ProfileLookup(String userId) {
+        this.userId = userId;
+    }
+
+    @Override
+    public String getId() {
+        return "profile:" + userId;
+    }
+
+    @Override
+    public Class<String> getResultClass() {
+        return String.class;
+    }
+
+    @Override
+    public String call() throws Exception {
+        return ProfileService.getProfile(userId);
+    }
+}
+
+public class ProfileAgent extends Agent {
+    @Action(EventType.InputEvent)
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        String userId = (String) InputEvent.fromEvent(event).getInput();
+        String profile = ctx.durableExecute(new ProfileLookup(userId));
+        ctx.sendEvent(new OutputEvent(profile));
+    }
+}
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+Python's `durable_id` and Java's `getId()` identify the logical operation during recovery.
+Java's `getResultClass()` provides the type needed to deserialize a saved result.
+
+#### Recovery Behavior
+
+When recovery re-executes an unfinished Action and reaches a durable call:
+
+| State of the matching call | Recovery behavior |
+| --- | --- |
+| A successful result has been persisted | Return the saved result without calling the function again. |
+| A failure has been persisted | Replay the failure without calling the function again. |
+| No completed outcome has been persisted | Execute the function again, or use the reconciler for a previously recorded in-flight call. |
+
+An external operation may finish before its result is persisted. If a failure occurs in
+that interval, calling the operation again can repeat its side effects. For such
+operations, use the external service's idempotency support or a reconciler that can
+recover the existing outcome.
+
+#### Reconciling an In-flight Call
+
+A reconciler asks the external system what happened to an earlier call whose outcome
+was not persisted. It is used only when recovery revisits a matching, recorded in-flight
+call. A saved outcome is replayed directly; a new call executes normally.
+
+The reconciler must return a recovered result or raise the recovered failure. That
+outcome is persisted. Raising an ordinary exception does not ask the framework to retry
+the original operation; it records a failed outcome.
+
+For example, suppose a report service supports idempotent submission by a stable request
+ID. The application provides `report_service` / `ReportService` with three synchronous
+operations: `is_submitted` / `isSubmitted` checks for an existing request,
+`wait_for_result` / `waitForResult` waits for its completion and returns the report URL
+(or throws its failure), and `submit_and_wait` / `submitAndWait` submits idempotently and
+waits for the same outcome. Inside an Action, register a reconciler as follows:
+
+{{< tabs "Reconcile a Report Request" >}}
+{{< tab "Python" >}}
+```python
+request_id = InputEvent.from_event(event).input
+
+
+def reconcile_report() -> str:
+    if report_service.is_submitted(request_id):
+        return report_service.wait_for_result(request_id)
+    return report_service.submit_and_wait(request_id)
+
+
+report_url = ctx.durable_execute(
+    report_service.submit_and_wait,
+    request_id,
+    durable_id=f"report:{request_id}",
+    reconciler=reconcile_report,
+)
+ctx.send_event(OutputEvent(output=report_url))
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+String requestId = (String) InputEvent.fromEvent(event).getInput();
+DurableCallable<String> call = new DurableCallable<>() {
+    @Override
+    public String getId() {
+        return "report:" + requestId;
+    }
+
+    @Override
+    public Class<String> getResultClass() {
+        return String.class;
+    }
+
+    @Override
+    public String call() throws Exception {
+        return ReportService.submitAndWait(requestId);
+    }
+
+    @Override
+    public Callable<String> reconciler() {
+        return () -> {
+            if (ReportService.isSubmitted(requestId)) {
+                return ReportService.waitForResult(requestId);
+            }
+            return ReportService.submitAndWait(requestId);
+        };
+    }
+};
+String reportUrl = ctx.durableExecute(call);
+ctx.sendEvent(new OutputEvent(reportUrl));
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+The same request ID must be reused after recovery. The service's idempotency guarantee
+also covers a retry racing with an earlier submission. If the service cannot establish
+a final outcome, the reconciler must implement the appropriate waiting or retry policy.
+
+#### Durable Call Requirements
+
+- Recovery must reach the same logical calls in the same order, with the same inputs.
+  Keep explicit durable IDs stable and distinguish operations or inputs that must not
+  reuse each other's result. An explicit ID does not make a reordered workflow safe.
+- Python derives an identity from the function and arguments when `durable_id` is omitted.
+  Supply a stable ID when your application owns one, as in the examples above.
+- The Action's control flow must be reproducible; the external function does not have to
+  produce the same result every time. Replaying the persisted result is what allows a
+  model call or external query to be reused.
+- Results must support the runtime's serialization: Java uses JSON and the declared result
+  class; Python uses pickle-compatible results. Keep inputs serializable and stable.
+- Read and write Sensory/Short-term Memory and send Events in the Action body, outside
+  the durable function and reconciler. Obtain Resources and Long-term Memory sets there
+  too; operations on an already obtained `MemorySet` may be performed in a durable call.
+
+### Durable Async Execution
+
+Durable async execution combines [async calls](#async-execution) with
+[durable recovery](#durable-execution). Use it when you want to await external work and
+reuse its persisted outcome after a failure. The context and Memory rules above still apply.
+
+Reuse the profile client and Java `ProfileLookup` from [A Durable Call](#a-durable-call):
+
+{{< tabs "Durable Async Call" >}}
+{{< tab "Python" >}}
+```python
+class ProfileAgent(Agent):
+    @action(EventType.InputEvent)
+    @staticmethod
+    async def process_input(event: Event, ctx: RunnerContext) -> None:
+        user_id = InputEvent.from_event(event).input
+        future = ctx.durable_execute_async(
+            profile_service.get_profile,
+            user_id,
+            durable_id=f"profile:{user_id}",
+        )
+        profile = await future
+        ctx.send_event(OutputEvent(output=profile))
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+public class ProfileAgent extends Agent {
+    @Action(EventType.InputEvent)
+    public static void processInput(Event event, RunnerContext ctx) throws Exception {
+        String userId = (String) InputEvent.fromEvent(event).getInput();
+        DurableFuture<String> future = ctx.durableExecuteAsync(new ProfileLookup(userId));
+        String profile = future.await();
+        ctx.sendEvent(new OutputEvent(profile));
+    }
+}
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+As with ordinary async calls, creating a future does not start work; await it directly
+or include it in an awaited `ctx.gather(...)` batch. A future that is never awaited does
+not execute or save a result. A batch may mix ordinary and durable calls; only the durable
+calls persist their outcomes for recovery. The optional Python `reconciler` argument and
+Java `reconciler()` method work with durable async calls too.
+
+### Execution Requirements
+
+#### JDK and Scheduling Requirements
+
+There are two forms of concurrency: running several calls within one Action using
+`gather`, and letting other Actions progress while one Action waits. Concurrent batches
+are supported in Java and Python on all supported JDK versions, within the configured
+worker and batch limits. Concurrency between Actions has additional requirements:
+
+- **Java on JDK 21+:** add `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to the JVM
+  options, including `env.java.opts.all` on a cluster, to enable continuation-based execution.
+- **Java on JDK 11–20:** the experimental parallel execution engine is enabled by default
+  for plans whose Actions are all Java. Setting `parallel-execution.enabled` to `false`,
+  or including Python Actions, disables it. A Java single-call await then runs synchronously;
+  use `gather` for concurrent calls within an Action. Plans using Python Resources also need
+  the cross-language Flink versions below.
+- **Python Actions:** use `async def` and the framework's futures and `gather` APIs.
+
+See [Core Options]({{< ref "docs/operations/configuration#core-options" >}}) for worker-pool
+and concurrency limits. These scheduling requirements apply to both ordinary and durable
+async calls. Durable calls additionally require the configured action state store.
+
+#### Cross-language Async Requirements
+
+Async calls between Java and Python require Flink **1.20.5+**, **2.0.2+**, **2.1.3+**,
+**2.2.1+**, or **2.3+**, within the respective release line. This includes built-in chat
+and context-retrieval Actions that use a Resource implemented in the other language.
+
+A call may cross into the other language and call back once into its starting language.
+For example, a Python Action can call a Java chat model setup that uses a Python connection.
+The connection then returns its result through the existing call chain.
+
+| Call chain within one async operation | Usage |
+| --- | --- |
+| Python Action → Java Resource | Supported. |
+| Java Action → Python Resource | Supported. |
+| Python Action → Java chat model setup → Python connection | Supported: one callback into the starting language. |
+| Java Action → Python chat model setup → Java connection | Supported: one callback into the starting language. |
+| Python → Java → Python → Java, or Java → Python → Java → Python | Avoid: further nested calls can deadlock. |
+
+The last row describes a new call made before the earlier calls return, not a normal
+return path. For example, a Python connection called by a Java setup should not make
+another nested Resource call into Java. Keep the remaining work in that connection's
+language, or return to the Action and have it send an Event to trigger a later step. See
+[Choose APIs and Languages]({{< ref "docs/development/create-agent/choose-apis-and-languages" >}})
+for dependency and payload requirements.
+
+## Appendix
 
 ### Trigger Condition Reference
 
 #### Custom Event-Type Names
 
-A custom event type may be a bare name such as `order.created` or `order-created`. Each dot-separated
-segment must start with an ASCII letter or underscore and may then contain ASCII letters, digits,
-underscores, or hyphens. Quote a name that contains other punctuation or would otherwise be parsed as
-an expression, for example `'order:created'`, `'true'`, or `'EventType.custom'`. In Java and Python,
-the quotes are part of the condition string. For example, use `@Action("'order:created'")` in Java or
-`@action("'order:created'")` in Python. A quoted name matches the literal event-type string; it does
-not reference a built-in `EventType` constant. Quoted names must be non-empty and cannot contain
-whitespace, quotes, backslashes, or control characters.
+A custom Event type may be a bare name such as `order.created` or `order-created`. Each
+dot-separated segment must start with an ASCII letter or underscore and may then contain
+ASCII letters, digits, underscores, or hyphens.
+
+A condition containing only a name, such as `urgent`, matches that Event type. To check
+an attribute instead, write a Boolean expression such as `attributes.urgent == true`.
+
+Quote a name that contains other punctuation or would otherwise be parsed as an expression,
+for example `'order:created'`, `'true'`, or `'EventType.custom'`. The quotes are part of the
+condition string: use `@action("'order:created'")` in Python or `@Action("'order:created'")`
+in Java. A quoted name matches the literal Event-type string. Quoted names must be non-empty
+and cannot contain whitespace, quotes, backslashes, or control characters.
 
 #### Expression Variables
 
-Java and Python actions use the same Java runtime to evaluate condition expressions. Expressions can
-access these framework variables:
+Java and Python Actions support the same condition expressions. Expressions can access:
 
-| Variable     | Value                                |
-|--------------|--------------------------------------|
-| `type`       | The event type string                |
-| `id`         | The event ID as a string             |
-| `EventType`  | The built-in event-type constants    |
-| `attributes` | The event's top-level attribute map  |
+| Variable | Value |
+| --- | --- |
+| `type` | The Event type string |
+| `id` | The Event ID as a string |
+| `EventType` | The built-in Event-type constants |
+| `attributes` | The Event's top-level attribute map |
+
+For example, `type == EventType.InputEvent` checks whether the Event is an `InputEvent`.
+You can combine this comparison with attribute checks using `&&`.
 
 #### Accessing Attributes
 
-- Top-level attributes are also available as bare variables, so `score > 80` and
-  `attributes.score > 80` refer to the same field.
-- Nested values are not flattened. For `{input: {status: "ok"}}`, use `input.status` or
-  `attributes.input.status`; bare `status` does not refer to the nested value. Other event payloads
-  keep their top-level envelope, for example `response.message.blocks`.
-- Framework variables take precedence over attributes with the same names. Use `attributes["type"]`
-  or `attributes["id"]` to access a colliding attribute.
-- For a top-level key containing dots, use a literal index such as `attributes["a.b.c"]`. Test its
+- Access an attribute as `attributes.score` or by its bare name, `score`.
+- Use `attributes["type"]` or `attributes["id"]` for attributes whose names overlap with
+  framework variables.
+- Use a literal index for a key containing dots, such as `attributes["a.b.c"]`. Check its
   presence with `"a.b.c" in attributes`.
 
-#### Missing Attributes and Value Types
+#### Missing Attributes and Null {#missing-attributes-and-value-types}
 
-A present attribute whose value is `null` remains `null`, while a missing attribute remains absent.
-Use `has(attributes.field)` before reading an optional attribute. Reading a missing attribute without
-a guard causes an event-time evaluation failure. With the default `WARN_AND_SKIP` strategy, the
-runtime logs a warning, treats that condition as false, and continues with later OR conditions;
-`FAIL` fails the Flink task. See the
-[condition evaluation failure strategy]({{< ref "docs/operations/configuration#core-options" >}}).
+A missing attribute and a present attribute with a `null` value are different.
+`has(attributes.score)` checks whether the attribute exists; it does not exclude `null`.
+To test an optional, nullable score, use:
 
-Strings remain strings even when they contain JSON. To match nested data, send a structured map or
-list instead of a JSON-encoded string. Decimal values and integers outside the signed 64-bit range are
-evaluated as doubles and may lose precision.
+```text
+has(attributes.score) && attributes.score != null && attributes.score > 80
+```
+
+The guard lets Events without a score fail to match normally, without trying to read a
+missing value.
+
+#### Condition Evaluation Failures
+
+Reading a missing attribute without a guard or applying an operation to an incompatible
+value can fail while evaluating a condition for an Event. For failure handling options, see
+[`action.trigger-condition.evaluate-failure-strategy`]({{< ref "docs/operations/configuration#core-options" >}})
+in Configuration.
 
 #### Limitations
 
-- `has(...)` is the only supported CEL macro. The comprehension macros `exists`, `exists_one`,
-  `all`, `filter`, and `map` are not supported.
-- Dynamic root access such as `attributes[key]` and operations over the whole `attributes` map are
-  rejected when the runtime compiles the condition. Operator initialization fails, so the job cannot
-  start. This happens before event-time evaluation and is not controlled by the condition evaluation
-  failure strategy. Dynamic access inside a selected top-level attribute remains supported.
-
-### Cross-language Actions
-
-To declare a cross-language Action, apply `action(...)` to a `Function` descriptor
-in Python, or annotate a `static final` `Function` field in Java. The descriptor
-identifies the function to execute.
-
-{{< tabs "Cross-language Actions" >}}
-
-{{< tab "Python" >}}
-```python
-from flink_agents.api.function import JavaFunction
-
-class MyAgent(Agent):
-    # Action signatures are fixed (Event, RunnerContext), so for_action
-    # fills the Java parameter types for you — only the class and method.
-    handle_input = action(InputEvent.EVENT_TYPE)(
-        JavaFunction.for_action("com.example.MyHandlers", "handleInput"))
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-```java
-import org.apache.flink.agents.api.function.PythonFunction;
-
-public class MyAgent extends Agent {
-    @Action(EventType.InputEvent)
-    private static final PythonFunction handleInput =
-            PythonFunction.of("my_pkg.handlers", "handle_input");
-}
-```
-{{< /tab >}}
-
-{{< /tabs >}}
-
-**Override the Action name (optional)**
-
-By default, the examples above use the member name as the Action name:
-`handle_input` in Python and `handleInput` in Java. Set `name` to give the Action
-a different name. These declarations name the Action `process_input`:
-
-{{< tabs "Override Cross-language Action Name" >}}
-
-{{< tab "Python" >}}
-```python
-class MyAgent(Agent):
-    handle_input = action(InputEvent.EVENT_TYPE, name="process_input")(
-        JavaFunction.for_action("com.example.MyHandlers", "handleInput")
-    )
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-```java
-public class MyAgent extends Agent {
-    @Action(value = EventType.InputEvent, name = "process_input")
-    private static final PythonFunction handleInput =
-            PythonFunction.of("my_pkg.handlers", "handle_input");
-}
-```
-{{< /tab >}}
-
-{{< /tabs >}}
-
-For dependency setup and supported payload types, see
-[Choose APIs and Languages]({{< ref "docs/development/create-agent/choose-apis-and-languages" >}}).
-
-### Async Execution
-
-Use `execute_async` (Python) or `executeAsync` (Java) to run a function
-asynchronously, for example when querying an external service.
-
-These methods return an `AsyncFuture`. Work starts when you await the future,
-not when you create it. Await one call directly, or use `ctx.gather(...)` to combine
-multiple calls. Awaiting each call separately executes them sequentially.
-
-{{< tabs "Ordinary Async Execution" >}}
-{{< tab "Python" >}}
-Inside an `async def` action, pass synchronous functions to `execute_async`:
-
-```python
-profile = ctx.execute_async(query_profile, user_id)
-inventory = ctx.execute_async(query_inventory, item_id)
-outcomes = await ctx.gather(profile, inventory)
-for outcome in outcomes:
-    if outcome.is_failure():
-        raise outcome.error
-profile_result = outcomes[0].value
-```
-
-For a single call, use `result = await ctx.execute_async(query_profile, user_id)`.
-Use `ctx.gather` for composition; standard asyncio functions are not supported.
-{{< /tab >}}
-{{< tab "Java" >}}
-```java
-AsyncFuture<String> profile = ctx.executeAsync(() -> queryProfile(userId));
-AsyncFuture<String> inventory = ctx.executeAsync(() -> queryInventory(itemId));
-List<Outcome<String>> outcomes = ctx.gather(List.of(profile, inventory)).await();
-for (Outcome<String> outcome : outcomes) {
-    if (outcome.isFailure()) {
-        throw outcome.getError();
-    }
-}
-String profileResult = outcomes.get(0).getValue();
-```
-
-For a single call, use `String result = ctx.executeAsync(() -> queryProfile(userId)).await()`.
-{{< /tab >}}
-{{< /tabs >}}
-
-`gather` returns an `Outcome` for each call in input order, including individual
-failures. Batch concurrency is controlled by `async.batch.parallelism`.
-Java and Python support concurrent batches on all supported JDK versions.
-
-Keep futures within the action that created them. Repeated awaits reuse the same
-future's result or exception; a future that is never awaited performs no work.
-Obtain resources before creating calls, and update memory or send events after
-awaiting results. Callbacks must not access `RunnerContext`, and any clients they
-share must support concurrent use.
-
-#### JDK and scheduling requirements
-
-For concurrency between Actions:
-
-- **Java on JDK 21+:** enable continuation-based execution by adding
-  `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to the JVM options, including
-  `env.java.opts.all` when running on a cluster.
-- **Java on JDK 11–20:** the experimental parallel execution engine is enabled by
-  default for plans whose Actions are all Java. If the plan declares Python Resources,
-  it also requires a Flink version supporting cross-language async calls (below).
-  Setting `parallel-execution.enabled` to `false`, or including Python Actions,
-  disables this engine; a Java single-call `executeAsync(...).await()` then runs
-  synchronously. Use `gather` to run a batch concurrently.
-- **Python Actions:** use `async def` and the framework's `AsyncFuture`/`gather` APIs.
-  Use `gather` to await multiple calls concurrently; awaiting each call in turn runs
-  them sequentially.
-
-See [Core Options]({{< ref "docs/operations/configuration#core-options" >}})
-for worker-pool and concurrency limits. These scheduling rules also apply to durable
-async calls; persistence adds the [durable execution requirements](#durable-execution).
-
-#### Cross-language async requirements
-
-Async calls across Java/Python require Flink **1.20.5+**, **2.0.2+**, **2.1.3+**,
-**2.2.1+**, or **2.3+**, within the respective release line. Use these versions for
-custom cross-language async calls and for asynchronous built-in chat and
-context-retrieval Actions that use an opposite-language Resource.
-
-{{< hint warning >}}
-Async actions in either language may call cross-language resources. Within one async execution,
-keep the cross-language call chain to one reverse callback. Only the following call shapes are
-supported:
-
-- Python action → Java resource → Python callback
-- Java action → Python resource → Java callback
-
-For example, a Python action may use a Java `ChatModelSetup` backed by a Python
-`ChatModelConnection`. Multiple or deeper cross-language callbacks, such as
-Python→Java→Python→Java or Java→Python→Java→Python, are not recommended and may deadlock
-when an outer call occupies an async or interpreter worker while waiting for another worker.
-{{< /hint >}}
-
-### Durable Execution
-
-Use durable execution when an operation needs result persistence and recovery replay. When a matching persisted result is available during recovery, the framework reuses it without invoking the function again. When recovery re-enters an action that has not been recorded as completed, code outside `durable_execute` / `durable_execute_async` will still be re-executed.
-
-**Constraints:**
-- The function must be deterministic and called in the same order on recovery.
-- Access to Memory and `send_event` is prohibited inside the function/callable.
-- Arguments and results must be serializable.
-
-{{< hint info >}}
-Durable execution requires an external action state store. See
-[Exactly-Once Action Consistency]({{< ref "docs/operations/deployment#exactly-once-action-consistency" >}})
-on how to setup and configure the external action state store.
-{{< /hint >}}
-
-**Best-effort replay:**
-- Results may not be reused if call order or arguments change (non-deterministic actions), which clears subsequent cached results and re-executes.
-- If a failure happens after a function starts but before it completes and its result is persisted, the call will be re-executed. See the "With a reconciler" section below.
-- In Python async actions, if `ctx.durable_execute_async(...)` is not awaited, the result is not recorded and cannot be replayed.
-- In Python, a recorded failure is replayed as the original exception when it can be pickled and rebuilt. Otherwise it is replayed as a `RuntimeError` with the message `<class>: <message>`, so code that catches a specific exception type may take a different path during replay. A failure that cannot be pickled is recorded this way too, so the call is not executed again on recovery. Failures recorded by a version that stored only the pickled exception have no class name or message to fall back on, and a version without this format cannot read failures recorded with it.
-
-**With a reconciler:**
-
-Use a reconciler for durable calls when the original call may already have completed but its result or failure has not yet been persisted, so the framework cannot determine during recovery whether the call needs to be executed again. A reconciler provides custom logic that can return the result or raise the failure for the durable call instead of re-executing the original call.
-
-- A durable call may optionally provide a reconciler that is used only during recovery, when the same durable call is revisited and no execution result has been persisted for it yet.
-- If the reconciler logic returns a result, the runtime persists and replays that recovered result.
-- If the reconciler logic raises an exception, the runtime persists and replays that recovered failure.
-
-{{< tabs "Durable Execution" >}}
-{{< tab "Python" >}}
-Python actions can call `ctx.durable_execute(...)` to run a synchronous durable code block.
-```python
-@action(EventType.InputEvent)
-@staticmethod
-def process_input(event: Event, ctx: RunnerContext) -> None:
-    input_event = InputEvent.from_event(event)
-    def slow_external_call(data: str) -> str:
-        time.sleep(2)
-        return f"Processed: {data}"
-
-    # Synchronous durable execution
-    result = ctx.durable_execute(slow_external_call, input_event.input)
-    ctx.send_event(OutputEvent(output=result))
-```
-
-You can also pass an optional `reconciler` callable to recover an execution outcome during recovery.
-```python
-@action(EventType.InputEvent)
-@staticmethod
-def process_input(event: Event, ctx: RunnerContext) -> None:
-    input_event = InputEvent.from_event(event)
-
-    def submit_payment(order_id: str) -> str:
-        return payment_client.submit(order_id)
-
-    def payment_reconciler() -> str:
-        status = payment_client.get_status(input_event.input)
-        if status == "SUCCEEDED":
-            return payment_client.lookup_completed_payment(input_event.input)
-        raise payment_client.get_failure(input_event.input)
-
-    result = ctx.durable_execute(
-        submit_payment,
-        input_event.input,
-        reconciler=payment_reconciler,
-    )
-    ctx.send_event(OutputEvent(output=result))
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-Java actions use `DurableCallable<T>` with `ctx.durableExecute(...)`, where `getId()` must be stable and `getResultClass()` supports recovery deserialization.
-```java
-@Action(EventType.InputEvent)
-public static void processInput(Event event, RunnerContext ctx) throws Exception {
-    InputEvent inputEvent = InputEvent.fromEvent(event);
-    DurableCallable<String> call = new DurableCallable<>() {
-        @Override
-        public String getId() {
-            return "slow_external_call";
-        }
-
-        @Override
-        public Class<String> getResultClass() {
-            return String.class;
-        }
-
-        @Override
-        public String call() throws Exception {
-            Thread.sleep(2000);
-            return "Processed: " + inputEvent.getInput();
-        }
-    };
-
-    String result = ctx.durableExecute(call);
-    ctx.sendEvent(new OutputEvent(result));
-}
-```
-
-Java actions can also override `reconciler()` to recover an execution outcome during recovery.
-```java
-@Action(EventType.InputEvent)
-public static void processInput(Event event, RunnerContext ctx) throws Exception {
-    InputEvent inputEvent = InputEvent.fromEvent(event);
-    DurableCallable<String> call = new DurableCallable<>() {
-        @Override
-        public String getId() {
-            return "submit_payment";
-        }
-
-        @Override
-        public Class<String> getResultClass() {
-            return String.class;
-        }
-
-        @Override
-        public String call() {
-            return paymentClient.submit(inputEvent.getInput());
-        }
-
-        @Override
-        public Callable<String> reconciler() {
-            return () -> {
-                PaymentStatus status =
-                    paymentClient.getStatus(inputEvent.getInput());
-                if (status == PaymentStatus.SUCCEEDED) {
-                    return paymentClient.lookupCompletedPayment(
-                        inputEvent.getInput());
-                }
-                throw paymentClient.getFailure(inputEvent.getInput());
-            };
-        }
-    };
-
-    String result = ctx.durableExecute(call);
-    ctx.sendEvent(new OutputEvent(result));
-}
-```
-{{< /tab >}}
-{{< /tabs >}}
-
-### Durable Async Execution
-
-Durable async execution adds result persistence and recovery replay to
-[async execution](#async-execution). Ordinary async calls may execute again if an
-action is re-executed after a failure. Use `durable_execute_async` (Python) or
-`durableExecuteAsync` (Java) when you need to reuse a saved result instead.
-
-Await the returned `DurableFuture` directly or combine calls with `ctx.gather(...)`.
-A batch can mix ordinary and durable calls; only durable calls save their results
-for recovery. The [durable execution constraints](#durable-execution) also apply.
-
-{{< tabs "Async Execution" >}}
-{{< tab "Python" >}}
-Define an `async def` action and `await ctx.durable_execute_async(...)`. The same optional `reconciler=...` argument is available for recovery.
-```python
-@action(EventType.InputEvent)
-@staticmethod
-async def process_with_async(event: Event, ctx: RunnerContext) -> None:
-    input_event = InputEvent.from_event(event)
-    def slow_external_call(data: str) -> str:
-        time.sleep(2)
-        return f"Processed: {data}"
-
-    result = await ctx.durable_execute_async(slow_external_call, input_event.input)
-    ctx.send_event(OutputEvent(output=result))
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-Use `ctx.durableExecuteAsync(DurableCallable)` and await the returned future.
-The optional `reconciler()` hook can be used for recovery.
-```java
-@Action(EventType.InputEvent)
-public static void processInput(Event event, RunnerContext ctx) throws Exception {
-    InputEvent inputEvent = InputEvent.fromEvent(event);
-    DurableCallable<String> call = new DurableCallable<>() {
-        @Override
-        public String getId() {
-            return "slow_external_call";
-        }
-
-        @Override
-        public Class<String> getResultClass() {
-            return String.class;
-        }
-
-        @Override
-        public String call() throws Exception {
-            Thread.sleep(2000);
-            return "Processed: " + inputEvent.getInput();
-        }
-    };
-
-    DurableFuture<String> future = ctx.durableExecuteAsync(call);
-    String result = future.await();
-    ctx.sendEvent(new OutputEvent(result));
-}
-```
-
-{{< /tab >}}
-{{< /tabs >}}
+- `has(...)` is the only supported CEL macro. The comprehension macros `exists`,
+  `exists_one`, `all`, `filter`, and `map` are not supported.
+- Select a top-level attribute by a fixed name. Dynamic root access such as `attributes[key]`
+  and operations on the whole `attributes` map are unsupported. Dynamic access within a
+  selected attribute, such as `attributes.details[key]`, is supported.

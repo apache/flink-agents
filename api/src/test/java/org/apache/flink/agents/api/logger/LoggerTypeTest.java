@@ -43,14 +43,6 @@ class LoggerTypeTest {
     }
 
     @Test
-    @DisplayName("Every declared type round-trips through its identifier")
-    void testFromTypeCoversEveryValue() {
-        for (LoggerType type : LoggerType.values()) {
-            assertThat(LoggerType.fromType(type.getType())).isEqualTo(type);
-        }
-    }
-
-    @Test
     @DisplayName("A null identifier is rejected")
     void testFromTypeRejectsNull() {
         assertThatThrownBy(() -> LoggerType.fromType(null))

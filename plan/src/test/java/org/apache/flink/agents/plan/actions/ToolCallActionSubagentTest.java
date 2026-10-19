@@ -235,6 +235,7 @@ class ToolCallActionSubagentTest {
                 .containsEntry("call-2", true);
         assertThat(response.getResponses().get("call-1").getText()).isEqualTo("a done");
         assertThat(response.getResponses().get("call-2").getText()).isEqualTo("b done");
+        assertSubagentReports(ctx.reports, "a", "b");
     }
 
     /**
@@ -398,22 +399,61 @@ class ToolCallActionSubagentTest {
 
         ToolCallAction.processToolRequest(toolRequest("_subagent_reviewer"), ctx);
 
-        assertThat(ctx.reports)
-                .extracting(report -> report.phase)
-                .containsExactly("created", "started", "succeeded");
-        assertThat(ctx.reports)
-                .allSatisfy(
-                        report -> {
-                            assertThat(report.entityType)
-                                    .isEqualTo(ExecutionReporter.EntityTypes.SUBAGENT);
-                            assertThat(report.entityName).isEqualTo("reviewer");
-                        });
+        assertSubagentReports(ctx.reports, "reviewer");
         ExecutionReport started = ctx.reports.get(1);
         ExecutionReport succeeded = ctx.reports.get(2);
         assertThat(started.timestamp).isNotNull();
         assertThat(succeeded.timestamp).isNotNull();
         assertThat(Instant.parse(succeeded.timestamp))
                 .isAfterOrEqualTo(Instant.parse(started.timestamp));
+    }
+
+    @Test
+    void reportsUnresolvedSubagentWithTheCreatedIdentity() throws Exception {
+        FakeRunnerContext ctx = new FakeRunnerContext();
+
+        ToolCallAction.processToolRequest(toolRequest("_subagent_missing"), ctx);
+
+        assertThat(ctx.reports)
+                .extracting(report -> report.phase)
+                .containsExactly("created", "failed");
+        assertThat(ctx.reports.get(0).executionId).isNotBlank();
+        assertThat(ctx.reports)
+                .allSatisfy(
+                        report -> {
+                            assertThat(report.executionId)
+                                    .isEqualTo(ctx.reports.get(0).executionId);
+                            assertThat(report.entityType)
+                                    .isEqualTo(ExecutionReporter.EntityTypes.TOOL);
+                            assertThat(report.entityName).isEqualTo("_subagent_missing");
+                        });
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getSuccess()).containsEntry("call-1", false);
+        assertThat(response.getResponses().get("call-1").isError()).isTrue();
+    }
+
+    private static void assertSubagentReports(
+            List<ExecutionReport> reports, String... expectedNames) {
+        Map<String, List<ExecutionReport>> calls = new LinkedHashMap<>();
+        for (ExecutionReport report : reports) {
+            assertThat(report.executionId).isNotBlank();
+            calls.computeIfAbsent(report.executionId, ignored -> new ArrayList<>()).add(report);
+        }
+        assertThat(calls.values())
+                .extracting(call -> call.get(0).entityName)
+                .containsExactlyInAnyOrder(expectedNames);
+        for (List<ExecutionReport> call : calls.values()) {
+            assertThat(call)
+                    .extracting(report -> report.phase)
+                    .containsExactly("created", "started", "succeeded");
+            assertThat(call)
+                    .allSatisfy(
+                            report -> {
+                                assertThat(report.entityType)
+                                        .isEqualTo(ExecutionReporter.EntityTypes.SUBAGENT);
+                                assertThat(report.entityName).isEqualTo(call.get(0).entityName);
+                            });
+        }
     }
 
     private static ToolRequestEvent toolRequest(String callableName) {
@@ -928,59 +968,77 @@ class ToolCallActionSubagentTest {
 
         @Override
         public void reportExecutionCreated(
-                String entityType, String entityName, Map<String, Object> entityMetadata) {
-            reports.add(new ExecutionReport("created", entityType, entityName, null));
+                String executionId,
+                String entityType,
+                String entityName,
+                Map<String, Object> entityMetadata) {
+            reports.add(new ExecutionReport(executionId, "created", entityType, entityName, null));
         }
 
         @Override
         public void reportExecutionStarted(
-                String entityType, String entityName, Map<String, Object> entityMetadata) {
-            reports.add(new ExecutionReport("started", entityType, entityName, null));
+                String executionId,
+                String entityType,
+                String entityName,
+                Map<String, Object> entityMetadata) {
+            reports.add(new ExecutionReport(executionId, "started", entityType, entityName, null));
         }
 
         @Override
         public void reportExecutionStartedAt(
+                String executionId,
                 String entityType,
                 String entityName,
                 Map<String, Object> entityMetadata,
                 String timestamp) {
-            reports.add(new ExecutionReport("started", entityType, entityName, timestamp));
+            reports.add(
+                    new ExecutionReport(executionId, "started", entityType, entityName, timestamp));
         }
 
         @Override
         public void reportExecutionSucceeded(
-                String entityType, String entityName, Map<String, Object> entityMetadata) {
-            reports.add(new ExecutionReport("succeeded", entityType, entityName, null));
+                String executionId,
+                String entityType,
+                String entityName,
+                Map<String, Object> entityMetadata) {
+            reports.add(
+                    new ExecutionReport(executionId, "succeeded", entityType, entityName, null));
         }
 
         @Override
         public void reportExecutionSucceededAt(
+                String executionId,
                 String entityType,
                 String entityName,
                 Map<String, Object> entityMetadata,
                 String timestamp) {
-            reports.add(new ExecutionReport("succeeded", entityType, entityName, timestamp));
+            reports.add(
+                    new ExecutionReport(
+                            executionId, "succeeded", entityType, entityName, timestamp));
         }
 
         @Override
         public void reportExecutionFailed(
+                String executionId,
                 String entityType,
                 String entityName,
                 Map<String, Object> entityMetadata,
                 Throwable error,
                 String problemCategory) {
-            reports.add(new ExecutionReport("failed", entityType, entityName, null));
+            reports.add(new ExecutionReport(executionId, "failed", entityType, entityName, null));
         }
 
         @Override
         public void reportExecutionFailedAt(
+                String executionId,
                 String entityType,
                 String entityName,
                 Map<String, Object> entityMetadata,
                 Throwable error,
                 String problemCategory,
                 String timestamp) {
-            reports.add(new ExecutionReport("failed", entityType, entityName, timestamp));
+            reports.add(
+                    new ExecutionReport(executionId, "failed", entityType, entityName, timestamp));
         }
 
         @Override
@@ -989,13 +1047,19 @@ class ToolCallActionSubagentTest {
 
     /** One lifecycle report captured by {@link FakeRunnerContext}, for scope assertions. */
     private static final class ExecutionReport {
+        private final String executionId;
         private final String phase;
         private final String entityType;
         private final String entityName;
         private final String timestamp;
 
         private ExecutionReport(
-                String phase, String entityType, String entityName, String timestamp) {
+                String executionId,
+                String phase,
+                String entityType,
+                String entityName,
+                String timestamp) {
+            this.executionId = executionId;
             this.phase = phase;
             this.entityType = entityType;
             this.entityName = entityName;

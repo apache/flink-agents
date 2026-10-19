@@ -35,6 +35,11 @@ Short-Term Memory is shared across all actions within an agent run, and multiple
 
 ## When to Use
 
+Access Sensory and Short-Term Memory in the Action body, before or after awaiting a call.
+Do not access them from a function submitted for async or durable execution, including
+through a previously obtained `MemoryObject`. See
+[Using Resources and Memory]({{< ref "docs/development/create-agent/actions#using-resources-and-memory" >}}).
+
 ### Sensory Memory
 Sensory Memory is ideal for:
 

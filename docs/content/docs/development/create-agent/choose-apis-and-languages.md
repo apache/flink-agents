@@ -104,7 +104,9 @@ Both APIs provide asynchronous execution and `gather` for running multiple calls
 Python Actions use `async def` and `await`. Java Actions use
 `executeAsync(...).await()`, and Action scheduling and required JVM options depend on
 the JDK version. See [Async Execution]({{< ref "docs/development/create-agent/actions#async-execution" >}})
-for the complete API and runtime requirements.
+for call and batch examples, and
+[Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}})
+for runtime prerequisites.
 
 ### Available integrations by language
 
@@ -184,6 +186,12 @@ Follow these rules:
   to JSON are not supported.
 - Keep integers within the target type's range and use finite floating-point values.
   Encode exact decimals and larger numbers as strings when precision must be preserved.
+
+These conversion rules describe application payloads. Built-in Event classes and their
+declared typed attributes are restored automatically at the JSON boundary; custom Event
+subclasses require explicit reconstruction. See
+[Serialization and Typed Values]({{< ref "docs/development/create-agent/events#json-serialization" >}})
+for examples of restoring Event and payload types.
 
 {{< hint info >}}
 Flink Agents uses a Java runtime. Data from the Python API crosses the Python-Java

@@ -39,8 +39,11 @@ import org.apache.flink.runtime.state.KeyedStateBackend;
 import org.apache.flink.runtime.state.KeyedStateFunction;
 import org.apache.flink.runtime.state.OperatorStateBackend;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.MockedConstruction;
 
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,10 +51,14 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -107,19 +114,7 @@ class DurableExecutionManagerTest {
         assertThat(dem.maybeGetActionState("k", 0L, action, event)).isNull();
         dem.maybeInitActionState("k", 0L, action, event);
         dem.notifyCheckpointComplete(1L);
-        dem.snapshotRecoveryMarker(Map.of());
-        dem.close();
-    }
-
-    @Test
-    void snapshotRecoveryMarkerPassesCompletedSequencesToStore() throws Exception {
-        ActionStateStore store = mock(ActionStateStore.class);
-        DurableExecutionManager dem = new DurableExecutionManager(store);
-        Map<Object, Long> lastCompletedSequenceNumbers = Map.of("key", 3L);
-
-        dem.snapshotRecoveryMarker(lastCompletedSequenceNumbers);
-
-        verify(store).getRecoveryMarker(lastCompletedSequenceNumbers);
+        dem.snapshotState(null, 1L);
         dem.close();
     }
 
@@ -153,14 +148,14 @@ class DurableExecutionManagerTest {
 
         // Cycle 1: snapshot + notify with null store. The snapshot-side guard must short-circuit
         // before any backend access, and the cleanup-side guard must leave the map untouched.
-        dem.snapshotLastCompletedSequenceNumbers(backend, 1L);
+        dem.snapshotState(backend, 1L);
         assertThat(dem.getCheckpointIdToSeqNums()).isEmpty();
         verifyNoInteractions(backend);
         dem.notifyCheckpointComplete(1L);
         assertThat(dem.getCheckpointIdToSeqNums()).isEmpty();
 
         // Cycle 2: confirm the invariant holds across multiple checkpoints.
-        dem.snapshotLastCompletedSequenceNumbers(backend, 2L);
+        dem.snapshotState(backend, 2L);
         assertThat(dem.getCheckpointIdToSeqNums()).isEmpty();
         verifyNoInteractions(backend);
         dem.notifyCheckpointComplete(2L);
@@ -209,14 +204,24 @@ class DurableExecutionManagerTest {
     }
 
     /**
-     * Verifies {@code snapshotLastCompletedSequenceNumbers} captures the per-key sequence numbers
-     * returned by the keyed state backend and records them under the given checkpoint id.
+     * Verifies {@code snapshotState} captures the per-key sequence numbers returned by the keyed
+     * state backend and records them under the given checkpoint id.
      */
     @Test
     @SuppressWarnings("unchecked")
     void snapshotCapturesKeySequenceNumbers() throws Exception {
-        InMemoryActionStateStore store = new InMemoryActionStateStore(false);
+        ActionStateStore store = mock(ActionStateStore.class);
         DurableExecutionManager dem = new DurableExecutionManager(store);
+        OperatorStateBackend opBackend = mock(OperatorStateBackend.class);
+        ListState<Object> markerState = mock(ListState.class);
+        when(opBackend.getUnionListState(any(ListStateDescriptor.class))).thenReturn(markerState);
+        dem.initRecoveryMarkerState(opBackend);
+        when(store.getRecoveryMarker(Map.of("k1", 10L, "k2", 20L)))
+                .thenAnswer(
+                        invocation -> {
+                            assertThat(dem.getCheckpointIdToSeqNums()).isEmpty();
+                            return "test-marker";
+                        });
 
         KeyedStateBackend<Object> backend = mock(KeyedStateBackend.class);
         doAnswer(
@@ -229,21 +234,66 @@ class DurableExecutionManagerTest {
                             when(state2.value()).thenReturn(20L);
                             function.process("k1", state1);
                             function.process("k2", state2);
+                            function.process("no-boundary", mock(ValueState.class));
                             return null;
                         })
                 .when(backend)
                 .applyToAllKeys(any(), any(), any(), any());
 
-        Map<Object, Long> lastCompletedSequenceNumbers =
-                dem.snapshotLastCompletedSequenceNumbers(backend, 1000L);
+        dem.snapshotState(backend, 1000L);
 
-        assertThat(lastCompletedSequenceNumbers)
+        assertThat(dem.getCheckpointIdToSeqNums())
+                .containsOnlyKeys(1000L)
+                .extractingByKey(1000L)
+                .asInstanceOf(
+                        org.assertj.core.api.InstanceOfAssertFactories.map(
+                                Object.class, Long.class))
                 .containsEntry("k1", 10L)
                 .containsEntry("k2", 20L)
                 .hasSize(2);
-        assertThat(dem.getCheckpointIdToSeqNums())
-                .containsEntry(1000L, lastCompletedSequenceNumbers);
+        verify(store).getRecoveryMarker(Map.of("k1", 10L, "k2", 20L));
+        verify(markerState).update(List.of("test-marker"));
 
+        dem.close();
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    @SuppressWarnings("unchecked")
+    void failedSnapshotDoesNotRegisterPruningBoundaries(boolean failMarkerUpdate) throws Exception {
+        ActionStateStore store = mock(ActionStateStore.class);
+        DurableExecutionManager dem = new DurableExecutionManager(store);
+        KeyedStateBackend<Object> backend = mock(KeyedStateBackend.class);
+        stubApplyToAllKeysSingle(backend, "key", 1L);
+        OperatorStateBackend opBackend = mock(OperatorStateBackend.class);
+        ListState<Object> markerState = mock(ListState.class);
+        when(opBackend.getUnionListState(any(ListStateDescriptor.class))).thenReturn(markerState);
+        dem.initRecoveryMarkerState(opBackend);
+        when(store.getRecoveryMarker(Map.of("key", 1L))).thenReturn("marker-1");
+        dem.snapshotState(backend, 1L);
+
+        stubApplyToAllKeysSingle(backend, "key", 2L);
+        if (failMarkerUpdate) {
+            when(store.getRecoveryMarker(Map.of("key", 2L))).thenReturn("marker-2");
+            doThrow(new IOException("marker update failed"))
+                    .when(markerState)
+                    .update(List.of("marker-2"));
+        } else {
+            when(store.getRecoveryMarker(Map.of("key", 2L)))
+                    .thenThrow(new RuntimeException("refresh failed"));
+        }
+
+        assertThatThrownBy(() -> dem.snapshotState(backend, 2L)).hasMessageContaining("failed");
+        assertThat(dem.getCheckpointIdToSeqNums()).containsOnlyKeys(1L);
+        assertThat(dem.getCheckpointIdToSeqNums().get(1L))
+                .containsExactlyEntriesOf(Map.of("key", 1L));
+        if (!failMarkerUpdate) {
+            verify(markerState, never()).update(List.of("marker-2"));
+        }
+        dem.notifyCheckpointAborted(2L);
+        verify(store, never()).pruneState(any(), anyLong());
+        dem.notifyCheckpointComplete(1L);
+        verify(store).pruneState("key", 1L);
         dem.close();
     }
 
@@ -338,7 +388,7 @@ class DurableExecutionManagerTest {
         @SuppressWarnings("unchecked")
         KeyedStateBackend<Object> backend = mock(KeyedStateBackend.class);
         stubApplyToAllKeysSingle(backend, key, seq);
-        dem.snapshotLastCompletedSequenceNumbers(backend, checkpointId);
+        dem.snapshotState(backend, checkpointId);
         assertThat(dem.getCheckpointIdToSeqNums()).containsKey(checkpointId);
 
         // Abort the checkpoint.
@@ -378,17 +428,17 @@ class DurableExecutionManagerTest {
         @SuppressWarnings("unchecked")
         KeyedStateBackend<Object> backendA = mock(KeyedStateBackend.class);
         stubApplyToAllKeysSingle(backendA, keyA, 10L);
-        dem.snapshotLastCompletedSequenceNumbers(backendA, 1L);
+        dem.snapshotState(backendA, 1L);
 
         @SuppressWarnings("unchecked")
         KeyedStateBackend<Object> backendB = mock(KeyedStateBackend.class);
         stubApplyToAllKeysSingle(backendB, keyB, 20L);
-        dem.snapshotLastCompletedSequenceNumbers(backendB, 2L);
+        dem.snapshotState(backendB, 2L);
 
         @SuppressWarnings("unchecked")
         KeyedStateBackend<Object> backendC = mock(KeyedStateBackend.class);
         stubApplyToAllKeysSingle(backendC, keyC, 30L);
-        dem.snapshotLastCompletedSequenceNumbers(backendC, 3L);
+        dem.snapshotState(backendC, 3L);
 
         assertThat(dem.getCheckpointIdToSeqNums()).containsKeys(1L, 2L, 3L);
 
@@ -424,7 +474,7 @@ class DurableExecutionManagerTest {
      * Stubs {@code backend.applyToAllKeys(...)} to invoke the supplied {@link KeyedStateFunction}
      * exactly once with the given key and a {@link ValueState} mock that returns the given sequence
      * number. This mirrors the per-key iteration shape used by {@link
-     * DurableExecutionManager#snapshotLastCompletedSequenceNumbers}.
+     * DurableExecutionManager#snapshotState}.
      */
     @SuppressWarnings("unchecked")
     private static void stubApplyToAllKeysSingle(

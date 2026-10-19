@@ -23,7 +23,6 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
-import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.MemoryObject;
@@ -231,26 +230,6 @@ public class ChatModelAction {
         }
     }
 
-    static void recordChatTokenMetrics(
-            BaseChatModelSetup chatModel,
-            ChatResult response,
-            @Nullable FlinkAgentsMetricGroup requestMetricGroup) {
-        if (requestMetricGroup == null) {
-            return;
-        }
-        TokenUsage usage = response.getUsage();
-        if (response.getModel() != null
-                && usage != null
-                && usage.getPromptTokens() != null
-                && usage.getCompletionTokens() != null) {
-            chatModel.recordTokenMetrics(
-                    requestMetricGroup,
-                    response.getModel(),
-                    usage.getPromptTokens(),
-                    usage.getCompletionTokens());
-        }
-    }
-
     private static void handleToolCalls(
             ChatResult response,
             UUID initialRequestId,
@@ -401,8 +380,8 @@ public class ChatModelAction {
                         result.totalRetryWaitSec);
                 if (selection.isRouter()) {
                     if (!result.model.equals(selection.getSelectedModel())) {
-                        // The strategy's pick failed and another candidate answered; record the
-                        // outcome in the event log, not just on the response.
+                        // The strategy's pick failed and another candidate answered; emit a
+                        // routing Event to report the fallback outcome.
                         ctx.sendEvent(
                                 new ModelRoutingEvent(
                                         initialRequestId,
@@ -473,7 +452,8 @@ public class ChatModelAction {
                 }
                 lastError = e.error;
                 LOG.debug(
-                        "Chat request {} failed for model {} with error: {}. The input chat messages are {}.",
+                        "Chat request {} failed for model {} with error: {}. The input chat"
+                                + " messages are {}.",
                         initialRequestId,
                         e.model,
                         e.error.toString(),
@@ -606,15 +586,18 @@ public class ChatModelAction {
 
     static Object generateStructuredOutputWithReport(
             RunnerContext ctx, ChatResult response, Object outputSchema) throws Exception {
-        ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
+        String executionId =
+                ExecutionReporters.started(
+                        ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
         try {
             Object structuredResponse = generateStructuredOutput(response, outputSchema);
             ExecutionReporters.succeeded(
-                    ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
+                    ctx, executionId, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
             return structuredResponse;
         } catch (Throwable e) {
             throw reportFailedAndPropagate(
                     ctx,
+                    executionId,
                     ExecutionReporter.EntityTypes.PARSER,
                     STRUCTURED_OUTPUT,
                     null,
@@ -717,11 +700,13 @@ public class ChatModelAction {
     }
 
     /**
-     * Reports a nested execution failure, then always throws the original failure. The Exception
-     * return type exists so callers must {@code throw} the result and cannot fall through.
+     * Reports the failure of a call made within the current Action, then always throws the original
+     * failure. The Exception return type exists so callers must {@code throw} the result and cannot
+     * fall through.
      */
     static Exception reportFailedAndPropagate(
             RunnerContext ctx,
+            String executionId,
             String entityType,
             String entityName,
             @Nullable Map<String, Object> entityMetadata,
@@ -729,10 +714,17 @@ public class ChatModelAction {
             String problemCategory)
             throws Exception {
         if (entityMetadata == null) {
-            ExecutionReporters.failed(ctx, entityType, entityName, error, problemCategory);
+            ExecutionReporters.failed(
+                    ctx, executionId, entityType, entityName, error, problemCategory);
         } else {
             ExecutionReporters.failed(
-                    ctx, entityType, entityName, entityMetadata, error, problemCategory);
+                    ctx,
+                    executionId,
+                    entityType,
+                    entityName,
+                    entityMetadata,
+                    error,
+                    problemCategory);
         }
         if (error instanceof Error) {
             throw (Error) error;

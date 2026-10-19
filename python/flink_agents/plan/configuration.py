@@ -26,6 +26,18 @@ from flink_agents.api.configuration import (
     ConfigOption,
     Configuration,
 )
+from flink_agents.api.trace_log import _parse_targets, _serialize_targets
+
+_TRACE_LOG_TARGETS_KEY = "trace-log.targets"
+
+
+def _normalize_trace_log_targets(conf_data: Dict[str, Any]) -> Dict[str, Any]:
+    if _TRACE_LOG_TARGETS_KEY not in conf_data:
+        return conf_data
+    return {
+        **conf_data,
+        _TRACE_LOG_TARGETS_KEY: _serialize_targets(conf_data[_TRACE_LOG_TARGETS_KEY]),
+    }
 
 
 def flatten_dict(d: Dict, parent_key: str = "", sep: str = ".") -> Dict[str, Any]:
@@ -49,7 +61,7 @@ def flatten_dict(d: Dict, parent_key: str = "", sep: str = ".") -> Dict[str, Any
     items = {}
     for k, v in d.items():
         new_key = f"{parent_key}{sep}{k}" if parent_key else k
-        if isinstance(v, dict):
+        if isinstance(v, dict) and v:
             items.update(flatten_dict(v, new_key, sep=sep))
         else:
             items[new_key] = v
@@ -68,7 +80,7 @@ class AgentConfiguration(BaseModel, Configuration):
         if conf_data is None:
             super().__init__(conf_data={})
         else:
-            super().__init__(conf_data=conf_data)
+            super().__init__(conf_data=_normalize_trace_log_targets(conf_data))
 
     def get_value_with_type(
         self, key: str, config_type: Type[Any], default: Any
@@ -112,6 +124,10 @@ class AgentConfiguration(BaseModel, Configuration):
 
     @override
     def get(self, option: ConfigOption) -> Any:
+        if option.get_key() == _TRACE_LOG_TARGETS_KEY:
+            return _parse_targets(
+                self.conf_data.get(option.get_key(), option.get_default_value())
+            )
         return self.get_value_with_type(
             option.get_key(), option.get_type(), option.get_default_value()
         )
@@ -134,7 +150,11 @@ class AgentConfiguration(BaseModel, Configuration):
 
     @override
     def set(self, option: ConfigOption, value: Any) -> None:
-        self.conf_data[option.get_key()] = value
+        self.conf_data[option.get_key()] = (
+            _serialize_targets(value)
+            if option.get_key() == _TRACE_LOG_TARGETS_KEY
+            else value
+        )
 
     def load_from_file(self, config_path: str | None = None) -> None:
         """Load configuration from a YAML file and update current configuration data.
@@ -146,7 +166,11 @@ class AgentConfiguration(BaseModel, Configuration):
             path = Path(config_path)
             with path.open() as f:
                 raw_config = yaml.safe_load(f)
-                self.conf_data.update(flatten_dict(raw_config.get("agent", {})))
+                self.conf_data.update(
+                    _normalize_trace_log_targets(
+                        flatten_dict(raw_config.get("agent", {}))
+                    )
+                )
 
     def get_conf_data(self) -> dict:
         """Get the configuration data dictionary.

@@ -115,7 +115,7 @@ under the License.
 {{ end }}
 
 {{ define "main" }}
-  <article class="markdown">
+  <article class="markdown{{ if .IsHome }} docs-home{{ end }}">
     {{- .Content -}}
   </article>
 {{ end }}

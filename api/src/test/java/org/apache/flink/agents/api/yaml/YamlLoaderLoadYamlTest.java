@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.configuration.Configuration;
 import org.apache.flink.agents.api.function.JavaFunction;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
@@ -31,6 +32,8 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.table.api.Table;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -114,6 +117,81 @@ class YamlLoaderLoadYamlTest {
                 .containsExactly(
                         new SkillSourceSpec("local", Map.of("path", "./shared_skill_dir")),
                         new SkillSourceSpec("local", Map.of("path", "./more")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void resolvesPreviouslyLoadedChild(boolean separateCalls, @TempDir Path tmp) throws Exception {
+        Path childPath = Files.writeString(tmp.resolve("child.yaml"), "agents: [{name: child}]");
+        Path parentPath =
+                Files.writeString(
+                        tmp.resolve("parent.yaml"),
+                        "agents: [{name: parent, subagents: [{name: reviewer, agent: child}]}]");
+        AgentsExecutionEnvironment env = new TestEnv();
+        if (separateCalls) {
+            env.loadYaml(childPath);
+            env.loadYaml(parentPath);
+        } else {
+            env.loadYaml(List.of(childPath, parentPath));
+        }
+        ResourceDescriptor descriptor =
+                (ResourceDescriptor)
+                        env.getAgents()
+                                .get("parent")
+                                .getResources()
+                                .get(ResourceType.AGENT)
+                                .get("reviewer");
+        assertThat(descriptor.getInitialArguments().get("agent"))
+                .isSameAs(env.getAgents().get("child"));
+        assertThat(env.getAgents()).containsOnlyKeys("parent", "child");
+        assertThat(env.getAgents().get("child").getResources().get(ResourceType.AGENT)).isEmpty();
+        assertThatThrownBy(() -> new TestEnv().loadYaml(parentPath))
+                .hasMessageContaining("unknown agent 'child'");
+    }
+
+    @Test
+    void childMustBeLoadedFirstAndFailurePreservesState(@TempDir Path tmp) throws Exception {
+        AgentsExecutionEnvironment env = new TestEnv();
+        env.loadYaml(
+                Files.writeString(
+                        tmp.resolve("existing.yaml"),
+                        "agents: [{name: existing}]\nprompts: [{name: existing_prompt, text: keep}]"));
+        Agent original = env.getAgents().get("existing");
+        Object prompt = env.getResources().get(ResourceType.PROMPT).get("existing_prompt");
+        Path childPath = Files.writeString(tmp.resolve("child.yaml"), "agents: [{name: child}]");
+        Path parentPath =
+                Files.writeString(
+                        tmp.resolve("parent.yaml"),
+                        "agents: [{name: parent, subagents: [{name: reviewer, agent: child}]}]\n"
+                                + "prompts: [{name: new_prompt, text: 'not committed'}]");
+        assertThatThrownBy(() -> env.loadYaml(List.of(parentPath, childPath)))
+                .hasMessageContaining("reviewer")
+                .hasMessageContaining("unknown agent 'child'")
+                .hasMessageContaining("already registered");
+        assertThat(env.getAgents()).containsExactlyEntriesOf(Map.of("existing", original));
+        assertThat(env.getResources().get(ResourceType.PROMPT))
+                .containsExactlyEntriesOf(Map.of("existing_prompt", prompt));
+        env.loadYaml(List.of(childPath, parentPath));
+        assertThat(env.getAgents()).containsOnlyKeys("existing", "child", "parent");
+    }
+
+    @Test
+    void currentFileCannotReplaceRegisteredChild(@TempDir Path tmp) throws Exception {
+        AgentsExecutionEnvironment env = new TestEnv();
+        env.loadYaml(Files.writeString(tmp.resolve("child.yaml"), "agents: [{name: child}]"));
+        Agent original = env.getAgents().get("child");
+        Path duplicate =
+                Files.writeString(
+                        tmp.resolve("duplicate.yaml"),
+                        "agents: [{name: parent, subagents: [{name: reviewer, agent: child}]}, "
+                                + "{name: child, prompts: [{name: replacement, text: bad}]}]\n"
+                                + "prompts: [{name: new_prompt, text: 'not committed'}]");
+        assertThatThrownBy(() -> env.loadYaml(duplicate))
+                .hasMessageContaining("Duplicate agent name 'child'");
+        assertThat(env.getAgents()).containsExactlyEntriesOf(Map.of("child", original));
+        assertThat(original.getResources().get(ResourceType.PROMPT)).isEmpty();
+        assertThat(env.getResources().values())
+                .allSatisfy(resources -> assertThat(resources).isEmpty());
     }
 
     /** Minimal env stub — we can't instantiate LocalExecutionEnvironment from the api module. */

@@ -19,6 +19,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from flink_agents.api.runner_context import RunnerContext
@@ -29,7 +30,7 @@ _EMPTY_METADATA: Mapping[str, Any] = {}
 
 
 class ExecutionEntityTypes:
-    """Shared entity type names for execution reports."""
+    """Shared entity type names for observing Actions and calls within Actions."""
 
     ACTION = "action"
     LLM = "llm"
@@ -39,7 +40,7 @@ class ExecutionEntityTypes:
 
 
 class ExecutionProblemCategories:
-    """Shared low-cardinality problem categories for failed execution reports."""
+    """Shared low-cardinality failure categories for Actions and their calls."""
 
     ACTION_EXECUTION_FAILED = "action_execution_failed"
     MODEL_CALL_FAILED = "model_call_failed"
@@ -48,72 +49,114 @@ class ExecutionProblemCategories:
 
 
 class ExecutionReporter(ABC):
-    """Optional capability for reporting executions nested inside an action."""
+    """Report the creation, start, and outcome of calls within the current Action.
+
+    A reported execution is one call, such as an LLM request, parser invocation,
+    Tool call, or Subagent call. The caller supplies a non-blank execution ID
+    unique to that call and reuses it in every report, including across awaits.
+    Retries are separate calls with separate IDs. Entity type and name remain
+    stable for the call; metadata describes the observation and does not identify
+    the call. Each report carries only the metadata supplied for that observation.
+    Reporting does not merge metadata across reports with the same execution ID.
+    Metadata should remain small, structured, and serializable.
+
+    Implementations decide how reports are consumed or ignored.
+    """
 
     def report_execution_created(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        """Report that a logical execution exists but has not necessarily started.
+        """Report that a call has been created but has not necessarily started.
 
-        A later start or terminal report is not guaranteed. Their absence does not
-        show whether the underlying invocation ran.
+        This optional report can describe a call prepared separately from its
+        invocation. The default implementation ignores it. A later start,
+        success, or failure report is not guaranteed; missing reports do not
+        establish whether the call ran.
         """
         return None
 
     @abstractmethod
     def report_execution_started(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        """Report that a logical execution started."""
+        """Report that a call made within the current Action started."""
 
     def report_execution_started_at(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None,
         timestamp: str,
     ) -> None:
-        """Report that a logical execution started at an occurrence timestamp."""
-        self.report_execution_started(entity_type, entity_name, entity_metadata)
+        """Report that a call started at the supplied timestamp.
+
+        Implementations that do not retain the supplied timestamp may use their
+        observation time.
+        """
+        self.report_execution_started(
+            execution_id, entity_type, entity_name, entity_metadata
+        )
 
     @abstractmethod
     def report_execution_succeeded(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        """Report that a logical execution completed successfully."""
+        """Report that a call completed successfully.
+
+        The execution ID, entity type, and name must match any creation or start
+        report for the call.
+        """
 
     def report_execution_succeeded_at(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None,
         timestamp: str,
     ) -> None:
-        """Report successful completion at an occurrence timestamp."""
-        self.report_execution_succeeded(entity_type, entity_name, entity_metadata)
+        """Report that a call completed successfully at the supplied timestamp.
+
+        Implementations that do not retain the supplied timestamp may use their
+        observation time.
+        """
+        self.report_execution_succeeded(
+            execution_id, entity_type, entity_name, entity_metadata
+        )
 
     @abstractmethod
     def report_execution_failed(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None,
         error: BaseException,
         problem_category: str | None = None,
     ) -> None:
-        """Report that a logical execution failed."""
+        """Report that a call failed.
+
+        The execution ID, entity type, and name must match any creation or start
+        report for the call. The problem category should be a stable,
+        low-cardinality classification.
+        """
 
     def report_execution_failed_at(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None,
@@ -121,8 +164,13 @@ class ExecutionReporter(ABC):
         problem_category: str | None,
         timestamp: str,
     ) -> None:
-        """Report failed completion at an occurrence timestamp."""
+        """Report that a call failed at the supplied timestamp.
+
+        Implementations that do not retain the supplied timestamp may use their
+        observation time.
+        """
         self.report_execution_failed(
+            execution_id,
             entity_type,
             entity_name,
             entity_metadata,
@@ -132,7 +180,13 @@ class ExecutionReporter(ABC):
 
 
 class ExecutionReporters:
-    """Best-effort helpers for contexts that implement ExecutionReporter."""
+    """Report calls within an Action through ExecutionReporter when available.
+
+    Contexts without this capability and failures in reporting are ignored.
+    Creation and start helpers allocate an execution ID when omitted and always
+    return it, even when the report is ignored. Pass that ID to later reports
+    about the same call.
+    """
 
     @staticmethod
     def created(
@@ -140,14 +194,22 @@ class ExecutionReporters:
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None = None,
-    ) -> None:
-        """Report creation of a nested execution if the context supports it."""
+        *,
+        execution_id: str | None = None,
+    ) -> str:
+        """Report a call's creation and return its supplied or newly allocated ID."""
+        if execution_id is None:
+            execution_id = str(uuid4())
         ExecutionReporters._report(
             ctx,
             lambda reporter: reporter.report_execution_created(
-                entity_type, entity_name, entity_metadata or _EMPTY_METADATA
+                execution_id,
+                entity_type,
+                entity_name,
+                entity_metadata or _EMPTY_METADATA,
             ),
         )
+        return execution_id
 
     @staticmethod
     def started(
@@ -155,14 +217,22 @@ class ExecutionReporters:
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None = None,
-    ) -> None:
-        """Report the start of a nested execution if the context supports it."""
+        *,
+        execution_id: str | None = None,
+    ) -> str:
+        """Report a call's start and return its supplied or newly allocated ID."""
+        if execution_id is None:
+            execution_id = str(uuid4())
         ExecutionReporters._report(
             ctx,
             lambda reporter: reporter.report_execution_started(
-                entity_type, entity_name, entity_metadata or _EMPTY_METADATA
+                execution_id,
+                entity_type,
+                entity_name,
+                entity_metadata or _EMPTY_METADATA,
             ),
         )
+        return execution_id
 
     @staticmethod
     def started_at(
@@ -171,45 +241,57 @@ class ExecutionReporters:
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None,
         timestamp: str,
-    ) -> None:
-        """Report a start occurrence if the context supports it."""
+        *,
+        execution_id: str | None = None,
+    ) -> str:
+        """Report a call's start time and return its supplied or newly allocated ID."""
+        if execution_id is None:
+            execution_id = str(uuid4())
         ExecutionReporters._report(
             ctx,
             lambda reporter: reporter.report_execution_started_at(
+                execution_id,
                 entity_type,
                 entity_name,
                 entity_metadata or _EMPTY_METADATA,
                 timestamp,
             ),
         )
+        return execution_id
 
     @staticmethod
     def succeeded(
         ctx: "RunnerContext",
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        """Report successful completion if the context supports it."""
+        """Report that a call succeeded if the context supports reporting."""
         ExecutionReporters._report(
             ctx,
             lambda reporter: reporter.report_execution_succeeded(
-                entity_type, entity_name, entity_metadata or _EMPTY_METADATA
+                execution_id,
+                entity_type,
+                entity_name,
+                entity_metadata or _EMPTY_METADATA,
             ),
         )
 
     @staticmethod
     def succeeded_at(
         ctx: "RunnerContext",
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None,
         timestamp: str,
     ) -> None:
-        """Report a successful occurrence if the context supports it."""
+        """Report a call's success time if the context supports reporting."""
         ExecutionReporters._report(
             ctx,
             lambda reporter: reporter.report_execution_succeeded_at(
+                execution_id,
                 entity_type,
                 entity_name,
                 entity_metadata or _EMPTY_METADATA,
@@ -220,16 +302,18 @@ class ExecutionReporters:
     @staticmethod
     def failed(
         ctx: "RunnerContext",
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None,
         error: BaseException,
         problem_category: str | None = None,
     ) -> None:
-        """Report failed completion if the context supports it."""
+        """Report that a call failed if the context supports reporting."""
         ExecutionReporters._report(
             ctx,
             lambda reporter: reporter.report_execution_failed(
+                execution_id,
                 entity_type,
                 entity_name,
                 entity_metadata or _EMPTY_METADATA,
@@ -241,6 +325,7 @@ class ExecutionReporters:
     @staticmethod
     def failed_at(
         ctx: "RunnerContext",
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None,
@@ -248,10 +333,11 @@ class ExecutionReporters:
         problem_category: str | None,
         timestamp: str,
     ) -> None:
-        """Report a failed occurrence if the context supports it."""
+        """Report a call's failure time if the context supports reporting."""
         ExecutionReporters._report(
             ctx,
             lambda reporter: reporter.report_execution_failed_at(
+                execution_id,
                 entity_type,
                 entity_name,
                 entity_metadata or _EMPTY_METADATA,

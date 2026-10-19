@@ -73,6 +73,7 @@ class SchemaParityTest {
         m.put("ActionSpec", ActionSpec.class);
         m.put("AgentSpec", AgentSpec.class);
         m.put("DescriptorSpec", DescriptorSpec.class);
+        m.put("InternalSubagentSpec", InternalSubagentSpec.class);
         m.put("PromptMessage", PromptMessage.class);
         m.put("PromptSpec", PromptSpec.class);
         m.put("SkillsSpec", SkillsSpec.class);

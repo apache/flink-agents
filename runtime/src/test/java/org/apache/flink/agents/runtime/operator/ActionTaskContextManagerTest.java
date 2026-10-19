@@ -17,12 +17,14 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
-import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.TraceContext;
+import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
@@ -30,8 +32,10 @@ import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
+import org.apache.flink.agents.runtime.chat.ChatContext;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl.ExecutionReportingContext;
 import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
@@ -178,19 +182,6 @@ class ActionTaskContextManagerTest {
     }
 
     @Test
-    void createAndSetRunnerContextBuildsFreshMemoryContextOnFirstCall() throws Exception {
-        try (ActionTaskContextManager mgr = newManager()) {
-            ActionTask t =
-                    new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
-            invokeCreateAndSetRunnerContext(mgr, t);
-
-            // Production path: createAndSetRunnerContext pins the freshly created MemoryContext.
-            assertThat(t.getRunnerContext()).isInstanceOf(JavaRunnerContextImpl.class);
-            assertThat(t.getRunnerContext().getMemoryContext()).isNotNull();
-        }
-    }
-
-    @Test
     void createAndSetRunnerContextPinsFreshContextsAndRestoresTaskSpecificContexts()
             throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
@@ -200,23 +191,76 @@ class ActionTaskContextManagerTest {
 
             invokeCreateAndSetRunnerContext(mgr, taskA);
             RunnerContextImpl.MemoryContext memoryA = taskA.getRunnerContext().getMemoryContext();
+            assertThat(memoryA).isNotNull();
+            ChatContext chatA = taskA.getRunnerContext().getChatContext();
             ContinuationContext continuationA =
                     ((JavaRunnerContextImpl) taskA.getRunnerContext()).getContinuationContext();
 
             invokeCreateAndSetRunnerContext(mgr, taskB);
             RunnerContextImpl.MemoryContext memoryB = taskB.getRunnerContext().getMemoryContext();
+            assertThat(memoryB).isNotNull().isNotSameAs(memoryA);
+            ChatContext chatB = taskB.getRunnerContext().getChatContext();
+            assertThat(chatB).isNotSameAs(chatA);
+            assertThat(chatB.getOwner()).isNotSameAs(chatA.getOwner());
+            assertThat(chatB.getManager()).isSameAs(chatA.getManager());
             ContinuationContext continuationB =
                     ((JavaRunnerContextImpl) taskB.getRunnerContext()).getContinuationContext();
 
             mgr.restore("a", taskA);
             assertThat(taskA.getRunnerContext().getMemoryContext()).isSameAs(memoryA);
+            assertThat(taskA.getRunnerContext().getChatContext()).isSameAs(chatA);
             assertThat(((JavaRunnerContextImpl) taskA.getRunnerContext()).getContinuationContext())
                     .isSameAs(continuationA);
 
             mgr.restore("b", taskB);
             assertThat(taskB.getRunnerContext().getMemoryContext()).isSameAs(memoryB);
+            assertThat(taskB.getRunnerContext().getChatContext()).isSameAs(chatB);
             assertThat(((JavaRunnerContextImpl) taskB.getRunnerContext()).getContinuationContext())
                     .isSameAs(continuationB);
+        }
+    }
+
+    @Test
+    void chatContextRestoresActiveCallAndSurvivesContinuationTransfer() throws Exception {
+        try (ActionTaskContextManager mgr = newManager()) {
+            Action action = TestActions.noopAction();
+            ActionTask caller = new JavaActionTask("k", new InputEvent(1L), action, 1L);
+            invokeCreateAndSetRunnerContext(mgr, caller);
+            RunnerContextImpl context = caller.getRunnerContext();
+            ChatContext callerChat = context.getChatContext();
+            String callId =
+                    callerChat
+                            .getManager()
+                            .prepareCall(
+                                    context,
+                                    new ObjectMapper()
+                                            .writeValueAsString(
+                                                    new ChatRequestEvent("model", List.of())));
+            ActionTask chatTask =
+                    new JavaActionTask("k", context.getPendingEvents().get(0), action, 2L);
+            invokeCreateAndSetRunnerContext(mgr, chatTask);
+            ChatContext activeChat = context.getChatContext();
+            assertThat(activeChat.getManager()).isSameAs(callerChat.getManager());
+            assertThat(activeChat.getOwner()).isNotSameAs(callerChat.getOwner());
+            assertThat(context.getSubgraphInvocation())
+                    .isSameAs(mgr.getChatCallManager().get(callId));
+
+            mgr.restore("k", caller);
+            assertThat(context.getChatContext()).isSameAs(callerChat);
+            assertThat(context.getSubgraphInvocation()).isNull();
+            mgr.restore("k", chatTask);
+            assertThat(context.getChatContext()).isSameAs(activeChat);
+
+            // A generated task may no longer carry the bootstrap event; keep the whole context.
+            ActionTask continuation = new JavaActionTask("k", new Event("resume"), action, 2L);
+            mgr.removeContexts(chatTask);
+            mgr.transferContexts(chatTask, continuation, new DurableExecutionManager(null));
+            invokeCreateAndSetRunnerContext(mgr, continuation);
+            assertThat(context.getChatContext()).isSameAs(activeChat);
+            assertThat(context.getSubgraphInvocation())
+                    .isSameAs(mgr.getChatCallManager().get(callId));
+            mgr.restore("k", caller);
+            assertThat(context.getChatContext()).isSameAs(callerChat);
         }
     }
 
@@ -243,49 +287,6 @@ class ActionTaskContextManagerTest {
             mgr.restore("a", taskA);
             assertThat(taskA.getRunnerContext().getDurableExecutionContext())
                     .isSameAs(durableContext);
-        }
-    }
-
-    @Test
-    void restoreReestablishesRunnerContextFromKeyAndActionTask() throws Exception {
-        try (ActionTaskContextManager mgr = newManager()) {
-            ActionTask task =
-                    new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
-            invokeCreateAndSetRunnerContext(mgr, task);
-
-            // The continuation executor extracts key and action task from its continuation context
-            // and hands them to the restorer directly; the manager never reads the context itself.
-            mgr.restore("k", task);
-            assertThat(task.getRunnerContext().getMemoryContext()).isNotNull();
-        }
-    }
-
-    @Test
-    void createAndSetRunnerContextReusesExistingMemoryContext() throws Exception {
-        try (ActionTaskContextManager mgr = newManager()) {
-            Action action = TestActions.noopAction();
-            ActionTask from = new JavaActionTask("k", new InputEvent(1L), action, 1L);
-            ActionTask to = new JavaActionTask("k", new InputEvent(2L), action, 1L);
-
-            // Step 1: createAndSetRunnerContext(from) — runner context carries and pins a fresh
-            // MemoryContext.
-            invokeCreateAndSetRunnerContext(mgr, from);
-            RunnerContextImpl.MemoryContext fromMemCtx = from.getRunnerContext().getMemoryContext();
-            assertThat(fromMemCtx).isNotNull();
-
-            // Step 2: transferContexts populates the map entry for `to` via the private
-            // putMemoryContext (ActionTaskContextManager.java:266-286). DEM null is OK because
-            // from has no DurableExecutionContext.
-            mgr.transferContexts(from, to, new DurableExecutionManager(null));
-
-            // Step 3: createAndSetRunnerContext(to) — production code at lines 211-212 reads
-            // the map for `to` and reuses fromMemCtx (the if-branch of the reuse check).
-            invokeCreateAndSetRunnerContext(mgr, to);
-
-            // The runner context is shared (single Java JavaRunnerContextImpl instance), but
-            // its memoryContext was switched to the entry that was in the map for `to`. Verify
-            // the same MemoryContext instance is now wired on the runner context.
-            assertThat(to.getRunnerContext().getMemoryContext()).isSameAs(fromMemCtx);
         }
     }
 
@@ -317,7 +318,10 @@ class ActionTaskContextManagerTest {
             invokeCreateAndSetRunnerContext(mgr, from);
             RunnerContextImpl.MemoryContext fromMemCtx = from.getRunnerContext().getMemoryContext();
             assertThat(fromMemCtx).isNotNull();
-            from.markExecutionStartedEventEmitted();
+            from.markExecutionStartedNotified();
+            OutputEvent bufferedBeforeYield = new OutputEvent("before-yield");
+            from.getRunnerContext().sendEvent(bufferedBeforeYield);
+            List<Event> liveBuffer = from.getRunnerContext().getPendingEvents();
 
             // Mirrors the production order: the operator removes the source record before
             // transferring (ActionExecutionOperator). transferContexts must therefore extract
@@ -334,8 +338,10 @@ class ActionTaskContextManagerTest {
 
             // (c) The pending-event buffer is shared with the source's live buffer, so events
             // emitted before the suspend survive into the generated task.
-            assertThat(to.getRunnerContext().getPendingEvents())
-                    .isSameAs(from.getRunnerContext().getPendingEvents());
+            assertThat(to.getRunnerContext().getPendingEvents()).isSameAs(liveBuffer);
+            assertThat(to.getRunnerContext().drainEventsAtActionFinish(null))
+                    .containsExactly(bufferedBeforeYield);
+            assertThat(liveBuffer).isEmpty();
 
             // (d) The removed source record fails fast on access.
             assertThatThrownBy(() -> mgr.getContinuationContext(from))
@@ -343,12 +349,12 @@ class ActionTaskContextManagerTest {
                     .hasMessageContaining("Missing contexts for action task");
 
             // (e) Persisted Action lifecycle state follows the continuation task.
-            assertThat(to.hasExecutionStartedEventEmitted()).isTrue();
+            assertThat(to.isExecutionStartedNotified()).isTrue();
         }
     }
 
     @Test
-    void componentListenersFollowActionExecutionAcrossContinuationTasks() throws Exception {
+    void componentReportsKeepTheirIdentityAcrossContinuationTasksAndRestore() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
             ActionTask from = new JavaActionTask("k", new InputEvent(1L), action, 1L);
@@ -356,75 +362,188 @@ class ActionTaskContextManagerTest {
                     new JavaActionTask("k", new InputEvent(1L), action, 1L, from.getTraceContext());
             RecordingComponentListener listener = new RecordingComponentListener();
             AtomicInteger factoryInvocations = new AtomicInteger();
-            Function<ActionTask, List<ComponentExecutionListener>> factory =
+            Function<ActionTask, ExecutionReportingContext> factory =
                     task -> {
                         factoryInvocations.incrementAndGet();
-                        return List.of(listener);
+                        return new ExecutionReportingContext(
+                                task.getTraceContext(), List.of(listener));
                     };
 
             invokeCreateAndSetRunnerContext(mgr, from, factory);
+            ExecutionReportingContext reportingContext =
+                    from.getRunnerContext().getExecutionReportingContext();
             from.getRunnerContext()
-                    .reportExecutionStarted(
-                            ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
+                    .reportExecutionCreated(
+                            "call-1", ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
 
+            mgr.removeContexts(from);
             mgr.transferContexts(from, to, new DurableExecutionManager(null));
             invokeCreateAndSetRunnerContext(mgr, to, factory);
+            assertThat(to.getRunnerContext().getExecutionReportingContext())
+                    .isSameAs(reportingContext);
+            to.getRunnerContext()
+                    .reportExecutionStarted(
+                            "call-1", ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
+
+            ActionTask other = new JavaActionTask("other", new InputEvent(2L), action, 2L);
+            invokeCreateAndSetRunnerContext(
+                    mgr,
+                    other,
+                    task -> new ExecutionReportingContext(task.getTraceContext(), List.of()));
+            mgr.restore("k", to);
+            assertThat(to.getRunnerContext().getExecutionReportingContext())
+                    .isSameAs(reportingContext);
             to.getRunnerContext()
                     .reportExecutionSucceeded(
-                            ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
+                            "call-1", ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
 
-            // The continuation task shares the execution's listener list, so the start/terminal
-            // pair reaches the same listener instance.
             assertThat(factoryInvocations.get()).isOne();
-            assertThat(listener.started).containsExactly("slow-tool");
-            assertThat(listener.succeeded).containsExactly("slow-tool");
+            assertThat(listener.records)
+                    .extracting(TraceRecord::getStatus)
+                    .containsExactly(
+                            TraceRecord.Statuses.CREATED,
+                            TraceRecord.Statuses.STARTED,
+                            TraceRecord.Statuses.SUCCESS);
+            assertThat(listener.records)
+                    .allSatisfy(
+                            record -> {
+                                assertThat(record.getContext().getEntityName())
+                                        .isEqualTo("slow-tool");
+                                assertThat(record.getContext().getExecutionId())
+                                        .isEqualTo(
+                                                listener.records
+                                                        .get(0)
+                                                        .getContext()
+                                                        .getExecutionId())
+                                        .isNotBlank();
+                                assertThat(record.getContext().getParentExecutionId())
+                                        .isEqualTo(from.getTraceContext().getExecutionId());
+                            });
         }
     }
 
     @Test
-    void removingContextsDropsComponentListeners() throws Exception {
+    void componentReportsRemainIsolatedWhenRestoringDifferentActions() throws Exception {
+        try (ActionTaskContextManager mgr = newManager()) {
+            Action action = TestActions.noopAction();
+            ActionTask taskA = new JavaActionTask("a", new InputEvent(1L), action, 1L);
+            ActionTask taskB = new JavaActionTask("b", new InputEvent(2L), action, 2L);
+            List<TraceRecord> records = new ArrayList<>();
+            Function<ActionTask, ExecutionReportingContext> factory =
+                    task ->
+                            new ExecutionReportingContext(
+                                    task.getTraceContext(), List.of(records::add));
+
+            invokeCreateAndSetRunnerContext(mgr, taskA, factory);
+            taskA.getRunnerContext()
+                    .reportExecutionCreated(
+                            "call-1", ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+            invokeCreateAndSetRunnerContext(mgr, taskB, factory);
+            assertThat(taskB.getRunnerContext()).isSameAs(taskA.getRunnerContext());
+            taskB.getRunnerContext()
+                    .reportExecutionStarted(
+                            "call-2", ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+
+            mgr.restore("a", taskA);
+            taskA.getRunnerContext()
+                    .reportExecutionStarted(
+                            "call-1", ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+            taskA.getRunnerContext()
+                    .reportExecutionSucceeded(
+                            "call-1", ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+            mgr.restore("b", taskB);
+            taskB.getRunnerContext()
+                    .reportExecutionSucceeded(
+                            "call-2", ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+
+            assertThat(records).hasSize(5);
+            String executionA = records.get(0).getContext().getExecutionId();
+            String executionB = records.get(1).getContext().getExecutionId();
+            assertThat(executionA).isNotBlank().isNotEqualTo(executionB);
+            assertThat(executionB).isNotBlank();
+            assertThat(List.of(records.get(0), records.get(2), records.get(3)))
+                    .allSatisfy(
+                            record -> {
+                                assertThat(record.getContext().getExecutionId())
+                                        .isEqualTo(executionA);
+                                assertThat(record.getContext().getParentExecutionId())
+                                        .isEqualTo(taskA.getTraceContext().getExecutionId());
+                            });
+            assertThat(List.of(records.get(1), records.get(4)))
+                    .allSatisfy(
+                            record -> {
+                                assertThat(record.getContext().getExecutionId())
+                                        .isEqualTo(executionB);
+                                assertThat(record.getContext().getParentExecutionId())
+                                        .isEqualTo(taskB.getTraceContext().getExecutionId());
+                            });
+        }
+    }
+
+    @Test
+    void removingContextsReplacesListenersWithoutRewritingTheSuppliedIdentity() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             ActionTask task =
                     new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
             List<RecordingComponentListener> created = new ArrayList<>();
-            Function<ActionTask, List<ComponentExecutionListener>> factory =
-                    ignored -> {
+            Function<ActionTask, ExecutionReportingContext> factory =
+                    actionTask -> {
                         RecordingComponentListener listener = new RecordingComponentListener();
                         created.add(listener);
-                        return List.of(listener);
+                        return new ExecutionReportingContext(
+                                actionTask.getTraceContext(), List.of(listener));
                     };
 
             invokeCreateAndSetRunnerContext(mgr, task, factory);
             task.getRunnerContext()
-                    .reportExecutionStarted(ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+                    .reportExecutionStarted(
+                            "call-1", ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
 
             mgr.removeContexts(task);
             invokeCreateAndSetRunnerContext(mgr, task, factory);
             task.getRunnerContext()
                     .reportExecutionSucceeded(
-                            ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+                            "call-1", ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
 
-            // A released contexts record starts a fresh listener list on the next preparation.
+            // A released contexts record starts a fresh reporting context on the next preparation.
             assertThat(created).hasSize(2);
-            assertThat(created.get(0).started).containsExactly("model-a");
-            assertThat(created.get(0).succeeded).isEmpty();
-            assertThat(created.get(1).succeeded).containsExactly("model-a");
+            assertThat(created.get(0).records)
+                    .extracting(TraceRecord::getStatus)
+                    .containsExactly(TraceRecord.Statuses.STARTED);
+            assertThat(created.get(1).records)
+                    .extracting(TraceRecord::getStatus)
+                    .containsExactly(TraceRecord.Statuses.SUCCESS);
+            assertThat(created.get(1).records.get(0).getContext().getExecutionId())
+                    .isEqualTo("call-1")
+                    .isEqualTo(created.get(0).records.get(0).getContext().getExecutionId());
         }
     }
 
     @Test
     void activeExecutionReportsDoNotEnterActionTaskState() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
-            ActionTask task =
-                    new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
+            InputEvent input = new InputEvent(1L);
+            Action action = TestActions.noopAction();
+            TraceContext actionContext =
+                    TraceContext.forAction(
+                            TraceContext.forInputRun("k", "agent"),
+                            action.getName(),
+                            input.getId().toString());
+            ActionTask task = new JavaActionTask("k", input, action, 1L, actionContext);
             invokeCreateAndSetRunnerContext(
-                    mgr, task, ignored -> List.of(new RecordingComponentListener()));
+                    mgr,
+                    task,
+                    actionTask ->
+                            new ExecutionReportingContext(
+                                    actionTask.getTraceContext(),
+                                    List.of(new RecordingComponentListener())));
             task.getRunnerContext()
                     .reportExecutionStarted(
+                            "call-1",
                             ExecutionReporter.EntityTypes.TOOL,
                             "search",
                             Map.of("toolCallId", "call-1"));
-            task.markExecutionStartedEventEmitted();
+            task.markExecutionStartedNotified();
 
             TypeSerializer<ActionTask> serializer =
                     TypeInformation.of(ActionTask.class)
@@ -435,7 +554,7 @@ class ActionTaskContextManagerTest {
                     serializer.deserialize(new DataInputDeserializer(output.getCopyOfBuffer()));
 
             assertThat(restored.getTraceContext()).isEqualTo(task.getTraceContext());
-            assertThat(restored.hasExecutionStartedEventEmitted()).isTrue();
+            assertThat(restored.isExecutionStartedNotified()).isTrue();
             assertThat(restored.getRunnerContext()).isNull();
         }
     }
@@ -572,8 +691,8 @@ class ActionTaskContextManagerTest {
     private static void invokeCreateAndSetRunnerContext(
             ActionTaskContextManager mgr,
             ActionTask task,
-            Function<ActionTask, List<ComponentExecutionListener>> componentListenerFactory) {
-        invokeCreateAndSetRunnerContext(mgr, task, null, componentListenerFactory);
+            Function<ActionTask, ExecutionReportingContext> executionReportingContextFactory) {
+        invokeCreateAndSetRunnerContext(mgr, task, null, executionReportingContextFactory);
     }
 
     @SuppressWarnings("unchecked")
@@ -581,7 +700,7 @@ class ActionTaskContextManagerTest {
             ActionTaskContextManager mgr,
             ActionTask task,
             InteranlBaseLongTermMemory longTermMemory,
-            Function<ActionTask, List<ComponentExecutionListener>> componentListenerFactory) {
+            Function<ActionTask, ExecutionReportingContext> executionReportingContextFactory) {
         AgentPlan plan = newEmptyAgentPlan();
         ResourceCache cache = mock(ResourceCache.class);
         FlinkAgentsMetricGroupImpl metricGroup =
@@ -600,27 +719,17 @@ class ActionTaskContextManagerTest {
                 shortTermMem,
                 /* pythonRunnerContext */ null,
                 longTermMemory,
-                /* subagentScope */ null,
-                componentListenerFactory);
+                /* resourceScope */ null,
+                executionReportingContextFactory);
     }
 
-    /** Records the entity names of the component reports it receives. */
+    /** Collects the complete records received by a consumer. */
     private static final class RecordingComponentListener implements ComponentExecutionListener {
-        private final List<String> started = new ArrayList<>();
-        private final List<String> succeeded = new ArrayList<>();
+        private final List<TraceRecord> records = new ArrayList<>();
 
         @Override
-        public void onComponentExecution(
-                String entityType,
-                String entityName,
-                Map<String, Object> entityMetadata,
-                EventContext eventContext,
-                Event event) {
-            if (ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(event.getType())) {
-                started.add(entityName);
-            } else {
-                succeeded.add(entityName);
-            }
+        public void onExecutionReported(TraceRecord record) {
+            records.add(record);
         }
     }
 

@@ -30,7 +30,11 @@ Build an Agent that analyzes a stream of product reviews.
 
 ### Prepare Agents Execution Environment
 
-Create the agents execution environment, and register the available chat model connections, which can be used by the agents, to the environment.
+Create the agents execution environment and register an Ollama connection as a named
+Resource of type `CHAT_MODEL_CONNECTION`. Registering it on the environment makes it available
+to the Agents in that environment. See
+[Registering and Referencing Resources]({{< ref "docs/development/create-agent/overview#registering-and-referencing-resources" >}})
+for the shared registration and access model.
 
 {{< tabs "Prepare Agents Execution Environment" >}}
 
@@ -69,7 +73,14 @@ agentsEnv.addResource(
 
 ### Create the Agents
 
-Below is the example code for the `ReviewAnalysisAgent`, which is used to analyze the product reviews and generate a satisfaction score and potential reasons for dissatisfaction. It demonstrates how to define the prompt, tool, chat model, and action for the agent. Also, it shows how to process the chat response and send the output event. For more details, please refer to the [Agent]({{< ref "docs/development/create-agent/overview" >}}) documentation.
+`ReviewAnalysisAgent` analyzes product reviews and produces a satisfaction score and reasons
+for dissatisfaction. It declares prompt, tool, and chat model Resources, along with two Actions.
+The chat model setup references the environment's connection by name: `ollama_server` in Python
+or `ollamaChatModelConnection` in Java.
+
+The input Action sends a `ChatRequestEvent` naming the model Resource (`review_analysis_model`
+or `reviewAnalysisModel`). The [built-in chat Action]({{< ref "docs/development/calling-llms/chat#chat-events" >}})
+gets and calls that Resource, then sends a response Event for the output Action to handle.
 
 {{< tabs "Create the Agents" >}}
 

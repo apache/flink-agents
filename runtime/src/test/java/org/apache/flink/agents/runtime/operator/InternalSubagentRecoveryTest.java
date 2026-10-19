@@ -31,7 +31,7 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
-import org.apache.flink.agents.runtime.subagent.InternalSubagentCallEvent;
+import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
@@ -147,6 +147,27 @@ public class InternalSubagentRecoveryTest {
         }
     }
 
+    public static class FailingChildAgent extends Agent {
+        public FailingChildAgent() throws Exception {
+            addAction(
+                    new String[] {InputEvent.EVENT_TYPE},
+                    FailingChildAgent.class.getMethod("fail", Event.class, RunnerContext.class));
+        }
+
+        public static void fail(Event event, RunnerContext ctx) {
+            CHILD_EXECUTIONS.incrementAndGet();
+            throw new IllegalArgumentException("child rejected");
+        }
+    }
+
+    public static void callFailingChild(Event event, RunnerContext ctx) throws Exception {
+        SubagentSetup setup = (SubagentSetup) ctx.getResource(CHILD_SCOPE, ResourceType.AGENT);
+        SubagentResult result = setup.submit(ctx, "p").await();
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getErrorMessage()).contains("child rejected");
+        ctx.sendEvent(new OutputEvent("failed"));
+    }
+
     public static class ChainedChildAgent extends Agent {
 
         public ChainedChildAgent() throws Exception {
@@ -257,7 +278,13 @@ public class InternalSubagentRecoveryTest {
         assertThat(CHILD_EXECUTIONS.get()).isEqualTo(1);
         Map<String, ActionState> childStates = childActionStates(store1, key);
         assertThat(childStates).hasSize(1);
-        assertThat(childStates.values().iterator().next().getSubagentResultEvents()).hasSize(1);
+        assertThat(childStates.values().iterator().next().getOutputEvents())
+                .filteredOn(
+                        event ->
+                                event instanceof SubgraphEvent
+                                        && ((SubgraphEvent) event).getDelegate()
+                                                instanceof OutputEvent)
+                .hasSize(1);
 
         // Stage 2: keep only the child's action state, so the parent action replays its body and
         // re-sends the call event.
@@ -343,9 +370,7 @@ public class InternalSubagentRecoveryTest {
         // that state deterministically rather than depending on the timing.
         ActionState rootState = rootCallerActionState(checkpoint.store, 1L);
         rootState.getOutputEvents().clear();
-        rootState.addEvent(
-                InternalSubagentCallEvent.bootstrap(
-                        new InputEvent("p"), CHILD_SCOPE, "s-replay#c-replay", "s-replay"));
+        rootState.addEvent(new SubgraphEvent("completed-child", new InputEvent("p"), true));
         rootState.addEvent(new OutputEvent(List.of("child:p")));
         rootState.markCompleted();
 
@@ -357,6 +382,31 @@ public class InternalSubagentRecoveryTest {
             restored.finish();
             assertThat(CHILD_EXECUTIONS.get()).isEqualTo(1);
             restored.assertSingleOutput(List.of("child:p"));
+        }
+    }
+
+    @Test
+    @Timeout(60)
+    @EnabledForJreRange(min = JRE.JAVA_21)
+    void restoresFailedChildBeforeCallerConsumesItsResult() throws Exception {
+        Agent agent = new Agent();
+        agent.addResource(CHILD_SCOPE, ResourceType.AGENT, new FailingChildAgent());
+        agent.addAction(
+                new String[] {InputEvent.EVENT_TYPE},
+                InternalSubagentRecoveryTest.class.getMethod(
+                        "callFailingChild", Event.class, RunnerContext.class));
+        AgentPlan agentPlan = new AgentPlan(agent);
+        Checkpoint checkpoint;
+        try (Attempt original = Attempt.start(agentPlan, true)) {
+            original.queue("fail", "callFailingChild");
+            original.nextMail();
+            original.queue("callFailingChild");
+            checkpoint = original.snapshot(1L);
+        }
+        try (Attempt restored = Attempt.restore(agentPlan, checkpoint)) {
+            restored.finish();
+            assertThat(CHILD_EXECUTIONS.get()).isEqualTo(1);
+            restored.assertSingleOutput("failed");
         }
     }
 
@@ -476,20 +526,16 @@ public class InternalSubagentRecoveryTest {
 
     @Test
     void envelopeSurvivesActionStateSerde() {
-        InternalSubagentCallEvent envelope =
-                InternalSubagentCallEvent.bootstrap(
-                        new InputEvent("p"), CHILD_SCOPE, "s-1#c-1", "s-1");
+        SubgraphEvent envelope = new SubgraphEvent("child-call", new InputEvent("p"), true);
 
         ActionState recovered =
                 ActionStateSerde.deserialize(ActionStateSerde.serialize(new ActionState(envelope)));
 
-        assertThat(recovered.getTaskEvent()).isInstanceOf(InternalSubagentCallEvent.class);
-        InternalSubagentCallEvent recoveredEnvelope =
-                (InternalSubagentCallEvent) recovered.getTaskEvent();
-        assertThat(recoveredEnvelope.getSessionId()).isEqualTo("s-1");
-        assertThat(recoveredEnvelope.getCallId()).isEqualTo("s-1#c-1");
-        assertThat(recoveredEnvelope.getTargetScope()).isEqualTo(CHILD_SCOPE);
-        assertThat(recoveredEnvelope.getDelegateEventType()).isEqualTo(InputEvent.EVENT_TYPE);
+        assertThat(recovered.getTaskEvent()).isInstanceOf(SubgraphEvent.class);
+        SubgraphEvent recoveredEnvelope = (SubgraphEvent) recovered.getTaskEvent();
+        assertThat(recoveredEnvelope.getInvocationId()).isEqualTo("child-call");
+        assertThat(recoveredEnvelope.isBootstrap()).isTrue();
+        assertThat(recoveredEnvelope.getDelegate().getType()).isEqualTo(InputEvent.EVENT_TYPE);
         assertThat(recoveredEnvelope.getDelegate().getAttributes())
                 .isEqualTo(envelope.getDelegate().getAttributes());
     }
@@ -497,10 +543,8 @@ public class InternalSubagentRecoveryTest {
     @Test
     void distinctCallsDoNotShareAnActionState() {
         InputEvent delegate = new InputEvent("p");
-        InternalSubagentCallEvent first =
-                InternalSubagentCallEvent.bootstrap(delegate, CHILD_SCOPE, "s-1#c-1", "s-1");
-        InternalSubagentCallEvent second =
-                InternalSubagentCallEvent.bootstrap(delegate, CHILD_SCOPE, "s-1#c-2", "s-1");
+        SubgraphEvent first = new SubgraphEvent("first-call", delegate, true);
+        SubgraphEvent second = new SubgraphEvent("second-call", delegate, true);
 
         assertThat(first.getAttributes()).isNotEqualTo(second.getAttributes());
     }
@@ -587,7 +631,7 @@ public class InternalSubagentRecoveryTest {
             InMemoryActionStateStore store, long key) {
         Map<String, ActionState> states = store.getKeyedActionStates().getOrDefault(key, Map.of());
         return states.entrySet().stream()
-                .filter(e -> e.getValue().getTaskEvent() instanceof InternalSubagentCallEvent)
+                .filter(e -> e.getValue().getTaskEvent() instanceof SubgraphEvent)
                 .collect(
                         Collectors.toMap(
                                 Map.Entry::getKey,
@@ -599,7 +643,7 @@ public class InternalSubagentRecoveryTest {
     /** The action state whose triggering event is not a sub-agent envelope: the root caller's. */
     private static ActionState rootCallerActionState(InMemoryActionStateStore store, long key) {
         return store.getKeyedActionStates().getOrDefault(key, Map.of()).values().stream()
-                .filter(state -> !(state.getTaskEvent() instanceof InternalSubagentCallEvent))
+                .filter(state -> !(state.getTaskEvent() instanceof SubgraphEvent))
                 .findFirst()
                 .orElseThrow(
                         () ->

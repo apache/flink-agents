@@ -15,9 +15,6 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from flink_agents.api.trace.execution_lifecycle_events import (
-    ExecutionLifecycleEvents,
-)
 from flink_agents.api.trace.execution_reporter import (
     ExecutionEntityTypes,
     ExecutionProblemCategories,
@@ -33,7 +30,6 @@ from flink_agents.api.trace.tool_execution_metadata_keys import (
 
 __all__ = [
     "ExecutionEntityTypes",
-    "ExecutionLifecycleEvents",
     "ExecutionProblemCategories",
     "ExecutionReporter",
     "ExecutionReporters",

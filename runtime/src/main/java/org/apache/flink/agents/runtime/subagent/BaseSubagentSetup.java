@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener;
 import org.apache.flink.agents.runtime.operator.ActionTask;
+import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 
 import javax.annotation.Nullable;
 
@@ -38,7 +39,7 @@ import java.util.Map;
  */
 public abstract class BaseSubagentSetup extends SubagentSetup implements TaskLifecycleListener {
 
-    private final Map<ActionTask, SubagentIdAllocator> perTaskAllocators = new HashMap<>();
+    private final Map<ActionTask, DeterministicIdAllocator> perTaskAllocators = new HashMap<>();
     private final Map<ActionTask, PendingSubagentCallRegistry> perTaskRegistries = new HashMap<>();
 
     /** The task whose execution is currently issuing calls. */
@@ -59,7 +60,7 @@ public abstract class BaseSubagentSetup extends SubagentSetup implements TaskLif
 
     @Override
     public void onActionTransferred(ActionTask from, ActionTask to) {
-        SubagentIdAllocator allocator = perTaskAllocators.remove(from);
+        DeterministicIdAllocator allocator = perTaskAllocators.remove(from);
         if (allocator != null) {
             perTaskAllocators.put(to, allocator);
         }
@@ -135,7 +136,7 @@ public abstract class BaseSubagentSetup extends SubagentSetup implements TaskLif
 
     @Override
     public SubagentFuture submit(RunnerContext ctx, Object prompt) throws Exception {
-        SubagentIdAllocator allocator = currentAllocator();
+        DeterministicIdAllocator allocator = currentAllocator();
         String sessionId = allocator.nextSessionId();
         return submit(ctx, prompt, sessionId, allocator.nextCallId(sessionId));
     }
@@ -144,7 +145,7 @@ public abstract class BaseSubagentSetup extends SubagentSetup implements TaskLif
      * The allocator of the currently executing task, scoped to one action execution so ordinals
      * restart for the next action. Failover replays hand out the same ids.
      */
-    protected final SubagentIdAllocator currentAllocator() {
+    protected final DeterministicIdAllocator currentAllocator() {
         if (currentTask == null) {
             throw new IllegalStateException(
                     "No prepared action task to assign sub-agent ids from.");
@@ -153,7 +154,7 @@ public abstract class BaseSubagentSetup extends SubagentSetup implements TaskLif
         return perTaskAllocators.computeIfAbsent(
                 task,
                 t ->
-                        new SubagentIdAllocator(
+                        new DeterministicIdAllocator(
                                 t.getKey(),
                                 t.getSequenceNumber(),
                                 t.getAction().getName(),

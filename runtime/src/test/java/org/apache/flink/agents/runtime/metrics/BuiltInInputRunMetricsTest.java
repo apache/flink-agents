@@ -20,7 +20,7 @@ package org.apache.flink.agents.runtime.metrics;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
@@ -51,7 +51,7 @@ class BuiltInInputRunMetricsTest {
     void completedRunIsSuccessfulAndLatencyIncludesQueueTime() {
         setTimeMillis(100L);
         Event inputEvent = new InputEvent("input");
-        ExecutionTraceContext inputRun = ExecutionTraceContext.forInputRun("key", "agent");
+        TraceContext inputRun = TraceContext.forInputRun("key", "agent");
 
         metrics.inputEventReceived(inputEvent);
         setTimeMillis(130L);
@@ -88,7 +88,7 @@ class BuiltInInputRunMetricsTest {
     @Test
     void restoredRunRebuildsActiveGaugeWithoutRecordingHistoricalSamples() {
         setTimeMillis(300L);
-        ExecutionTraceContext inputRun = ExecutionTraceContext.forInputRun("key", "agent");
+        TraceContext inputRun = TraceContext.forInputRun("key", "agent");
 
         metrics.restoreActiveInputRuns(1L);
         metrics.identifyRestoredActiveInputRun(inputRun.getInputRunId());
@@ -104,9 +104,26 @@ class BuiltInInputRunMetricsTest {
     }
 
     @Test
+    void restoredRunIdentifiedBeforeCountIsNotCountedTwice() {
+        setTimeMillis(300L);
+        TraceContext inputRun = TraceContext.forInputRun("key", "agent");
+
+        // The operator restores action tasks, identifying their runs, before it counts the
+        // restored processing keys.
+        metrics.identifyRestoredActiveInputRun(inputRun.getInputRunId());
+        metrics.restoreActiveInputRuns(1L);
+        assertThat(gauge(BuiltInInputRunMetrics.NUM_ACTIVE_INPUT_RUNS)).isEqualTo(1L);
+
+        setTimeMillis(375L);
+        metrics.inputRunCompleted(inputRun.getInputRunId());
+
+        assertThat(gauge(BuiltInInputRunMetrics.NUM_ACTIVE_INPUT_RUNS)).isZero();
+    }
+
+    @Test
     void restoredPendingInputRecordsLocallyObservedOutcomeAndProcessingLatency() {
         Event inputEvent = new InputEvent("restored-pending");
-        ExecutionTraceContext inputRun = ExecutionTraceContext.forInputRun("key", "agent");
+        TraceContext inputRun = TraceContext.forInputRun("key", "agent");
 
         metrics.restorePendingInputEvents(1L);
         metrics.pendingInputEventDequeued();
@@ -127,7 +144,7 @@ class BuiltInInputRunMetricsTest {
 
     @Test
     void duplicateTerminalForIdentifiedRestoredRunDoesNotConsumeAnonymousRun() {
-        ExecutionTraceContext identifiedRun = ExecutionTraceContext.forInputRun("key-1", "agent");
+        TraceContext identifiedRun = TraceContext.forInputRun("key-1", "agent");
 
         metrics.restoreActiveInputRuns(2L);
         metrics.identifyRestoredActiveInputRun(identifiedRun.getInputRunId());
@@ -144,14 +161,14 @@ class BuiltInInputRunMetricsTest {
     void terminalFailureIsAttributedToMatchingRunForSameKey() {
         setTimeMillis(100L);
         Event firstInput = new InputEvent("first");
-        ExecutionTraceContext firstRun = ExecutionTraceContext.forInputRun("key", "agent");
+        TraceContext firstRun = TraceContext.forInputRun("key", "agent");
         metrics.inputEventReceived(firstInput);
         metrics.inputRunStarted(firstInput, firstRun);
         assertThat(gauge(BuiltInInputRunMetrics.NUM_ACTIVE_INPUT_RUNS)).isEqualTo(1L);
 
         setTimeMillis(110L);
         Event secondInput = new InputEvent("second");
-        ExecutionTraceContext secondRun = ExecutionTraceContext.forInputRun("key", "agent");
+        TraceContext secondRun = TraceContext.forInputRun("key", "agent");
         metrics.inputEventReceived(secondInput);
         metrics.inputRunStarted(secondInput, secondRun);
         assertThat(gauge(BuiltInInputRunMetrics.NUM_ACTIVE_INPUT_RUNS)).isEqualTo(2L);
@@ -186,7 +203,7 @@ class BuiltInInputRunMetricsTest {
     @Test
     void duplicateTerminalNotificationDoesNotUnderflowActiveGauge() {
         Event inputEvent = new InputEvent("input");
-        ExecutionTraceContext inputRun = ExecutionTraceContext.forInputRun("key", "agent");
+        TraceContext inputRun = TraceContext.forInputRun("key", "agent");
         metrics.inputEventReceived(inputEvent);
         metrics.inputRunStarted(inputEvent, inputRun);
 

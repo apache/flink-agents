@@ -19,7 +19,7 @@
 package org.apache.flink.agents.runtime.metrics;
 
 import org.apache.flink.agents.api.trace.ExecutionReporter;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.metrics.Histogram;
 
 /** Records framework-observed sub-agent delegation outcomes and latency by registered name. */
@@ -37,7 +37,7 @@ final class SubagentExecutionMetricRecorder implements ExecutionMetricRecorder {
     @Override
     public void record(
             FlinkAgentsMetricGroupImpl actionMetricGroup,
-            ExecutionTraceContext traceContext,
+            TraceContext traceContext,
             Outcome outcome,
             Long latencyMs) {
         String entityName = traceContext.getEntityName();

@@ -120,11 +120,7 @@ public class ToolCallAction {
 
             Tool tool = null;
             SubagentSetup agent = null;
-            Exception preparationError =
-                    arguments == null
-                            ? new IllegalArgumentException(
-                                    "INVALID_ARGUMENT /: type (expected object)")
-                            : null;
+            Exception preparationError = null;
             // The reserved _subagent_ prefix separates the two namespaces: tool
             // registration rejects the prefix, so a prefixed callable name can only
             // address a sub-agent. Matched once here and carried down, because resolving
@@ -163,16 +159,17 @@ public class ToolCallAction {
             // agent name, so the runtime attributes its outcome and latency to that sub-agent
             // instead of bucketing the reserved callable name as an unknown tool. An unresolved
             // _subagent_ name keeps the tool scope and lands in tool=unknown.
-            if (agent != null) {
-                ExecutionReporters.created(
-                        ctx,
-                        ExecutionReporter.EntityTypes.SUBAGENT,
-                        name.substring(SubagentSetup.CALLABLE_NAME_PREFIX.length()),
-                        entityMetadata);
-            } else {
-                ExecutionReporters.created(
-                        ctx, ExecutionReporter.EntityTypes.TOOL, name, entityMetadata);
-            }
+            String reportEntityType =
+                    agent != null
+                            ? ExecutionReporter.EntityTypes.SUBAGENT
+                            : ExecutionReporter.EntityTypes.TOOL;
+            String reportEntityName =
+                    agent != null
+                            ? name.substring(SubagentSetup.CALLABLE_NAME_PREFIX.length())
+                            : name;
+            String traceExecutionId =
+                    ExecutionReporters.created(
+                            ctx, reportEntityType, reportEntityName, entityMetadata);
             boolean unresolved = tool == null && agent == null;
             if (unresolved || preparationError != null) {
                 Exception failure =
@@ -193,8 +190,9 @@ public class ToolCallAction {
                         responses);
                 ExecutionReporters.failed(
                         ctx,
-                        ExecutionReporter.EntityTypes.TOOL,
-                        name,
+                        traceExecutionId,
+                        reportEntityType,
+                        reportEntityName,
                         entityMetadata,
                         failure,
                         ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
@@ -228,7 +226,14 @@ public class ToolCallAction {
                     };
             executions.add(
                     new ToolCallExecution(
-                            id, name, callable, entityMetadata, occurrence, agent, callArguments));
+                            id,
+                            traceExecutionId,
+                            name,
+                            callable,
+                            entityMetadata,
+                            occurrence,
+                            agent,
+                            callArguments));
         }
         return executions;
     }
@@ -376,6 +381,7 @@ public class ToolCallAction {
         if (startedAt != null && (outcome == null || !startedAt.isAfter(resultObservedAt))) {
             ExecutionReporters.startedAt(
                     ctx,
+                    execution.traceExecutionId,
                     ExecutionReporter.EntityTypes.TOOL,
                     execution.name,
                     execution.entityMetadata,
@@ -398,6 +404,7 @@ public class ToolCallAction {
         if (failure == null) {
             ExecutionReporters.succeededAt(
                     ctx,
+                    execution.traceExecutionId,
                     ExecutionReporter.EntityTypes.TOOL,
                     execution.name,
                     execution.entityMetadata,
@@ -405,6 +412,7 @@ public class ToolCallAction {
         } else {
             ExecutionReporters.failedAt(
                     ctx,
+                    execution.traceExecutionId,
                     ExecutionReporter.EntityTypes.TOOL,
                     execution.name,
                     execution.entityMetadata,
@@ -566,6 +574,7 @@ public class ToolCallAction {
         execution.occurrence.markFinished();
         ExecutionReporters.failedAt(
                 ctx,
+                execution.traceExecutionId,
                 ExecutionReporter.EntityTypes.SUBAGENT,
                 subagentReportName(execution),
                 execution.entityMetadata,
@@ -593,6 +602,7 @@ public class ToolCallAction {
             execution.occurrence.markFinished();
             ExecutionReporters.succeededAt(
                     ctx,
+                    execution.traceExecutionId,
                     ExecutionReporter.EntityTypes.SUBAGENT,
                     subagentReportName(execution),
                     execution.entityMetadata,
@@ -611,6 +621,7 @@ public class ToolCallAction {
             execution.occurrence.markFinished();
             ExecutionReporters.failedAt(
                     ctx,
+                    execution.traceExecutionId,
                     ExecutionReporter.EntityTypes.SUBAGENT,
                     subagentReportName(execution),
                     execution.entityMetadata,
@@ -630,6 +641,7 @@ public class ToolCallAction {
         if (startedAt != null) {
             ExecutionReporters.startedAt(
                     ctx,
+                    execution.traceExecutionId,
                     ExecutionReporter.EntityTypes.SUBAGENT,
                     subagentReportName(execution),
                     execution.entityMetadata,
@@ -700,6 +712,7 @@ public class ToolCallAction {
 
     private static final class ToolCallExecution {
         private final String id;
+        private final String traceExecutionId;
         private final String name;
         private final DurableCallable<ToolResponse> callable;
         private final Map<String, Object> entityMetadata;
@@ -709,6 +722,7 @@ public class ToolCallAction {
 
         private ToolCallExecution(
                 String id,
+                String traceExecutionId,
                 String name,
                 DurableCallable<ToolResponse> callable,
                 Map<String, Object> entityMetadata,
@@ -716,6 +730,7 @@ public class ToolCallAction {
                 SubagentSetup agent,
                 Map<String, Object> agentArguments) {
             this.id = id;
+            this.traceExecutionId = traceExecutionId;
             this.name = name;
             this.callable = callable;
             this.entityMetadata = entityMetadata;

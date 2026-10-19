@@ -87,6 +87,52 @@ class _InvocationFailure(Exception):
     """Textual provider failure recovered from durable execution."""
 
 
+def _report_successful_response(
+    ctx: "RunnerContext",
+    execution_id: str,
+    model: str,
+    llm_metadata: dict,
+    chat_model: "BaseChatModelSetup",
+    response: "ChatResult",
+    request_metric_group: "MetricGroup | None",
+) -> None:
+    """Report a successful chat response to execution observers and token metrics."""
+    prompt_tokens = response.usage.prompt_tokens if response.usage else None
+    completion_tokens = response.usage.completion_tokens if response.usage else None
+    usage = {
+        name: value
+        for name, value in (
+            ("promptTokens", prompt_tokens),
+            ("completionTokens", completion_tokens),
+        )
+        if value is not None
+    }
+    metadata = dict(llm_metadata)
+    if usage:
+        metadata[LLMExecutionMetadataKeys.USAGE] = usage
+    ExecutionReporters.succeeded(
+        ctx,
+        execution_id,
+        ExecutionEntityTypes.LLM,
+        model,
+        metadata,
+    )
+
+    model_name = response.model
+    if (
+        request_metric_group is not None
+        and model_name is not None
+        and prompt_tokens is not None
+        and completion_tokens is not None
+    ):
+        chat_model._record_token_metrics(
+            model_name,
+            prompt_tokens,
+            completion_tokens,
+            request_metric_group,
+        )
+
+
 def _require_invocation_response(
     response: ChatResult | None, error: str | None
 ) -> ChatResult:
@@ -427,12 +473,15 @@ def _reject_incomplete_response(response: ChatResult) -> None:
 def _generate_structured_output_with_report(
     ctx: RunnerContext, response: ChatResult, output_schema: OutputSchema
 ) -> Any:
-    ExecutionReporters.started(ctx, ExecutionEntityTypes.PARSER, STRUCTURED_OUTPUT)
+    execution_id = ExecutionReporters.started(
+        ctx, ExecutionEntityTypes.PARSER, STRUCTURED_OUTPUT
+    )
     try:
         structured_response = _generate_structured_output(response, output_schema)
     except Exception as e:
         ExecutionReporters.failed(
             ctx,
+            execution_id,
             ExecutionEntityTypes.PARSER,
             STRUCTURED_OUTPUT,
             {},
@@ -442,7 +491,7 @@ def _generate_structured_output_with_report(
         raise
     else:
         ExecutionReporters.succeeded(
-            ctx, ExecutionEntityTypes.PARSER, STRUCTURED_OUTPUT
+            ctx, execution_id, ExecutionEntityTypes.PARSER, STRUCTURED_OUTPUT
         )
         return structured_response
 
@@ -466,6 +515,7 @@ def _require_model_response(response: ChatResult | None) -> ChatResult:
 
 def _accept_model_response(
     ctx: RunnerContext,
+    execution_id: str,
     chat_model: "BaseChatModelSetup",
     model: str,
     llm_metadata: Dict,
@@ -484,6 +534,7 @@ def _accept_model_response(
     except Exception as model_error:
         ExecutionReporters.failed(
             ctx,
+            execution_id,
             ExecutionEntityTypes.LLM,
             model,
             llm_metadata,
@@ -491,21 +542,15 @@ def _accept_model_response(
             ExecutionProblemCategories.MODEL_CALL_FAILED,
         )
         raise
-    ExecutionReporters.succeeded(ctx, ExecutionEntityTypes.LLM, model, llm_metadata)
-
-    if (
-        request_metric_group is not None
-        and response.model is not None
-        and response.usage is not None
-        and response.usage.prompt_tokens is not None
-        and response.usage.completion_tokens is not None
-    ):
-        chat_model._record_token_metrics(
-            response.model,
-            response.usage.prompt_tokens,
-            response.usage.completion_tokens,
-            request_metric_group,
-        )
+    _report_successful_response(
+        ctx,
+        execution_id,
+        model,
+        llm_metadata,
+        chat_model,
+        response,
+        request_metric_group,
+    )
     # A truncated response consumed its full token budget, so the token metrics
     # above are recorded before this rejects and abandons the response.
     _reject_incomplete_response(response)
@@ -613,7 +658,7 @@ async def chat(
 
     try:
         for attempt in range(num_retries + 1):
-            ExecutionReporters.started(
+            execution_id = ExecutionReporters.started(
                 ctx, ExecutionEntityTypes.LLM, model, llm_metadata
             )
             # Persistence/recovery failures must escape the request-failure boundary,
@@ -629,6 +674,7 @@ async def chat(
             try:
                 response = _accept_model_response(
                     ctx,
+                    execution_id,
                     chat_model,
                     model,
                     llm_metadata,
@@ -650,7 +696,7 @@ async def chat(
                 break
 
             if finalize:
-                ExecutionReporters.started(
+                final_execution_id = ExecutionReporters.started(
                     ctx, ExecutionEntityTypes.LLM, model, llm_metadata
                 )
                 structured, failure = await _durable_invoke(
@@ -664,6 +710,7 @@ async def chat(
                 try:
                     structured = _accept_model_response(
                         ctx,
+                        final_execution_id,
                         chat_model,
                         model,
                         llm_metadata,

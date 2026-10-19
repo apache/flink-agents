@@ -17,24 +17,36 @@
  */
 package org.apache.flink.agents.integrations.chatmodels.common;
 
+import com.fasterxml.classmate.ResolvedType;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
+import com.github.victools.jsonschema.generator.CustomDefinition;
 import com.github.victools.jsonschema.generator.FieldScope;
 import com.github.victools.jsonschema.generator.Option;
 import com.github.victools.jsonschema.generator.OptionPreset;
+import com.github.victools.jsonschema.generator.SchemaGenerationContext;
 import com.github.victools.jsonschema.generator.SchemaGenerator;
 import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
+import com.github.victools.jsonschema.generator.SchemaKeyword;
 import com.github.victools.jsonschema.generator.SchemaVersion;
 import com.github.victools.jsonschema.generator.impl.PropertySortUtils;
 import com.github.victools.jsonschema.module.jackson.JacksonModule;
 import com.github.victools.jsonschema.module.jackson.JacksonOption;
 
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 
 /** Derives the JSON Schema that chat model connections send as a native output schema. */
 public final class PojoJsonSchemaGenerator {
+
+    private static final ObjectMapper ENUM_VALUE_MAPPER = new ObjectMapper();
 
     private PojoJsonSchemaGenerator() {}
 
@@ -56,12 +68,17 @@ public final class PojoJsonSchemaGenerator {
     //     nullable there, so the schema still admits null for it.
     //   - The Jackson module names properties the way an ObjectMapper reads them, honoring
     //     @JsonProperty renames and dropping @JsonIgnore fields, which the required check would
-    //     otherwise mark required. It lists enum constants mapped by @JsonProperty or by a
-    //     @JsonValue method under those mapped values. A property or enum constant stated under
-    //     any other name makes a response that satisfies the schema fail to deserialize. An enum
-    //     annotating only some constants falls back to Java names for all of them, so its
-    //     annotated constants do not read back. RESPECT_JSONPROPERTY_REQUIRED stays off, so
+    //     otherwise mark required. A property stated under any other name makes a response that
+    //     satisfies the schema fail to deserialize. RESPECT_JSONPROPERTY_REQUIRED stays off, so
     //     @JsonProperty(required = true) does not widen the required set configured here.
+    //   - Enums get their own definition, registered before the Jackson module so it takes
+    //     precedence over the module's. It lists each constant under the value an ObjectMapper
+    //     writes for it, typed as that value. The module's @JsonProperty flattening applies only
+    //     when every constant carries @JsonProperty, so in a partly annotated enum it lists the
+    //     renamed constants by Java names that fail to deserialize. Its @JsonValue flattening
+    //     types numeric values as strings, a schema no value satisfies. An enum without
+    //     constants, one whose values cannot be written, or one written as objects or arrays
+    //     (such as @JsonFormat(shape = OBJECT)) falls back to the existing enum handling.
 
     /**
      * Generates the JSON Schema for {@code type}.
@@ -138,6 +155,8 @@ public final class PojoJsonSchemaGenerator {
         for (Option option : options) {
             builder.with(option);
         }
+        builder.forTypesInGeneral()
+                .withCustomDefinitionProvider(PojoJsonSchemaGenerator::enumDefinition);
         builder.with(
                 new JacksonModule(
                         JacksonOption.FLATTENED_ENUMS_FROM_JSONPROPERTY,
@@ -146,5 +165,64 @@ public final class PojoJsonSchemaGenerator {
                 .withPropertySorter(PropertySortUtils.SORT_PROPERTIES_FIELDS_BEFORE_METHODS);
         builder.forFields().withRequiredCheck(requiredCheck);
         return builder;
+    }
+
+    private static CustomDefinition enumDefinition(
+            ResolvedType javaType, SchemaGenerationContext context) {
+        Class<?> enumType = javaType.getErasedType();
+        if (!enumType.isEnum()) {
+            return null;
+        }
+        Object[] constants = enumType.getEnumConstants();
+        if (constants.length == 0) {
+            return null;
+        }
+        ArrayNode values = context.getGeneratorConfig().createArrayNode();
+        Set<String> types = new LinkedHashSet<>();
+        for (Object constant : constants) {
+            JsonNode value;
+            try {
+                value = ENUM_VALUE_MAPPER.valueToTree(constant);
+            } catch (IllegalArgumentException e) {
+                return null;
+            }
+            if (value.isContainerNode()) {
+                // Handle only scalar values here. Object and array values fall back to the
+                // existing enum handling; reading them back may require a @JsonCreator.
+                return null;
+            }
+            if ((value.isFloat() || value.isDouble()) && !Double.isFinite(value.doubleValue())) {
+                // JSON has no non-finite numbers; Jackson writes these as strings such as "NaN".
+                value = TextNode.valueOf(value.asText());
+            }
+            values.add(value);
+            types.add(jsonType(value, context));
+        }
+        ObjectNode definition = context.getGeneratorConfig().createObjectNode();
+        if (types.size() == 1) {
+            definition.put(context.getKeyword(SchemaKeyword.TAG_TYPE), types.iterator().next());
+        } else {
+            ArrayNode typeArray = definition.putArray(context.getKeyword(SchemaKeyword.TAG_TYPE));
+            types.forEach(typeArray::add);
+        }
+        if (values.size() == 1) {
+            definition.set(context.getKeyword(SchemaKeyword.TAG_CONST), values.get(0));
+        } else {
+            definition.set(context.getKeyword(SchemaKeyword.TAG_ENUM), values);
+        }
+        return new CustomDefinition(definition);
+    }
+
+    private static String jsonType(JsonNode value, SchemaGenerationContext context) {
+        if (value.isIntegralNumber()) {
+            return context.getKeyword(SchemaKeyword.TAG_TYPE_INTEGER);
+        } else if (value.isNumber()) {
+            return context.getKeyword(SchemaKeyword.TAG_TYPE_NUMBER);
+        } else if (value.isBoolean()) {
+            return context.getKeyword(SchemaKeyword.TAG_TYPE_BOOLEAN);
+        } else if (value.isNull()) {
+            return context.getKeyword(SchemaKeyword.TAG_TYPE_NULL);
+        }
+        return context.getKeyword(SchemaKeyword.TAG_TYPE_STRING);
     }
 }

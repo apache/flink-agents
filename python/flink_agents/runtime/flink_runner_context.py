@@ -29,8 +29,12 @@ from typing import Any, Callable, Dict, Literal
 import cloudpickle
 from typing_extensions import override
 
+from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.chat_message import ChatMessage
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.configuration import ReadableConfiguration
 from flink_agents.api.core_options import AgentExecutionOptions
+from flink_agents.api.events.chat_event import ChatRequestEvent
 from flink_agents.api.events.event import Event
 from flink_agents.api.memory.long_term_memory import (
     BaseLongTermMemory,
@@ -46,6 +50,7 @@ from flink_agents.api.runner_context import (
     RunnerContext,
 )
 from flink_agents.api.trace import ExecutionReporter
+from flink_agents.runtime.chat_future import _ChatFuture
 from flink_agents.runtime.close_utils import failure_of, first_or_logged
 from flink_agents.runtime.durable_exception import (
     deserialize_durable_exception,
@@ -696,23 +701,6 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         event : Event
             The event to be processed by the agent system.
         """
-        preset = [
-            f"{name}={value}"
-            for name, value in (
-                ("upstream_event_id", event.upstream_event_id),
-                ("upstream_action_name", event.upstream_action_name),
-            )
-            if value is not None
-        ]
-        if preset:
-            # Java's sendEvent checks this too; checking here names the Python fields.
-            err_msg = (
-                f"Event '{event.get_type()}' ({event.id}) already carries "
-                f"{' and '.join(preset)}. The runtime sets lineage when an Action "
-                "emits an Event: emit a new Event rather than one received from "
-                "another Action, and keep user metadata in attributes."
-            )
-            raise ValueError(err_msg)
         store_event_attachments(event, self)
         event_json = event.model_dump_json()
         try:
@@ -997,11 +985,13 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     @override
     def report_execution_created(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None = None,
     ) -> None:
         self._j_runner_context.reportExecutionCreatedJson(
+            execution_id,
             entity_type,
             entity_name,
             self._entity_metadata_json(entity_metadata),
@@ -1010,11 +1000,13 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     @override
     def report_execution_started(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None = None,
     ) -> None:
         self._j_runner_context.reportExecutionStartedJson(
+            execution_id,
             entity_type,
             entity_name,
             self._entity_metadata_json(entity_metadata),
@@ -1023,12 +1015,14 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     @override
     def report_execution_started_at(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None,
         timestamp: str,
     ) -> None:
         self._j_runner_context.reportExecutionStartedAtJson(
+            execution_id,
             entity_type,
             entity_name,
             self._entity_metadata_json(entity_metadata),
@@ -1038,11 +1032,13 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     @override
     def report_execution_succeeded(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None = None,
     ) -> None:
         self._j_runner_context.reportExecutionSucceededJson(
+            execution_id,
             entity_type,
             entity_name,
             self._entity_metadata_json(entity_metadata),
@@ -1051,12 +1047,14 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     @override
     def report_execution_succeeded_at(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None,
         timestamp: str,
     ) -> None:
         self._j_runner_context.reportExecutionSucceededAtJson(
+            execution_id,
             entity_type,
             entity_name,
             self._entity_metadata_json(entity_metadata),
@@ -1066,6 +1064,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     @override
     def report_execution_failed(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None,
@@ -1075,6 +1074,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         root_error = _root_cause(error)
         error_message = str(root_error)
         self._j_runner_context.reportExecutionFailedJson(
+            execution_id,
             entity_type,
             entity_name,
             self._entity_metadata_json(entity_metadata),
@@ -1086,6 +1086,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     @override
     def report_execution_failed_at(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None,
@@ -1096,6 +1097,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         root_error = _root_cause(error)
         error_message = str(root_error)
         self._j_runner_context.reportExecutionFailedAtJson(
+            execution_id,
             entity_type,
             entity_name,
             self._entity_metadata_json(entity_metadata),
@@ -1639,6 +1641,21 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     ) -> AsyncFuture[Any]:
         """Create an ordinary deferred call owned by this runner context."""
         return _SingleAsyncFuture(self, func, args, kwargs)
+
+    @override
+    def chat(
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        *,
+        prompt_args: dict[str, Any] | None = None,
+        output_schema: OutputSchema | None = None,
+    ) -> DurableFuture[ChatResult]:
+        """Create a lazy chat call driven by the operator's event scheduler."""
+        return _ChatFuture(
+            self._j_runner_context,
+            ChatRequestEvent(model, messages, prompt_args, output_schema),
+        )
 
     @override
     def durable_execute_async(

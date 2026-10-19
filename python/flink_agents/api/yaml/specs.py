@@ -29,6 +29,7 @@ from typing import Annotated, Any, Dict, List, Literal
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     StrictBool,
@@ -60,6 +61,30 @@ class DescriptorSpec(BaseModel):
     name: str
     clazz: str
     type: Language | None = None
+
+
+class InternalSubagentSpec(BaseModel):
+    """Reference a child Agent in this file or already registered in the environment."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    agent: Annotated[str, Field(pattern=r"\S")]
+    description: str | None = None
+    input_schema: Dict[str, Any] | None = None
+
+
+def _parse_subagent(value: Any) -> Any:
+    if isinstance(value, dict):
+        spec = DescriptorSpec if "clazz" in value else InternalSubagentSpec
+        return spec.model_validate(value)
+    return value
+
+
+SubagentSpec = Annotated[
+    InternalSubagentSpec | DescriptorSpec,
+    BeforeValidator(_parse_subagent),
+]
 
 
 class MessageRole(str, Enum):
@@ -258,7 +283,7 @@ class AgentSpec(BaseModel):
     embedding_model_setups: List[DescriptorSpec] = Field(default_factory=list)
     vector_stores: List[DescriptorSpec] = Field(default_factory=list)
     mcp_servers: List[DescriptorSpec] = Field(default_factory=list)
-    subagents: List[DescriptorSpec] = Field(default_factory=list)
+    subagents: List[SubagentSpec] = Field(default_factory=list)
 
 
 class YamlAgentsDocument(BaseModel):

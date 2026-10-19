@@ -20,7 +20,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -537,7 +537,7 @@ def test_parallel_tool_calls_report_independent_occurrences() -> None:
     assert ctx.report_execution_succeeded_at.call_count == 1
     assert ctx.report_execution_failed_at.call_count == 2
     terminal_call_ids = {
-        report.args[2][ToolExecutionMetadataKeys.TOOL_CALL_ID]
+        report.args[3][ToolExecutionMetadataKeys.TOOL_CALL_ID]
         for report in (
             ctx.report_execution_succeeded_at.call_args_list
             + ctx.report_execution_failed_at.call_args_list
@@ -604,7 +604,7 @@ def test_parallel_tool_calls_report_their_own_completion_timestamps() -> None:
         asyncio.run(process_tool_request(request, ctx))
 
     terminal_timestamps = {
-        call.args[2][ToolExecutionMetadataKeys.TOOL_CALL_ID]: call.args[-1]
+        call.args[3][ToolExecutionMetadataKeys.TOOL_CALL_ID]: call.args[-1]
         for call in ctx.report_execution_succeeded_at.call_args_list
     }
     assert terminal_timestamps == {
@@ -644,7 +644,7 @@ def test_response_processing_failure_does_not_repeat_occurrences() -> None:
         "call-2": False,
         "call-3": True,
     }
-    assert ctx.report_execution_failed_at.call_args.args[3] is failure
+    assert ctx.report_execution_failed_at.call_args.args[4] is failure
 
 
 @pytest.mark.parametrize("mode", ["sync", "serial_async", "parallel"])
@@ -692,7 +692,7 @@ def test_durable_failure_is_reported_as_tool_failure(mode: str) -> None:
         ["call-2"] if mode == "parallel" else ["call-1", "call-2", "call-3"],
     )
     assert all(
-        call.args[3] is failure
+        call.args[4] is failure
         for call in ctx.report_execution_failed_at.call_args_list
     )
     assert sent_events[0].success["call-2"] is False
@@ -716,7 +716,7 @@ def test_parallel_batch_failure_before_invocation_retains_created_executions() -
     asyncio.run(process_tool_request(parallel_trace_request(), ctx))
 
     created_call_ids = {
-        call.args[2][ToolExecutionMetadataKeys.TOOL_CALL_ID]
+        call.args[3][ToolExecutionMetadataKeys.TOOL_CALL_ID]
         for call in ctx.report_execution_created.call_args_list
     }
     assert created_call_ids == {"call-1", "call-2", "call-3"}
@@ -763,7 +763,7 @@ def test_timeout_reports_failure_without_repeating_on_late_completion() -> None:
             )
         )
         assert_occurrence_reports(ctx, ["call-1"], [], ["call-1"])
-        assert ctx.report_execution_failed_at.call_args.args[3] is failure
+        assert ctx.report_execution_failed_at.call_args.args[4] is failure
         finished_at = ctx.report_execution_failed_at.call_args.args[-1]
         assert (
             datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
@@ -894,7 +894,7 @@ def test_parallel_timeout_omits_starts_after_result_observation(
         ]
 
     def report_started(*args: Any) -> None:
-        if args[2][ToolExecutionMetadataKeys.TOOL_CALL_ID] == "call-1":
+        if args[3][ToolExecutionMetadataKeys.TOOL_CALL_ID] == "call-1":
             # The delayed calls enter after the Action has observed the timeout.
             clock[0] = delayed_start
             for call in delayed:
@@ -910,7 +910,7 @@ def test_parallel_timeout_omits_starts_after_result_observation(
     assert_occurrence_reports(ctx, starts, ["call-1"], ["call-2", "call-3"])
     assert tool.call.call_count == 3
     assert all(
-        call.args[3] is failure and call.args[-1] == "2026-01-01T00:00:01Z"
+        call.args[4] is failure and call.args[-1] == "2026-01-01T00:00:01Z"
         for call in ctx.report_execution_failed_at.call_args_list
     )
     assert sent_events[0].success == {
@@ -987,7 +987,7 @@ def test_tool_result_conversion_failure_is_isolated_and_reported(
     assert response.responses[invalid_call_id].is_error()
     assert response.error == {invalid_call_id: str(failure)}
     assert_occurrence_reports(ctx, call_ids, valid_call_ids, [invalid_call_id])
-    assert ctx.report_execution_failed_at.call_args.args[3] is failure
+    assert ctx.report_execution_failed_at.call_args.args[4] is failure
 
 
 @pytest.mark.parametrize("mode", ["sync", "serial_async", "parallel"])
@@ -1035,21 +1035,34 @@ def assert_occurrence_reports(
 ) -> None:
     expected_created = set(started + succeeded + failed)
     actual_created = {
-        call.args[2][ToolExecutionMetadataKeys.TOOL_CALL_ID]
+        call.args[3][ToolExecutionMetadataKeys.TOOL_CALL_ID]
         for call in ctx.report_execution_created.call_args_list
     }
     assert ctx.report_execution_created.call_count == len(expected_created)
     assert actual_created == expected_created
+    identities = {
+        call.args[3][ToolExecutionMetadataKeys.TOOL_CALL_ID]: call.args[0]
+        for call in ctx.report_execution_created.call_args_list
+    }
+    assert len(set(identities.values())) == len(expected_created)
+    assert all(
+        isinstance(identity, str) and identity for identity in identities.values()
+    )
     for method, expected in (
         (ctx.report_execution_started_at, started),
         (ctx.report_execution_succeeded_at, succeeded),
         (ctx.report_execution_failed_at, failed),
     ):
         actual = [
-            call.args[2][ToolExecutionMetadataKeys.TOOL_CALL_ID]
+            call.args[3][ToolExecutionMetadataKeys.TOOL_CALL_ID]
             for call in method.call_args_list
         ]
         assert sorted(actual) == sorted(expected)
+        for call in method.call_args_list:
+            assert (
+                call.args[0]
+                == identities[call.args[3][ToolExecutionMetadataKeys.TOOL_CALL_ID]]
+            )
 
 
 def test_tool_call_action_uses_serial_async_when_parallelism_is_one() -> None:
@@ -1230,16 +1243,18 @@ def test_tool_call_reports_started_and_succeeded() -> None:
         ToolExecutionMetadataKeys.TOOL_TYPE: "function",
     }
     ctx.report_execution_created.assert_called_once_with(
-        ExecutionEntityTypes.TOOL, "search", metadata
+        ANY, ExecutionEntityTypes.TOOL, "search", metadata
     )
     ctx.report_execution_started_at.assert_called_once()
     started_args = ctx.report_execution_started_at.call_args.args
-    assert started_args[:3] == (ExecutionEntityTypes.TOOL, "search", metadata)
+    assert started_args[0] == ctx.report_execution_created.call_args.args[0]
+    assert started_args[1:4] == (ExecutionEntityTypes.TOOL, "search", metadata)
     ctx.report_execution_succeeded_at.assert_called_once()
     succeeded_args = ctx.report_execution_succeeded_at.call_args.args
-    assert succeeded_args[:3] == (ExecutionEntityTypes.TOOL, "search", metadata)
-    assert datetime.fromisoformat(succeeded_args[3].replace("Z", "+00:00")) >= (
-        datetime.fromisoformat(started_args[3].replace("Z", "+00:00"))
+    assert succeeded_args[0] == started_args[0]
+    assert succeeded_args[1:4] == (ExecutionEntityTypes.TOOL, "search", metadata)
+    assert datetime.fromisoformat(succeeded_args[4].replace("Z", "+00:00")) >= (
+        datetime.fromisoformat(started_args[4].replace("Z", "+00:00"))
     )
     ctx.report_execution_failed_at.assert_not_called()
 
@@ -1255,12 +1270,12 @@ def test_tool_call_reports_failed() -> None:
 
     ctx.report_execution_failed_at.assert_called_once()
     args = ctx.report_execution_failed_at.call_args.args
-    assert args[0] == ExecutionEntityTypes.TOOL
-    assert args[1] == "search"
-    assert args[2][ToolExecutionMetadataKeys.TOOL_CALL_ID] == "call-1"
-    assert isinstance(args[3], RuntimeError)
-    assert args[4] == ExecutionProblemCategories.TOOL_CALL_FAILED
-    assert datetime.fromisoformat(args[5].replace("Z", "+00:00"))
+    assert args[1] == ExecutionEntityTypes.TOOL
+    assert args[2] == "search"
+    assert args[3][ToolExecutionMetadataKeys.TOOL_CALL_ID] == "call-1"
+    assert isinstance(args[4], RuntimeError)
+    assert args[5] == ExecutionProblemCategories.TOOL_CALL_FAILED
+    assert datetime.fromisoformat(args[6].replace("Z", "+00:00"))
 
 
 def test_tool_call_reports_explicit_tool_response_failure() -> None:
@@ -1310,12 +1325,16 @@ def test_missing_tool_reports_creation_and_failure_without_start() -> None:
         )
     )
 
-    created_metadata = ctx.report_execution_created.call_args.args[2]
+    created_metadata = ctx.report_execution_created.call_args.args[3]
     ctx.report_execution_created.assert_called_once_with(
-        ExecutionEntityTypes.TOOL, "search", created_metadata
+        ANY, ExecutionEntityTypes.TOOL, "search", created_metadata
+    )
+    assert (
+        ctx.report_execution_failed.call_args.args[0]
+        == ctx.report_execution_created.call_args.args[0]
     )
     assert created_metadata[ToolExecutionMetadataKeys.TOOL_CALL_ID] == "call-1"
-    assert ctx.report_execution_failed.call_args.args[:3] == (
+    assert ctx.report_execution_failed.call_args.args[1:4] == (
         ExecutionEntityTypes.TOOL,
         "search",
         created_metadata,
@@ -1343,7 +1362,7 @@ def test_tool_call_includes_provider_metadata() -> None:
 
     asyncio.run(process_tool_request(request, ctx))
 
-    metadata = ctx.report_execution_started_at.call_args.args[2]
+    metadata = ctx.report_execution_started_at.call_args.args[3]
     assert metadata[ToolExecutionMetadataKeys.MCP_SERVER] == "search_server"
 
 
@@ -1373,7 +1392,7 @@ def test_tool_call_reports_registered_skill_metadata() -> None:
         )
     )
 
-    metadata = ctx.report_execution_started_at.call_args.args[2]
+    metadata = ctx.report_execution_started_at.call_args.args[3]
     assert metadata[ToolExecutionMetadataKeys.SKILL_NAME] == "calculator"
     assert metadata[ToolExecutionMetadataKeys.SKILL_REGISTERED] is True
 
@@ -1446,3 +1465,41 @@ def trace_tool_call() -> dict:
         "id": "call-1",
         "function": {"name": "search", "arguments": {"query": "flink"}},
     }
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_identical_tool_invocations_have_distinct_trace_ids(asynchronous: bool) -> None:
+    tool = MagicMock()
+    tool.tool_type.return_value = ToolType.FUNCTION
+    tool.call = MagicMock(return_value="result")
+    ctx, _ = trace_context(tool)
+    ctx.config = AgentConfiguration({})
+    ctx.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, asynchronous)
+    ctx.config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 1)
+    durable_ids = []
+
+    def execute(func: Any, *, durable_id: str, **kwargs: Any) -> Any:
+        durable_ids.append(durable_id)
+        assert kwargs == {"query": "flink"}
+        return func(**kwargs)
+
+    async def execute_async(func: Any, *, durable_id: str, **kwargs: Any) -> Any:
+        await asyncio.sleep(0)
+        return execute(func, durable_id=durable_id, **kwargs)
+
+    ctx.durable_execute = execute
+    ctx.durable_execute_async = execute_async
+    request = _request(model="model-a", tool_calls=[trace_tool_call()])
+    asyncio.run(process_tool_request(request, ctx))
+    asyncio.run(process_tool_request(request, ctx))
+    created = ctx.report_execution_created.call_args_list
+    identities = [report.args[0] for report in created]
+    assert len(set(identities)) == 2
+    assert created[0].args[1:] == created[1].args[1:]
+    assert [
+        report.args[0] for report in ctx.report_execution_started_at.call_args_list
+    ] == identities
+    assert [
+        report.args[0] for report in ctx.report_execution_succeeded_at.call_args_list
+    ] == identities
+    assert durable_ids == ["tool-call:call-1", "tool-call:call-1"]

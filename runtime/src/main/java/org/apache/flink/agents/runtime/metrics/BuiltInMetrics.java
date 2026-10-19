@@ -20,10 +20,9 @@
 package org.apache.flink.agents.runtime.metrics;
 
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.EventContext;
-import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.api.trace.TraceContext;
+import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Meter;
@@ -45,9 +44,9 @@ public class BuiltInMetrics {
 
     private final Meter numOfActionsExecutedPerSec;
 
-    private final Counter eventLogTruncatedEvents;
+    private final Counter traceLogTruncatedRecords;
 
-    private final Counter eventLogWriteFailures;
+    private final Counter traceLogWriteFailures;
 
     private final BuiltInInputRunMetrics inputRunMetrics;
 
@@ -68,8 +67,8 @@ public class BuiltInMetrics {
         this.numOfActionsExecutedPerSec =
                 parentMetricGroup.getMeter("numOfActionsExecutedPerSec", numOfActionsExecuted);
 
-        this.eventLogTruncatedEvents = parentMetricGroup.getCounter("eventLogTruncatedEvents");
-        this.eventLogWriteFailures = parentMetricGroup.getCounter("eventLogWriteFailures");
+        this.traceLogTruncatedRecords = parentMetricGroup.getCounter("traceLogTruncatedRecords");
+        this.traceLogWriteFailures = parentMetricGroup.getCounter("traceLogWriteFailures");
         this.inputRunMetrics = new BuiltInInputRunMetrics(parentMetricGroup, System::nanoTime);
         this.executionMetrics = new BuiltInExecutionMetrics(parentMetricGroup, isRegisteredTool);
 
@@ -98,7 +97,7 @@ public class BuiltInMetrics {
         inputRunMetrics.inputEventFailed(inputEvent);
     }
 
-    public void markInputRunStarted(Event inputEvent, ExecutionTraceContext traceContext) {
+    public void markInputRunStarted(Event inputEvent, TraceContext traceContext) {
         inputRunMetrics.inputRunStarted(inputEvent, traceContext);
     }
 
@@ -126,52 +125,42 @@ public class BuiltInMetrics {
         inputRunMetrics.restoreActiveInputRuns(count);
     }
 
-    public void markActionTaskEnqueued(
-            ExecutionTraceContext traceContext, boolean executionStarted) {
+    public void markActionTaskEnqueued(TraceContext traceContext, boolean executionStarted) {
         actionMetrics(traceContext.getEntityName())
                 .actionTaskEnqueued(traceContext.getExecutionId(), executionStarted);
     }
 
-    public void markActionTaskDequeued(
-            ExecutionTraceContext traceContext, boolean executionStarted) {
+    public void markActionTaskDequeued(TraceContext traceContext, boolean executionStarted) {
         actionMetrics(traceContext.getEntityName())
                 .actionTaskDequeued(traceContext.getExecutionId(), executionStarted);
     }
 
-    public void restoreActionTask(ExecutionTraceContext traceContext, boolean executionStarted) {
+    public void restoreActionTask(TraceContext traceContext, boolean executionStarted) {
         inputRunMetrics.identifyRestoredActiveInputRun(traceContext.getInputRunId());
         restoredActionMetrics(traceContext.getEntityName())
                 .restoreActionTask(traceContext.getExecutionId(), executionStarted);
     }
 
-    public void markExecutionEvent(
-            String actionName, Event event, ExecutionTraceContext traceContext) {
-        markExecutionEvent(actionName, new EventContext(event), event, traceContext);
-    }
-
-    public void markExecutionEvent(
-            String actionName,
-            EventContext eventContext,
-            Event event,
-            ExecutionTraceContext traceContext) {
+    public void markExecutionRecord(String actionName, TraceRecord record) {
+        TraceContext traceContext = record.getContext();
         if (ExecutionReporter.EntityTypes.ACTION.equals(traceContext.getEntityType())) {
-            actionMetrics(actionName).executionEventObserved(event, traceContext);
-            if (isTerminalExecutionEvent(event)) {
+            actionMetrics(actionName).executionRecordObserved(record);
+            if (isTerminalExecutionRecord(record)) {
                 executionMetrics.actionExecutionTerminated(traceContext.getExecutionId());
             }
         } else {
-            executionMetrics.executionEventObserved(actionName, eventContext, event, traceContext);
+            executionMetrics.executionRecordObserved(actionName, record);
         }
     }
 
-    /** Returns the counter tracking event log truncation occurrences. */
-    public Counter getEventLogTruncatedEventsCounter() {
-        return eventLogTruncatedEvents;
+    /** Returns the counter tracking Trace Log records with truncated attributes. */
+    public Counter getTraceLogTruncatedRecordsCounter() {
+        return traceLogTruncatedRecords;
     }
 
-    /** Returns the counter tracking failed Event Log writes. */
-    public Counter getEventLogWriteFailuresCounter() {
-        return eventLogWriteFailures;
+    /** Returns the counter tracking failed Trace Log writes. */
+    public Counter getTraceLogWriteFailuresCounter() {
+        return traceLogWriteFailures;
     }
 
     private BuiltInActionMetrics actionMetrics(String actionName) {
@@ -190,9 +179,9 @@ public class BuiltInMetrics {
                 parentMetricGroup.getSubGroup("action", actionName), System::nanoTime);
     }
 
-    private static boolean isTerminalExecutionEvent(Event event) {
-        return ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE.equals(event.getType())
-                || ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE.equals(event.getType())
-                || ExecutionLifecycleEvents.EXECUTION_REUSED_EVENT_TYPE.equals(event.getType());
+    private static boolean isTerminalExecutionRecord(TraceRecord record) {
+        return TraceRecord.Statuses.SUCCESS.equals(record.getStatus())
+                || TraceRecord.Statuses.FAILED.equals(record.getStatus())
+                || TraceRecord.Statuses.REUSED.equals(record.getStatus());
     }
 }

@@ -35,8 +35,8 @@ import java.util.Map;
  *
  * <p>Routes coding/SQL/analysis requests to a strong model ({@code gpt-4o}) and everything else to
  * a small model ({@code gpt-4o-mini}); on no match it abstains and the router uses its default
- * ({@code small}). The selected model call is a first-class chat in the EventLog (tokens attributed
- * to that model) and the decision is recorded as a {@code ModelRoutingEvent}.
+ * ({@code small}). The selected model call is a first-class chat in the Trace Log (tokens
+ * attributed to that model) and the decision is recorded as a {@code ModelRoutingEvent}.
  *
  * <p>Run with {@code OPENAI_API_KEY} set in the environment.
  *

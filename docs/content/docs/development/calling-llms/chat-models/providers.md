@@ -258,6 +258,17 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
+**Multimodal input.** The media blocks of a user message are sent as Anthropic content blocks, in block order, next to its text blocks:
+
+| Block | Sent as |
+|---|---|
+| `TextBlock` | a `text` block |
+| `ImageBlock` | an `image` block, by URL or Base64 data, for `image/jpeg`, `image/png`, `image/gif` or `image/webp` |
+| `DocumentBlock` | a `document` block titled by the block's `name`: `application/pdf` by URL or Base64 data, or `text/plain` Base64 data sent as decoded UTF-8 text |
+| `AudioBlock`, `VideoBlock` | not supported |
+
+Other image or document types, plain text given by URL, audio, video, and media in assistant messages or tool results raise `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the request is sent.
+
 #### Available Models
 
 Visit the [Anthropic Models documentation](https://docs.anthropic.com/en/docs/about-claude/models) for the complete and up-to-date list of available chat models.
@@ -857,7 +868,7 @@ The Chat Completions connections (OpenAI, Azure OpenAI and vLLM) send the media 
 
 A user message with only text blocks is still sent as a plain string. Media in system, assistant or tool messages, audio or documents given by URL, other audio types, and video raise `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the request is sent. Whether a model accepts a given part depends on the model and the server.
 
-The other built-in providers (Anthropic, Gemini, Amazon Bedrock, IBM watsonx.ai, DashScope and the OpenAI Responses API) do not send media yet: a message with a media block raises the same error instead of being sent as its text.
+The other built-in providers (Gemini, Amazon Bedrock, IBM watsonx.ai, DashScope and the OpenAI Responses API) do not send media yet: a message with a media block raises the same error instead of being sent as its text.
 
 #### Responses API
 

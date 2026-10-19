@@ -38,7 +38,7 @@ import java.util.Map;
  * MODEL_ROUTER}. The router's rule strategy sends coding/SQL/analysis requests to a strong model
  * ({@code big}) and everything else to a small model ({@code small}); when no rule matches it
  * abstains and the router uses its default model. The selected model call is a first-class chat in
- * the EventLog (tokens attributed to that model), and the decision itself is recorded as a {@code
+ * the Trace Log (tokens attributed to that model), and the decision itself is recorded as a {@code
  * ModelRoutingEvent}.
  *
  * <p>Model names are illustrative — adjust them to models available on your Ollama server.

@@ -1,6 +1,6 @@
 ---
 title: "Multi-Agent"
-weight: 5
+weight: 6
 type: docs
 bookCollapseSection: true
 ---

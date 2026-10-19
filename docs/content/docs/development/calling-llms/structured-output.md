@@ -105,7 +105,9 @@ ctx.sendEvent(
 
 ## Read the Result
 
-A ReAct Agent emits the parsed object as its output. In a custom action, read it from the successful `ChatResponseEvent`. For a typed class, Java returns an instance of the POJO. Python returns the model instance, or its fields as a `dict` once the event has been serialized, so validate it back into the model. For a `RowTypeInfo`, the result is a `Row`.
+A ReAct Agent emits the parsed object as its output. In a custom Action, read the
+structured output from a successful `ChatResponseEvent`, as shown below.
+For a `RowTypeInfo`, the result is a `Row`.
 
 {{< tabs "Read the Result" >}}
 
@@ -137,6 +139,11 @@ public static void processResponse(Event event, RunnerContext ctx) throws Except
 {{< /tab >}}
 
 {{< /tabs >}}
+
+The structured output may sometimes arrive as a `Map` or `dict` instead of an instance
+of your application type. In that case, deserialize it into your application type
+before accessing its fields. See
+[Serialization and Typed Values]({{< ref "docs/development/create-agent/events#json-serialization" >}}).
 
 ## Choose a Strategy
 
@@ -265,7 +272,7 @@ The connection's `api_version` must be `2024-08-01` or later, for example `2024-
 List the values the model should return, in the form the model reads back:
 
 - **Python:** a Pydantic `Enum` lists its values. A string enum gives `"type": "string"` and a numeric enum gives `"type": "integer"`.
-- **Java:** the schema lists the values Jackson deserializes. Put `@JsonProperty` on **every** constant, or use a `@JsonValue` method that returns a `String`.
+- **Java:** the native schema lists each constant under the value Jackson serializes it to, typed as that value: a `@JsonProperty` name, a `@JsonValue` result, or the Java name. An integer `@JsonValue` gives `"type": "integer"`. An enum with `@JsonFormat(shape = OBJECT)` and no other Jackson customization is listed by its constant names, which a default `ObjectMapper` reads back. Jackson reads the values back by default when a `@JsonValue` method returns a `String` or an integral primitive or wrapper; other return types, such as floating-point, `boolean`, `BigInteger` or `Object`, may need matching deserialization support, such as a `@JsonCreator`. The ReAct Agent's prompt text uses a different generator (see [Java POJOs](#java-pojos)).
 
 {{< tabs "Enum Fields" >}}
 
@@ -304,11 +311,6 @@ public enum Sentiment {
 {{< /tab >}}
 
 {{< /tabs >}}
-
-Two Java cases do not work as you might expect. They behave the same on every Java provider:
-
-- `@JsonProperty` on only **some** constants lists the Java names for **all** of them (`["POSITIVE","NEGATIVE"]`). The model may reply with a Java name where you annotated a different value, and parsing fails. Annotate every constant or none.
-- A `@JsonValue` that returns a number produces `{"type":"string","enum":[1,-1]}`, which contradicts itself. Use a string value instead.
 
 ### Java POJOs
 

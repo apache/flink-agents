@@ -18,7 +18,7 @@
  */
 package org.apache.flink.agents.runtime.metrics;
 
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.api.trace.TraceContext;
 
 import javax.annotation.Nullable;
 
@@ -36,7 +36,7 @@ interface ExecutionMetricRecorder {
     /** Records a terminal execution whose lifecycle has already been resolved by the caller. */
     void record(
             FlinkAgentsMetricGroupImpl actionMetricGroup,
-            ExecutionTraceContext traceContext,
+            TraceContext traceContext,
             Outcome outcome,
             @Nullable Long latencyMs);
 }

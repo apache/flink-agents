@@ -222,6 +222,33 @@ def test_build_agents_loads_tools_and_prompts() -> None:
     assert msg_prompt.template[1].text == "{q}"
 
 
+@pytest.mark.parametrize(
+    "text_field", ["", "        text: null\n", '        text: ""\n']
+)
+def test_build_agents_preserves_prompt_messages_with_unset_text(
+    tmp_path: Path, text_field: str
+) -> None:
+    path = tmp_path / "prompt.yaml"
+    path.write_text(
+        "agents:\n"
+        "  - name: chat_agent\n"
+        "    prompts:\n"
+        "      - name: greeting\n"
+        f"{text_field}"
+        "        messages:\n"
+        "          - {role: system, content: 'Hello {name}'}\n"
+        "          - {role: user, content: '{question}'}\n"
+    )
+    agents, _, _ = build_agents(path)
+    prompt = agents["chat_agent"].resources[ResourceType.PROMPT]["greeting"]
+    messages = prompt.format_messages(name="Alice", question="How are you?")
+    assert [message.role for message in messages] == [
+        MessageRole.SYSTEM,
+        MessageRole.USER,
+    ]
+    assert [message.text for message in messages] == ["Hello Alice", "How are you?"]
+
+
 def test_build_agents_handles_shared_resources_and_actions() -> None:
     agents, shared_resources, shared_actions = build_agents(
         _FIXTURES / "with_shared.yaml"

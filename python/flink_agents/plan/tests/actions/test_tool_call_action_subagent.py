@@ -191,7 +191,7 @@ class _Context(ExecutionReporter):
         self.sensory_memory = None
         self.short_term_memory = None
         self.sent_events = []
-        self.reports: list[tuple[str, str, str, str | None]] = []
+        self.reports: list[tuple[str, str, str, str | None, str]] = []
         self.tools = {}
         self.agents = {}
         self.durable_executions = 0
@@ -248,48 +248,76 @@ class _Context(ExecutionReporter):
 
     @override
     def report_execution_created(
-        self, entity_type: str, entity_name: str, entity_metadata: Any = None
+        self,
+        execution_id: str,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Any = None,
     ) -> None:
-        self.reports.append(("created", entity_type, entity_name, None))
+        self.reports.append(("created", entity_type, entity_name, None, execution_id))
 
     @override
     def report_execution_started(
-        self, entity_type: str, entity_name: str, entity_metadata: Any = None
+        self,
+        execution_id: str,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Any = None,
     ) -> None:
-        self.reports.append(("started", entity_type, entity_name, None))
+        self.reports.append(("started", entity_type, entity_name, None, execution_id))
 
     @override
     def report_execution_started_at(
-        self, entity_type: str, entity_name: str, entity_metadata: Any, timestamp: str
+        self,
+        execution_id: str,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Any,
+        timestamp: str,
     ) -> None:
-        self.reports.append(("started", entity_type, entity_name, timestamp))
+        self.reports.append(
+            ("started", entity_type, entity_name, timestamp, execution_id)
+        )
 
     @override
     def report_execution_succeeded(
-        self, entity_type: str, entity_name: str, entity_metadata: Any = None
+        self,
+        execution_id: str,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Any = None,
     ) -> None:
-        self.reports.append(("succeeded", entity_type, entity_name, None))
+        self.reports.append(("succeeded", entity_type, entity_name, None, execution_id))
 
     @override
     def report_execution_succeeded_at(
-        self, entity_type: str, entity_name: str, entity_metadata: Any, timestamp: str
+        self,
+        execution_id: str,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Any,
+        timestamp: str,
     ) -> None:
-        self.reports.append(("succeeded", entity_type, entity_name, timestamp))
+        self.reports.append(
+            ("succeeded", entity_type, entity_name, timestamp, execution_id)
+        )
 
     @override
     def report_execution_failed(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Any,
         error: BaseException,
         problem_category: str | None = None,
     ) -> None:
-        self.reports.append(("failed", entity_type, entity_name, None))
+        self.reports.append(("failed", entity_type, entity_name, None, execution_id))
 
     @override
     def report_execution_failed_at(
         self,
+        execution_id: str,
         entity_type: str,
         entity_name: str,
         entity_metadata: Any,
@@ -297,7 +325,9 @@ class _Context(ExecutionReporter):
         problem_category: str | None,
         timestamp: str,
     ) -> None:
-        self.reports.append(("failed", entity_type, entity_name, timestamp))
+        self.reports.append(
+            ("failed", entity_type, entity_name, timestamp, execution_id)
+        )
 
 
 def _parse_timestamp(timestamp: str) -> datetime:
@@ -563,9 +593,11 @@ def test_reports_a_resolved_subagent_delegation_under_the_subagent_scope() -> No
     asyncio.run(process_tool_request(tool_request("_subagent_reviewer"), ctx))
 
     assert [report[0] for report in ctx.reports] == ["created", "started", "succeeded"]
-    for _, entity_type, entity_name, _ in ctx.reports:
+    for _, entity_type, entity_name, _, _ in ctx.reports:
         assert entity_type == ExecutionEntityTypes.SUBAGENT
         assert entity_name == "reviewer"
+    assert len({report[4] for report in ctx.reports}) == 1
+    assert ctx.reports[0][4]
     started_timestamp = ctx.reports[1][3]
     succeeded_timestamp = ctx.reports[2][3]
     assert started_timestamp is not None

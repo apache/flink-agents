@@ -176,7 +176,7 @@ class RoutingTest {
 
     @Test
     void modelRoutingEventRequestIdSurvivesStringForm() {
-        // Simulate an EventLog JSON round-trip where request_id came back as a String.
+        // Simulate JSON-decoded Event attributes, where request_id is a String.
         UUID id = UUID.fromString("00000000-0000-0000-0000-0000000000ab");
         HashMap<String, Object> attrs = new HashMap<>();
         attrs.put("request_id", id.toString());

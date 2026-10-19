@@ -17,10 +17,11 @@
  */
 package org.apache.flink.agents.api.trace;
 
-/** Shared field names for LLM execution entity metadata. */
+/** Shared field names for metadata reported with an LLM request. */
 public final class LLMExecutionMetadataKeys {
 
     public static final String MODEL = "model";
+    public static final String USAGE = "usage";
 
     private LLMExecutionMetadataKeys() {}
 }

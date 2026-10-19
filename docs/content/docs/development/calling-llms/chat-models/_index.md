@@ -187,6 +187,55 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
+### Calling chat from an action
+
+The example above sends a `ChatRequestEvent` and handles the response in a separate action. When the same action needs to continue with the result, use `ctx.chat` to await it directly. It wraps the same built-in Chat/Tool event flow and supports the same model routing, retries, tools, and structured output.
+
+Keep the resource declarations above and replace the input and response actions with the following action:
+
+{{< tabs "Chat calls" >}}
+{{< tab "Python" >}}
+```python
+@action(EventType.InputEvent)
+@staticmethod
+async def process_input(event: Event, ctx: RunnerContext) -> None:
+    input_event = InputEvent.from_event(event)
+    response = await ctx.chat(
+        "ollama_chat_model",
+        [ChatMessage.user(str(input_event.input))],
+    )
+    ctx.send_event(OutputEvent(output=response.text))
+```
+
+Use the optional `prompt_args` and `output_schema` arguments for prompt parameters and structured output.
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+@Action(EventType.InputEvent)
+public static void processInput(Event event, RunnerContext ctx) throws Exception {
+    InputEvent inputEvent = InputEvent.fromEvent(event);
+    ChatResult response = ctx.chat(
+            "ollamaChatModel",
+            List.of(ChatMessage.user(String.valueOf(inputEvent.getInput()))))
+            .await();
+    ctx.sendEvent(new OutputEvent(response.getText()));
+}
+```
+
+For prompt arguments or structured output, pass a `ChatRequestEvent` to `ctx.chat(request)`.
+{{< /tab >}}
+{{< /tabs >}}
+
+The returned `DurableFuture<ChatResult>` (Python: `DurableFuture[ChatResult]`) starts the request only when awaited. Await it directly, without wrapping it in `durable_execute_async` / `durableExecuteAsync`. Use the future only within the action execution that created it; do not store it for a later event or pass it to another action execution. Repeated awaits within that execution reuse the same result. Passing chat futures to `gather` is not supported yet.
+
+The result is a full `ChatResult`, including the assistant message and its content blocks, plus available model, token usage and invocation metadata. Use `response.message` in Python or `response.getMessage()` in Java to access the message; `response.text` / `response.getText()` provides its text. A failed chat response raises `ChatResponseError` in Python or `ChatResponseEvent.ChatResponseException` in Java, which the calling action can catch. Existing model and tool timeout settings still apply; there is no additional whole-call timeout.
+
+`ctx.chat` uses the calling action's resources and memory. Its response is returned to the caller and does not trigger actions subscribed to `ChatResponseEvent`. Use the event-style API when you want a separate action to handle the response.
+
+With durable execution enabled, recorded results are reused after recovery. Replay matches calls by the calling action's execution identity and the order in which chat calls are first awaited; it does not compare the model, messages, or prompt arguments. Changing a request at the same call position therefore still reuses its recorded response when the caller identity is unchanged. Requests whose results were not recorded may execute again, so external provider or tool effects are not guaranteed to occur exactly once.
+
+Java chat calls require JDK 21 and `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` in `env.java.opts.all`. Python chat calls do not require JDK 21. Java calls are currently affected by the known deadlock limitation in [#1213](https://github.com/apache/flink-agents/issues/1213).
+
 ## Custom Providers
 
 {{< hint warning >}}

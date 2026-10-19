@@ -26,19 +26,36 @@ under the License.
 
 ## Overview
 
-Flink Agents provides a flexible and extensible tool use mechanism. Developers can define the tool as a local Python function, or they can integrate with a remote MCP server to use the tools provided by the MCP server.
+Tools let a model request work from a Java or Python function, or from an
+[MCP server]({{< ref "docs/development/calling-llms/mcp" >}}). This page explains how
+to declare function tools, supply runtime parameters, and configure tool execution.
+For the chat request, tool-call, and response flow, see
+[Tool Calling in Chat with Models]({{< ref "docs/development/calling-llms/chat#built-in-events-and-actions" >}}).
 
 ## Local Function as Tool
 
-Developer can define the tool as a local Python/Java function, and there are two ways to define and register a local function as a tool:
+Declare a tool as a static method in an Agent class, or register it on the
+execution environment to share it across agents. In both cases, reference the
+registered tool name in the chat model setup's `tools` list.
+
+The following snippets show the tool declaration and registration parts of a job.
+They assume a connection named `ollamaChatModelConnection` has been registered as
+explained in [Declare the Resources]({{< ref "docs/development/calling-llms/chat-models" >}}).
+The notification helper is application code; the complete
+{{< gh_link file="python/flink_agents/examples/quickstart/react_agent_example.py" name="Python example" >}}
+and {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/ReActAgentExample.java" name="Java example" >}}
+show how to connect a tool to a ReAct Agent and a Flink job.
 
 {{< hint info >}}
-Flink Agents uses the docstring of the python tool function to generate the tool metadata. The docstring of the python function should accurately describe the tool's purpose, parameters, and return value, so that the LLM can understand the tool and use it effectively.
+Flink Agents uses a Python function's docstring to describe the tool to the model.
+Describe its purpose, parameters, and return value accurately. In Java, use
+`@Tool(description = "...")` and `@ToolParam` to describe the function and name its parameters.
 {{< /hint >}}
 
 ### Define Tool as Static Method in Agent Class
 
-Developer can define the tool as a static method in the agent class while defining the Agent, and use the `@tool` decorator to mark the function as a tool in python (or `@Tool` annotation in java). The tool can be referenced by its name in the `tools` list of the `ResourceDescriptor` when creating the chat model in the agent.
+Use `@tool` in Python or `@Tool` in Java to declare a static method as a tool.
+The chat model setup references that method by name:
 
 {{< tabs "Define Tool as Static Method in Agent Class" >}}
 
@@ -67,7 +84,8 @@ class ReviewAnalysisAgent(Agent):
         """ChatModel which focus on review analysis."""
         return ResourceDescriptor(
             clazz=ResourceName.ChatModel.OLLAMA_SETUP,
-            ...,
+            connection="ollamaChatModelConnection",
+            model="qwen3:8b",
             tools=["notify_shipping_manager"], # reference the tool by its name
         )
     
@@ -89,12 +107,10 @@ public class ReviewAnalysisAgent extends Agent {
     public static ResourceDescriptor reviewAnalysisModel() {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaChatModelConnection")
-                ...
+                .addInitialArgument("model", "qwen3:8b")
                 .addInitialArgument("tools", Collections.singletonList("notifyShippingManager")) // reference the tool by its name
                 .build();
     }
-    
-    ...
 }
 ```
 {{< /tab >}}
@@ -108,7 +124,8 @@ public class ReviewAnalysisAgent extends Agent {
 
 ### Register Tool to Execution Environment
 
-Developer can register the tool to the execution environment, and then reference the tool by its name. This allows the tool to be reused by multiple agents.
+Register a tool on the execution environment when multiple agents need it.
+Each agent references the registered resource name in its chat model setup.
 
 {{< tabs "Register Tool to Execution Environment" >}}
 
@@ -140,9 +157,10 @@ agents_env.add_resource(
 review_analysis_react_agent = ReActAgent(
     chat_model=ResourceDescriptor(
         clazz=ResourceName.ChatModel.OLLAMA_SETUP,
+        connection="ollamaChatModelConnection",
+        model="qwen3:8b",
         tools=["notify_shipping_manager"], # reference the tool by its name
     ),
-    ...
 )
 ```
 {{< /tab >}}
@@ -152,7 +170,7 @@ review_analysis_react_agent = ReActAgent(
 @Tool(description = "Notify the shipping manager when product received a negative review due to shipping damage.")
 public static void notifyShippingManager(
         @ToolParam(name = "id") String id, @ToolParam(name = "review") String review) {
-    ...
+    CustomTypesAndResources.notifyShippingManager(id, review);
 }
 
 // Add notify shipping manager tool to the execution environment.
@@ -167,11 +185,13 @@ agentsEnv
 // Create react agent with notify shipping manager tool.
 ReActAgent reviewAnalysisReactAgent = new ReActAgent(
         ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
+                .addInitialArgument("connection", "ollamaChatModelConnection")
+                .addInitialArgument("model", "qwen3:8b")
                 .addInitialArgument(
                         "tools", Collections.singletonList("notifyShippingManager")) // reference the tool by its name
-                ...
                 .build(),
-        ...);
+        null,
+        null);
 ```
 {{< /tab >}}
 
@@ -225,6 +245,29 @@ Some tools need runtime data that should not be chosen by the model, such as a t
 
 The model only sees and provides normal tool parameters. The built-in `tool_call_action` resolves injected values and overwrites any model-supplied values for the same parameters before calling the tool.
 
+Choose the source according to where the value is available when the tool runs:
+
+| Source | Runtime value | Python declaration |
+| --- | --- | --- |
+| `config` | A value in the agent execution environment configuration | `InjectedArg.from_config("tenant_id")` |
+| `sensory_memory` | A value at a path in the current run's sensory memory | `InjectedArg.from_sensory_memory("request.trace_id")` |
+| `short_term_memory` | A value at a path in the agent's short-term memory | `InjectedArg.from_short_term_memory("session.tenant_id")` |
+
+For memory sources, write the value to the selected path before requesting the
+tool call. The path must exist and refer to a value, rather than a nested memory
+object. The injection key identifies the configuration entry or memory path;
+it can differ from the tool parameter name.
+
+In Java annotations, set `@ToolParam(injected = true)` to hide the parameter from
+the model, and use `source` and `key` to bind its value. The default source is
+`sensory_memory`; an omitted key uses the parameter name. For YAML declarations,
+see the [`injected_args` reference]({{< ref "docs/development/create-agent/yaml#resources" >}}),
+which covers the configuration shape, defaults, and examples.
+
+For the following example, set `tenant_id` on the agent execution environment
+with `agents_env.get_config().set_str("tenant_id", "tenant-a")` in Python or
+`agentsEnv.getConfig().setStr("tenant_id", "tenant-a")` in Java.
+
 {{< tabs "Inject Tool Parameters" >}}
 
 {{< tab "Python" >}}
@@ -271,7 +314,7 @@ public class OrderAgent extends Agent {
 
 {{< /tabs >}}
 
-Configure the injected value on the agent execution environment. Python uses `agents_env.get_config().set_str("tenant_id", "tenant-a")`; Java uses `agentsEnv.getConfig().setStr("tenant_id", "tenant-a")`.
+The model supplies only `order_id`; the framework supplies `tenant_id`.
 
 Injected values can also come from memory when the value is attached to the current request or session instead of static environment configuration:
 
@@ -311,61 +354,90 @@ public static String lookupOrder(
 
 {{< /tabs >}}
 
-The supported sources are `config`, `sensory_memory`, and `short_term_memory`.
-If `source` is omitted, it defaults to `sensory_memory`.
-For Java annotation-based tools, `@ToolParam(injected = true)` is what marks the
-parameter as framework-injected and hidden from the model; `source` and `key` only
-configure where the value is read from.
-If the same injected parameter is declared both on the tool function and by a
-descriptor such as YAML, the declarations must resolve to the same source and key;
-conflicting declarations fail during agent plan construction.
+### Overrides and failures
 
-Injected parameters are part of the tool execution contract, not the model contract:
+The built-in `tool_call_action` resolves injection before invoking a function tool:
 
-- They are not included in the JSON schema sent to the model.
-- They are not written back to the original `ToolRequestEvent`.
-- If a model supplies an argument with the same name, the framework-provided value takes precedence.
+- Injected parameters are excluded from the model-facing JSON schema.
+- A framework value overrides any model-supplied value for the same parameter.
+  The original `ToolRequestEvent` arguments remain unchanged.
+- A missing configuration entry, missing memory path, or invalid injected value
+  fails the tool call without invoking the function. Model-supplied values are
+  never used as a fallback.
+- If the function and a descriptor such as YAML both declare an injected
+  parameter, their source and key must agree. A conflict fails during agent plan
+  construction, before the tool can run.
+
+This resolution is part of the built-in tool-call flow. When calling a function
+tool directly, supply its required arguments yourself.
 
 ## Parallel tool-call batches
 
-When `tool-call.async` is enabled, the built-in `tool_call_action` runs all tool calls from one
-`ToolRequestEvent` as a single durable batch. Set `async.batch.parallelism` to control concurrency:
+A model may request several tool calls in one `ToolRequestEvent`. The built-in
+`tool_call_action` can execute the tools registered by the agent, possibly
+including ordinary functions or MCP tool calls, as parallel operations. Use the
+following settings on the agent execution environment:
 
-- `1` — serial execution (one tool at a time).
-- `> 1` — parallel batch with a sliding window of at most that many in-flight tool calls.
+| Option | Default | Effect on tool execution |
+| --- | --- | --- |
+| `tool-call.async` | `true` | Enables durable async tool calls. With `false`, tools execute synchronously, one at a time. |
+| `async.batch.parallelism` | Available CPU count | Maximum concurrent calls in one async batch. `1` executes tools one at a time while keeping async execution enabled. |
 
-Java and Python support concurrent tool-call batches on all supported JDK versions.
+For example, allow up to four concurrent calls per batch:
 
-Tool batches share a `num-async-threads` pool **per operator subtask** (every key routed to
-that subtask). On JDK 21+ and in Python, chat and RAG calls also use this pool. On older JDKs,
-Java batches use a separate pool from the Action workers. The default batch parallelism is
-the host CPU count.
+{{< tabs "Configure Tool Parallelism" >}}
+{{< tab "Python" >}}
+```python
+from flink_agents.api.core_options import AgentExecutionOptions
 
-Built-in actions for a **single key** run one at a time. In the usual chat → tool path, a chat
-async call finishes before `tool_call_action` starts, so they do not overlap on the same key.
-Contention appears mainly **across keys** on the same subtask: one key's parallel tool batch can
-delay another key's chat or RAG async work.
+agents_env.get_config().set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+agents_env.get_config().set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 4)
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+
+agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
+agentsEnv.getConfig().set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 4);
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+With async execution enabled and `async.batch.parallelism` greater than `1`,
+multiple tool calls can run concurrently. This limit also applies to batches
+created with `ctx.gather(...)`. The `num-async-threads` setting further limits
+available concurrency. Tool batches share execution capacity with other external
+calls, so a large batch may delay other model calls or retrieval requests. Lower
+the batch limit to leave capacity for other calls or avoid overwhelming an
+external service. Actual concurrency can be lower than the batch limit.
 
 {{< hint warning >}}
-**Cross-key impact:** with defaults (`num-async-threads = 2× cores`, `async.batch.parallelism =
-cores`), one full tool batch can use up to half the subtask pool; several hot keys can saturate it.
-If your job mixes heavy tool batches with chat/RAG on the same subtask, lower
-`async.batch.parallelism` or increase `num-async-threads`.
+Calls in a parallel batch must be independent: a tool must not wait for another
+call in the same batch to complete. Concurrency is an optimization and does not
+guarantee that calls overlap or finish in request order. If one operation depends
+on another's result, request it in a later step instead of the same batch.
 {{< /hint >}}
 
-`async.batch.timeout.ms` applies to the whole batch. On timeout, completed slots keep their
-outcome; slots that started but did not finish are recorded as failures; slots that never started
-executing (for example, queued in a saturated pool) stay pending, so they are re-executed after
-recovery instead of recording a false failure. Timeout cancellation is best-effort; side-effecting
-tools should be idempotent or provide a reconciler.
+### Timeouts and external effects
 
-{{< hint warning >}}
-**Thread reclamation:** a timeout unblocks the batch but cannot interrupt a tool that is still
-running. Its worker thread stays in the shared `num-async-threads` pool until the tool returns on
-its own, so a tool that never returns permanently reduces pool capacity. Bound blocking work inside
-the tool (for example an HTTP client read timeout) rather than relying on this batch timeout to free
-the thread.
-{{< /hint >}}
+`async.batch.timeout.ms` sets an overall timeout for a parallel batch of ordinary
+tool calls. Its default is `-1`; non-positive values disable it. When it expires,
+completed calls keep their results and unfinished calls are reported to the model
+as failed tool calls.
+
+For requests containing only ordinary tools, the batch timeout is not used when
+`tool-call.async` is `false`, when `async.batch.parallelism` is `1` or less, or when
+the request has a single tool call. Configure timeouts for blocking operations
+inside each tool, such as an HTTP client read timeout.
+
+A batch timeout does not undo external effects or guarantee that an already
+running tool stops. Tools that change external systems should be idempotent,
+because a call may run again after recovery. See
+[Configuration]({{< ref "docs/operations/configuration" >}}) for the full async batch
+and execution-capacity options, and
+[Durable Execution]({{< ref "docs/development/create-agent/actions#durable-execution" >}})
+for recovery guarantees.
 
 ## Tool response content and metadata
 
@@ -494,6 +566,6 @@ The built-in `tool_call_action` listens to `ToolRequestEvent`. For each tool cal
 
 Ordinary tool return values are converted to successful text responses as described in [Tool response content and metadata](#tool-response-content-and-metadata). A tool that completes normally but cannot perform the requested operation can return `ToolResponse.error("reason")`; an exception still represents an invocation failure. Both failure forms are recorded as failed tool calls in `ToolResponseEvent`.
 
-When the tool request comes from `chat_model_action`, the emitted `ToolResponseEvent` is automatically consumed by `chat_model_action` to continue the chat. See [Tool Calling in Chat with Models]({{< ref "docs/development/calling-llms/chat#built-in-events-and-actions" >}}) for details on how `chat_model_action` handles tool responses.
+When the tool request comes from `chat_model_action`, that Action automatically handles the emitted `ToolResponseEvent` to continue the chat. See [Tool Calling in Chat with Models]({{< ref "docs/development/calling-llms/chat#built-in-events-and-actions" >}}) for details on how `chat_model_action` handles tool responses.
 
 Users can also send `ToolRequestEvent` directly when they want to invoke tools programmatically.

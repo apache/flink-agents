@@ -26,18 +26,27 @@ under the License.
 
 ## Overview
 
-Beyond the Python and Java programmatic APIs, Flink Agents offers a **declarative YAML API** for describing agents. Compared with the programmatic APIs, the YAML API has the following advantages:
+Flink Agents provides a **declarative YAML API** for defining and orchestrating Agents.
+It uses the same Events, Actions, and Resources as the Java and Python APIs, described in
+[Core Concepts]({{< ref "docs/development/create-agent/overview#core-concepts" >}}).
 
-- **Human-friendly**: low entry barrier and easy to templatize across deployments.
-- **Coding-agent-friendly**: a fixed schema reduces token cost, enables strict schema validation, and decouples configuration changes (declared parameters) from logic changes (action code).
+Parts of an Agent definition can be expressed directly in YAML, while the
+implementation logic remains in Java or Python code:
 
-A Flink Agents application is composed of three concepts; the YAML API exposes all three as declarative sections:
+**What can be defined in YAML:**
 
-- **Events**: the messages flowing inside an agent. Every event has a type used for routing.
-- **Actions**: code snippets triggered by events and emitting new events. They carry the agent's business logic.
-- **Resources**: reusable components — Chat Models, Tools, Prompts, Vector Stores, MCP servers, etc. — referenced by actions at runtime.
+- Which Actions make up an Agent and which Events trigger them.
+- Which Resources are available and how components reference them.
+- The existing implementations to use and their configuration.
+- Inline prompt text or messages.
 
-A YAML file describes **Resources** and **Actions** declaratively; the **Event** types are referenced by name (built-in event aliases like `input` / `chat_response`, or your own event-type strings). The implementation classes (action functions, tool functions, custom types) still live in your Python or Java code; the YAML file only describes *how* those pieces are wired together.
+**What remains in code:**
+
+- Action and tool logic.
+- Custom Resource implementations.
+- Custom Event classes.
+
+This lets you change component configuration and wiring while reusing the same code.
 
 If you'd rather declare agents directly in code, see [Agent]({{< ref "docs/development/create-agent/overview" >}}) and [Built-in ReAct Agent]({{< ref "docs/development/react_agent" >}}).
 
@@ -48,6 +57,7 @@ This section walks through:
 1. Declaring a single agent in one YAML file.
 2. Declaring multiple agents in one YAML file.
 3. Declaring shared Resources and Actions that any agent in the file (or any later-loaded file) can reuse.
+4. Declaring sub-agents and referencing them from a parent Agent.
 
 ### Declaring a single agent
 
@@ -104,20 +114,33 @@ agents:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | yes | Agent name. Must be unique across the environment. Used to apply the agent by name later. |
-| `description` | no | Free-form description of what the agent does. Not surfaced at runtime. |
+| `name` | Required | Agent name. Must be unique across the environment. Used to apply the agent by name later. |
+| `description` | Optional | Free-form description of what the agent does. Not surfaced at runtime. |
 
 #### Resources
 
-All resource sections are declared as lists under the agent. Each entry has a `name` unique within its section.
+Declare Resources as lists under the agent, with a `name` unique within each section.
+The section determines the resource type: for example, `chat_model_setups` registers
+`CHAT_MODEL` Resources and `tools` registers `TOOL` Resources. For Resources configured
+by implementation class and for Tools, the optional `type: python` or `type: java`
+field selects the implementation language. Prompts and Skills do not accept `type`.
 
-**Prompt** — declarative prompt template; pick exactly one of `text` or `messages`.
+These declarations register Resources for use by name, just like decorators, annotations,
+or `add_resource` / `addResource`. Actions can get their instances through
+`ctx.get_resource` / `ctx.getResource`; see
+[Registering and Referencing Resources]({{< ref "docs/development/create-agent/overview#registering-and-referencing-resources" >}}).
+
+**Prompt** — declarative prompt template. Exactly one of `text` or `messages` must be non-empty.
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | yes | Prompt name (referenced by chat-model setups). |
-| `text` | one-of | Single-string prompt template. Corresponds to `Prompt.from_text` / `Prompt.fromText`. |
-| `messages` | one-of | Multi-turn message template. Corresponds to `Prompt.from_messages` / `Prompt.fromMessages`. Each entry has `role` (`system` / `user` / `assistant` / `tool`) and `content`. |
+| `name` | Required | Prompt name (referenced by chat-model setups). |
+| `text` | Required if `messages` is unset or empty | Non-empty string prompt template. Corresponds to `Prompt.from_text` / `Prompt.fromText`. |
+| `messages` | Required if `text` is unset or empty | Non-empty list of message templates. Corresponds to `Prompt.from_messages` / `Prompt.fromMessages`. Each entry has `role` (`system` / `user` / `assistant` / `tool`) and `content`. |
+
+Omitted or `null` fields, `text: ""`, and `messages: []` are treated as unset.
+If both alternatives are non-empty, or neither is non-empty, YAML loading fails
+validation. Neither alternative takes precedence over the other.
 
 ```yaml
 prompts:
@@ -135,11 +158,11 @@ prompts:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | yes | Tool name (referenced from `chat_model_setups[].tools`). |
-| `function` | yes | Fully-qualified callable in the form `<module-or-class>:<qualname>`. See [Function references](#function-references). |
-| `type` | no | Implementation language: `python` or `java`. Defaults to `python` (see [Selecting the implementation language](#selecting-the-implementation-language)). |
-| `parameter_types` | java only | Required for Java tools — one Java type FQN per declared parameter, in order. Forbidden for Python tools (the signature is reflected from the callable). |
-| `injected_args` | no | Tool arguments injected by the framework at execution time. Declare a map from tool parameter name to `{source, key}`. These arguments are hidden from the model-facing tool schema. |
+| `name` | Required | Tool name (referenced from `chat_model_setups[].tools`). |
+| `function` | Required | Fully-qualified callable in the form `<module-or-class>:<qualname>`. See [Function references](#function-references). |
+| `type` | Optional | Implementation language: `python` or `java`. Defaults to `python` (see [Selecting the implementation language](#selecting-the-implementation-language)). |
+| `parameter_types` | Required for Java / Forbidden for Python | One Java type per declared parameter, in order. Use `[]` for a Java tool with no parameters. Python tool signatures are reflected from the callable. |
+| `injected_args` | Optional | Tool arguments injected by the framework at execution time. Declare a map from tool parameter name to `{source, key}`. These arguments are hidden from the model-facing tool schema. |
 
 ```yaml
 tools:
@@ -148,7 +171,7 @@ tools:
     type: python
 ```
 
-For **Java tools**, `parameter_types` is required because Java methods can be overloaded — list one FQN per declared parameter, in order. Generic type arguments are not part of the JVM method descriptor and must not be included (`java.util.List`, not `java.util.List<String>`). Boxed primitives (`java.lang.Integer`, etc.) and bare primitives (`int`, `boolean`, ...) are both accepted.
+For **Java tools**, `parameter_types` is required because Java methods can be overloaded — list one Java type per declared parameter, in order.
 
 ```yaml
 tools:
@@ -158,82 +181,52 @@ tools:
     parameter_types: [java.lang.Integer, java.lang.Integer]
 ```
 
-To hide framework-owned arguments from the model, declare them in `injected_args` and bind each argument to a runtime source:
+{{< hint info >}}
+Generic type arguments are not part of the JVM method descriptor and must not be
+included (`java.util.List`, not `java.util.List<String>`). Boxed primitives
+(`java.lang.Integer`, etc.) and bare primitives (`int`, `boolean`, ...) are both accepted.
+{{< /hint >}}
 
-```yaml
-agents:
-  - name: order_agent
-    tools:
-      - name: query_order
-        function: my_pkg.tools:query_order
-        injected_args:
-          tenant_id:
-            source: config
-            key: tenant_id
-```
-
-The supported `source` values are `config`, `sensory_memory`, and `short_term_memory`. If omitted, `source` defaults to `sensory_memory`. For `config`, `key` is read from the agent execution environment configuration. For memory sources, `key` is the memory path.
-
-For Java tools loaded from YAML, the `injected_args` entry itself marks the parameter
-as framework-injected and hides it from the model-facing schema. The Java method may
-use `@ToolParam(name = "...")` to provide stable parameter names, but it does not need
-`@ToolParam(injected = true)` when injection is declared in YAML.
-If both YAML and the tool function declare the same injected parameter, they must use
-the same source and key; conflicting declarations fail during agent plan construction.
-
-Per-request values, such as a trace id written to sensory memory before tool execution, can be injected the same way:
-
-```yaml
-agents:
-  - name: traced_order_agent
-    tools:
-      - name: lookup_order
-        function: my_pkg.tools:lookup_order
-        injected_args:
-          trace_id:
-            source: sensory_memory
-            key: request.trace_id
-```
-
-```yaml
-# Java-loaded YAML
-agents:
-  - name: java_order_agent
-    tools:
-      - name: queryOrder
-        type: java
-        function: com.example.OrderTools:queryOrder
-        parameter_types: [java.lang.String, java.lang.String]
-        injected_args:
-          tenant_id:
-            source: config
-            key: tenant_id
-```
-
-**Skills** — bundles of agent skill assets loaded from one or more sources. At least one of `paths` / `urls` / `url_sources` / `classpath` / `package` must be non-empty; multiple sources can coexist.
+`injected_args` maps tool parameter names to injection settings. Each entry must be
+an object with the following optional fields. Omit `injected_args` or use `{}` if
+you do not need to declare parameter injection in YAML.
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | yes | Skills resource name. |
-| `paths` | one-of | `local` scheme: list of directories or `.zip` files. |
-| `urls` | one-of | `url` scheme: list of HTTPS URLs without embedded user information, pointing to `.zip` archives. |
-| `url_sources` | one-of | `url` scheme: list of `{url, sha256?, allow_insecure_http?}` archive sources without embedded user information. HTTPS is required by default; `sha256` pins the downloaded archive, and `allow_insecure_http: true` is an explicit unsafe compatibility opt-in. |
-| `classpath` | one-of | `classpath` scheme (Java runtime only): list of classpath resource paths. |
-| `package` | one-of | `package` scheme (Python runtime only): list of `{package, resource}` pairs. |
+| `source` | Optional | One of `config`, `sensory_memory`, or `short_term_memory`. Defaults to `sensory_memory`. |
+| `key` | Optional | Configuration key or memory path. If omitted, `null`, or empty, defaults to the tool parameter name. |
 
-`urls` entries must use HTTPS. To keep an existing plain-HTTP source, move it to `url_sources` and opt in explicitly:
+For example, declare injection for the `tenant_id` parameter of `query_order`:
 
 ```yaml
-skills:
-  - name: agent_skills
-    url_sources:
-      - url: http://example.com/skills.zip
-        allow_insecure_http: true
+tools:
+  - name: query_order
+    function: my_pkg.tools:query_order
+    injected_args:
+      tenant_id:
+        source: config
+        key: tenant_id
 ```
 
-Use this compatibility option only on trusted development networks; prefer HTTPS.
+See [Tool Parameter Injection]({{< ref "docs/development/calling-llms/tool_use#tool-parameter-injection" >}})
+for when to use injection, runtime value resolution, Java annotations, and
+conflict and failure rules.
 
-URL source hosts must use DNS-compatible ASCII syntax. Names containing underscores, such as `skill_server`, are rejected; use a DNS-compatible name such as `skill-server`. Internationalized hostnames must use IDNA/Punycode rather than raw Unicode, and scoped IPv6 literals with zone identifiers are rejected. This validation is stricter than in earlier releases.
+**Skills** — bundles of agent skill assets loaded from one or more sources.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Required | Skills resource name. |
+| `paths` | Optional | `local` scheme: list of directories or `.zip` files. |
+| `urls` | Optional | `url` scheme: list of HTTPS URLs pointing to `.zip` archives. |
+| `url_sources` | Optional | `url` scheme: list of objects with a required `url`, optional `sha256` digest, and optional `allow_insecure_http` flag (defaults to `false`). Set the flag to `true` to allow plain HTTP. |
+| `classpath` | Optional | `classpath` scheme: list of Java classpath resource paths. |
+| `package` | Optional | `package` scheme: list of Python `{package, resource}` pairs. |
+
+{{< hint info >}}
+At least one of `paths`, `urls`, `url_sources`, `classpath`, or `package` must be non-empty.
+Multiple sources can be configured together.
+{{< /hint >}}
 
 ```yaml
 skills:
@@ -252,18 +245,25 @@ skills:
         resource: skills/
 ```
 
-`classpath` is accepted by the Python parser for schema parity with Java but rejected at runtime, because the Python runtime does not register a `classpath` handler.
+Both `classpath` and `package` sources are supported by Java and Python agents.
+See
+[Skill Sources]({{< ref "docs/development/calling-llms/skills#skill-sources" >}})
+for URL restrictions, archive integrity and security guidance, and dependency and
+cross-language runtime requirements.
 
-Remote skill archives contain trusted agent instructions and may contain executable scripts. Pin remote sources with `sha256`, or use `Skills.from_url_with_sha256(...)` (Python) / `Skills.fromUrlWithSha256(...)` (Java) in code.
-
-**ResourceDescriptor-backed resources** — `chat_model_connections`, `chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, `vector_stores`, `mcp_servers`. Unlike the resources above (which are constructed inline by the loader), these are described by a `ResourceDescriptor` and instantiated by the framework at runtime. They all share the same shape:
+**Resources configured by implementation class** — `chat_model_connections`,
+`chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, `vector_stores`,
+and `mcp_servers`, plus `subagents` for external sub-agents. Declare the implementation
+and its configuration using the fields below.
+This corresponds to a `ResourceDescriptor` in Java or Python; the framework creates the
+Resource instance at runtime.
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | yes | Resource name (referenced by other resources or actions). |
-| `clazz` | yes | Either a built-in [alias](#class-aliases) (e.g. `ollama`, `openai`) or a fully-qualified class path. |
-| `type` | no | Implementation language: `python` or `java`. Defaults to `python` (see [Selecting the implementation language](#selecting-the-implementation-language)). |
-| *extras* | no | Any additional keys are forwarded verbatim as `ResourceDescriptor` init arguments (e.g. `base_url`, `endpoint`, `model`, `request_timeout`). |
+| `name` | Required | Resource name (referenced by other resources or actions). |
+| `clazz` | Required | Either a built-in [alias](#class-aliases) (e.g. `ollama`, `openai`) or a fully-qualified class path. |
+| `type` | Optional | Implementation language: `python` or `java`. Defaults to `python` (see [Selecting the implementation language](#selecting-the-implementation-language)). |
+| *extras* | Depends on the selected implementation | Additional configuration for the selected implementation (e.g. `base_url`, `endpoint`, `model`, `request_timeout`). See its provider documentation for required fields and defaults. |
 
 ```yaml
 chat_model_connections:
@@ -279,30 +279,47 @@ mcp_servers:
     endpoint: http://127.0.0.1:8000/mcp
 ```
 
-**Inter-resource references.** Several fields are not values but *name lookups* into another section, resolved within the agent first and then against shared resources. In the [single-agent example](#declaring-a-single-agent):
+**Sub-agents** are registered under `subagents` as `AGENT` Resources. Internal
+sub-agents reference another Agent in the same file or already loaded into the same
+environment; external sub-agents name a setup implementation. See [Declaring sub-agents](#declaring-sub-agents).
+
+**References between Resources.** Fields such as `connection`, `prompt`, and `tools`
+refer to registered Resource names. The Agent's own registrations take precedence over
+shared Resources from the execution environment. In the [single-agent example](#declaring-a-single-agent):
 
 | Field | Refers to | Example |
 |-------|-----------|---------|
 | `chat_model_setups[].connection` | a `chat_model_connections[]` name | `connection: ollama_server` |
 | `chat_model_setups[].prompt` | a `prompts[]` name | `prompt: review_analysis_prompt` |
 | `chat_model_setups[].tools` | a list of `tools[]` names | `tools: [notify_shipping_manager]` |
+| `chat_model_setups[].subagents` | a list of `subagents[]` resource names | `subagents: [reviewer]` |
 | `embedding_model_setups[].connection` | an `embedding_model_connections[]` name | `connection: my_embedding_server` |
 
-The referenced name must exist in the same agent or be a shared resource at the file level; otherwise loading fails.
+The referenced Resource must be registered on the Agent or its execution environment.
+The setup's `name: review_analysis_model` identifies the Resource in your application;
+its `model: qwen3:8b` selects the model on the Ollama server.
+
+An Action can send a `ChatRequestEvent` naming `review_analysis_model` to use the
+[built-in chat Action]({{< ref "docs/development/calling-llms/chat#chat-events" >}}),
+which gets and calls the model Resource. This event-based path is provided by the built-in
+Action; registering a Resource alone does not create an Event handler for it.
 
 #### Actions
 
 `actions:` is a list. Each entry is either an inline action **map** or, when reusing a shared action, a bare **string** referring to the shared action's name.
 
+[Built-in Actions]({{< ref "docs/development/create-agent/events#built-in-events-and-actions" >}})
+are registered automatically; you do not need to list them under `actions:`.
+
 Inline action (map) fields:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | yes | Action name (unique within the agent). |
-| `function` | yes | Fully-qualified callable in the form `<module-or-class>:<qualname>`. See [Function references](#function-references). |
-| `trigger_conditions` | yes | Non-empty list of strings containing exact event types or condition expressions that return a Boolean. Each string must contain at least one non-whitespace character. Built-in [event aliases](#event-aliases) (`input`, `chat_request`, ...) may be used as complete entries. All entries use OR semantics. |
-| `type` | no | Implementation language: `python` or `java`. Defaults to `python` (see [Selecting the implementation language](#selecting-the-implementation-language)). |
-| `config` | no | Free-form configuration map passed to the action at runtime. |
+| `name` | Required | Action name (unique within the agent). |
+| `function` | Required | Fully-qualified callable in the form `<module-or-class>:<qualname>`. See [Function references](#function-references). |
+| `trigger_conditions` | Required | Non-empty list of strings containing exact event types or condition expressions that return a Boolean. Each string must contain at least one non-whitespace character. Built-in [event aliases](#event-aliases) (`input`, `chat_request`, ...) may be used as complete entries. All entries use OR semantics. |
+| `type` | Optional | Implementation language: `python` or `java`. Defaults to `python` (see [Selecting the implementation language](#selecting-the-implementation-language)). |
+| `config` | Optional | Free-form configuration map passed to the action at runtime. |
 
 For built-in event types, prefer an [event alias](#event-aliases) such as `input`. Trigger-condition
 matching and expression semantics are shared with annotated and programmatically registered actions;
@@ -418,6 +435,107 @@ actions:
 {{< hint info >}}
 Composing one agent across multiple YAML files is **not** supported. If two files loaded into the same environment declare the same agent name, or the same shared resource/action name, the second `load_yaml` call raises an error.
 {{< /hint >}}
+
+### Declaring sub-agents
+
+Use an internal sub-agent to delegate to another Agent defined in your application,
+or an external sub-agent to call an agent hosted by another system.
+
+#### Internal sub-agents
+
+To make a child Agent available to a parent Agent, add an entry to the parent's
+`subagents` list. Each entry uses the following fields:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Required | Resource name the parent uses to call this sub-agent. |
+| `agent` | Required | Value of the child Agent's `name` field in the top-level `agents` list. |
+| `description` | Optional | Describes when the model should delegate to this child. Defaults to an empty string; a generic description is used if none is supplied. |
+| `input_schema` | Required for model-selected calls | JSON Schema written as a YAML mapping describing the child's input arguments. It can be omitted when calling the sub-agent directly from an Action. |
+
+The following fragment extends the [single-agent example](#declaring-a-single-agent).
+Keep the parent's existing configuration and add the declarations shown below.
+The child Agent's Actions and Resources are omitted.
+
+```yaml
+agents:
+  - name: review_analysis_agent
+    # Existing Actions and Resources omitted.
+    subagents:
+      - name: reviewer
+        agent: review_workflow
+        description: Analyze product review details
+        input_schema:
+          type: object
+          properties:
+            review: {type: string}
+          required: [review]
+    chat_model_setups:
+      - name: review_analysis_model
+        # Keep the existing model configuration.
+        subagents: [reviewer]
+
+  - name: review_workflow
+    # Define the child's Actions and Resources here.
+```
+
+Here, `agent: review_workflow` refers to the child defined with
+`name: review_workflow`. The parent model uses the Resource name `reviewer` to call it.
+
+Multiple parents may reference the same child definition. Declare internal
+references under each parent's `subagents`; file-level `subagents` supports only
+external setup declarations.
+
+The referenced child Agent must be defined in the same YAML file or already loaded
+into the same execution environment. Within one file, the child may appear before
+or after its parent. For Agents split across files, load the child file before the
+parent file. Files in a list are loaded in order, and separate loading calls use
+the same rule:
+
+{{< tabs "Load Sub-agent Files" >}}
+{{< tab "Python" >}}
+```python
+agents_env.load_yaml(["child.yaml", "parent.yaml"])
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+agentsEnv.loadYaml(List.of(Paths.get("child.yaml"), Paths.get("parent.yaml")));
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+An unknown child name fails loading of the referencing file; the loader does not
+wait for later files. Agent names must remain unique across the environment.
+Self-references and indirect cycles fail when the Agent plan is built. Register the
+child's required Resources on the child itself, as described in
+[Declare an internal sub-agent]({{< ref "docs/development/multi-agent/subagents#declare-an-internal-sub-agent" >}}).
+
+For input/output behavior, model delegation, and execution requirements, see
+[Subagents]({{< ref "docs/development/multi-agent/subagents" >}}).
+
+#### External sub-agents
+
+Use `clazz` to name a custom sub-agent setup implementation. Its additional fields
+are passed to that implementation as configuration:
+
+```yaml
+subagents:
+  - name: remote_reviewer
+    clazz: my_app.agents.RemoteReviewSetup
+    type: python
+    endpoint: https://example.com/review
+    description: Review code using the remote service
+    input_schema: '{"type":"object","properties":{"code":{"type":"string"}},"required":["code"]}'
+```
+
+This example assumes `RemoteReviewSetup` accepts `endpoint`, `description`, and a
+JSON string `input_schema`. Use `type: java` and a Java class name when loading an
+external Java setup from a Java job. YAML external sub-agent declarations currently
+require the setup language to match the loader; an omitted `type` defaults to Python.
+Reference `remote_reviewer` in the chat model's `subagents` list to enable model delegation.
+See [Declare an external sub-agent]({{< ref "docs/development/multi-agent/subagents#declare-an-external-sub-agent" >}})
+for the implementation contract.
 
 ## Loading and Running
 
@@ -536,9 +654,12 @@ function: com.example.Outer$Inner:processInput
 
 ### Selecting the implementation language
 
-Every resource, tool, and action accepts an optional `type:` field with values `python` or `java`. When omitted, the default is **`python`** — both the Python loader and the Java loader treat a missing `type:` as `python`.
+Resources configured by implementation class, Tools, and Actions accept an optional
+`type:` field with values `python` or `java`. When omitted, the default is **`python`**
+in both loaders. Prompts, Skills, and internal sub-agent references do not accept this field.
 
-This means a YAML file loaded by the **Java loader** must set `type: java` explicitly on every resource, tool, and action whose implementation is in Java. Omitting `type:` on a Java resource in a Java-loaded YAML will make the loader try to build a Python-wrapping descriptor — usually not what you want.
+For components that accept `type`, set `type: java` explicitly when selecting a Java
+implementation, even when loading the YAML from a Java job.
 
 When `type:` resolves to the **opposite** language of the loader, the loader builds a cross-language descriptor that delegates to the other-language implementation — see [Cross-language agents](#cross-language-agents).
 
@@ -568,6 +689,10 @@ action matching. Therefore, using `output` as a trigger condition never invokes 
 For custom event types defined in your code, write the event's full `EVENT_TYPE` string instead of an alias.
 
 #### Class aliases
+
+Class aliases cover built-in providers. For custom providers, set `clazz:` to the
+fully-qualified class name in Java or class path in Python; custom alias registration
+is not supported.
 
 Aliases for `clazz:` are keyed on resource type **and** implementation language. The same alias (e.g. `ollama`) resolves to a different class for `chat_model_connections` vs `chat_model_setups`, and for `python` vs `java`.
 
@@ -608,8 +733,6 @@ Vector-store aliases:
 | `milvus`        | —              | Milvus          |
 
 The full alias tables live in `flink_agents.api.yaml.aliases` (Python) and `org.apache.flink.agents.api.yaml.Aliases` (Java).
-
-If `clazz:` is not a known alias, the loader passes it through as-is — write a fully-qualified class path (e.g. `flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup`) for providers you've added yourself.
 
 ### Cross-language agents
 
@@ -671,7 +794,7 @@ in a Java Flink job and use each component's `type:` to select its implementatio
 Application payloads must use the supported
 [Java and Python data types]({{< ref "docs/development/create-agent/choose-apis-and-languages#data-passed-between-java-and-python" >}}).
 
-Not every resource type is cross-language. Currently `actions`, `tools`, `chat_model_connections`, `chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, and `vector_stores` support `type:` on the opposite language; others (e.g. `mcp_servers`) do not.
+Not every resource type is cross-language. Currently `actions`, `tools`, `chat_model_connections`, `chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, and `vector_stores` support `type:` on the opposite language; others (e.g. `mcp_servers` and external `subagents`) do not.
 
 ## YAML API Specification
 
@@ -682,31 +805,7 @@ The schema benefits both humans and machines:
 - It defines an interface contract, so LLMs and external systems can interact with Flink Agents declaratively.
 - It is language-neutral, so it doubles as the compatibility contract between the Python and the Java loader.
 
-### Python and Java mapping
-
-When loading a YAML file, both runtimes parse it into typed in-memory representations and validate it against them using the framework's native validation:
-
-- The **Python loader** parses YAML into Pydantic `BaseModel`s declared in `flink_agents.api.yaml.specs`. Pydantic enforces the schema (required fields, value types, `extra="forbid"` on unknown keys, mutually-exclusive `text`/`messages` on prompts, ...).
-- The **Java loader** parses YAML into POJOs declared in `org.apache.flink.agents.api.yaml.spec`, validated by Jackson with equivalent rules.
-
-### Consistency guarantees
-
-Because Pydantic models are easier to author and evolve than raw JSON Schema, the **ground truth** is the Pydantic spec — the checked-in `docs/yaml-schema.json` is exported from it. After changing the specs, regenerate the schema with:
-
-```bash
-python -m flink_agents.api.yaml.specs > docs/yaml-schema.json
-```
-
-The coding-agent skill under `dev/agent-skills/` bundles a copy of the schema so it can work offline, so refresh that copy in the same change. `python3 tools/check-skill-schema.py` reports whether it is current and prints the two edits needed when it is not.
-
-Continuous tests then verify cross-runtime consistency:
-
-- the JSON Schema exported by the Pydantic specs matches the checked-in `docs/yaml-schema.json`;
-- the Java POJOs match the checked-in `docs/yaml-schema.json` in property names, required fields, and `additionalProperties` strictness;
-- the Pydantic specs stay aligned with the Python `Agent` API;
-- the Java POJOs stay aligned with the Java `Agent` API.
-
-These checks keep the YAML structure aligned across loaders. Schema validation does
+Schema validation checks the document structure. It does
 not verify that referenced classes/functions are installed, that a component supports
 the selected implementation language, or that its provider is reachable. Before
 running the job, follow [Choose APIs and Languages]({{< ref "docs/development/create-agent/choose-apis-and-languages" >}})

@@ -37,9 +37,16 @@ The key features of Apache Flink Agents include:
 - **Familiar Agent Abstractions**: Leverages well-known AI agent concepts - skills, short/long-term memory, prompts, tools, and dynamic orchestration - making it easy for developers experienced with agent-based systems to quickly adopt and build on Apache Flink Agents without a steep learning curve.
 - **Multi-Language Support**: Provides Java, Python, and YAML APIs for defining Agents. Actions and supported Resources can be implemented in Java or Python and used across languages. See [Choose APIs and Languages]({{< ref "docs/development/create-agent/choose-apis-and-languages" >}}).
 - **Rich Ecosystem**: Natively integrates mainstream LLMs, vector stores from diverse providers, and tools or prompts hosted on MCP servers into your agents, while enabling customizable extensions.
-- **Observability**: Adopts an event-centric orchestration approach, where all agent actions are connected and controlled by events, enabling observation and understanding of agent behavior through the event log.
+- **Observability**: Provides structured [Trace Log]({{< ref "docs/operations/monitoring#trace-log" >}}) output for Events, Actions, and component calls, so developers can inspect agent behavior and correlate calls with their triggering Events. Built-in metrics report call outcomes, latency, and model usage independently of log selection.
 
 ## Getting Started
+
+Agents use Actions to process Events and Resources to provide reusable, named runtime
+components such as models, tools, prompts, and MCP servers. See
+[Core Concepts]({{< ref "docs/development/create-agent/overview#core-concepts" >}})
+for how these pieces work together, and
+[Registering and Referencing Resources]({{< ref "docs/development/create-agent/overview#registering-and-referencing-resources" >}})
+for how Actions access Resources.
 
 Start with [Setup]({{< ref "docs/get-started/setup" >}}), then choose a Quickstart:
 
@@ -47,7 +54,8 @@ Start with [Setup]({{< ref "docs/get-started/setup" >}}), then choose a Quicksta
 - [Use the Built-in ReAct Agent]({{< ref "docs/get-started/quickstart/react_agent" >}})
 - [Define an Agent with YAML]({{< ref "docs/get-started/quickstart/yaml_agent" >}})
 
-For an optional authoring aid, see the [Coding-agent Skill](https://github.com/apache/flink-agents/tree/main/dev/agent-skills/flink-agents-dev).
+To build Flink Agents applications with a coding agent, see
+[Build with a Coding Agent]({{< ref "docs/development/coding-agent-skill" >}}).
 
 ## Preview Status
 

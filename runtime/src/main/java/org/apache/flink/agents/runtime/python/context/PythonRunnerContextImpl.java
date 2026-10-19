@@ -21,8 +21,8 @@ package org.apache.flink.agents.runtime.python.context;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.EventContext;
-import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
+import org.apache.flink.agents.api.trace.TraceRecord;
+import org.apache.flink.agents.api.trace.TraceRecords;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -31,6 +31,7 @@ import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import javax.annotation.concurrent.NotThreadSafe;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -73,35 +74,58 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
     }
 
     public void reportExecutionCreatedJson(
-            String entityType, String entityName, String entityMetadataJson) throws Exception {
-        reportExecutionCreated(entityType, entityName, parseEntityMetadata(entityMetadataJson));
+            String executionId, String entityType, String entityName, String entityMetadataJson)
+            throws Exception {
+        reportExecutionCreated(
+                executionId, entityType, entityName, parseEntityMetadata(entityMetadataJson));
     }
 
     public void reportExecutionStartedJson(
-            String entityType, String entityName, String entityMetadataJson) throws Exception {
-        reportExecutionStarted(entityType, entityName, parseEntityMetadata(entityMetadataJson));
+            String executionId, String entityType, String entityName, String entityMetadataJson)
+            throws Exception {
+        reportExecutionStarted(
+                executionId, entityType, entityName, parseEntityMetadata(entityMetadataJson));
     }
 
     public void reportExecutionStartedAtJson(
-            String entityType, String entityName, String entityMetadataJson, String timestamp)
+            String executionId,
+            String entityType,
+            String entityName,
+            String entityMetadataJson,
+            String timestamp)
             throws Exception {
         reportExecutionStartedAt(
-                entityType, entityName, parseEntityMetadata(entityMetadataJson), timestamp);
+                executionId,
+                entityType,
+                entityName,
+                parseEntityMetadata(entityMetadataJson),
+                timestamp);
     }
 
     public void reportExecutionSucceededJson(
-            String entityType, String entityName, String entityMetadataJson) throws Exception {
-        reportExecutionSucceeded(entityType, entityName, parseEntityMetadata(entityMetadataJson));
+            String executionId, String entityType, String entityName, String entityMetadataJson)
+            throws Exception {
+        reportExecutionSucceeded(
+                executionId, entityType, entityName, parseEntityMetadata(entityMetadataJson));
     }
 
     public void reportExecutionSucceededAtJson(
-            String entityType, String entityName, String entityMetadataJson, String timestamp)
+            String executionId,
+            String entityType,
+            String entityName,
+            String entityMetadataJson,
+            String timestamp)
             throws Exception {
         reportExecutionSucceededAt(
-                entityType, entityName, parseEntityMetadata(entityMetadataJson), timestamp);
+                executionId,
+                entityType,
+                entityName,
+                parseEntityMetadata(entityMetadataJson),
+                timestamp);
     }
 
     public void reportExecutionFailedJson(
+            String executionId,
             String entityType,
             String entityName,
             String entityMetadataJson,
@@ -110,13 +134,18 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
             String problemCategory)
             throws Exception {
         reportChildExecution(
+                executionId,
                 entityType,
                 entityName,
                 parseEntityMetadata(entityMetadataJson),
-                ExecutionLifecycleEvents.executionFailed(errorType, errorMessage, problemCategory));
+                Instant.now().toString(),
+                TraceRecord.Statuses.FAILED,
+                problemCategory,
+                TraceRecords.errorAttributes(errorType, errorMessage));
     }
 
     public void reportExecutionFailedAtJson(
+            String executionId,
             String entityType,
             String entityName,
             String entityMetadataJson,
@@ -125,14 +154,15 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
             String problemCategory,
             String timestamp)
             throws Exception {
-        Event event =
-                ExecutionLifecycleEvents.executionFailed(errorType, errorMessage, problemCategory);
         reportChildExecution(
+                executionId,
                 entityType,
                 entityName,
                 parseEntityMetadata(entityMetadataJson),
-                new EventContext(event.getType(), timestamp),
-                event);
+                timestamp,
+                TraceRecord.Statuses.FAILED,
+                problemCategory,
+                TraceRecords.errorAttributes(errorType, errorMessage));
     }
 
     public void checkMailboxThread() {

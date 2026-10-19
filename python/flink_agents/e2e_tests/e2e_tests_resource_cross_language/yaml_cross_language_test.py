@@ -120,9 +120,9 @@ def test_yaml_cross_language_agent(
     deserialize_datastream = input_datastream.map(lambda x: str(x))
 
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
-    log_dir = tmp_path / "event_logs"
+    log_dir = tmp_path / "trace_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    agents_env.get_config().set_str("baseLogDir", str(log_dir))
+    agents_env.get_config().set_str("trace-log.base-dir", str(log_dir))
     agents_env.load_yaml(_RESOURCES / "yaml_cross_language_agent.yaml")
 
     output_datastream = (

@@ -20,6 +20,8 @@ package org.apache.flink.agents.api.yaml;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.function.PythonFunction;
 import org.apache.flink.agents.api.prompt.Prompt;
@@ -35,7 +37,10 @@ import org.apache.flink.agents.api.yaml.spec.PromptSpec;
 import org.apache.flink.agents.api.yaml.spec.SkillsSpec;
 import org.apache.flink.agents.api.yaml.spec.ToolSpec;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -178,15 +183,27 @@ class YamlLoaderBuildersTest {
         assertThat(prompt.formatString(Map.of())).isEqualTo("hi");
     }
 
-    @Test
-    void buildPromptMessages() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"", "text: null\n", "text: \"\"\n"})
+    void buildPromptMessagesWithUnsetText(String textField) throws Exception {
         PromptSpec spec =
                 M.readValue(
-                        "name: p\nmessages:\n  - {role: system, content: hi}\n", PromptSpec.class);
+                        "name: p\n"
+                                + textField
+                                + "messages:\n"
+                                + "  - {role: system, content: 'Hello {name}'}\n"
+                                + "  - {role: user, content: '{question}'}\n",
+                        PromptSpec.class);
         Prompt prompt = YamlLoader.buildPrompt(spec);
-        // Both message-templated and text-templated prompts produce LocalPrompt instances;
-        // confirm the constructed prompt formats without error.
-        assertThat(prompt).isNotNull();
+        List<ChatMessage> messages =
+                prompt.formatMessages(
+                        MessageRole.SYSTEM, Map.of("name", "Alice", "question", "How are you?"));
+        assertThat(messages)
+                .extracting(ChatMessage::getRole)
+                .containsExactly(MessageRole.SYSTEM, MessageRole.USER);
+        assertThat(messages)
+                .extracting(ChatMessage::getText)
+                .containsExactly("Hello Alice", "How are you?");
     }
 
     @Test

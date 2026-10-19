@@ -35,7 +35,11 @@ The **Parallel Sentiment Analysis** agent processes a restaurant review and judg
 
 ### Prepare Agents Execution Environment
 
-Create the agents execution environment, and register the available chat model connection to the environment.
+Create the agents execution environment and register the Ollama connection as a named
+Resource of type `CHAT_MODEL_CONNECTION`. The Agent's model setup references this connection
+as `ollama_server` in Python or `ollamaChatModelConnection` in Java. See
+[Registering and Referencing Resources]({{< ref "docs/development/create-agent/overview#registering-and-referencing-resources" >}})
+for the shared registration and access model.
 
 {{< tabs "Prepare Agents Execution Environment" >}}
 
@@ -80,6 +84,11 @@ agentsEnv.addResource(
 {{< /tabs >}}
 
 ### Create the Agent
+
+The model Resource is named `sentiment_model` in Python or `sentimentModel` in Java.
+Each `ChatRequestEvent` references that name; the
+[built-in chat Action]({{< ref "docs/development/calling-llms/chat#chat-events" >}})
+gets the Resource and performs the model call.
 
 Below is the example code for the `ParallelChatAgent`. Two system prompts — `PARALLEL_SYSTEM_PROMPT` for the parallel aspect judgments and `AGGREGATE_SYSTEM_PROMPT` for the aggregation call — are packaged into `ChatRequestEvent`s by `_build_aspect_request` / `buildAspectRequest` and `_build_summarize_request` / `buildSummarizeRequest`. The agent defines a chat model and four actions: `request_aspect_judgments` stores the review `id` and `text` in sensory memory and emits a single generic `Event` of type `SENTIMENT_INPUT_EVENT_TYPE`; `handle_taste_input` and `handle_service_input` each listen on that event type and independently dispatch one `ChatRequestEvent`, recording a `{request_id → aspect}` entry using path-based memory access (`aspect_map.<request_id>`); and `handle_response` looks up the dispatched aspect, stores the result under `sentiments.<aspect>`, and triggers aggregation once all aspects are collected.
 
@@ -167,7 +176,7 @@ class ParallelChatAgent(Agent):
     def request_aspect_judgments(event: Event, ctx: RunnerContext) -> None:
         """Process input event and dispatch SentimentInputEvent to aspect handlers."""
         payload = InputEvent.from_event(event).input
-        # Primitive types (int, str) cross the Pemja JVM boundary without serialization.
+        # Store the input's primitive values in Sensory Memory.
         ctx.sensory_memory.set("id", payload["id"])
         ctx.sensory_memory.set("text", payload["text"])
         ctx.send_event(
@@ -314,9 +323,9 @@ Other private helpers (`buildOutputEvent`) are omitted above; the full source is
 
 {{< hint warning >}}
 **Constraints when using parallel actions:**
-- **Dispatch action must exit immediately after sending events.** The action that emits `SentimentInputEvent` (i.e. `request_aspect_judgments`) should return right after calling `ctx.send_event(...)`. Do not `await`, block, or perform further business logic in the same action — the framework needs control back to schedule the parallel chat actions.
-- **Action handlers on the same key execute sequentially.** Multiple action invocations triggered by the same key are processed one at a time, not concurrently. This means `handle_taste_input` and `handle_service_input` are called in sequence. Each handler writes a single path-based entry (`aspect_map.<request_id>`) to sensory memory without reading back, so there is no conflict between the two. The actual LLM calls dispatched by these handlers still execute in parallel.
-- **Response handlers on the same key execute sequentially.** Multiple `ChatResponseEvent` triggers for the same key are processed one at a time, not concurrently. This means the path-based writes to `sentiments.<aspect>` in `handle_response` are safe and will not suffer from concurrent overwrites.
+- **Finish dispatch before waiting for downstream results.** The `request_aspect_judgments` Action's `SENTIMENT_INPUT_EVENT_TYPE` Event is routed after that Action finishes. Awaiting unrelated work can let other ready Actions run, but does not dispatch this buffered Event. Keep the dispatch Action short.
+- **Keep shared-memory updates in the Action body.** The request and response handlers in this example update Sensory Memory without awaiting between reading and writing it. If you add an await, another Action may update shared Memory before the handler resumes. Do not move Memory access into the asynchronous call itself.
+- **Check the runtime requirements for concurrent calls.** See [Async Execution]({{< ref "docs/development/create-agent/actions#async-execution" >}}) and [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}}) for scheduling behavior and setup.
 {{< /hint >}}
 
 ### Integrate the Agent with Flink

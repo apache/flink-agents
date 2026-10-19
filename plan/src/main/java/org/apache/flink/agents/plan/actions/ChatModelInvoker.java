@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.actions;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -36,6 +37,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -255,7 +257,9 @@ public final class ChatModelInvoker {
                         : Map.of(LLMExecutionMetadataKeys.MODEL, chatModel.getModel());
 
         for (int attempt = 0; attempt < numRetries + 1; attempt++) {
-            ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
+            String executionId =
+                    ExecutionReporters.started(
+                            ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
             // Keep persistence and recovery failures outside the request-failure catch.
             InvocationOutcome outcome;
             try {
@@ -277,15 +281,21 @@ public final class ChatModelInvoker {
                 } catch (Throwable modelError) {
                     throw ChatModelAction.reportFailedAndPropagate(
                             ctx,
+                            executionId,
                             ExecutionReporter.EntityTypes.LLM,
                             model,
                             llmMetadata,
                             modelError,
                             ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
                 }
-                ExecutionReporters.succeeded(
-                        ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
-                ChatModelAction.recordChatTokenMetrics(chatModel, response, requestMetricGroup);
+                reportSuccessfulResponse(
+                        ctx,
+                        executionId,
+                        model,
+                        llmMetadata,
+                        chatModel,
+                        response,
+                        requestMetricGroup);
                 // A truncated response consumed its full token budget, so the token metrics
                 // above are recorded before this rejects and abandons the response.
                 ChatModelAction.rejectIncompleteResponse(response);
@@ -335,7 +345,8 @@ public final class ChatModelInvoker {
                     actualRetryCount = attempt + 1;
                     int currentWaitSec = retryWaitIntervalSec * (1 << (actualRetryCount - 1));
                     LOG.warn(
-                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {} s.",
+                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {}"
+                                    + " s.",
                             initialRequestId,
                             e,
                             actualRetryCount,
@@ -417,7 +428,9 @@ public final class ChatModelInvoker {
                     }
                 };
 
-        ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
+        String executionId =
+                ExecutionReporters.started(
+                        ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
         InvocationOutcome outcome;
         try {
             outcome =
@@ -441,15 +454,49 @@ public final class ChatModelInvoker {
         } catch (Throwable modelError) {
             throw ChatModelAction.reportFailedAndPropagate(
                     ctx,
+                    executionId,
                     ExecutionReporter.EntityTypes.LLM,
                     model,
                     llmMetadata,
                     modelError,
                     ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
         }
-        ExecutionReporters.succeeded(ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
-        ChatModelAction.recordChatTokenMetrics(chatModel, response, requestMetricGroup);
+        reportSuccessfulResponse(
+                ctx, executionId, model, llmMetadata, chatModel, response, requestMetricGroup);
         ChatModelAction.rejectIncompleteResponse(response);
         return response;
+    }
+
+    private static void reportSuccessfulResponse(
+            RunnerContext ctx,
+            String executionId,
+            String model,
+            Map<String, Object> llmMetadata,
+            BaseChatModelSetup chatModel,
+            ChatResult response,
+            @Nullable FlinkAgentsMetricGroup requestMetricGroup) {
+        TokenUsage responseUsage = response.getUsage();
+        Long prompt = responseUsage == null ? null : responseUsage.getPromptTokens();
+        Long completion = responseUsage == null ? null : responseUsage.getCompletionTokens();
+        Map<String, Object> usage = new HashMap<>();
+        if (prompt != null) {
+            usage.put("promptTokens", prompt);
+        }
+        if (completion != null) {
+            usage.put("completionTokens", completion);
+        }
+        Map<String, Object> metadata = new HashMap<>(llmMetadata);
+        if (!usage.isEmpty()) {
+            metadata.put(LLMExecutionMetadataKeys.USAGE, usage);
+        }
+        ExecutionReporters.succeeded(
+                ctx, executionId, ExecutionReporter.EntityTypes.LLM, model, metadata);
+        if (requestMetricGroup != null
+                && response.getModel() != null
+                && prompt != null
+                && completion != null) {
+            chatModel.recordTokenMetrics(
+                    requestMetricGroup, response.getModel(), prompt, completion);
+        }
     }
 }

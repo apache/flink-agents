@@ -135,14 +135,12 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
                     judgeResult.retryCount,
                     judgeResult.totalRetryWaitSec);
             ChatResult reply = judgeResult.response;
-            // Same both-or-neither type guard as the metrics reader of these extraArgs
-            // keys (ChatModelAction#recordChatTokenMetrics): a half-populated or non-Number
-            // pair must not leak into the durable decision metadata.
-            Object promptTokens =
+            // Only complete token pairs enter the durable decision metadata.
+            Long promptTokens =
                     reply.getUsage() == null ? null : reply.getUsage().getPromptTokens();
-            Object completionTokens =
+            Long completionTokens =
                     reply.getUsage() == null ? null : reply.getUsage().getCompletionTokens();
-            if (promptTokens instanceof Number && completionTokens instanceof Number) {
+            if (promptTokens != null && completionTokens != null) {
                 judgeMetadata.put("judge_prompt_tokens", promptTokens);
                 judgeMetadata.put("judge_completion_tokens", completionTokens);
             }

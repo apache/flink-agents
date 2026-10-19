@@ -28,6 +28,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from py4j.java_collections import JavaList, JavaMap
+from py4j.java_gateway import JavaObject
+from py4j.protocol import Py4JJavaError
 from pyflink.java_gateway import get_gateway
 from pyflink.util.java_utils import add_jars_to_context_class_loader
 
@@ -36,7 +39,10 @@ from flink_agents.api.core_options import (
     AgentConfigOptions,
     AgentExecutionOptions,
     MemoryEventOptions,
+    TraceLogLevel,
+    TraceLogScope,
 )
+from flink_agents.api.trace_log import TraceLogTarget, _serialize_targets
 
 _JAVA_PRIMITIVE_TYPE_TO_PYTHON: dict[str, type] = {
     "java.lang.String": str,
@@ -90,12 +96,29 @@ def _java_type_matches_python(java_type_name: str, python_config_type: type) -> 
     return python_config_type.__name__ == java_simple_name
 
 
+def _normalize_java_collection(value: Any) -> Any:
+    if isinstance(value, JavaMap):
+        return {key: _normalize_java_collection(item) for key, item in value.items()}
+    if isinstance(value, JavaList):
+        return [_normalize_java_collection(item) for item in value]
+    if (
+        isinstance(value, JavaObject)
+        and value.getClass().getName()
+        == "org.apache.flink.agents.api.logger.TraceLogTarget"
+    ):
+        return _normalize_java_collection(value.toConfig())
+    return value
+
+
 def normalize_java_default(
     java_default: Any, java_type_name: str, python_config_type: type
 ) -> Any:
     """Convert a Java default value into a Python-comparable form."""
     if java_default is None:
         return None
+
+    if python_config_type is list:
+        return [_normalize_java_collection(item) for item in java_default]
 
     if hasattr(java_default, "name") and callable(java_default.name):
         enum_name = java_default.name()
@@ -130,6 +153,8 @@ def assert_python_option_matches_java(
     )
 
     python_default = python_option.get_default_value()
+    if python_option.get_key() == AgentConfigOptions.TRACE_LOG_TARGETS.get_key():
+        python_default = _serialize_targets(python_default)
     java_default = normalize_java_default(
         java_option.getDefaultValue(),
         java_type_name,
@@ -166,6 +191,128 @@ def assert_options_class_matches_java(
         )
 
 
+def assert_enum_matches_java(python_enum: type[Enum], java_enum_class: Any) -> None:
+    """Compare enum names used inside trace log targets."""
+    java_names = {value.name() for value in java_enum_class.getEnumConstants()}
+    assert set(python_enum.__members__) == java_names, (
+        f"{python_enum.__name__}: enum values differ "
+        f"(python={sorted(python_enum.__members__)!r}, java={sorted(java_names)!r})"
+    )
+
+
+def assert_trace_log_target_factories_match_java(jvm: Any) -> None:
+    """Compare canonical wire values from typed factories across both languages."""
+    java_target = jvm.org.apache.flink.agents.api.logger.TraceLogTarget
+    java_level = jvm.org.apache.flink.agents.api.logger.TraceLogLevel
+    factories = (
+        ("all", None),
+        ("events", "event"),
+        ("actions", "action"),
+        ("tools", "tool"),
+        ("llms", "llm"),
+        ("parsers", "parser"),
+        ("subagents", "subagent"),
+    )
+    for plural, singular in factories:
+        for level in (None, *TraceLogLevel):
+            python_args = [] if level is None else [level]
+            java_args = [] if level is None else [getattr(java_level, level.name)]
+            python_target = getattr(TraceLogTarget, plural)(*python_args)
+            target = getattr(java_target, plural)(*java_args)
+            assert _serialize_targets([python_target])[0] == _normalize_java_collection(
+                target
+            ), (plural, level)
+            if singular is not None:
+                for name in ("named", "com.example.*"):
+                    python_target = getattr(TraceLogTarget, singular)(
+                        name, *python_args
+                    )
+                    target = getattr(java_target, singular)(name, *java_args)
+                    assert _serialize_targets([python_target])[0] == (
+                        _normalize_java_collection(target)
+                    ), (singular, name, level)
+    for name in (None, "search"):
+        python_target = TraceLogTarget.entity("embedding", name, TraceLogLevel.VERBOSE)
+        target = java_target.entity("embedding", name, java_level.VERBOSE)
+        assert _serialize_targets([python_target])[0] == _normalize_java_collection(
+            target
+        )
+
+
+def _java_config_value(value: Any, jvm: Any) -> Any:
+    if isinstance(value, dict):
+        result = jvm.java.util.LinkedHashMap()
+        for key, item in value.items():
+            result.put(key, _java_config_value(item, jvm))
+        return result
+    if isinstance(value, list):
+        result = jvm.java.util.ArrayList()
+        for item in value:
+            result.add(_java_config_value(item, jvm))
+        return result
+    return value
+
+
+def assert_trace_log_target_validation_matches_java(jvm: Any) -> None:
+    """Run raw configuration examples through both shared target codecs."""
+    java_target = jvm.org.apache.flink.agents.api.logger.TraceLogTarget
+    examples = [
+        [],
+        [{"scope": "all", "level": "verbose"}],
+        [{"scope": "EVENT_ONLY", "level": None}],
+        [{"scope": {"entityType": "embedding", "entityName": "search"}}],
+        [{"scope": {"entityType": "tool", "entityName": None}}],
+        [
+            {"scope": "EVENT_ONLY"},
+            {"scope": {"entityType": "event"}, "level": "OFF"},
+            {"scope": {"event": "*"}, "level": "STANDARD"},
+        ],
+        None,
+        {},
+        "ALL",
+        [None],
+        [{}],
+        [{"scope": "ALL", "unknown": True}],
+        [{"scope": "ALL", "level": "DEBUG"}],
+        [{"scope": "ALL", "level": 1}],
+        [{"scope": {"event": "created", "tool": "search"}}],
+        [{"scope": {"event": "created", "entityType": "event"}}],
+        [{"scope": {"event": None}}],
+        [{"scope": {"event": " "}}],
+        [{"scope": {"event": 1}}],
+        [{"scope": {"event": "com.*.foo"}}],
+        [{"scope": {"embedding": "search"}}],
+        [{"scope": {"entityType": "event", "entityName": "*"}}],
+    ]
+    for category in ("event", "action", "tool", "llm", "parser", "subagent"):
+        examples.extend(
+            [{"scope": {category: name}}] for name in ("named", "com.example.*", "*")
+        )
+    for raw in examples:
+        python_result = None
+        python_error = False
+        try:
+            python_result = _serialize_targets(raw)
+        except ValueError:
+            python_error = True
+        java_result = None
+        java_error = False
+        try:
+            java_result = _normalize_java_collection(
+                java_target.parseTargets(_java_config_value(raw, jvm))
+            )
+        except Py4JJavaError as error:
+            if (
+                error.java_exception.getClass().getName()
+                != "java.lang.IllegalArgumentException"
+            ):
+                raise
+            java_error = True
+        assert python_error == java_error, (raw, python_error, java_error)
+        if not python_error:
+            assert python_result == java_result, (raw, python_result, java_result)
+
+
 def main() -> None:
     current_dir = Path(__file__).parent
 
@@ -194,6 +341,15 @@ def main() -> None:
     assert_options_class_matches_java(
         MemoryEventOptions, java_memory_event_options, jvm
     )
+    assert_trace_log_target_factories_match_java(jvm)
+    assert_trace_log_target_validation_matches_java(jvm)
+    for python_enum in (TraceLogLevel, TraceLogScope):
+        assert_enum_matches_java(
+            python_enum,
+            class_loader.loadClass(
+                f"org.apache.flink.agents.api.logger.{python_enum.__name__}"
+            ),
+        )
 
 
 if __name__ == "__main__":

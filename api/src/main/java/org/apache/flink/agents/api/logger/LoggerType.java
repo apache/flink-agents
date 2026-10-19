@@ -19,18 +19,18 @@
 package org.apache.flink.agents.api.logger;
 
 /**
- * Enumeration of built-in EventLogger types.
+ * Enumeration of built-in TraceLogger types.
  *
- * <p>Each {@code LoggerType} corresponds to a built-in {@link EventLogger} implementation
- * registered with the {@link EventLoggerFactory}. The {@link #getType()} string is the identifier
+ * <p>Each {@code LoggerType} corresponds to a built-in {@link TraceLogger} implementation
+ * registered with the {@link TraceLoggerFactory}. The {@link #getType()} string is the identifier
  * used by the factory registry, the configuration system, and {@link
- * EventLoggerConfig#getLoggerType()}.
+ * TraceLoggerConfig#getLoggerType()}.
  */
 public enum LoggerType {
-    /** SLF4J-based event logger; outputs to Flink Web UI via log4j2. */
+    /** SLF4J-based trace logger; outputs to Flink Web UI via log4j2. */
     SLF4J("slf4j"),
 
-    /** File-based event logger; writes events to per-subtask log files. */
+    /** File-based trace logger; writes trace records to per-subtask log files. */
     FILE("file");
 
     private final String type;
@@ -41,7 +41,7 @@ public enum LoggerType {
 
     /**
      * Gets the string identifier used to register and look up this logger type in {@link
-     * EventLoggerFactory}.
+     * TraceLoggerFactory}.
      *
      * @return the logger type identifier
      */

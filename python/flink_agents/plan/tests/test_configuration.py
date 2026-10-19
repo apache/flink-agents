@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 import tempfile
 from pathlib import Path
 
@@ -22,6 +23,12 @@ import pytest
 import yaml
 
 from flink_agents.api.configuration import ConfigOption
+from flink_agents.api.core_options import (
+    AgentConfigOptions,
+    LoggerType,
+)
+from flink_agents.api.trace_log import TraceLogLevel, TraceLogScope, TraceLogTarget
+from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
 
 
@@ -223,12 +230,24 @@ def test_get_with_default_value() -> None:
     default_str = ConfigOption("default.str", str, "default_value")
     default_int = ConfigOption("default.int", int, 100)
     default_double = ConfigOption("default.double", float, 2.5)
+    default_targets = ConfigOption(
+        "default.targets", list, [{"scope": "EVENT_ONLY", "level": "STANDARD"}]
+    )
 
     config = AgentConfiguration()
 
     assert config.get(default_str) == "default_value"
     assert config.get(default_int) == 100
     assert config.get(default_double) == 2.5
+
+    targets = config.get(default_targets)
+    targets[0]["level"] = "OFF"
+    targets.append({"scope": "ALL"})
+
+    expected_targets = [{"scope": "EVENT_ONLY", "level": "STANDARD"}]
+    assert config.get(default_targets) == expected_targets
+    assert AgentConfiguration().get(default_targets) == expected_targets
+    assert default_targets.get_default_value() == expected_targets
 
 
 def test_get_with_null_and_default() -> None:
@@ -238,3 +257,191 @@ def test_get_with_null_and_default() -> None:
     config.set_str("nullable.str", None)
 
     assert config.get(nullable_str) == "default"
+
+
+def test_trace_log_defaults_and_empty_targets_survive_json() -> None:
+    config = AgentConfiguration()
+    assert config.get(AgentConfigOptions.TRACE_LOG_TARGETS) == [
+        TraceLogTarget.events(TraceLogLevel.STANDARD)
+    ]
+    assert config.get(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE) is LoggerType.SLF4J
+
+    config.set(AgentConfigOptions.TRACE_LOG_TARGETS, [])
+    config.set(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE, LoggerType.FILE)
+    restored = AgentConfiguration.model_validate_json(config.model_dump_json())
+    assert restored.get(AgentConfigOptions.TRACE_LOG_TARGETS) == []
+    assert restored.get(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE) is LoggerType.FILE
+
+
+@pytest.mark.parametrize(
+    ("targets", "expected"),
+    [
+        (
+            [
+                {"scope": "ALL", "level": "OFF"},
+                {"scope": "EVENT_ONLY", "level": "STANDARD"},
+                {"scope": {"event": "com.foo.*"}, "level": "VERBOSE"},
+                {"scope": {"action": "process"}},
+                {"scope": {"tool": "*"}},
+                {"scope": {"entityType": "embedding", "entityName": "search"}},
+            ],
+            [
+                TraceLogTarget.all(TraceLogLevel.OFF),
+                TraceLogTarget.events(TraceLogLevel.STANDARD),
+                TraceLogTarget.event("com.foo.*", TraceLogLevel.VERBOSE),
+                TraceLogTarget.action("process"),
+                TraceLogTarget.tools(),
+                TraceLogTarget.entity("embedding", "search"),
+            ],
+        ),
+        ([], []),
+    ],
+)
+def test_trace_log_targets_survive_yaml_and_plan_json(
+    tmp_path: Path, targets: list[dict], expected: list[TraceLogTarget]
+) -> None:
+    config_file = tmp_path / "agent.yaml"
+    config_file.write_text(
+        yaml.safe_dump({"agent": {"trace-log": {"targets": targets}}}),
+        encoding="utf-8",
+    )
+    config = AgentConfiguration()
+    config.load_from_file(str(config_file))
+    assert config.get(AgentConfigOptions.TRACE_LOG_TARGETS) == expected
+
+    typed_config = AgentConfiguration()
+    typed_config.set(AgentConfigOptions.TRACE_LOG_TARGETS, expected)
+    assert config.get_conf_data() == typed_config.get_conf_data()
+    plan = AgentPlan(actions={}, config=config)
+    serialized = plan.model_dump_json(serialize_as_any=True)
+    restored = AgentPlan.model_validate_json(serialized)
+    assert restored.config.get(AgentConfigOptions.TRACE_LOG_TARGETS) == expected
+    assert json.loads(serialized)["config"]["conf_data"] == config.get_conf_data()
+
+
+@pytest.mark.parametrize(
+    "category", ["event", "action", "tool", "llm", "parser", "subagent"]
+)
+def test_shorthand_matches_generic_scope_and_wildcard(category: str) -> None:
+    option = AgentConfigOptions.TRACE_LOG_TARGETS
+    for name in ("named", "com.foo.*", "*"):
+        config = AgentConfiguration({option.get_key(): [{"scope": {category: name}}]})
+        expected = TraceLogTarget.entity(category, None if name == "*" else name)
+        assert config.get(option) == [expected]
+        generic = AgentConfiguration()
+        generic.set(option, [expected])
+        assert config.get_conf_data() == generic.get_conf_data()
+
+
+def test_trace_log_targets_preserve_omitted_level_and_custom_categories() -> None:
+    option = AgentConfigOptions.TRACE_LOG_TARGETS
+    config = AgentConfiguration()
+    config.set(
+        option,
+        [
+            TraceLogTarget.all(TraceLogLevel.OFF),
+            TraceLogTarget.events(),
+            TraceLogTarget.entity("embedding", "search", TraceLogLevel.VERBOSE),
+        ],
+    )
+    assert config.get_conf_data()[option.get_key()] == [
+        {"scope": "ALL", "level": "OFF"},
+        {"scope": "EVENT_ONLY"},
+        {
+            "scope": {"entityType": "embedding", "entityName": "search"},
+            "level": "VERBOSE",
+        },
+    ]
+    config.get(option).clear()
+    assert len(config.get(option)) == 3
+
+
+def test_trace_log_maps_accept_enums_case_insensitive_presets_and_null_level() -> None:
+    option = AgentConfigOptions.TRACE_LOG_TARGETS
+    config = AgentConfiguration(
+        {
+            option.get_key(): [
+                {"scope": TraceLogScope.ALL, "level": TraceLogLevel.VERBOSE},
+                {"scope": "event_only", "level": "standard"},
+                {"scope": {"entityType": "tool", "entityName": None}, "level": None},
+            ]
+        }
+    )
+    assert config.get(option) == [
+        TraceLogTarget.all(TraceLogLevel.VERBOSE),
+        TraceLogTarget.events(TraceLogLevel.STANDARD),
+        TraceLogTarget.tools(),
+    ]
+    assert config.get_conf_data()[option.get_key()] == [
+        {"scope": "ALL", "level": "VERBOSE"},
+        {"scope": "EVENT_ONLY", "level": "STANDARD"},
+        {"scope": {"entityType": "tool"}},
+    ]
+
+
+def test_trace_log_duplicate_aliases_preserve_levels_for_runtime_resolution() -> None:
+    option = AgentConfigOptions.TRACE_LOG_TARGETS
+    config = AgentConfiguration()
+    config.set(
+        option,
+        [
+            TraceLogTarget.events(),
+            {"scope": {"event": "*"}, "level": "OFF"},
+            {"scope": {"entityType": "event"}, "level": "STANDARD"},
+        ],
+    )
+    assert config.get_conf_data()[option.get_key()] == [
+        {"scope": "EVENT_ONLY"},
+        {"scope": "EVENT_ONLY", "level": "OFF"},
+        {"scope": "EVENT_ONLY", "level": "STANDARD"},
+    ]
+
+
+@pytest.mark.parametrize(
+    "targets",
+    [
+        None,
+        {},
+        "ALL",
+        [None],
+        [{}],
+        [{"scope": "ALL", "unknown": True}],
+        [{"scope": "ALL", "level": "DEBUG"}],
+        [{"scope": {"event": "created", "tool": "search"}}],
+        [{"scope": {"event": "created", "entityType": "event"}}],
+        [{"scope": {"event": None}}],
+        [{"scope": {"event": " "}}],
+        [{"scope": {"event": 1}}],
+        [{"scope": {"event": "com.*.foo"}}],
+        [{"scope": {"embedding": "search"}}],
+        [{"scope": {"entityType": "event", "entityName": "*"}}],
+    ],
+)
+def test_trace_log_targets_reject_malformed_configuration(targets) -> None:
+    option = AgentConfigOptions.TRACE_LOG_TARGETS
+    with pytest.raises(ValueError, match="Invalid trace-log.targets"):
+        AgentConfiguration().set(option, targets)
+    with pytest.raises(ValueError, match="Invalid trace-log.targets"):
+        AgentConfiguration({option.get_key(): targets})
+    config = AgentConfiguration()
+    config.conf_data[option.get_key()] = targets
+    with pytest.raises(ValueError, match="Invalid trace-log.targets"):
+        config.get(option)
+
+
+def test_trace_log_typed_constructor_input_is_json_native() -> None:
+    option = AgentConfigOptions.TRACE_LOG_TARGETS
+    config = AgentConfiguration({option.get_key(): [TraceLogTarget.tool("search")]})
+    restored = AgentConfiguration.model_validate_json(config.model_dump_json())
+    assert restored.get(option) == [TraceLogTarget.tool("search")]
+    assert restored.get_conf_data()[option.get_key()] == [
+        {"scope": {"entityType": "tool", "entityName": "search"}}
+    ]
+
+
+def test_trace_log_target_error_identifies_list_entry() -> None:
+    with pytest.raises(ValueError, match="trace-log.targets: target 1: unknown field"):
+        AgentConfiguration().set(
+            AgentConfigOptions.TRACE_LOG_TARGETS,
+            [TraceLogTarget.all(), {"scope": {"unknown": "search"}}],
+        )

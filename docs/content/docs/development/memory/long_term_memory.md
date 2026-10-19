@@ -185,17 +185,12 @@ A memory set is scoped to the key of the action that obtained it. Call `get_memo
 in a later action. Reusing a set would apply another key's operations to the key it was
 originally obtained for, and operating on a set that carries no scope raises an error.
 
-Obtaining a memory set and deleting one both read the key currently in scope, which only
-the action's own thread reads consistently. Both raise wherever they run on a worker
-thread, so passing `getMemorySet` / `get_memory_set` or `deleteMemorySet` /
-`delete_memory_set` to `durableExecuteAsync` / `durable_execute_async` is unsupported: in
-Python, and in Java on JDK 21 and above, the callable runs on a worker thread and the call
-raises. On JDK 11 Java runs the callable inline instead, so the same code does not raise
-today, but it is unsupported there too and will raise once the job moves to a newer JDK.
-
-Operations on a set you already hold are unaffected, since they carry the key the set was
-obtained under. That is why a memory set may be handed to a worker thread but the long-term
-memory itself may not.
+Call `getMemorySet` / `get_memory_set` and `deleteMemorySet` / `delete_memory_set` in
+the Action body, outside functions submitted for async or durable execution. Operations
+such as `add`, `get`, `search`, and `delete` on a `MemorySet` obtained in that Action can
+run in those functions. See
+[Using Resources and Memory]({{< ref "docs/development/create-agent/actions#using-resources-and-memory" >}})
+for the access rules and an async search example.
 
 Long-term memory also requires a non-empty partition key. A key of `""` carries no
 isolation in the backing store, so obtaining or using a memory set under one raises

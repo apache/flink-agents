@@ -76,9 +76,9 @@ def test_java_chat_model_integration(
     deserialize_datastream = input_datastream.map(lambda x: str(x))
 
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
-    log_dir = tmp_path / "event_logs"
+    log_dir = tmp_path / "trace_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    agents_env.get_config().set_str("baseLogDir", str(log_dir))
+    agents_env.get_config().set_str("trace-log.base-dir", str(log_dir))
     output_datastream = (
         agents_env.from_datastream(
             input=deserialize_datastream, key_selector=lambda x: "orderKey"
