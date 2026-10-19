@@ -813,7 +813,7 @@ Not every resource type is cross-language. Currently `actions`, `tools`, `chat_m
 
 ## YAML API Specification
 
-To help users and coding agents understand the YAML format and validate YAML files, Flink Agents publishes a language-neutral **JSON Schema** for the YAML document. The schema is checked in at [`docs/yaml-schema.json`](https://github.com/apache/flink-agents/blob/main/docs/yaml-schema.json) — point your IDE's YAML language server at it for inline validation and autocompletion.
+To help users and coding agents understand the YAML format and validate YAML files, Flink Agents publishes a language-neutral **JSON Schema** for the YAML document. The schema is checked in at {{< gh_link file="docs/yaml-schema.json" name="`docs/yaml-schema.json`" >}} — point your IDE's YAML language server at it for inline validation and autocompletion.
 
 The schema benefits both humans and machines:
 

@@ -121,7 +121,7 @@ outputStream.print();
 
 The input `DataStream` must be `KeyedStream`, or user should provide `KeySelector` to tell how to convert the input `DataStream` to `KeyedStream`.
 
-For complete, runnable examples, see [`WorkflowSingleAgentExample.java`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/WorkflowSingleAgentExample.java) (Java) and [`workflow_single_agent_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/workflow_single_agent_example.py) (Python).
+For complete, runnable examples, see {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/WorkflowSingleAgentExample.java" name="`WorkflowSingleAgentExample.java`" >}} (Java) and {{< gh_link file="python/flink_agents/examples/quickstart/workflow_single_agent_example.py" name="`workflow_single_agent_example.py`" >}} (Python).
 
 ## From/To Flink Table API
 

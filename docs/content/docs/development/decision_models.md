@@ -543,9 +543,9 @@ exits with an exception.
 ## Run the review analysis example
 
 The runnable
-[`decision_review_analysis_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/decision_models/decision_review_analysis_example.py)
+{{< gh_link file="python/flink_agents/examples/decision_models/decision_review_analysis_example.py" name="`decision_review_analysis_example.py`" >}}
 uses the same `ProductReview` input as the workflow-agent quickstart. Its
-[`DecisionReviewAnalysisAgent`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/agents/decision_review_analysis_agent.py)
+{{< gh_link file="python/flink_agents/examples/quickstart/agents/decision_review_analysis_agent.py" name="`DecisionReviewAnalysisAgent`" >}}
 submits three questions through the built-in Decision Action:
 
 | Question | Type | Business use |

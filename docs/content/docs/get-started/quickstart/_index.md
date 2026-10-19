@@ -54,7 +54,7 @@ The Quickstarts submit the example programs that ship with the repository, so yo
 them locally. Clone the repository:
 
 ```bash
-git clone https://github.com/apache/flink-agents.git
+git clone --branch {{< branch >}} https://github.com/apache/flink-agents.git
 cd flink-agents
 ```
 

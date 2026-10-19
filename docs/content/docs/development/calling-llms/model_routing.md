@@ -359,8 +359,8 @@ for the persistence and replay guarantees.
 
 ## Examples
 
-- [`ModelRoutingExample`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/ModelRoutingExample.java): rule-based routing between two Ollama models.
-- [`ModelRoutingJudgeExample`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/ModelRoutingJudgeExample.java): the same two models with an LLM judge and candidate descriptions.
-- [`OpenAiModelRoutingExample`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/openai/OpenAiModelRoutingExample.java): rule-based routing between `gpt-4o-mini` and `gpt-4o` over one OpenAI connection.
+- {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/ModelRoutingExample.java" name="`ModelRoutingExample`" >}}: rule-based routing between two Ollama models.
+- {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/ModelRoutingJudgeExample.java" name="`ModelRoutingJudgeExample`" >}}: the same two models with an LLM judge and candidate descriptions.
+- {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/openai/OpenAiModelRoutingExample.java" name="`OpenAiModelRoutingExample`" >}}: rule-based routing between `gpt-4o-mini` and `gpt-4o` over one OpenAI connection.
 
-All three register their resources on the execution environment and use the [`ModelRoutingAgent`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/agents/ModelRoutingAgent.java) to send requests and handle responses.
+All three register their resources on the execution environment and use the {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/agents/ModelRoutingAgent.java" name="`ModelRoutingAgent`" >}} to send requests and handle responses.

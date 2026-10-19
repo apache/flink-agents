@@ -192,7 +192,7 @@ PIP_CONSTRAINT=/tmp/constraint.txt pip install flink-agents apache-flink==${FLIN
 **Clone the repository:**
 
 ```shell
-git clone https://github.com/apache/flink-agents.git
+git clone --branch {{< branch >}} https://github.com/apache/flink-agents.git
 ```
 
 **Build and install:**
