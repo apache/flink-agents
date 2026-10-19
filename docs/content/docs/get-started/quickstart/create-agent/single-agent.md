@@ -309,7 +309,8 @@ public static void processChatResponse(Event event, RunnerContext ctx) throws Ex
                             scoreNode.asInt(),
                             result)));
 }
-}```
+}
+```
 {{< /tab >}}
 
 {{< /tabs >}}

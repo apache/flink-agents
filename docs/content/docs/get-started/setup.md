@@ -326,8 +326,7 @@ cp dist/flink-${FLINK_VERSION%.*}/target/flink-agents-dist-flink-${FLINK_VERSION
 
 ## Developing with the Java API
 
-A Java Flink job declares its Agent in Java, so it also needs the Flink Agents artifacts
-on its compile classpath.
+To develop a Java Flink job, add the Flink Agents artifacts to its compile classpath.
 
 ### Maven Dependencies
 
