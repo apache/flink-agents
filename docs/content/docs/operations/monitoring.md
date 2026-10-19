@@ -56,7 +56,7 @@ The **Scope** column in the tables below identifies the metric group. The exampl
 | **Model** | `action.<action_name>.model.<model_name>` | `action.chat_model_action.model.qwen3:1.7b.promptTokens` |
 | **Model Resource**, **Tool**, **Skill**, **MCP Server**, **Subagent** | `action.<action_name>.<kind>.<name>`, where `<kind>` is `model_resource`, `tool`, `skill`, `mcp_server` or `subagent` | `action.tool_call_action.tool.get_weather.numOfToolCallsSucceeded` |
 
-Each group below the Agent scope is a key-value group: `<action_name>` is the Action's name, `<model_name>` the model a chat model reports usage for, and `<name>` the resource, Tool, Skill, MCP Server or sub-agent name. Reporters that support key-value groups, such as Prometheus, expose them as labels.
+Each group below the Agent scope is a key-value group: `<action_name>` is the Action's name, `<model_name>` the model a chat model reports usage for, and `<name>` the resource, Tool, Skill, MCP Server or sub-agent name. Reporters that support key-value groups, such as Prometheus, expose them as labels. The examples use `chat_model_action` and `tool_call_action`, [built-in Actions]({{< ref "docs/development/create-agent/events#built-in-events-and-actions" >}}) that call chat models and Tools, respectively. Their names appear in metric paths when your Agent uses them.
 
 ### Built-in Metrics
 
@@ -123,7 +123,7 @@ These metrics describe LLM, Tool, Skill, MCP Server and sub-agent calls that the
 
 #### Token Usage Metrics
 
-Token usage metrics are recorded when chat models are invoked through `ChatModelConnection`, which helps track LLM API usage and cost.
+Token usage metrics are recorded when chat models are invoked through `ChatModelConnection`, which helps track LLM API usage and cost. In the built-in chat flow, token usage metrics appear under `action.chat_model_action.model.<model_name>`, not under the Action that sends `ChatRequestEvent`.
 
 | Scope | Metrics | Description | Type |
 |-------|---------|-------------|------|
@@ -238,6 +238,8 @@ Trace Log records Events, Action executions, and component calls as structured J
 Trace Log writes are best effort. A failed write does not fail Event processing or the job; the first failure is logged at `WARN`, later ones at `DEBUG`, and each one increments `traceLogWriteFailures`.
 
 ### Recording Targets
+
+A target's `scope` supports `EVENT_ONLY` (the default), which records only Events, and `ALL`, which records all entity types the framework observes. The example below uses `ALL`.
 
 To record Events, Actions, and component calls at `STANDARD`, with full attributes for the `search` Tool, configure:
 
