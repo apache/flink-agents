@@ -179,7 +179,7 @@ pip install flink-agents apache-flink==${FLINK_VERSION}
 ```
 
 {{< hint warning >}}
-**Apple Silicon (macOS arm64) + Python 3.12**: `apache-flink` depends on `apache-beam`, which ships no macOS arm64 wheel for Python 3.12, so pip builds it from source. The build pulls the latest `setuptools` (>=82), which removed `pkg_resources`, causing `ModuleNotFoundError: No module named 'pkg_resources'`. That is an upstream issue, tracked in [setuptools#5174](https://github.com/pypa/setuptools/issues/5174). Constrain the build's setuptools to fix it:
+**Apple Silicon (macOS arm64)**: `apache-flink` depends on `apache-beam`, and none of the `apache-beam` versions that `apache-flink` 1.20 through 2.3 accept ships a macOS arm64 wheel, so pip builds it from source on every supported Python version. The build pulls the latest `setuptools` (>=82), which removed `pkg_resources`, causing `ModuleNotFoundError: No module named 'pkg_resources'`. That is an upstream issue, tracked in [setuptools#5174](https://github.com/pypa/setuptools/issues/5174). Constrain the build's setuptools to fix it:
 
 ```shell
 echo "setuptools<82" > /tmp/constraint.txt
@@ -209,7 +209,7 @@ cd flink-agents
 cd ..
 ```
 
-On Apple Silicon with Python 3.12, that `pip install` can fail while building `apache-beam`. See
+On Apple Silicon, that `pip install` can fail while building `apache-beam`. See
 the warning in [From Official Release](#from-official-release) for the fix.
 
 This script will:
