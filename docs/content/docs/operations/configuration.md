@@ -274,7 +274,7 @@ for passing Kafka client SASL/SSL settings.
 
 | Key                                 | Default                  | Type    | Description                                                                 |
 |-------------------------------------|--------------------------|---------|-----------------------------------------------------------------------------|
-| `kafkaActionStateCleanupControlTopic` | (none) | String | Separate topic containing committed checkpoint-aligned cleanup boundaries. When configured, recovery rejects points requiring data below the boundary. Mutually exclusive with `kafkaActionStateTombstoneEnabled=true`. See [Checkpoint-aligned Kafka cleanup](#checkpoint-aligned-kafka-cleanup) for prerequisites. |
+| `kafkaActionStateCleanupControlTopic` | (none) | String | Separate topic containing committed checkpoint-aligned cleanup boundaries. When configured, recovery rejects points requiring data below the boundary. Mutually exclusive with `kafkaActionStateTombstoneEnabled=true`. See [Checkpoint-aligned Kafka cleanup]({{< ref "docs/operations/consistency#checkpoint-aligned-kafka-cleanup" >}}) for prerequisites and procedure. |
 | `kafkaActionStateTombstoneEnabled` | false | Boolean | Write deletion markers for execution records covered by completed checkpoints. Enabling this may cause completed Actions to run again when restoring older checkpoints or savepoints. Mutually exclusive with `kafkaActionStateCleanupControlTopic`. See [Kafka retention and cleanup]({{< ref "docs/operations/consistency#kafka-retention-and-cleanup" >}}) for the recovery trade-off. |
 | `kafkaActionStateTopic` | (none) | String | Topic storing Action state. Required when `actionStateStoreBackend` is `kafka`. |
 | `kafkaActionStateTopicNumPartitions` | 64 | Integer | Number of partitions when creating the topic. Does not change an existing topic. |
@@ -292,37 +292,6 @@ When reusing checkpoints or savepoints with this store:
 - Retention changes and manual deletion must preserve the records needed by every
   recovery point you intend to retain. See
   [Kafka retention and cleanup]({{< ref "docs/operations/consistency" >}}#kafka-retention-and-cleanup).
-- Once a checkpoint-aligned cleanup boundary has been committed, keep the same
-  `kafkaActionStateCleanupControlTopic` configuration and its committed history
-  for all subsequent runs and restores.
-
-##### Checkpoint-aligned Kafka cleanup
-
-`KafkaActionStateCleanupTool` requires the following configuration and recovery
-constraints:
-
-- The data topic must use `cleanup.policy=compact,delete`, `retention.ms=-1`, and
-  `retention.bytes=-1`. These are also the settings used when the store creates a
-  new data topic.
-- The control topic must differ from the data topic, have exactly one partition,
-  and use `cleanup.policy=compact` without delete retention. Dedicate it to the
-  same logical Agent operator and physical data topic; do not share it across
-  operators.
-- Before enabling `kafkaActionStateCleanupControlTopic` on the job, the control
-  topic must exist and contain a committed cleanup boundary. A missing topic or
-  committed history prevents recovery.
-- Per-key tombstones must be disabled. Cleanup boundaries can move only forward;
-  run only one `apply` operation at a time.
-- The `plan` command accepts only versioned Kafka recovery markers. Legacy map
-  markers can still be used for job recovery, but cannot authorize cleanup.
-
-The `apply` command's optional `--replication-factor` controls creation of the
-control topic. It defaults to `1` and accepts values from `1` to `32767`.
-
-For the procedure and command examples, see
-[Cleanup steps]({{< ref "docs/operations/consistency" >}}#cleanup-steps). Jobs that
-previously emitted tombstones must first follow
-[Switching from per-key tombstones]({{< ref "docs/operations/consistency" >}}#switching-from-per-key-tombstones).
 
 #### Fluss-based Action State Store
 

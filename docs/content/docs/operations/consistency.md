@@ -186,9 +186,13 @@ To match saved records to the correct work, replay must preserve the following:
   Action must reach the same durable calls in the same order, with the same inputs.
   See [Durable Execution]({{< ref "docs/development/create-agent/actions#durable-execution" >}})
   for call identity, serialization, and Action-context requirements.
-
-Before restoring state after changes to keys, Action names, result types,
-application code, or versions, review [Upgrades and migration](#upgrades-and-migration).
+- **Keep keys and Action names stable.** Reuse the original key types and
+  serializer configuration, and ensure custom key serializers produce
+  deterministic bytes. Changing key serialization or renaming an Action can
+  prevent recovery from finding its saved completion.
+- **Keep saved values usable.** The application must still be able to read and use
+  stored Events, Memory updates, and durable call outcomes, since recovery may
+  replay them without running the code that produced them.
 
 ### Limits on external side effects
 
@@ -243,10 +247,28 @@ finished.
 For per-key tombstones, set `kafkaActionStateTombstoneEnabled=true` before starting
 the job.
 
-For checkpoint-aligned cleanup, use `KafkaActionStateCleanupTool` for both Java
-and Python jobs. Review the [configuration prerequisites]({{< ref "docs/operations/configuration#checkpoint-aligned-kafka-cleanup" >}})
-before running the tool. If the job has used per-key tombstones, first follow
-[Switching from per-key tombstones](#switching-from-per-key-tombstones).
+##### Checkpoint-aligned Kafka cleanup
+
+Use `KafkaActionStateCleanupTool` for both Java and Python jobs. Before generating
+a plan, check the prerequisites below. If the job has used per-key tombstones,
+first follow [Switching from per-key tombstones](#switching-from-per-key-tombstones).
+
+{{< details title="Prerequisites and topic settings" >}}
+
+- The data topic must use `cleanup.policy=compact,delete`, `retention.ms=-1`, and
+  `retention.bytes=-1`. These are also the settings used when the store creates a
+  new data topic.
+- The control topic must differ from the data topic, have exactly one partition,
+  and use `cleanup.policy=compact` without delete retention. Dedicate it to the
+  same logical Agent operator and physical data topic; do not share it across
+  operators.
+- Before enabling `kafkaActionStateCleanupControlTopic` on the job, the control
+  topic must exist and contain a committed cleanup boundary. Recovery fails if
+  the topic or its committed history is missing.
+- The `plan` command accepts only versioned Kafka recovery markers. Legacy map
+  markers can still be used for job recovery, but cannot authorize cleanup.
+
+{{< /details >}}
 
 For the first cleanup of an existing job:
 
@@ -279,9 +301,8 @@ java -cp "$FLINK_HOME/lib/*:<FLINK_AGENTS_DIST_JAR>:<FLINK_STATE_PROCESSOR_API_J
   --output cleanup-plan.json
 ```
 
-After checking the plan, apply it with a separate control topic. The tool can
-create the topic; existing-topic requirements and optional parameters are listed
-in the [configuration reference]({{< ref "docs/operations/configuration#checkpoint-aligned-kafka-cleanup" >}}).
+After checking the plan, apply it with a separate control topic. The tool creates
+the topic if it does not exist.
 
 ```bash
 java -cp "$FLINK_HOME/lib/*:<FLINK_AGENTS_DIST_JAR>:<FLINK_STATE_PROCESSOR_API_JAR>" \
@@ -289,6 +310,10 @@ java -cp "$FLINK_HOME/lib/*:<FLINK_AGENTS_DIST_JAR>:<FLINK_STATE_PROCESSOR_API_J
   apply --plan cleanup-plan.json --bootstrap-servers "kafka:9092" \
   --control-topic "orders-agent-action-state-cleanup"
 ```
+
+To choose the replication factor when creating the control topic, add
+`--replication-factor N` to `apply`. The default is `1`; valid values are `1`
+through `32767`.
 
 A successful apply prints `Cleanup plan <id> is APPLIED`.
 
@@ -330,32 +355,9 @@ Flink Agents currently provides no equivalent of Kafka's per-key tombstones or
 checkpoint-aligned cleanup for the Fluss Action State Store. Instead, use Fluss's
 own log retention settings to manage record retention and cleanup.
 
-## Upgrades and migration
+## Migration notes
 
-### Check recovery conditions before a change
-
-Before restoring state after a change, check Flink's state compatibility
-requirements and confirm that the application can still use its saved Action
-results. A readable checkpoint does not by itself guarantee that saved results
-remain valid for the new code.
-
-| Planned change | What to check |
-| --- | --- |
-| Flink Agents or Flink version | Follow the target release's migration guidance and Flink's upgrade requirements. A job starting successfully does not confirm that recovery across those versions is supported. |
-| Key type or serializer | Keep the original key type and serializer configuration when reusing Action state. Custom key serializers must produce deterministic bytes. Changes to the serialized key bytes are not always detected. |
-| Action name | Renaming an Action prevents recovery from finding its saved completion. Keeping the same name allows recovery to reuse saved output without running the new body. Check that this output is still valid for the new code. |
-| User code, Events, Memory, or durable results | Check that saved outputs and values can still be read and used, and that unfinished Actions reach the same logical calls. Runtime format checks do not verify compatibility with the application's logic. |
-| Action State Store backend | When reusing checkpoints or savepoints, preserve the original [Kafka topic]({{< ref "docs/operations/configuration" >}}#changes-to-an-existing-kafka-store) or [Fluss table]({{< ref "docs/operations/configuration" >}}#changes-to-an-existing-fluss-store), its partition or bucket layout, and [the records needed for recovery](#action-state-store-retention-and-cleanup). |
-
-Use Flink's
-[application and version upgrade guidance](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/upgrading/)
-for the hosting job. The checks above identify recovery requirements and known
-risks. They do not establish which Flink Agents and Flink version combinations are
-supported.
-
-### Migration notes
-
-#### Flink Agents 0.4
+### Flink Agents 0.4
 
 Flink Agents 0.4 changes the Action State Store record key format and does not
 support records written by earlier versions. When upgrading from an earlier
