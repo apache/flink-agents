@@ -264,6 +264,18 @@ public final class AgentTraceSpans {
                     attributes.put(GEN_AI_TOOL_TYPE, conventionType);
                 }
             }
+        } else if (ExecutionReporter.EntityTypes.SUBAGENT.equals(entityType)) {
+            // A sub-agent delegation the model requested as a tool call. Records don't
+            // distinguish in-process agents from remote async jobs, so this keeps the
+            // fallback's INTERNAL kind until they carry locality.
+            name = "invoke_agent " + entityName;
+            kind = SpanKind.INTERNAL;
+            attributes.put(GEN_AI_OPERATION_NAME, "invoke_agent");
+            attributes.put(GEN_AI_AGENT_NAME, entityName);
+            String callId = stringValue(metadata, ToolExecutionMetadataKeys.TOOL_CALL_ID);
+            if (callId != null) {
+                attributes.put(GEN_AI_TOOL_CALL_ID, callId);
+            }
         } else if (ExecutionReporter.EntityTypes.ACTION.equals(entityType)) {
             name = "action " + entityName;
             kind = SpanKind.INTERNAL;

@@ -512,7 +512,7 @@ The JSON result exposes the same graph:
 
 The `flink-agents-integrations-observability-otel` module converts Trace Log records into [OpenTelemetry](https://opentelemetry.io) traces that follow the [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), so agent runs can be viewed in any OTLP-compatible backend, such as Jaeger or Grafana Tempo.
 
-The exporter runs **out of band**: it reads Trace Log files and sends spans over OTLP, so it has no effect on the running job and also works on logs from finished runs. It needs execution records, which the default `EVENT_ONLY` target does not write: use `scope: ALL` as in [Recording Targets](#recording-targets), or add a target per type, such as `scope: {action: "*"}` and `scope: {llm: "*"}`, for `action`, `llm`, `tool`, and `parser`.
+The exporter runs **out of band**: it reads Trace Log files and sends spans over OTLP, so it has no effect on the running job and also works on logs from finished runs. It needs execution records, which the default `EVENT_ONLY` target does not write: use `scope: ALL` as in [Recording Targets](#recording-targets), or add a target per type, such as `scope: {action: "*"}` and `scope: {llm: "*"}`, for `action`, `llm`, `tool`, `parser`, and `subagent`.
 
 #### Mapping
 
@@ -522,6 +522,7 @@ The exporter runs **out of band**: it reads Trace Log files and sends spans over
 | Execution (`executionId` / `parentExecutionId`) | Span / parent span. A child whose parent has no records, for example when targets keep Tools but not Actions, is attached to the root span and keeps the parent id in `flink_agents.parent_execution_id` |
 | `llm` execution | `chat {model}` span, kind CLIENT: `gen_ai.operation.name=chat`, `gen_ai.request.model` from `entityMetadata.model` (span name `chat` when absent), and `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` from the success record's `entityMetadata.usage`. `gen_ai.provider.name` is not set: the record does not carry the provider |
 | `tool` execution | `execute_tool {tool}` span, kind INTERNAL: `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name`, `gen_ai.tool.call.id` from `entityMetadata.toolCallId`, `gen_ai.tool.type` (`function` for function tools, `extension` for remote-function and MCP tools; the raw value is always in `flink_agents.tool.type`), and `gen_ai.agent.name` |
+| `subagent` execution | `invoke_agent {name}` span, kind INTERNAL: `gen_ai.operation.name=invoke_agent`, `gen_ai.agent.name` from the sub-agent name, and `gen_ai.tool.call.id` from `entityMetadata.toolCallId` |
 | `action` execution | `action {name}` span, kind INTERNAL |
 | `parser` execution | `parse {name}` span, kind INTERNAL, `gen_ai.operation.name=parse` (a custom low-cardinality value) |
 | `businessKey` | `flink_agents.business_key`. It is the keyed-stream key, which is a conversation only in chat-style pipelines, so it is reported as `gen_ai.conversation.id` only when enabled (`--business-key-as-conversation-id`, or `setBusinessKeyAsConversationId(true)`) |

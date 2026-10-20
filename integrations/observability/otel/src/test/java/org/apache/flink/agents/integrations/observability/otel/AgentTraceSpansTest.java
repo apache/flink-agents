@@ -747,4 +747,37 @@ class AgentTraceSpansTest {
             Collections.reverse(records);
         }
     }
+
+    @Test
+    @DisplayName("A sub-agent delegation maps to invoke_agent {name} with the tool call id")
+    void testSubagentMapping() {
+        String delegation =
+                "\"inputRunId\":\"r\",\"executionId\":\"s\",\"entityType\":\"subagent\","
+                        + "\"entityName\":\"researcher\","
+                        + "\"entityMetadata\":{\"toolCallId\":\"call_1\"},\"attributes\":{},";
+        SpanData span =
+                spanNamed(
+                        new AgentTraceSpans("test-service")
+                                .assemble(
+                                        List.of(
+                                                record(
+                                                        "{\"schemaVersion\":1,"
+                                                                + delegation
+                                                                + "\"timestamp\":\"2026-01-15T10:30:00Z\","
+                                                                + "\"status\":\"started\"}"),
+                                                record(
+                                                        "{\"schemaVersion\":1,"
+                                                                + delegation
+                                                                + "\"timestamp\":\"2026-01-15T10:30:02Z\","
+                                                                + "\"status\":\"success\"}"))),
+                        "invoke_agent researcher");
+
+        assertThat(span.getKind()).isEqualTo(SpanKind.INTERNAL);
+        assertThat(span.getAttributes().get(AgentTraceSpans.GEN_AI_OPERATION_NAME))
+                .isEqualTo("invoke_agent");
+        assertThat(span.getAttributes().get(AgentTraceSpans.GEN_AI_AGENT_NAME))
+                .isEqualTo("researcher");
+        assertThat(span.getAttributes().get(AgentTraceSpans.GEN_AI_TOOL_CALL_ID))
+                .isEqualTo("call_1");
+    }
 }
