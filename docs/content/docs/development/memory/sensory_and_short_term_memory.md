@@ -290,9 +290,7 @@ Sensory Memory is automatically cleared by the framework after each agent run co
 During execution, sensory memory data is checkpointed by Flink for fault tolerance. However, once the run completes, all sensory memory is cleared and will not be available in subsequent runs.
 {{< /hint >}}
 
-<span id="short-term-memory-2"></span>
-
-### Short-Term Memory {#short-term-memory-ttl}
+### Short-Term Memory
 
 Short-term memory can be configured with a time-to-live (TTL) so that older state expires automatically. This is useful for agents that may run for a long time: if the agent only needs recent memories, expiring historical data directly keeps the stored state focused on the latest context and avoids retaining stale information.
 

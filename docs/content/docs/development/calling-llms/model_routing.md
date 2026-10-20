@@ -281,7 +281,7 @@ behaviors:
 
 For candidates `[small, medium, big]`, selecting `big` with fallback enabled tries
 `big`, then `small`, then `medium`. Model-call retries run before fallback; see
-[Model calls, tools, and retries]({{< ref "docs/operations/configuration#model-calls-tools-and-retries" >}}).
+[Core Options]({{< ref "docs/operations/configuration#core-options" >}}).
 Failures before the call, such as an unresolved model resource, can proceed
 directly to the next candidate without retries.
 
@@ -351,11 +351,11 @@ metadata when distinguishing their usage.
 
 ## Recovery
 
-With an Action State Store configured, recovery can reuse saved routing decisions
-and model call outcomes. A request whose decision was not saved may be routed
-again and select a different model. See
-[Recovery flow]({{< ref "docs/operations/consistency#recovery-flow" >}})
-for when saved work can be reused.
+With durable execution enabled, completed routing decisions and model calls can
+be reused after recovery. Without it, a request may be routed again and select a
+different model. See
+[Recovery Behavior]({{< ref "docs/development/create-agent/actions#recovery-behavior" >}})
+for the persistence and replay guarantees.
 
 ## Examples
 

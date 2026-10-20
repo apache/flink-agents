@@ -215,7 +215,7 @@ support `gather`. For general await behavior and durable execution, see
 [Async Execution]({{< ref "docs/development/create-agent/actions#async-execution" >}})
 and [Durable Execution]({{< ref "docs/development/create-agent/actions#durable-execution" >}}).
 
-With an Action State Store configured, chat calls match saved responses by Action
+With durable execution enabled, chat calls reuse recorded responses by Action
 execution and await order, not by model or message contents. Existing model and
 tool timeouts apply; `ctx.chat` adds no whole-call timeout.
 
@@ -259,13 +259,13 @@ the failure.
 <span id="failures-and-recovery"></span>
 
 Model-call failures are reported after configured retries and routing fallbacks
-are exhausted. See [Model calls, tools, and retries]({{< ref "docs/operations/configuration#model-calls-tools-and-retries" >}})
+are exhausted. See [Core Options]({{< ref "docs/operations/configuration#core-options" >}})
 for retry settings and [Model Routing]({{< ref "docs/development/calling-llms/model_routing" >}})
-for fallbacks. The terminal `ChatResponseEvent` also reports the retry count and
-total retry wait in seconds.
+for fallbacks.
 
-For how calls behave during recovery, see
-[Recovery flow]({{< ref "docs/operations/consistency#recovery-flow" >}}).
+For how calls behave after a failure and recovery, see
+[Recovery Behavior]({{< ref "docs/development/create-agent/actions#recovery-behavior" >}})
+in Actions.
 
 ## Multimodal Messages {#message-content-blocks}
 

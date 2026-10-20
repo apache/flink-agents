@@ -165,7 +165,7 @@ and the output options above.
 ### Condition handling
 
 See [Condition Evaluation Failures]({{< ref "docs/development/create-agent/actions#condition-evaluation-failures" >}})
-for trigger condition behavior and initialization failures.
+for trigger condition examples.
 
 | Key | Default | Type | Description |
 | --- | --- | --- | --- |
@@ -192,8 +192,10 @@ for retry metrics.
 These async switches select how built-in calls execute. Synchronous calls still
 use durable execution; saving outcomes for recovery requires an
 [Action State Store]({{< ref "docs/operations/consistency#configure-an-action-state-store" >}}).
-See [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}})
-for cross-language async requirements and synchronous fallbacks.
+Built-in Chat and context retrieval calls, and Java Decision Model calls through
+Python, fall back to synchronous execution when the runtime cannot support their
+cross-language async call. See [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}})
+for cross-language async requirements.
 
 The `ErrorHandlingStrategy` API and `error-handling-strategy` option have been
 removed. Configure retries with `max-retries`; see Chat for terminal failure handling.
@@ -236,7 +238,7 @@ is listed under [Observability](#observability).
 
 #### Short-term memory TTL
 
-See [Short-Term Memory TTL]({{< ref "docs/development/memory/sensory_and_short_term_memory#short-term-memory-ttl" >}})
+See [Short-Term Memory TTL]({{< ref "docs/development/memory/sensory_and_short_term_memory#short-term-memory-2" >}})
 for TTL behavior and setup examples.
 
 | Key | Default | Type | Description |

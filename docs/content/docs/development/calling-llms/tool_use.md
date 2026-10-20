@@ -435,10 +435,12 @@ the request has a single tool call. Configure timeouts for blocking operations
 inside each tool, such as an HTTP client read timeout.
 
 A batch timeout does not undo external effects or guarantee that an already
-running tool stops. For recovery guarantees and protection against repeated effects,
-see [Consistency]({{< ref "docs/operations/consistency#limits-on-external-side-effects" >}}).
-See [Configuration]({{< ref "docs/operations/configuration" >}}) for the full async batch
-and execution-capacity options.
+running tool stops. Tools that change external systems should be idempotent,
+because a call may run again after recovery. See
+[Configuration]({{< ref "docs/operations/configuration" >}}) for the full async batch
+and execution-capacity options, and
+[Durable Execution]({{< ref "docs/development/create-agent/actions#durable-execution" >}})
+for recovery guarantees.
 
 ## Tool response content and metadata
 
