@@ -244,69 +244,70 @@ For per-key tombstones, set `kafkaActionStateTombstoneEnabled=true` before start
 the job.
 
 For checkpoint-aligned cleanup, use `KafkaActionStateCleanupTool` for both Java
-and Python jobs. Use the full Flink Agents distribution JAR for your Flink version
-(`flink-agents-dist-flink-<FLINK_VERSION>-<FA_VERSION>.jar`, without the `-thin`
-classifier), the matching Flink State Processor API JAR, and Flink's `lib/` on the
-classpath. Run the tool where the recovery point and Kafka are accessible.
-
-If the job has used per-key tombstones, first follow
+and Python jobs. Review the [configuration prerequisites]({{< ref "docs/operations/configuration#checkpoint-aligned-kafka-cleanup" >}})
+before running the tool. If the job has used per-key tombstones, first follow
 [Switching from per-key tombstones](#switching-from-per-key-tombstones).
 
 For the first cleanup of an existing job:
 
-1. Select the oldest completed checkpoint or savepoint you intend to retain, and
-   stop the job while keeping that recovery point available. Identify the Agent
-   operator by its UID or UID hash in that snapshot. The selected point must
-   contain versioned Kafka recovery markers.
-   See the [configuration reference]({{< ref "docs/operations/configuration#checkpoint-aligned-kafka-cleanup" >}})
-   for recovery marker requirements.
-2. Generate a cleanup plan. Replace the JAR and recovery-point placeholders below;
-   use `--operator-uid` instead of `--operator-uid-hash` when specifying a UID:
+1. Select the oldest completed checkpoint or savepoint to retain, and stop the
+   job while keeping that snapshot available.
+2. Generate a cleanup plan for the Agent operator in that snapshot, and check
+   that it matches the selected recovery point and Action State Store.
+3. Apply the plan with a separate cleanup control topic dedicated to that Action
+   State Store.
+4. After `apply` succeeds, set `kafkaActionStateCleanupControlTopic` to that topic
+   and `kafkaActionStateTombstoneEnabled=false`, then restart from the
+   **same selected recovery point**.
 
-   ```bash
-   java -cp "$FLINK_HOME/lib/*:<FLINK_AGENTS_DIST_JAR>:<FLINK_STATE_PROCESSOR_API_JAR>" \
-     org.apache.flink.agents.runtime.actionstate.KafkaActionStateCleanupTool \
-     plan --checkpoint "<CHECKPOINT_OR_SAVEPOINT_PATH>" \
-     --operator-uid-hash "<AGENT_OPERATOR_UID_HASH>" \
-     --output cleanup-plan.json
-   ```
+If the first cleanup fails or is interrupted, keep the job stopped and retry
+`apply` with the same plan: the boundary may already have been committed, making
+earlier recovery points unavailable.
 
-3. Check that the plan's `sourceRecoveryPoint` and `topic` match the selected
-   snapshot and this Agent operator's Action State Store. Keep the plan file, and
-   ensure the data topic uses the retention settings listed above.
-4. Apply the plan using a separate control topic:
-
-   ```bash
-   java -cp "$FLINK_HOME/lib/*:<FLINK_AGENTS_DIST_JAR>:<FLINK_STATE_PROCESSOR_API_JAR>" \
-     org.apache.flink.agents.runtime.actionstate.KafkaActionStateCleanupTool \
-     apply --plan cleanup-plan.json --bootstrap-servers "kafka:9092" \
-     --control-topic "orders-agent-action-state-cleanup"
-   ```
-
-   Dedicate the control topic to this Agent operator's data topic. The tool can
-   create it; see the [configuration reference]({{< ref "docs/operations/configuration#checkpoint-aligned-kafka-cleanup" >}})
-   for existing-topic requirements and optional parameters.
-5. After `apply` succeeds and prints `Cleanup plan <id> is APPLIED`, set
-   `kafkaActionStateCleanupControlTopic` to the control topic and
-   `kafkaActionStateTombstoneEnabled=false`, then restart from the
-   **same selected recovery point**. Startup or recovery fails if the control
-   topic is missing or has no committed boundary.
-
-If the first cleanup fails or is interrupted, the boundary may already have been
-committed, making earlier recovery points unavailable. Keep the job stopped and
-retry `apply` with the same plan.
-
-Once boundary enforcement is enabled, you can apply later cleanup plans while the
-job runs, provided they only advance the boundary. Apply one plan at a time,
-keeping the data topic and its partition count unchanged during cleanup.
+Once boundary enforcement is enabled, later plans may be applied while the job
+runs. Apply one plan at a time, only advance the boundary, and keep the data topic
+and its partition count unchanged during cleanup.
 
 {{< hint warning >}}
-Keep the job configured to use the same cleanup control topic, and retain that
-topic's records for every subsequent run and restore of this recovery history.
-The job needs this configuration to enforce the cleanup boundary; omitting or
-changing it removes that protection. With the control topic configured, the job
-also rejects a fresh start without a recovery marker.
+Keep the same cleanup control topic configured and retain its committed records
+for every subsequent run and restore of this recovery history. Omitting or
+changing the topic removes boundary enforcement; with it configured, the job also
+rejects a fresh start without a recovery marker.
 {{< /hint >}}
+
+{{< details title="Command examples" >}}
+
+Run the tool where the recovery point and Kafka are accessible. The classpath
+must include the full Flink Agents distribution JAR for your Flink version
+(`flink-agents-dist-flink-<FLINK_VERSION>-<FA_VERSION>.jar`, without the `-thin`
+classifier), the matching Flink State Processor API JAR, and Flink's `lib/`.
+
+Generate a plan with the Agent operator's UID hash in the selected snapshot.
+Replace the placeholders below, or use `--operator-uid` instead of
+`--operator-uid-hash` when specifying a UID:
+
+```bash
+java -cp "$FLINK_HOME/lib/*:<FLINK_AGENTS_DIST_JAR>:<FLINK_STATE_PROCESSOR_API_JAR>" \
+  org.apache.flink.agents.runtime.actionstate.KafkaActionStateCleanupTool \
+  plan --checkpoint "<CHECKPOINT_OR_SAVEPOINT_PATH>" \
+  --operator-uid-hash "<AGENT_OPERATOR_UID_HASH>" \
+  --output cleanup-plan.json
+```
+
+After checking the plan, apply it with a separate control topic. The tool can
+create the topic; existing-topic requirements and optional parameters are listed
+in the [configuration reference]({{< ref "docs/operations/configuration#checkpoint-aligned-kafka-cleanup" >}}).
+
+```bash
+java -cp "$FLINK_HOME/lib/*:<FLINK_AGENTS_DIST_JAR>:<FLINK_STATE_PROCESSOR_API_JAR>" \
+  org.apache.flink.agents.runtime.actionstate.KafkaActionStateCleanupTool \
+  apply --plan cleanup-plan.json --bootstrap-servers "kafka:9092" \
+  --control-topic "orders-agent-action-state-cleanup"
+```
+
+A successful apply prints `Cleanup plan <id> is APPLIED`.
+
+{{< /details >}}
 
 #### Switching from per-key tombstones
 
