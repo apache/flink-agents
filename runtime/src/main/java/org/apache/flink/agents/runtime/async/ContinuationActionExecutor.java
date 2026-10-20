@@ -206,4 +206,14 @@ public class ContinuationActionExecutor {
     public static boolean isContinuationSupported() {
         return false;
     }
+
+    /**
+     * Whether an async wait can hand the shared execution lock off, so the operator can dispatch
+     * other work while this worker blocks. This is the JDK&lt;21 parallel engine's substitute for
+     * yielding a continuation: a caller waiting on a child graph keeps its worker but stops holding
+     * the operator, which is what lets the child run and complete.
+     */
+    public boolean canHandOffExecutionLock() {
+        return parallelExecutionLock != null;
+    }
 }

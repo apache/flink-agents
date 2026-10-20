@@ -35,10 +35,11 @@ import java.util.concurrent.ExecutionException;
 /**
  * Runtime-only state of one internal graph call, shared by Java and Python.
  *
- * <p>All mutations run on the mailbox. A logical action remains in flight across yield/resume; it
- * is retired only after its durable output has been dispatched. This accounts for buffered events
- * and nested calls without counting continuation tasks as new executions. Each dispatch registers
- * all successor actions before its producer is retired.
+ * <p>All mutations run on the mailbox thread or under the parallel execution lock. A logical action
+ * remains in flight across yield/resume; it is retired only after its durable output has been
+ * dispatched. This accounts for buffered events and nested calls without counting continuation
+ * tasks as new executions. Each dispatch registers all successor actions before its producer is
+ * retired.
  *
  * <p>The future is not checkpointed. Root replay rebuilds this object and child ActionState
  * supplies completed work. Waiters capture this object instead of reading a switched context.
@@ -115,7 +116,7 @@ public class SubgraphInvocation<R> {
         return replayed;
     }
 
-    /** Routes one persisted output or an authorized bootstrap on the mailbox thread. */
+    /** Routes one persisted output or an authorized bootstrap under operator ownership. */
     public final List<Action> dispatch(Event event) {
         if (failure != null) {
             // Already scheduled siblings may finish after a captured child failure. Their outputs

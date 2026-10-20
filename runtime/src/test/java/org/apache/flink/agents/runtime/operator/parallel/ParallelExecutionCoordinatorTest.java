@@ -21,6 +21,8 @@ import org.apache.flink.agents.runtime.async.AsyncExecutorThreadFactory;
 import org.apache.flink.util.function.ThrowingRunnable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import javax.annotation.Nullable;
 
@@ -49,6 +51,85 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ParallelExecutionCoordinatorTest {
 
     private static final Object KEY = "k0";
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    @Timeout(15)
+    void interruptedWaitDoesNotReleaseUnownedLock(boolean dependent) throws Exception {
+        ParallelExecutionLock lock = new ParallelExecutionLock();
+        BlockingQueue<ThrowingRunnable<? extends Exception>> mails = new LinkedBlockingQueue<>();
+        Queue<Throwable> uncaught = new ConcurrentLinkedQueue<>();
+        List<String> events = Collections.synchronizedList(new ArrayList<>());
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch wait = new CountDownLatch(1);
+        FakeWork work =
+                FakeWork.blocking(
+                        "interrupted",
+                        events,
+                        () -> {
+                            Thread.currentThread()
+                                    .setUncaughtExceptionHandler(
+                                            (thread, error) -> uncaught.add(error));
+                            lock.release();
+                            started.countDown();
+                            try {
+                                wait.await();
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                        });
+        try (ParallelExecutionCoordinator coordinator = newCoordinator(lock, mails, () -> work)) {
+            lock.acquireByMain();
+            if (dependent) {
+                coordinator.addDependentTask(work, KEY, 0L, 0L);
+            } else {
+                coordinator.addTask(KEY);
+            }
+            lock.release();
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            coordinator.close();
+            assertThat(uncaught).isEmpty();
+            assertThat(events).containsExactly("execute-interrupted");
+            assertThat(mails).isEmpty();
+        }
+    }
+
+    /**
+     * The other interrupt site: the worker is stopped while still queued for the lock, so it never
+     * reaches the commit mail that removes {@code addDependentTask}'s charge.
+     */
+    @Test
+    @Timeout(15)
+    void dependentInterruptedWhileQueuedForTheLockGivesBackItsCharge() throws Exception {
+        ParallelExecutionLock lock = new ParallelExecutionLock();
+        BlockingQueue<ThrowingRunnable<? extends Exception>> mails = new LinkedBlockingQueue<>();
+        List<String> events = Collections.synchronizedList(new ArrayList<>());
+        FakeWork work = FakeWork.blocking("never-runs", events, () -> {});
+        try (ParallelExecutionCoordinator coordinator = newCoordinator(lock, mails, () -> work)) {
+            // Held across the submission so the worker can only be interrupted while queued for it;
+            // an interrupt landing later takes the execute path, which refunds by mail.
+            lock.acquireByMain();
+            coordinator.addDependentTask(work, KEY, 0L, 0L);
+            assertThat(coordinator.hasOutstanding(KEY)).isTrue();
+            assertThat(coordinator.isQuiesced()).isFalse();
+
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (lock.getQueuedWorkerCountForTesting() != 1) {
+                assertThat(System.nanoTime())
+                        .as("the worker never queued for the lock")
+                        .isLessThan(deadline);
+                Thread.sleep(10L);
+            }
+
+            coordinator.close();
+            lock.release();
+
+            assertThat(coordinator.hasOutstanding(KEY)).isFalse();
+            assertThat(coordinator.isQuiesced()).isTrue();
+            assertThat(events).as("the action never ran").isEmpty();
+            assertThat(mails).as("nothing was left for the mailbox to refund").isEmpty();
+        }
+    }
 
     @Test
     void addTaskRequiresMailboxLock() {
@@ -424,6 +505,271 @@ class ParallelExecutionCoordinatorTest {
         } finally {
             mainHoldsLock.countDown();
             coordinator.close();
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void dependentCommitsDuringDrainingBeforeItsWaitingCaller() throws Exception {
+        ParallelExecutionLock lock = new ParallelExecutionLock();
+        BlockingQueue<ThrowingRunnable<? extends Exception>> mails = new LinkedBlockingQueue<>();
+        List<String> events = Collections.synchronizedList(new ArrayList<>());
+        Queue<ParallelExecutionTask> works = new ConcurrentLinkedQueue<>();
+        CountDownLatch callerStarted = new CountDownLatch(1);
+        CountDownLatch childCommitted = new CountDownLatch(1);
+        try (ParallelExecutionCoordinator coordinator =
+                newCoordinator(2, lock, mails, works::poll)) {
+            works.add(
+                    FakeWork.blockingAsync(
+                            "caller",
+                            events,
+                            lock,
+                            () -> {
+                                callerStarted.countDown();
+                                await(childCommitted);
+                            }));
+            lock.acquireByMain();
+            coordinator.addTask(KEY);
+            lock.release();
+            assertThat(callerStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            coordinator.startDraining();
+
+            lock.acquireByMain();
+            coordinator.addDependentTask(
+                    FakeWork.blocking("child", events, lock::checkReentrant), KEY, 0L, 0L);
+            assertThat(coordinator.isQuiesced()).isFalse();
+            lock.release();
+
+            runOneMail(mails);
+            assertThat(committed(events)).containsExactly("child");
+            assertThat(events).doesNotContain("finish-child->child");
+            assertThat(coordinator.hasOutstanding(KEY)).isTrue();
+            assertThat(coordinator.isQuiesced()).isFalse();
+            childCommitted.countDown();
+            runOneMail(mails);
+            assertThat(events)
+                    .containsExactly(
+                            "execute-caller",
+                            "execute-child",
+                            "restore-child",
+                            "commit-child",
+                            "restore-caller",
+                            "commit-caller",
+                            "finish-caller->caller");
+            assertThat(coordinator.hasOutstanding(KEY)).isFalse();
+            assertThat(coordinator.isQuiesced()).isTrue();
+            coordinator.stopDraining();
+        } finally {
+            childCommitted.countDown();
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void dependentSubmittedDuringDrainIsNotStarvedByAQueuedRootPermit() throws Exception {
+        ParallelExecutionLock lock = new ParallelExecutionLock();
+        BlockingQueue<ThrowingRunnable<? extends Exception>> mails = new LinkedBlockingQueue<>();
+        List<String> events = Collections.synchronizedList(new ArrayList<>());
+        Queue<ParallelExecutionTask> works = new ConcurrentLinkedQueue<>();
+        CountDownLatch callerStarted = new CountDownLatch(1);
+        CountDownLatch callerMayFinish = new CountDownLatch(1);
+        CountDownLatch childStarted = new CountDownLatch(1);
+        CountDownLatch queuedStarted = new CountDownLatch(1);
+        // One worker, so both the second root permit and the dependent permit queue behind the
+        // caller: whichever the single worker redeems once the caller returns decides the outcome.
+        try (ParallelExecutionCoordinator coordinator =
+                newCoordinator(1, lock, mails, works::poll)) {
+            works.add(
+                    FakeWork.blockingAsync(
+                            "caller",
+                            events,
+                            lock,
+                            () -> {
+                                callerStarted.countDown();
+                                await(callerMayFinish);
+                            }));
+            works.add(
+                    FakeWork.blocking(
+                            "queued",
+                            events,
+                            () -> {
+                                lock.checkReentrant();
+                                queuedStarted.countDown();
+                            }));
+            lock.acquireByMain();
+            coordinator.addTask(KEY);
+            coordinator.addTask(KEY);
+            lock.release();
+            assertThat(callerStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            coordinator.startDraining();
+            lock.acquireByMain();
+            coordinator.addDependentTask(
+                    FakeWork.blocking(
+                            "child",
+                            events,
+                            () -> {
+                                lock.checkReentrant();
+                                childStarted.countDown();
+                            }),
+                    KEY,
+                    0L,
+                    0L);
+            // The dependency is outstanding from submission, so quiesce now waits on a permit that
+            // sits behind a root permit no worker will pull while draining.
+            assertThat(coordinator.isQuiesced()).isFalse();
+            lock.release();
+
+            callerMayFinish.countDown();
+            // The caller's commit mail must run: it is what consumes the sticky main-grant its
+            // worker left behind, without which no worker can re-acquire the lock at all.
+            runOneMail(mails);
+            // A worker that parked on the root permit would hold the pool's only thread for the
+            // whole snapshot and the child would never run; forfeiting it hands the thread back.
+            assertThat(childStarted.await(5, TimeUnit.SECONDS))
+                    .as("a queued root permit must not starve a dependent submitted during a drain")
+                    .isTrue();
+
+            // The forfeited permit is re-submitted on resume, so the queued node is not lost.
+            coordinator.stopDraining();
+            assertThat(queuedStarted.await(5, TimeUnit.SECONDS))
+                    .as("resume must re-submit the forfeited permit")
+                    .isTrue();
+        } finally {
+            callerMayFinish.countDown();
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void dependentCommitFailureEscapesMailboxAndReleasesQuiescence() throws Exception {
+        ParallelExecutionLock lock = new ParallelExecutionLock();
+        BlockingQueue<ThrowingRunnable<? extends Exception>> mails = new LinkedBlockingQueue<>();
+        List<String> events = new ArrayList<>();
+        RuntimeException failure = new RuntimeException("child commit failure");
+        try (ParallelExecutionCoordinator coordinator = newCoordinator(lock, mails, () -> null)) {
+            lock.acquireByMain();
+            coordinator.addDependentTask(
+                    FakeWork.failingCommit("child", events, failure), KEY, 0L, 0L);
+            lock.release();
+
+            assertThatThrownBy(() -> runOneMail(mails)).isSameAs(failure);
+            assertThat(events).containsExactly("execute-child", "restore-child");
+            assertThat(coordinator.isQuiesced()).isTrue();
+            lock.acquireByMain();
+            try {
+                assertThat(coordinator.hasOutstanding(KEY)).isFalse();
+            } finally {
+                lock.release();
+            }
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void dependentRemainsOutstandingAfterCallerCommitsAndFinishesGroupLast() throws Exception {
+        ParallelExecutionLock lock = new ParallelExecutionLock();
+        BlockingQueue<ThrowingRunnable<? extends Exception>> mails = new LinkedBlockingQueue<>();
+        List<String> events = Collections.synchronizedList(new ArrayList<>());
+        Queue<ParallelExecutionTask> works = new ConcurrentLinkedQueue<>();
+        CountDownLatch callerStarted = new CountDownLatch(1);
+        CountDownLatch allowCaller = new CountDownLatch(1);
+        CountDownLatch dependentStarted = new CountDownLatch(1);
+        CountDownLatch allowDependent = new CountDownLatch(1);
+        try (ParallelExecutionCoordinator coordinator =
+                newCoordinator(2, lock, mails, works::poll)) {
+            works.add(
+                    FakeWork.blockingAsync(
+                                    "caller",
+                                    events,
+                                    lock,
+                                    () -> {
+                                        callerStarted.countDown();
+                                        await(allowCaller);
+                                    })
+                            .withFinishGroup(
+                                    () -> {
+                                        lock.checkReentrant();
+                                        // Model the operator's input-retirement guard.
+                                        if (!coordinator.hasOutstanding(KEY)) {
+                                            events.add("record-finished");
+                                        }
+                                    }));
+            lock.acquireByMain();
+            coordinator.addTask(KEY);
+            lock.release();
+            assertThat(callerStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            lock.acquireByMain();
+            try {
+                coordinator.addDependentTask(
+                        FakeWork.blockingAsync(
+                                        "child",
+                                        events,
+                                        lock,
+                                        () -> {
+                                            dependentStarted.countDown();
+                                            await(allowDependent);
+                                        })
+                                .withFinishGroup(
+                                        () -> {
+                                            lock.checkReentrant();
+                                            assertThat(coordinator.hasOutstanding(KEY)).isFalse();
+                                            assertThat(coordinator.isQuiesced()).isTrue();
+                                            events.add("record-finished");
+                                        }),
+                        KEY,
+                        0L,
+                        0L);
+                assertThat(dependentStarted.await(100, TimeUnit.MILLISECONDS)).isFalse();
+                assertThat(events).containsExactly("execute-caller");
+                assertThat(coordinator.hasOutstanding(KEY)).isTrue();
+                assertThat(coordinator.isQuiesced()).isFalse();
+            } finally {
+                lock.release();
+            }
+            assertThat(dependentStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            // A replayed outer result can let the caller commit while the dependency still waits
+            // outside the lock. Its root follow-up must not retire the input in that window.
+            allowCaller.countDown();
+            runOneMail(mails);
+            lock.acquireByMain();
+            try {
+                assertThat(coordinator.hasOutstanding(KEY)).isTrue();
+                assertThat(coordinator.hasOutstanding("other-key")).isFalse();
+                assertThat(coordinator.isQuiesced()).isFalse();
+                assertThat(events)
+                        .containsExactly(
+                                "execute-caller",
+                                "execute-child",
+                                "restore-caller",
+                                "commit-caller",
+                                "finish-caller->caller");
+            } finally {
+                lock.release();
+            }
+
+            allowDependent.countDown();
+            runOneMail(mails);
+            assertThat(events)
+                    .containsExactly(
+                            "execute-caller",
+                            "execute-child",
+                            "restore-caller",
+                            "commit-caller",
+                            "finish-caller->caller",
+                            "restore-child",
+                            "commit-child",
+                            "finish-child->child",
+                            "record-finished");
+            assertThat(coordinator.hasOutstanding(KEY)).isFalse();
+            assertThat(coordinator.isQuiesced()).isTrue();
+            assertThat(lock.isHeldByCurrentThread()).isFalse();
+            assertThat(mails).isEmpty();
+        } finally {
+            allowCaller.countDown();
+            allowDependent.countDown();
         }
     }
 
@@ -837,6 +1183,7 @@ class ParallelExecutionCoordinatorTest {
         @Nullable private final ParallelExecutionLock asyncLock;
         @Nullable private final RuntimeException commitFailure;
         private final boolean abandonOnInterrupt;
+        @Nullable private Runnable onFinishGroup;
         private volatile boolean done;
         private volatile Object assignedKey;
         private volatile long assignedRecordIndex = -1L;
@@ -892,6 +1239,11 @@ class ParallelExecutionCoordinatorTest {
         static FakeWork failingCommit(
                 String id, List<String> events, RuntimeException commitFailure) {
             return new FakeWork(id, events, null, null, commitFailure, false);
+        }
+
+        FakeWork withFinishGroup(Runnable onFinishGroup) {
+            this.onFinishGroup = onFinishGroup;
+            return this;
         }
 
         @Override
@@ -951,6 +1303,9 @@ class ParallelExecutionCoordinatorTest {
                             + id
                             + "->"
                             + (lastCommitted == null ? "none" : ((FakeWork) lastCommitted).id));
+            if (onFinishGroup != null) {
+                onFinishGroup.run();
+            }
         }
     }
 }

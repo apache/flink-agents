@@ -69,6 +69,7 @@ import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 import org.apache.flink.agents.runtime.utils.IdAllocatorSource;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.util.Preconditions;
+import org.apache.flink.util.function.ThrowingRunnable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -210,6 +211,12 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     @Nullable private SubgraphInvocation<?> subgraphInvocation;
     private SubgraphCallManager subgraphCalls = new SubgraphCallManager();
+
+    /**
+     * Starts a call's graph as soon as it is issued, installed only by an engine whose actions
+     * never yield. See {@link #dispatchSubgraphBootstrap()}.
+     */
+    @Nullable private ThrowingRunnable<Exception> subgraphBootstrapDispatcher;
 
     /** Textual key shared by long-term-memory isolation and framework observation events. */
     protected String contextKey;
@@ -427,6 +434,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         this.observationSuppressed = observationSuppressed;
         this.ltmObservationEnabled = !observationSuppressed && ltmObservationConfigured;
         this.executionReportingContext = executionReportingContext;
+        this.subgraphBootstrapDispatcher = null;
         if (ltm != null) {
             ltm.switchContext(contextKey, observationId, observationSuppressed);
         }
@@ -475,6 +483,27 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                     e);
         }
         pendingEvents.add(event);
+    }
+
+    /**
+     * Starts the graph of a call issued from this action, if the running engine needs that done
+     * before the action finishes. An engine that suspends actions leaves this a no-op, because the
+     * operator drains the bootstrap when it drains the caller's yield; an engine that runs an
+     * action to completion in one turn installs a dispatcher instead.
+     */
+    public void dispatchSubgraphBootstrap() throws Exception {
+        if (subgraphBootstrapDispatcher != null) {
+            subgraphBootstrapDispatcher.run();
+        }
+    }
+
+    /**
+     * Installs the dispatcher {@link #dispatchSubgraphBootstrap()} runs. Cleared on every action
+     * context switch, so a binding never leaks from one task to the next on this shared context.
+     */
+    public void setSubgraphBootstrapDispatcher(
+            @Nullable ThrowingRunnable<Exception> subgraphBootstrapDispatcher) {
+        this.subgraphBootstrapDispatcher = subgraphBootstrapDispatcher;
     }
 
     public List<Event> drainEventsAtActionYield(Long timestamp) {

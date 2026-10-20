@@ -31,13 +31,15 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
-import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.subagent.InternalSubagentPlans;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl.ExecutionReportingContext;
 import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
 import org.apache.flink.agents.runtime.lifecycle.PythonTaskLifecycleListener;
@@ -100,8 +102,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.IntPredicate;
+import java.util.stream.Collectors;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
+import static org.apache.flink.agents.plan.actions.Utils.requiredVersions;
 import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -166,14 +170,55 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 && agentPlan.getConfig().get(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED)
                 && agentPlan.getActions().values().stream()
                         .allMatch(action -> action.getExec() instanceof JavaFunction)
-                && (!usesPythonResource(agentPlan) || supportAsync());
+                && (pythonOwnedResourceNames(agentPlan).isEmpty() || supportAsync());
     }
 
-    /** Whether the plan declares any Python resource. */
-    private static boolean usesPythonResource(AgentPlan agentPlan) {
+    /**
+     * Rejects a child plan this engine cannot run: a worker cannot execute a Python action at all,
+     * and a Python-owned resource needs the cross-language async support {@link
+     * #shouldEnableParallelExecutionWithoutCoroutine} screens only the root plan for.
+     */
+    static void checkChildPlansRunOnParallelEngine(AgentPlan agentPlan) {
+        for (Map<String, ResourceProvider> providersByName :
+                agentPlan.getResourceProviders().values()) {
+            for (ResourceProvider provider : providersByName.values()) {
+                Optional<AgentPlan> child = InternalSubagentPlans.plan(provider);
+                if (!child.isPresent()) {
+                    continue;
+                }
+                for (Action action : child.get().getActions().values()) {
+                    checkState(
+                            action.getExec() instanceof JavaFunction,
+                            "The parallel execution engine runs an internal sub-agent's child"
+                                    + " actions on workers that cannot execute Python, but action"
+                                    + " %s of scope %s is not a Java action. Run this agent on JDK"
+                                    + " 21, or remove that action from the scope.",
+                            action.getName(),
+                            provider.getName());
+                }
+                List<String> pythonResources = pythonOwnedResourceNames(child.get());
+                checkState(
+                        pythonResources.isEmpty() || supportAsync(),
+                        "The parallel execution engine calls an internal sub-agent's Python-owned"
+                                + " resource across languages, but scope %s declares %s and this"
+                                + " Flink version cannot execute such a call asynchronously."
+                                + " Upgrade Flink past %s, or remove that resource from the scope.",
+                        provider.getName(),
+                        pythonResources,
+                        requiredVersions);
+                // The plan tree is a DAG because cycles are rejected at compile time.
+                checkChildPlansRunOnParallelEngine(child.get());
+            }
+        }
+    }
+
+    /** Names of the resources this plan declares that the Python runtime constructs. */
+    private static List<String> pythonOwnedResourceNames(AgentPlan agentPlan) {
         return agentPlan.getResourceProviders().values().stream()
                 .flatMap(providersByName -> providersByName.values().stream())
-                .anyMatch(provider -> provider instanceof PythonResourceProvider);
+                .filter(ResourceProvider::isPythonOwned)
+                .map(ResourceProvider::getName)
+                .collect(Collectors.toList());
     }
 
     private final AgentPlan agentPlan;
@@ -345,6 +390,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 shouldEnableParallelExecutionWithoutCoroutine(
                         agentPlan, ContinuationActionExecutor.isContinuationSupported());
         if (parallelExecutionWithoutCoroutineEnabled) {
+            checkChildPlansRunOnParallelEngine(agentPlan);
             parallelExecutionLock = new ParallelExecutionLock();
         } else {
             // JDK21 cooperative-continuation path: there is no worker pool and no lock. All
@@ -551,15 +597,21 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private void processActionOutputEvent(
             Object key, String contextKey, Event outputEvent, ActionTask actionTask)
             throws Exception {
-        TraceContext actionTraceContext = actionTask.getTraceContext();
-        TraceContext eventTraceContext =
-                TraceContext.forEvent(
-                        actionTraceContext,
-                        outputEvent.getType(),
-                        outputEvent.getId().toString(),
-                        (String) actionTraceContext.getEntityMetadata().get("triggerEventId"),
-                        actionTraceContext.getEntityName());
-        processEvent(key, contextKey, outputEvent, eventTraceContext);
+        processEvent(
+                key,
+                contextKey,
+                outputEvent,
+                actionOutputEventTraceContext(actionTask.getTraceContext(), outputEvent));
+    }
+
+    private static TraceContext actionOutputEventTraceContext(
+            TraceContext actionTraceContext, Event event) {
+        return TraceContext.forEvent(
+                actionTraceContext,
+                event.getType(),
+                event.getId().toString(),
+                (String) actionTraceContext.getEntityMetadata().get("triggerEventId"),
+                actionTraceContext.getEntityName());
     }
 
     /** Processes an Event whose identity and source references are already populated. */
@@ -892,13 +944,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                 actionTask
                                 .new ActionTaskResult(
                                         true,
-                                        actionTask.validateOutputEvents(
-                                                List.of(
-                                                        new SubgraphEvent(
-                                                                envelope.getInvocationId(),
-                                                                new SubgraphFailureEvent(
-                                                                        actionFailure),
-                                                                false))),
+                                        List.of(
+                                                new SubgraphEvent(
+                                                        envelope.getInvocationId(),
+                                                        new SubgraphFailureEvent(actionFailure),
+                                                        false)),
                                         null);
                     } else {
                         try {
@@ -1589,9 +1639,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 if (parallelExecutionWithoutCoroutineEnabled) {
                     // Restored tasks were never enqueued through processEvent: add one node per
                     // queued task; the worker-completion path finishes the input (no kick mail).
-                    // No sub-agent child reaches this engine: the parallel path requires
-                    // continuations to be unsupported (JDK < 21), where InternalSubagentSetup
-                    // fails fast, so the root-only filter above never drops anything here.
                     setCurrentKey(key);
                     int queued = stateManager.countActionTasks();
                     for (int i = 0; i < queued; i++) {
@@ -1680,11 +1727,78 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     /**
+     * Installs the parallel engine's subgraph bootstrap dispatcher on a freshly bound task context.
+     *
+     * <p>Under continuations a caller that issues a graph call yields next and the operator
+     * dispatches the bootstrap when it drains that yield. This engine runs an action to completion
+     * in one turn, so there is no yield to drain and the graph has to start at issue time or the
+     * caller waits for one the operator was never told to start. Only bootstrap events go early;
+     * ordinary graph events stay buffered until the action completes.
+     */
+    void installParallelSubgraphBootstrap(ActionTask task) {
+        if (!parallelExecutionWithoutCoroutineEnabled) {
+            return;
+        }
+        RunnerContextImpl context = task.getRunnerContext();
+        ContinuationContext continuation = contextManager.getContinuationContext(task);
+        context.setSubgraphBootstrapDispatcher(
+                () -> {
+                    parallelExecutionLock.checkReentrant();
+                    for (Event event :
+                            task.validateOutputEvents(
+                                    context.drainEventsAtActionYield(
+                                            task.getEvent().getSourceTimestamp()))) {
+                        dispatchParallelSubgraphEvent(
+                                task,
+                                (SubgraphEvent) event,
+                                continuation.getRecordIndex(),
+                                continuation.getTaskIndex());
+                    }
+                });
+    }
+
+    /**
+     * Routes one call event on the parallel engine: registers every action the invocation matches,
+     * then submits each as a dependent action. Dependents commit independently of the root FIFO, so
+     * a caller blocked waiting for its graph cannot hold up the very commits that complete it.
+     */
+    private void dispatchParallelSubgraphEvent(
+            ActionTask caller, SubgraphEvent envelope, long recordIndex, long taskIndex)
+            throws Exception {
+        SubgraphInvocation<?> call =
+                contextManager.getSubgraphCalls().get(envelope.getInvocationId());
+        TraceContext eventTraceContext =
+                actionOutputEventTraceContext(caller.getTraceContext(), envelope);
+        eventRouter.notifyEventProcessed(envelope, eventTraceContext);
+        List<Action> actions = call.dispatch(envelope.getDelegate());
+        for (Action action : actions) {
+            checkState(
+                    action.getExec() instanceof JavaFunction,
+                    "Parallel graph calls require Java actions, but %s is not.",
+                    action.getName());
+        }
+        for (Action action : actions) {
+            ActionTask child =
+                    createActionTask(
+                            caller.getKey(),
+                            action,
+                            envelope,
+                            caller.getSequenceNumber(),
+                            eventTraceContext);
+            executionCoordinator.addDependentTask(
+                    new Work(child), caller.getKey(), recordIndex, taskIndex);
+        }
+    }
+
+    /**
      * A single action task's full worker lifecycle on the parallel engine: a pool thread {@code
      * setup}s and {@code execute}s it under the lock; the mailbox thread later restores and commits
      * it. All task-specific processing lives here; the operator keeps only mailbox flow.
      */
     private final class Work implements ParallelExecutionTask {
+        /** A dependent action's task, or {@code null} for a root work that pulls its own. */
+        @Nullable private final ActionTask submittedTask;
+
         private Object key;
         private long recordIndex;
         private long taskIndex;
@@ -1702,6 +1816,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         @Nullable private ActionTask.ActionTaskResult result;
         @Nullable private Throwable failure;
 
+        private Work() {
+            this(null);
+        }
+
+        private Work(@Nullable ActionTask submittedTask) {
+            this.submittedTask = submittedTask;
+        }
+
         @Override
         public void setup(Object key, long recordIndex, long taskIndex) {
             this.key = key;
@@ -1717,7 +1839,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 // taskIndex keeps the (taskIndex, task) binding correct across concurrent workers.
                 // createAndSetRunnerContext already binds the context on this thread.
                 setCurrentKey(key);
-                ActionTask task = pollNextActionTask();
+                ActionTask task = submittedTask == null ? pollNextActionTask() : submittedTask;
                 checkState(task != null, "Action task queue was empty.");
                 this.actionTask = task;
 
@@ -1763,6 +1885,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 context.setKey(key);
                 context.setActionTask(task);
                 context.setPriority(recordIndex, taskIndex);
+                // Bound after the priority, so a call this action issues dispatches its graph at
+                // this work's priority.
+                installParallelSubgraphBootstrap(task);
 
                 this.sequenceNumber = seq;
                 this.replayCompletedAction = replay;
@@ -1777,7 +1902,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     MemoryUpdateReplayer.replay(
                             task.getRunnerContext().getSensoryMemory(),
                             state.getSensoryMemoryUpdates());
-                    result = task.new ActionTaskResult(true, state.getOutputEvents(), null);
+                    result =
+                            task
+                            .new ActionTaskResult(
+                                    true, completedActionOutputEvents(task, state), null);
                 } else {
                     if (lifecyclePrepared) {
                         notifyActionStarted(task);
@@ -1791,23 +1919,47 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                         getRuntimeContext().getUserCodeClassLoader(),
                                         pythonBridge.getPythonActionExecutor());
                     } catch (Throwable actionFailure) {
-                        // The discard below goes through the shared context, so a worker that no
-                        // longer holds the execution lock must not make it: shutdown can interrupt
+                        // Both writes below go through the shared context, so a worker that no
+                        // longer holds the execution lock must make neither: shutdown can interrupt
                         // re-acquisition before the caller context is restored, and a handoff that
-                        // raises a framework fault may have left the shared context bound to
-                        // another task. Its serial twin in processActionTask runs on the mailbox
-                        // and owns its context unconditionally, so it needs no such guard.
+                        // raises a framework fault may have left the context bound to another task.
                         if (!parallelExecutionLock.isHeldByCurrentThread()) {
                             throw actionFailure;
                         }
-                        try {
-                            task.getRunnerContext().discardMemoryObservation();
-                        } catch (Throwable discardFailure) {
-                            if (discardFailure != actionFailure) {
-                                actionFailure.addSuppressed(discardFailure);
+                        if (task.isSubgraphEvent()
+                                && contextManager
+                                        .getSubgraphCalls()
+                                        .get(((SubgraphEvent) task.event).getInvocationId())
+                                        .capturesActionFailure(actionFailure)) {
+                            // Journal the terminal failure before completing the call. Root
+                            // replay must not reinterpret a completed failed child as a
+                            // successful empty graph.
+                            SubgraphEvent envelope = (SubgraphEvent) task.event;
+                            LOG.warn(
+                                    "Action {} failed in subgraph {}",
+                                    task.action.getName(),
+                                    envelope.getInvocationId(),
+                                    actionFailure);
+                            result =
+                                    task
+                                    .new ActionTaskResult(
+                                            true,
+                                            List.of(
+                                                    new SubgraphEvent(
+                                                            envelope.getInvocationId(),
+                                                            new SubgraphFailureEvent(actionFailure),
+                                                            false)),
+                                            null);
+                        } else {
+                            try {
+                                task.getRunnerContext().discardMemoryObservation();
+                            } catch (Throwable discardFailure) {
+                                if (discardFailure != actionFailure) {
+                                    actionFailure.addSuppressed(discardFailure);
+                                }
                             }
+                            throw actionFailure;
                         }
-                        throw actionFailure;
                     }
                 }
             } catch (Throwable t) {
@@ -1898,7 +2050,18 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
             for (Event actionOutputEvent : result.getOutputEvents()) {
                 try {
-                    processActionOutputEvent(key, contextKey, actionOutputEvent, actionTask);
+                    if (actionOutputEvent instanceof SubgraphEvent) {
+                        // A call event goes to its own graph over the independent dependent
+                        // channel: the root FIFO would let this task's waiting caller block the
+                        // very commits that complete the graph it is waiting for.
+                        dispatchParallelSubgraphEvent(
+                                actionTask,
+                                (SubgraphEvent) actionOutputEvent,
+                                recordIndex,
+                                taskIndex);
+                    } else {
+                        processActionOutputEvent(key, contextKey, actionOutputEvent, actionTask);
+                    }
                 } catch (Throwable t) {
                     // Mirror the serial kick-mail wrapper (tryProcessActionTaskForKey): surface
                     // output-event processing failures as ActionTaskExecutionException so callers
@@ -1908,8 +2071,18 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 }
             }
 
+            if (actionTask.isSubgraphEvent()) {
+                contextManager
+                        .getSubgraphCalls()
+                        .get(((SubgraphEvent) actionTask.event).getInvocationId())
+                        .completeAction();
+            }
             if (lifecyclePrepared) {
-                builtInMetrics.markActionExecuted(actionTask.action.getName());
+                // Scope-aware: an action inside a graph call reports to that call's metrics.
+                actionTask
+                        .getRunnerContext()
+                        .getBuiltInMetrics()
+                        .markActionExecuted(actionTask.action.getName());
             }
             actionTask.getRunnerContext().persistMemory();
         }

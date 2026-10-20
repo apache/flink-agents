@@ -68,10 +68,9 @@ public interface SubgraphDefinition<R> {
     /**
      * Whether an ordinary exception from an action body belongs to the call's error result. A kind
      * that answers yes turns its graph's failure into its own terminal result instead of failing
-     * the caller, both while waiting for the graph and while taking the result from it. Failures
-     * outside action invocation (such as journal persistence and event dispatch), cancellation, JVM
-     * errors, and framework faults marked {@code UncapturableException} are never delegated to this
-     * policy: the last two must fail the job rather than be reported as this call's answer.
+     * the caller. Failures outside action invocation (such as journal persistence and event
+     * dispatch), cancellation, JVM errors and framework faults marked {@code UncapturableException}
+     * are never delegated to this policy.
      */
     default boolean capturesActionFailures() {
         return false;

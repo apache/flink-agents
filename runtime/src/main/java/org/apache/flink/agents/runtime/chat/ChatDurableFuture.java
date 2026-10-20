@@ -40,11 +40,9 @@ public final class ChatDurableFuture implements DurableFuture<ChatResult> {
     public ChatResult await() throws Exception {
         context.checkMailboxThread();
         if (response == null) {
-            // The guard is its own statement ahead of building the invocation: folding it into one
-            // expression would evaluate invocationFor(context) first, so an uninitialized context
-            // would fail dereferencing its memory rather than on the guard that explains why the
-            // call cannot run here at all.
-            SubgraphExecution.requireMailboxSuspension(context);
+            // Its own statement ahead of building the invocation: folded into one expression,
+            // invocationFor(context) would evaluate first and fail on an uninitialized context.
+            SubgraphExecution.requireReleasableOperator(context);
             String id =
                     SubgraphExecution.prepare(
                             context, ChatSubgraphDefinition.invocationFor(context), request);

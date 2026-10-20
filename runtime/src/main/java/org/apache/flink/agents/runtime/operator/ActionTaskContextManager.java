@@ -477,6 +477,9 @@ class ActionTaskContextManager implements AutoCloseable {
             context.setDurableExecutionContext(durableContext);
         }
         actionTask.setRunnerContext(context);
+        // Last, because the hook captures the context just bound: an engine whose actions never
+        // yield needs the dispatcher to start a call's graph before the caller waits for it.
+        operator.installParallelSubgraphBootstrap(actionTask);
     }
 
     private void putMemoryContext(

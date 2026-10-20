@@ -23,6 +23,8 @@ import org.apache.flink.util.function.ThrowingRunnable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -36,8 +38,9 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * add} one node per queued task, and the coordinator submits one anonymous <em>dispatch permit</em>
  * per node to an elastic {@link ThreadPoolExecutor}. A pool thread redeems a permit under the lock
  * (node poll and FIFO task pull share the lock hold, keeping their binding correct — permits never
- * name a task). Commits run on the mailbox thread in per-key taskIndex order, and a task stays
- * outstanding until its commit completes.
+ * name a task). Root commits run on the mailbox thread in per-key taskIndex order; dependent
+ * actions commit independently so a waiting caller cannot block their completion. Both remain
+ * outstanding until committed, even when a caller commits before its dependent actions.
  */
 public final class ParallelExecutionCoordinator implements AutoCloseable {
 
@@ -55,14 +58,13 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
     private static final int MIN_WORKER_CEILING = 10;
 
     /**
-     * Sizes the worker pool for {@code numAsyncThreads}. An async call runs its supplier inline on
-     * the worker that issued it, so that worker is occupied for the whole call even though it holds
-     * no lock, and the pool is also what dispatches every queued task. Sized at {@code
-     * numAsyncThreads} instead, the calls the pool exists to serve would starve the dispatch queued
-     * behind them. That does not fail loudly: {@link DispatchQueue} is unbounded and the pool
-     * cannot grow past its maximum, so the queued permits are never redeemed and the job hangs
-     * until Flink's checkpoint timeout fails it, naming no cause. The floor extends the headroom to
-     * configurations too small for the multiplier to reach it.
+     * Sizes the worker pool for {@code numAsyncThreads}. A worker stays occupied for the whole of a
+     * call it blocks on inline -- an async call, or a graph call whose lock handoff keeps the
+     * worker -- while the work queued behind it draws from this same pool, so the pool has to hold
+     * both. Too small a pool does not fail loudly: {@link DispatchQueue} is unbounded and the pool
+     * cannot grow past its maximum, so queued permits are never redeemed and the job hangs until
+     * Flink's checkpoint timeout fails it, naming no cause. The floor covers configurations the
+     * multiplier cannot reach.
      */
     public static int workerCeiling(int numAsyncThreads) {
         return Math.max(MIN_WORKER_CEILING, WORKER_CEILING_MULTIPLIER * numAsyncThreads);
@@ -82,7 +84,17 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
     /** Supplies a fresh work; the work pulls and prepares its own task inside {@code execute()}. */
     private final Supplier<ParallelExecutionTask> workFactory;
 
-    /** Pulled tasks not yet committed; read by {@link #isQuiesced()} for checkpoint quiesce. */
+    /**
+     * Uncommitted dependent actions per key. Mutated as a per-key atomic map operation, not a
+     * read-modify-write under {@link #parallelExecutionLock}: a worker interrupted before it
+     * acquires that lock gives its own charge back without it.
+     */
+    private final Map<Object, Integer> dependentTasks = new ConcurrentHashMap<>();
+
+    /**
+     * Pulled root tasks and submitted dependent actions not yet committed; read by {@link
+     * #isQuiesced()} for checkpoint quiesce.
+     */
     private final AtomicInteger inFlightExecuting = new AtomicInteger();
 
     /**
@@ -158,9 +170,93 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
         workerExecutor.execute(this::runOneTask);
     }
 
+    /**
+     * Submits a dependent action independently of the root FIFO so its waiting caller cannot block
+     * its commit. Must be called holding the lock; the dependency is outstanding from submission.
+     */
+    public void addDependentTask(
+            ParallelExecutionTask work, Object key, long recordIndex, long taskIndex) {
+        parallelExecutionLock.checkReentrant();
+        dependentTasks.merge(key, 1, Integer::sum);
+        inFlightExecuting.incrementAndGet();
+        submittedPermits.incrementAndGet();
+        workerExecutor.execute(() -> runDependentTask(work, key, recordIndex, taskIndex));
+    }
+
+    private void runDependentTask(
+            ParallelExecutionTask work, Object key, long recordIndex, long taskIndex) {
+        try {
+            try {
+                parallelExecutionLock.acquireByWorker(Long.MAX_VALUE, Long.MAX_VALUE);
+            } catch (InterruptedException e) {
+                // This action will never run and never reach the commit mail that removes its
+                // charge, so give the charge back here: left in place, the key stays outstanding
+                // forever and the coordinator never reports quiescence again.
+                refundDependentTask(key);
+                Thread.currentThread().interrupt();
+                return;
+            }
+            try {
+                // Dependencies of in-flight callers must progress even during checkpoint draining.
+                work.setup(key, recordIndex, taskIndex);
+                work.execute();
+                if (workerExecutor.isShutdown() && !parallelExecutionLock.isHeldByCurrentThread()) {
+                    return;
+                }
+                parallelExecutionLock.checkReentrant();
+                mailboxDispatcher.execute(
+                        () -> {
+                            parallelExecutionLock.acquireByMain();
+                            try {
+                                try {
+                                    work.commit();
+                                } finally {
+                                    removeDependentTask(key);
+                                }
+                                if (!hasOutstanding(key)) {
+                                    work.finishGroup(work);
+                                }
+                            } finally {
+                                parallelExecutionLock.release();
+                            }
+                        },
+                        "complete dependent action task");
+            } catch (Throwable t) {
+                mailboxDispatcher.execute(
+                        () -> {
+                            parallelExecutionLock.acquireByMain();
+                            try {
+                                throw t;
+                            } finally {
+                                removeDependentTask(key);
+                                parallelExecutionLock.release();
+                            }
+                        },
+                        "throw dependent action task scheduling failure");
+            } finally {
+                if (parallelExecutionLock.isHeldByCurrentThread()) {
+                    parallelExecutionLock.releaseToMain();
+                }
+            }
+        } finally {
+            submittedPermits.decrementAndGet();
+        }
+    }
+
+    private void removeDependentTask(Object key) {
+        parallelExecutionLock.checkReentrant();
+        refundDependentTask(key);
+    }
+
+    /** Gives back one of the charges {@link #addDependentTask} made for {@code key}. */
+    private void refundDependentTask(Object key) {
+        dependentTasks.compute(key, (ignored, count) -> count == 1 ? null : count - 1);
+        inFlightExecuting.decrementAndGet();
+    }
+
     /** Whether {@code key} still has outstanding (added but not yet committed) work. */
     public boolean hasOutstanding(Object key) {
-        return schedule.hasOutstanding(key);
+        return schedule.hasOutstanding(key) || dependentTasks.containsKey(key);
     }
 
     /**
@@ -239,18 +335,17 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
                 // Fresh pulls acquire at the lowest priority: async resumes always take precedence.
                 parallelExecutionLock.acquireByWorker(Long.MAX_VALUE, Long.MAX_VALUE);
             } catch (InterruptedException e) {
-                // The only interruptible call here, and it throws without holding the lock, so an
-                // interrupt is unambiguously the shutdown signal.
+                // The interruptible call below throws without holding the lock, so one handler
+                // treats every interrupt as the shutdown signal.
                 Thread.currentThread().interrupt();
                 return;
             }
             synchronized (drainLock) {
                 if (draining) {
                     // Parking here would hold a worker out of the pool for the whole snapshot,
-                    // leaving every dispatch queued behind it -- a pending root node, or an async
-                    // call resuming onto the mailbox -- with no thread to run on. Forfeiting costs
-                    // nothing at this point: the node is still pending and quiesce accounting
-                    // starts after the poll.
+                    // leaving everything queued behind it with no thread to run on. Forfeiting
+                    // costs nothing: the node is still pending and quiesce accounting starts after
+                    // the poll.
                     forfeitedPermits++;
                     parallelExecutionLock.release();
                     return;

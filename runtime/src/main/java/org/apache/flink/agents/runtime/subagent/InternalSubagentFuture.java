@@ -72,7 +72,7 @@ final class InternalSubagentFuture extends SubagentFuture implements PhasedSubag
         }
         if (id == null) {
             RunnerContextImpl runner = (RunnerContextImpl) ctx;
-            SubgraphExecution.requireMailboxSuspension(runner);
+            SubgraphExecution.requireReleasableOperator(runner);
             id =
                     SubgraphExecution.prepare(
                             runner, setup.invocation(runner, getSessionId(), getCallId()), prompt);

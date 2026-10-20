@@ -19,6 +19,7 @@ package org.apache.flink.agents.runtime.subgraph;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.Outcome;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -33,36 +34,23 @@ import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 
 /**
- * The one execution chain an internal graph call follows: register the invocation, build its
- * delegate event, emit it, release the mailbox so the operator can dispatch the graph, then take
- * the terminal result, persist it and deregister.
+ * Shared execution chain for internal graph calls, with durable result reuse and runtime-specific
+ * waiting.
  *
  * <p>Every step after {@link #prepare} names its call by the id that step returned, never by the
- * invocation, so once a call is registered the id is the only handle its caller needs. That is what
- * lets a caller prepare every member of a group before waiting for any, so their graphs run
- * concurrently.
+ * invocation, so a caller can prepare every member of a group before waiting for any and their
+ * graphs run concurrently.
  *
  * <p>Two driving protocols are built from the same steps. The blocking one runs {@link #prepare},
- * {@link #await} and {@link #finish} in one turn: {@link #await} releases the operator while the
- * graph runs, and {@link #requireMailboxSuspension} is its fail-fast guard. The polling one, for a
- * bridge that drives its call from a generator yielding between polls, pairs {@link #prepare} with
- * {@link #tryFinish}, which returns {@code null} while the graph still runs so the bridge can yield
- * and come back. Releasing the operator is that yield's job rather than {@link #await}'s, so such a
- * bridge neither calls {@link #await} nor consults {@link #requireMailboxSuspension}.
+ * {@link #await} and {@link #finish} in one turn, with {@link #requireReleasableOperator} as its
+ * fail-fast guard. The polling one, for a bridge that drives its call from a generator yielding
+ * between polls, pairs {@link #prepare} with {@link #tryFinish}, which returns {@code null} while
+ * the graph still runs; releasing the operator is that yield's job, so such a bridge never calls
+ * {@link #await}.
  *
- * <p>Nothing here is kind-specific. What a built-in chat call and an internal sub-agent call differ
- * in — the environment the graph runs in, the delegate event it consumes, the durable slot's key
- * and result type, and whether the call's own failure becomes its result — lives in the {@link
- * SubgraphDefinition} the call's kind supplies. The identity that separates two calls of one kind
- * is minted by that kind's entry point and travels on the invocation, so this chain reads it back
- * rather than deriving it.
- *
- * <p>Reading the slot before emitting is what makes a replay cheap: the recorded result goes into a
- * fresh invocation and the child graph never starts, so its actions are not dispatched just to
- * replay their own recorded state.
- *
- * <p>Nothing here is checkpointed. A replay rebuilds the invocation from the caller's identity and
- * the durable slot supplies the completed work.
+ * <p>What a built-in chat call and an internal sub-agent call differ in lives in the {@link
+ * SubgraphDefinition} the call's kind supplies. Nothing here is checkpointed: a replay rebuilds the
+ * invocation from the caller's identity and the durable slot supplies the completed work.
  */
 public final class SubgraphExecution {
 
@@ -96,23 +84,25 @@ public final class SubgraphExecution {
         EventAttachmentUtils.storeEventAttachments(delegate, context);
         // Start a nested graph; the caller remains in flight while awaiting its result.
         context.addPendingEvent(new SubgraphEvent(invocation.getId(), delegate, true));
+        // Under continuations the caller yields next and the operator drains the bootstrap then.
+        // An engine whose action never yields installs a dispatcher here instead, so the graph
+        // starts before the caller waits for it rather than after it finishes.
+        context.dispatchSubgraphBootstrap();
         return invocation.getId();
     }
 
     /**
-     * Releases the mailbox while the graph of the call registered under {@code id} runs, so the
-     * operator can dispatch its actions. A call whose result came from the durable slot is already
-     * done and does not yield.
+     * Releases the operator while the graph of the call registered under {@code id} runs, so it can
+     * dispatch the graph's actions. A call whose result came from the durable slot is already done
+     * and does not yield.
      *
      * <p>Waiting is all this does; {@link #finish} takes the result. A call whose graph failure is
      * its own result therefore tolerates the wait's exception rather than failing the caller with
      * it.
      *
-     * <p>The wait yields the caller's continuation and holds no async-pool worker: the child graph
-     * draws its own workers from that same finite pool, so a worker-dispatched wait would hold one
-     * for the whole call while the child's durable calls queue behind it, which self-deadlocks at
-     * {@code num-async-threads=1} and starves under enough nested or concurrent waits at any pool
-     * size (issue #1213).
+     * <p>Yielding a continuation holds no async-pool worker. The parallel engine instead waits on
+     * the caller's worker and hands off only the execution lock, so its pool must hold both the
+     * caller and the graph's work.
      */
     public static void await(RunnerContextImpl context, String id) throws Exception {
         SubgraphInvocation<?> invocation = context.getSubgraphCalls().get(id);
@@ -120,7 +110,15 @@ public final class SubgraphExecution {
             return;
         }
         try {
-            invocation.awaitResult((JavaRunnerContextImpl) context);
+            JavaRunnerContextImpl javaContext =
+                    context instanceof JavaRunnerContextImpl
+                            ? (JavaRunnerContextImpl) context
+                            : null;
+            if (javaContext != null && canYieldContinuation(javaContext)) {
+                invocation.awaitResult(javaContext);
+            } else {
+                context.resolveAsync(invocation::awaitResult);
+            }
         } catch (Exception e) {
             if (!invocation.capturesActionFailure(e)) {
                 throw e;
@@ -165,25 +163,45 @@ public final class SubgraphExecution {
     }
 
     /**
-     * Fail-fast guard before a chain that waits on the mailbox thread. Waiting for the graph must
-     * release the mailbox so the operator can dispatch its actions; without stackful suspension the
-     * wait would block the mailbox and deadlock, so the call fails before anything is emitted.
+     * Fail-fast guard before a chain that waits for a child graph. Waiting must release the
+     * operator so it can dispatch the graph's actions; an engine that can neither yield a
+     * continuation nor hand off its execution lock would block the operator and deadlock, so the
+     * call fails before anything is emitted.
      */
-    public static void requireMailboxSuspension(@Nullable RunnerContextImpl context) {
-        boolean suspendable =
-                ContinuationActionExecutor.isContinuationSupported()
-                        && (!(context instanceof JavaRunnerContextImpl)
-                                || (((JavaRunnerContextImpl) context).getContinuationExecutor()
-                                                != null
-                                        && ((JavaRunnerContextImpl) context)
-                                                        .getContinuationContext()
-                                                != null));
-        if (!suspendable) {
+    public static void requireReleasableOperator(@Nullable RunnerContextImpl context) {
+        if (!canReleaseOperator(context)) {
             throw new UnsupportedOperationException(
-                    "Resolving an internal graph call requires stackful suspension to release the"
-                            + " mailbox while the child graph runs (JDK 21+ with the Continuation"
-                            + " API); the current runtime would block the mailbox and deadlock.");
+                    "Resolving an internal graph call requires a runtime that releases the"
+                            + " operator while the child graph runs: either stackful suspension"
+                            + " (JDK 21+ with the Continuation API) or the parallel execution"
+                            + " engine's lock handoff. The current runtime would block the"
+                            + " operator and deadlock.");
         }
+    }
+
+    /**
+     * Whether waiting for a child graph can release the operator, by either mechanism: yielding the
+     * caller's continuation, or handing off the parallel engine's execution lock. A caller that is
+     * not a Java context drives its call through a polling bridge and never waits here, so
+     * continuation support for the graph it starts is all that is asked of it.
+     */
+    private static boolean canReleaseOperator(@Nullable RunnerContext context) {
+        if (!(context instanceof JavaRunnerContextImpl)) {
+            return ContinuationActionExecutor.isContinuationSupported();
+        }
+        JavaRunnerContextImpl javaContext = (JavaRunnerContextImpl) context;
+        ContinuationActionExecutor executor = javaContext.getContinuationExecutor();
+        if (executor == null) {
+            return false;
+        }
+        return canYieldContinuation(javaContext) || executor.canHandOffExecutionLock();
+    }
+
+    /** Whether this caller can release the operator by yielding its own continuation. */
+    private static boolean canYieldContinuation(JavaRunnerContextImpl context) {
+        return ContinuationActionExecutor.isContinuationSupported()
+                && context.getContinuationExecutor() != null
+                && context.getContinuationContext() != null;
     }
 
     private static <R> R terminal(SubgraphInvocation<R> invocation) throws Exception {
@@ -194,12 +212,9 @@ public final class SubgraphExecution {
                 throw e;
             }
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            // The last gate before a failure becomes this call's own result, so it is where the
-            // contract is enforced for whoever implements captureActionFailure next: a framework
-            // fault is rethrown as found -- the very instance, keeping its type and stack -- rather
-            // than folded into an answer the caller cannot distinguish from its child's own.
-            // Unreachable while capturesActionFailure keeps refusing to complete a call
-            // exceptionally with one.
+            // The last gate before a failure becomes this call's own result, so a framework fault
+            // is rethrown as found -- the very instance, keeping its type and stack -- rather than
+            // folded into an answer the caller cannot distinguish from its child's own.
             Optional<UncapturableException> uncapturable =
                     ExceptionUtils.findThrowable(cause, UncapturableException.class);
             if (uncapturable.isPresent()) {

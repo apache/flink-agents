@@ -27,9 +27,6 @@ Issuing the call reads the caller's durable slot first, so a replay of an
 already completed call installs the recorded result and the child graph never
 starts — the same pre-dispatch skip the Java caller path has.
 
-Unlike the Java caller path, this does not need JDK 21: a Python coroutine
-releases the mailbox by yielding at ``await``.
-
 The common subgraph runtime routes child events privately and accumulates outputs
 into the call result. The operator separately selects the child's ``ResourceScope``
 on the shared ``PythonRunnerContextImpl`` (``ActionTaskContextManager``), so its

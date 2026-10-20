@@ -56,6 +56,7 @@ import org.apache.flink.agents.plan.actions.ToolCallAction;
 import org.apache.flink.agents.plan.actions.Utils;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.runtime.ResourceCache;
@@ -350,6 +351,40 @@ public class ActionExecutionOperatorTest {
             assertThat(
                             ActionExecutionOperator.shouldEnableParallelExecutionWithoutCoroutine(
                                     planWithPythonResource, false))
+                    .isTrue();
+        }
+    }
+
+    /** A Python tool arrives as a serializable provider, which the screen must catch too. */
+    @Test
+    void pythonSerializableResourcesAlsoRequireAsyncCompatibleFlinkForParallelExecution()
+            throws Exception {
+        AgentPlan allJava = TestAgent.getAgentPlan(false);
+        PythonSerializableResourceProvider pythonTool =
+                new PythonSerializableResourceProvider(
+                        "python-tool",
+                        ResourceType.TOOL,
+                        "test.module",
+                        "FunctionTool",
+                        new HashMap<>());
+        Map<String, ResourceProvider> tools = new HashMap<>();
+        tools.put("python-tool", pythonTool);
+        Map<ResourceType, Map<String, ResourceProvider>> resourceProviders = new HashMap<>();
+        resourceProviders.put(ResourceType.TOOL, tools);
+        AgentPlan planWithPythonSerializableResource =
+                new AgentPlan(allJava.getActions(), resourceProviders, allJava.getConfig());
+
+        try (MockedStatic<Utils> utils = mockStatic(Utils.class)) {
+            utils.when(Utils::supportAsync).thenReturn(false);
+            assertThat(
+                            ActionExecutionOperator.shouldEnableParallelExecutionWithoutCoroutine(
+                                    planWithPythonSerializableResource, false))
+                    .isFalse();
+
+            utils.when(Utils::supportAsync).thenReturn(true);
+            assertThat(
+                            ActionExecutionOperator.shouldEnableParallelExecutionWithoutCoroutine(
+                                    planWithPythonSerializableResource, false))
                     .isTrue();
         }
     }

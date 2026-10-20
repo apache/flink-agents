@@ -29,6 +29,6 @@ import org.apache.flink.agents.api.context.DurableCallable;
  * callable marked here awaits by yielding, so the worker pool stays free for the callee.
  *
  * <p>Only meaningful on JDK 21+, where the continuation the callable yields is the caller's; the
- * callers that produce such callables gate on {@code requireMailboxSuspension} beforehand.
+ * callers that produce such callables gate on {@code requireReleasableOperator} beforehand.
  */
 public interface ContinuationNativeCallable<T> extends DurableCallable<T> {}

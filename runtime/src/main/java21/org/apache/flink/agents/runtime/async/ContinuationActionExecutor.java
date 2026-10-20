@@ -440,4 +440,12 @@ public class ContinuationActionExecutor {
     public static boolean isContinuationSupported() {
         return true;
     }
+
+    /**
+     * Always false here: continuation execution releases the operator by yielding the caller's
+     * continuation, never by handing off a parallel execution lock it does not use.
+     */
+    public boolean canHandOffExecutionLock() {
+        return false;
+    }
 }

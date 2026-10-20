@@ -22,6 +22,8 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
+import org.apache.flink.agents.runtime.operator.parallel.ActionTaskLifecycleException;
+import org.apache.flink.agents.runtime.operator.parallel.UncapturableException;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -152,6 +154,37 @@ class SubgraphInvocationTest {
         assertThat(call.capturesActionFailure(new AssertionError())).isFalse();
         assertThat(call.capturesActionFailure(new RuntimeException(new OutOfMemoryError())))
                 .isFalse();
+    }
+
+    /**
+     * A framework fault must never become this call's own result, even though the definition under
+     * test does capture ordinary action failures. This gate is what keeps such a fault out of the
+     * durable journal: the fold is what produces the result the operator persists, so refusing it
+     * is what makes the fault recoverable once its cause is corrected — a recorded fault would be
+     * replayed forever.
+     */
+    @Test
+    void doesNotCaptureAFrameworkFaultWrappedInItsShell() {
+        SubgraphInvocation<List<Event>> call = call("call", "key");
+        // Sanity: this definition does capture an ordinary body failure, so the refusals below are
+        // the shell's doing rather than the policy's.
+        assertThat(call.capturesActionFailure(new IllegalArgumentException("business"))).isTrue();
+
+        UncapturableException suspend =
+                ActionTaskLifecycleException.suspendFailed(new IllegalStateException("listener"));
+        assertThat(call.capturesActionFailure(suspend)).isFalse();
+        // The scan walks causes, so a fault that arrives wrapped is refused all the same.
+        assertThat(call.capturesActionFailure(new RuntimeException(suspend))).isFalse();
+
+        UncapturableException resume =
+                ActionTaskLifecycleException.resumeFailed(
+                        new IllegalStateException("rebind"), new IllegalStateException("call"));
+        assertThat(call.capturesActionFailure(resume)).isFalse();
+        assertThat(call.capturesActionFailure(new RuntimeException(resume))).isFalse();
+
+        // The shell keeps the real fault reachable through the extra layer.
+        assertThat(suspend).hasCauseInstanceOf(ActionTaskLifecycleException.class);
+        assertThat(resume).hasCauseInstanceOf(ActionTaskLifecycleException.class);
     }
 
     @Test

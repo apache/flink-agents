@@ -24,8 +24,9 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Operator-owned invocation registry, confined to the mailbox. Both chat and internal subagents
- * register here; adapters may retain references for their public handles but own no scheduler.
+ * Operator-owned invocation registry, accessed on the mailbox thread or under the parallel
+ * execution lock. Both chat and internal subagents register here; adapters may retain references
+ * for their public handles but own no scheduler.
  */
 public final class SubgraphCallManager {
     private final Map<String, SubgraphInvocation<?>> calls = new HashMap<>();
