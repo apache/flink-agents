@@ -101,8 +101,7 @@ public class ContinuationActionExecutor {
         try {
             return supplier.get();
         } finally {
-            parallelExecutionLock.acquireByWorker(context.getRecordIndex(), context.getTaskIndex());
-            contextRestorer.restore(context.getKey(), context.getActionTask());
+            reacquireAndRestore(context);
         }
     }
 
@@ -132,9 +131,27 @@ public class ContinuationActionExecutor {
         try {
             return batchExecutor.execute(suppliers, timeout, maxParallelism);
         } finally {
-            parallelExecutionLock.acquireByWorker(context.getRecordIndex(), context.getTaskIndex());
-            contextRestorer.restore(context.getKey(), context.getActionTask());
+            reacquireAndRestore(context);
         }
+    }
+
+    /**
+     * Re-acquires worker ownership and restores the runner context. An interrupt flag left set by
+     * the call (for example by code that re-interrupts after catching {@link InterruptedException})
+     * must not discard its outcome, so the flag is cleared for the wait and restored afterward. A
+     * new interrupt during the wait, such as the coordinator's shutdown interrupts, still aborts
+     * it.
+     */
+    private void reacquireAndRestore(ContinuationContext context) throws InterruptedException {
+        boolean interrupted = Thread.interrupted();
+        try {
+            parallelExecutionLock.acquireByWorker(context.getRecordIndex(), context.getTaskIndex());
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        contextRestorer.restore(context.getKey(), context.getActionTask());
     }
 
     /**

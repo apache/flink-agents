@@ -34,6 +34,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -372,6 +373,57 @@ class ParallelExecutionCoordinatorTest {
             runOneMail(mails);
         } finally {
             allow.countDown();
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void shutdownDuringAsyncReacquireAbandonsTaskWithoutLockErrors() throws Exception {
+        ParallelExecutionLock lock = new ParallelExecutionLock();
+        BlockingQueue<ThrowingRunnable<? extends Exception>> mails = new LinkedBlockingQueue<>();
+        List<String> events = Collections.synchronizedList(new ArrayList<>());
+        AtomicReference<Throwable> uncaught = new AtomicReference<>();
+        CountDownLatch released = new CountDownLatch(1);
+        CountDownLatch mainHoldsLock = new CountDownLatch(1);
+        Supplier<ParallelExecutionTask> works =
+                () ->
+                        FakeWork.asyncAbandonedOnInterrupt(
+                                "A",
+                                events,
+                                lock,
+                                () -> {
+                                    Thread.currentThread()
+                                            .setUncaughtExceptionHandler(
+                                                    (thread, error) ->
+                                                            uncaught.compareAndSet(null, error));
+                                    released.countDown();
+                                    await(mainHoldsLock);
+                                });
+        ParallelExecutionCoordinator coordinator = newCoordinator(lock, mails, works);
+        try {
+            lock.acquireByMain();
+            coordinator.addTask(KEY);
+            lock.release();
+            assertThat(released.await(5, TimeUnit.SECONDS)).isTrue();
+
+            // Hold the lock on the main thread so the worker's re-acquire has to wait, then shut
+            // down, whose interrupt aborts that wait.
+            lock.acquireByMain();
+            try {
+                mainHoldsLock.countDown();
+                waitUntilQueuedWorkers(lock, 1);
+                coordinator.shutdown();
+                coordinator.close();
+            } finally {
+                lock.release();
+            }
+
+            assertThat(events).contains("abandon-A").doesNotContain("commit-A");
+            assertThat(mails).isEmpty();
+            assertThat(uncaught.get()).isNull();
+        } finally {
+            mainHoldsLock.countDown();
+            coordinator.close();
         }
     }
 
@@ -734,6 +786,17 @@ class ParallelExecutionCoordinatorTest {
         }
     }
 
+    private static void waitUntilQueuedWorkers(ParallelExecutionLock lock, int expected)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (lock.getQueuedWorkerCountForTesting() != expected) {
+            assertThat(System.nanoTime())
+                    .as("timed out waiting for %d queued workers", expected)
+                    .isLessThan(deadline);
+            Thread.sleep(10L);
+        }
+    }
+
     private static void runOneMail(BlockingQueue<ThrowingRunnable<? extends Exception>> mails)
             throws Exception {
         ThrowingRunnable<? extends Exception> mail = mails.poll(5, TimeUnit.SECONDS);
@@ -773,6 +836,7 @@ class ParallelExecutionCoordinatorTest {
         @Nullable private final Runnable onExecute;
         @Nullable private final ParallelExecutionLock asyncLock;
         @Nullable private final RuntimeException commitFailure;
+        private final boolean abandonOnInterrupt;
         private volatile boolean done;
         private volatile Object assignedKey;
         private volatile long assignedRecordIndex = -1L;
@@ -783,16 +847,18 @@ class ParallelExecutionCoordinatorTest {
                 List<String> events,
                 @Nullable Runnable onExecute,
                 @Nullable ParallelExecutionLock asyncLock,
-                @Nullable RuntimeException commitFailure) {
+                @Nullable RuntimeException commitFailure,
+                boolean abandonOnInterrupt) {
             this.id = id;
             this.events = events;
             this.onExecute = onExecute;
             this.asyncLock = asyncLock;
             this.commitFailure = commitFailure;
+            this.abandonOnInterrupt = abandonOnInterrupt;
         }
 
         static FakeWork blocking(String id, List<String> events, Runnable onExecute) {
-            return new FakeWork(id, events, onExecute, null, null);
+            return new FakeWork(id, events, onExecute, null, null, false);
         }
 
         /**
@@ -802,7 +868,7 @@ class ParallelExecutionCoordinatorTest {
          */
         static FakeWork blockingAsync(
                 String id, List<String> events, ParallelExecutionLock lock, Runnable onExecute) {
-            return new FakeWork(id, events, onExecute, lock, null);
+            return new FakeWork(id, events, onExecute, lock, null, false);
         }
 
         static FakeWork blockingAsyncFailingCommit(
@@ -811,12 +877,21 @@ class ParallelExecutionCoordinatorTest {
                 ParallelExecutionLock lock,
                 Runnable onExecute,
                 RuntimeException commitFailure) {
-            return new FakeWork(id, events, onExecute, lock, commitFailure);
+            return new FakeWork(id, events, onExecute, lock, commitFailure, false);
+        }
+
+        /**
+         * Like {@link #blockingAsync}, but an interrupted re-acquire returns without the lock, as
+         * the operator's work does when it records the failure for commit.
+         */
+        static FakeWork asyncAbandonedOnInterrupt(
+                String id, List<String> events, ParallelExecutionLock lock, Runnable onExecute) {
+            return new FakeWork(id, events, onExecute, lock, null, true);
         }
 
         static FakeWork failingCommit(
                 String id, List<String> events, RuntimeException commitFailure) {
-            return new FakeWork(id, events, null, null, commitFailure);
+            return new FakeWork(id, events, null, null, commitFailure, false);
         }
 
         @Override
@@ -847,6 +922,10 @@ class ParallelExecutionCoordinatorTest {
                         asyncLock.acquireByWorker(assignedRecordIndex, assignedTaskIndex);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
+                        if (abandonOnInterrupt) {
+                            events.add("abandon-" + id);
+                            return;
+                        }
                         throw new AssertionError("Interrupted while re-acquiring the lock", e);
                     }
                 }

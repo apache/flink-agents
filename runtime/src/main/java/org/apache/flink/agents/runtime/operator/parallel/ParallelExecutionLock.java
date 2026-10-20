@@ -176,6 +176,11 @@ public final class ParallelExecutionLock {
         }
     }
 
+    /** Whether the calling thread currently owns the lock. */
+    boolean isHeldByCurrentThread() {
+        return ownerThread == Thread.currentThread();
+    }
+
     /** Asserts that the calling thread currently owns the lock. */
     public void checkReentrant() {
         if (ownerThread != Thread.currentThread()) {

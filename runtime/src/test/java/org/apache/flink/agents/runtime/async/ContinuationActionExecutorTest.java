@@ -25,11 +25,13 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -96,6 +98,75 @@ class ContinuationActionExecutorTest {
             allowSupplierToFinish.countDown();
             assertThat(workerResult.get(5, TimeUnit.SECONDS)).isEqualTo("result");
             assertThat(restored).isTrue();
+        } finally {
+            workerExecutor.shutdownNow();
+            executor.close();
+        }
+    }
+
+    @Test
+    void executeAsyncKeepsResultWhenCallLeavesInterruptFlagSet() throws Throwable {
+        assertThat(
+                        runInterruptingCall(
+                                () -> {
+                                    // Code that catches an InterruptedException and re-interrupts.
+                                    Thread.currentThread().interrupt();
+                                    return "result";
+                                }))
+                .isEqualTo("result");
+    }
+
+    @Test
+    void executeAsyncKeepsFailureWhenCallLeavesInterruptFlagSet() {
+        IllegalStateException failure = new IllegalStateException("call failed");
+        assertThatThrownBy(
+                        () ->
+                                runInterruptingCall(
+                                        () -> {
+                                            Thread.currentThread().interrupt();
+                                            throw failure;
+                                        }))
+                .isSameAs(failure);
+    }
+
+    /**
+     * Runs {@code call} through {@code executeAsync} on a worker that owns the lock, and checks
+     * that the worker gets the lock and its context back with the interrupt flag still set.
+     */
+    private static String runInterruptingCall(Supplier<String> call) throws Throwable {
+        ParallelExecutionLock lock = new ParallelExecutionLock();
+        AtomicBoolean restored = new AtomicBoolean();
+        AtomicBoolean interruptedAfterCall = new AtomicBoolean();
+        ContinuationActionExecutor executor =
+                new ContinuationActionExecutor(
+                        1,
+                        () -> {},
+                        lock,
+                        (key, action) -> {
+                            lock.checkReentrant();
+                            restored.set(true);
+                        });
+        ExecutorService workerExecutor = Executors.newSingleThreadExecutor();
+        try {
+            Future<String> workerResult =
+                    workerExecutor.submit(
+                            () -> {
+                                lock.acquireByWorker(0, 0);
+                                try {
+                                    return executor.executeAsync(new ContinuationContext(), call);
+                                } finally {
+                                    interruptedAfterCall.set(Thread.interrupted());
+                                    lock.release();
+                                }
+                            });
+            try {
+                return workerResult.get(5, TimeUnit.SECONDS);
+            } catch (ExecutionException e) {
+                throw e.getCause();
+            } finally {
+                assertThat(restored).isTrue();
+                assertThat(interruptedAfterCall).isTrue();
+            }
         } finally {
             workerExecutor.shutdownNow();
             executor.close();
