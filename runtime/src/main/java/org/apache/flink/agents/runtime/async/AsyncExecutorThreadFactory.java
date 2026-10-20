@@ -18,8 +18,8 @@
 package org.apache.flink.agents.runtime.async;
 
 import java.util.Objects;
-import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 
@@ -42,7 +42,13 @@ public final class AsyncExecutorThreadFactory implements ThreadFactory {
 
     private final ThreadFactory delegate = Executors.defaultThreadFactory();
     private final Runnable threadCleanup;
-    private final Queue<Thread> createdThreads = new ConcurrentLinkedQueue<>();
+
+    /**
+     * Workers that have not finished their exit cleanup yet. Each removes itself as it exits: a
+     * pool whose workers retire on an idle timeout and are then recreated would otherwise
+     * accumulate the whole run's threads here.
+     */
+    private final Set<Thread> liveThreads = ConcurrentHashMap.newKeySet();
 
     public AsyncExecutorThreadFactory() {
         this(() -> {});
@@ -70,11 +76,12 @@ public final class AsyncExecutorThreadFactory implements ThreadFactory {
                                     threadCleanup.run();
                                 } finally {
                                     ASYNC_EXECUTOR_THREAD.remove();
+                                    liveThreads.remove(Thread.currentThread());
                                 }
                             }
                         });
         thread.setName(NAME_PREFIX + thread.getName());
-        createdThreads.add(thread);
+        liveThreads.add(thread);
         return thread;
     }
 
@@ -82,7 +89,7 @@ public final class AsyncExecutorThreadFactory implements ThreadFactory {
     public void awaitThreadExit() {
         boolean interrupted = false;
         try {
-            for (Thread thread : createdThreads) {
+            for (Thread thread : liveThreads) {
                 while (thread.isAlive()) {
                     try {
                         thread.join();

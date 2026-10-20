@@ -693,13 +693,21 @@ public class ActionExecutionOperatorTest {
     @Timeout(30)
     void restoreRebuildsInFlightBudgetFromProcessingKeysAndPendingEvents() throws Exception {
         assumeFalse(ContinuationActionExecutor.isContinuationSupported());
-        TestAgent.resetSingleAsyncFixture();
+        int numAsyncThreads = 1;
+        // Every worker has to be parked before the key under test queues its task, or a free
+        // worker pulls that task and it retires during the drain -- and retiring polls the key's
+        // pending event into a new round, which is exactly the unit phase 2 has to see rebuilt.
+        // Derived from the ceiling rather than hard-coded, so this tracks the pool it must fill.
+        int workers = ParallelExecutionCoordinator.workerCeiling(numAsyncThreads);
+        long queuedKey = workers + 1L;
+        TestAgent.resetSingleAsyncFixture(workers);
         AgentConfiguration config = new AgentConfiguration();
-        config.set(AgentExecutionOptions.NUM_ASYNC_THREADS, 1);
-        config.set(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS, 3);
+        config.set(AgentExecutionOptions.NUM_ASYNC_THREADS, numAsyncThreads);
+        config.set(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS, workers + 3);
 
-        // Phase 1: key 1 is pulled and parks in async; key 2 queues one task (single worker is
-        // busy) plus one pending input event (busy key). The drain retires key 1, so the snapshot
+        // Phase 1: `workers` keys are pulled and park in async, filling the pool; queuedKey then
+        // queues one task no worker is left to pull, plus one pending input event (busy key). The
+        // drain retires the saturating keys and forfeits queuedKey's permit, so the snapshot
         // captures exactly one processing key and one pending event.
         OperatorSubtaskState snapshot;
         Thread releaser = null;
@@ -713,10 +721,12 @@ public class ActionExecutionOperatorTest {
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
-            testHarness.processElement(new StreamRecord<>(1L));
+            for (long key = 1; key <= workers; key++) {
+                testHarness.processElement(new StreamRecord<>(key));
+            }
             assertThat(TestAgent.SINGLE_ASYNC_STARTED.await(5, TimeUnit.SECONDS)).isTrue();
-            testHarness.processElement(new StreamRecord<>(2L));
-            testHarness.processElement(new StreamRecord<>(2L));
+            testHarness.processElement(new StreamRecord<>(queuedKey));
+            testHarness.processElement(new StreamRecord<>(queuedKey));
 
             releaser =
                     new Thread(
@@ -731,7 +741,8 @@ public class ActionExecutionOperatorTest {
             releaser.setDaemon(true);
             releaser.start();
             operator.prepareSnapshotPreBarrier(1L);
-            assertThat(operator.getOperatorStateManager().getProcessingKeys()).containsExactly(2L);
+            assertThat(operator.getOperatorStateManager().getProcessingKeys())
+                    .containsExactly(queuedKey);
             snapshot = testHarness.snapshot(1L, 1L);
         } finally {
             TestAgent.SINGLE_ASYNC_ALLOW.countDown();
@@ -745,7 +756,7 @@ public class ActionExecutionOperatorTest {
         // either unit were dropped, admission would pass immediately and the assertion fails.
         TestAgent.resetSingleAsyncFixture();
         AgentConfiguration restoredConfig = new AgentConfiguration();
-        restoredConfig.set(AgentExecutionOptions.NUM_ASYNC_THREADS, 1);
+        restoredConfig.set(AgentExecutionOptions.NUM_ASYNC_THREADS, numAsyncThreads);
         restoredConfig.set(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS, 2);
         Thread budgetReleaser = null;
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> restored =
@@ -776,15 +787,19 @@ public class ActionExecutionOperatorTest {
             budgetReleaser.setDaemon(true);
             budgetReleaser.start();
 
-            restored.processElement(new StreamRecord<>(3L));
+            long admittedAfterRestore = queuedKey + 1L;
+            restored.processElement(new StreamRecord<>(admittedAfterRestore));
             assertThat(budgetFreed.get()).isTrue();
 
             operator.waitInFlightEventsFinished();
             List<StreamRecord<Object>> output =
                     (List<StreamRecord<Object>>) restored.getRecordOutput();
+            // queuedKey's restored task and the pending event behind it each emit queuedKey's
+            // double, and the record admitted once the budget freed emits its own.
             assertThat(output)
                     .extracting(StreamRecord::getValue)
-                    .containsExactlyInAnyOrder(4L, 4L, 6L);
+                    .containsExactlyInAnyOrder(
+                            queuedKey * 2, queuedKey * 2, admittedAfterRestore * 2);
         } finally {
             TestAgent.SINGLE_ASYNC_ALLOW.countDown();
             if (budgetReleaser != null) {
@@ -4231,7 +4246,17 @@ public class ActionExecutionOperatorTest {
         }
 
         public static void resetSingleAsyncFixture() {
-            SINGLE_ASYNC_STARTED = new CountDownLatch(1);
+            resetSingleAsyncFixture(1);
+        }
+
+        /**
+         * Same fixture, but {@code SINGLE_ASYNC_STARTED} opens only after {@code startedCount}
+         * actions have reached the async stage. A test that has to know the whole worker pool is
+         * parked -- because what it is arranging is a task no worker is left to pull -- sizes this
+         * to the pool; awaiting the latch is then the proof of saturation rather than a guess.
+         */
+        public static void resetSingleAsyncFixture(int startedCount) {
+            SINGLE_ASYNC_STARTED = new CountDownLatch(startedCount);
             SINGLE_ASYNC_ALLOW = new CountDownLatch(1);
         }
 

@@ -36,6 +36,7 @@ import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.agents.runtime.operator.ActionTask;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionCoordinator;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
@@ -45,13 +46,17 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /**
  * Tests that {@link ActionExecutionOperator} broadcasts the record/task lifecycle events to
@@ -374,8 +379,8 @@ public class TaskLifecycleListenerNotificationTest {
 
     @Test
     void resumedInFlightRecordReEmitsRecordStart() throws Exception {
-        // Keep this test on serial restore. Parallel checkpoints can also retain queued roots
-        // whose workers have not started.
+        // Serial restore: the record is in flight because its task is still pending on the mailbox.
+        // The queued-task branch on the parallel engine has its own test below.
         AgentConfiguration serialConfig = new AgentConfiguration();
         serialConfig.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
         AgentPlan plan = new AgentPlan(new SyncAgent(), serialConfig);
@@ -415,6 +420,148 @@ public class TaskLifecycleListenerNotificationTest {
                             "finishing:handleInput",
                             "finished:handleInput",
                             "recordFinished:7");
+        }
+    }
+
+    /**
+     * Agent whose input action parks inside a durable async call. On the parallel engine that parks
+     * the worker holding it, which is how a test fills the pool and leaves a later task queued.
+     */
+    public static class ParkingAgent extends Agent {
+
+        static volatile CountDownLatch started;
+        static volatile CountDownLatch allow;
+
+        static void resetFixture(int startedCount) {
+            started = new CountDownLatch(startedCount);
+            allow = new CountDownLatch(1);
+        }
+
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
+        public static void handleInput(Event event, RunnerContext context) throws Exception {
+            Long input = (Long) InputEvent.fromEvent(event).getInput();
+            Long result =
+                    context.durableExecuteAsync(
+                                    new DurableCallable<Long>() {
+                                        @Override
+                                        public String getId() {
+                                            return "parking";
+                                        }
+
+                                        @Override
+                                        public Class<Long> getResultClass() {
+                                            return Long.class;
+                                        }
+
+                                        @Override
+                                        public Long call() {
+                                            started.countDown();
+                                            try {
+                                                allow.await();
+                                            } catch (InterruptedException e) {
+                                                Thread.currentThread().interrupt();
+                                            }
+                                            return input * 2;
+                                        }
+                                    })
+                            .await();
+            context.sendEvent(new OutputEvent(result));
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void resumedInFlightRecordReEmitsRecordStartOnParallelRestore() throws Exception {
+        assumeFalse(ContinuationActionExecutor.isContinuationSupported());
+        int numAsyncThreads = 1;
+        // Every worker has to be parked before the key under test queues its task, or a free
+        // worker pulls that task and it retires during the drain, leaving nothing in flight to
+        // restore. Derived from the ceiling rather than hard-coded, so it tracks the pool it fills.
+        int workers = ParallelExecutionCoordinator.workerCeiling(numAsyncThreads);
+        long queuedKey = workers + 1L;
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.NUM_ASYNC_THREADS, numAsyncThreads);
+        config.set(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS, workers + 2);
+        AgentPlan plan = new AgentPlan(new ParkingAgent(), config);
+        assertThat(usesParallelWorker(plan)).isTrue();
+
+        // Phase 1: fill the pool, queue one record no worker is left to pull, then drain. The
+        // drain retires the parked keys and forfeits the queued record's dispatch permit, so the
+        // snapshot captures it as a processing key whose task is still queued.
+        OperatorSubtaskState snapshot;
+        ParkingAgent.resetFixture(workers);
+        Thread releaser = null;
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(plan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            for (long key = 1; key <= workers; key++) {
+                testHarness.processElement(new StreamRecord<>(key));
+            }
+            assertThat(ParkingAgent.started.await(5, TimeUnit.SECONDS)).isTrue();
+            testHarness.processElement(new StreamRecord<>(queuedKey));
+
+            // Released only once the drain has paused dispatch: any earlier and a retiring worker
+            // pulls the queued task, which then retires and empties the snapshot.
+            releaser =
+                    new Thread(
+                            () -> {
+                                try {
+                                    Thread.sleep(300);
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                }
+                                ParkingAgent.allow.countDown();
+                            });
+            releaser.setDaemon(true);
+            releaser.start();
+            operator.prepareSnapshotPreBarrier(1L);
+            snapshot = testHarness.snapshot(1L, 1L);
+        } finally {
+            ParkingAgent.allow.countDown();
+            if (releaser != null) {
+                releaser.join();
+            }
+        }
+
+        // Phase 2: the restored round opens its bracket before dispatching, so the record start
+        // precedes every action callback the resumed task emits and the bracket closes on it.
+        ParkingAgent.resetFixture(1);
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> restored =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ListenerInjectingOperatorFactory(plan, new RecordingListener()),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            restored.initializeState(snapshot);
+            restored.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) restored.getOperator();
+            // Proof the snapshot really held the queued record: it was re-dispatched and reached
+            // the async stage. Without this the assertions below would pass on an empty restore.
+            assertThat(ParkingAgent.started.await(5, TimeUnit.SECONDS)).isTrue();
+            ParkingAgent.allow.countDown();
+            operator.waitInFlightEventsFinished();
+
+            assertThat(RecordingListener.EVENTS)
+                    .containsExactly(
+                            "recordStart:" + queuedKey,
+                            "prepared:handleInput",
+                            "started:handleInput",
+                            "transferred:handleInput->handleInput",
+                            "prepared:handleInput",
+                            "transferred:handleInput->handleInput",
+                            "prepared:handleInput",
+                            "finishing:handleInput",
+                            "finished:handleInput",
+                            "recordFinished:" + queuedKey);
+            List<StreamRecord<Object>> output =
+                    (List<StreamRecord<Object>>) restored.getRecordOutput();
+            assertThat(output).extracting(StreamRecord::getValue).containsExactly(queuedKey * 2);
         }
     }
 

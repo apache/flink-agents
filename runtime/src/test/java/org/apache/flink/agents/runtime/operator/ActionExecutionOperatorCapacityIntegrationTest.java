@@ -28,6 +28,7 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionCoordinator;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
@@ -55,8 +56,15 @@ import static org.assertj.core.api.Assumptions.assumeThat;
 class ActionExecutionOperatorCapacityIntegrationTest {
 
     private static final int NUM_ASYNC_THREADS = 2;
-    private static final int WORKER_BACKLOG_ACTIONS = NUM_ASYNC_THREADS * 2;
-    private static final int NUM_ACTIONS = WORKER_BACKLOG_ACTIONS + 2;
+
+    /** Workers the operator sizes the pool with for {@link #NUM_ASYNC_THREADS}. */
+    private static final int WORKERS =
+            ParallelExecutionCoordinator.workerCeiling(NUM_ASYNC_THREADS);
+
+    /** Actions left without a worker, since the first {@link #WORKERS} each block holding one. */
+    private static final int WORKER_BACKLOG_ACTIONS = 2;
+
+    private static final int NUM_ACTIONS = WORKERS + WORKER_BACKLOG_ACTIONS;
 
     @Test
     @Timeout(20)
@@ -78,11 +86,12 @@ class ActionExecutionOperatorCapacityIntegrationTest {
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
             testHarness.processElement(new StreamRecord<>(0L));
-            // Resident workers pull and start the tasks autonomously once the input is admitted;
-            // only NUM_ASYNC_THREADS of them can enter the async stage at once.
+            // Workers pull and start the tasks on their own once the input is admitted, but only
+            // WORKERS of them can be in the async stage at once: a call there keeps its worker
+            // and only hands off the execution lock.
 
             assertThat(CapacityAgent.FIRST_BATCH_STARTED.await(5, TimeUnit.SECONDS)).isTrue();
-            assertThat(CapacityAgent.STARTED_COUNT).hasValue(NUM_ASYNC_THREADS);
+            assertThat(CapacityAgent.STARTED_COUNT).hasValue(WORKERS);
             assertThat(testHarness.getRecordOutput()).isEmpty();
 
             CapacityAgent.ALLOW_FIRST_BATCH.countDown();
@@ -147,8 +156,7 @@ class ActionExecutionOperatorCapacityIntegrationTest {
                     .isTrue();
 
             beforeRestore = outputValues(testHarness);
-            assertThat(beforeRestore)
-                    .containsExactlyInAnyOrder("capacity-action-1", "capacity-action-2");
+            assertThat(beforeRestore).containsExactlyInAnyOrderElementsOf(firstBatchActions());
 
             CapacityAgent.ALLOW_REMAINING_ACTIONS.countDown();
             operator.waitInFlightEventsFinished();
@@ -205,11 +213,24 @@ class ActionExecutionOperatorCapacityIntegrationTest {
     }
 
     private static Set<String> expectedActions() {
-        Set<String> expected = new LinkedHashSet<>();
-        for (int i = 1; i <= NUM_ACTIONS; i++) {
-            expected.add("capacity-action-" + i);
+        return actionNames(1, NUM_ACTIONS);
+    }
+
+    /**
+     * The actions whose output the snapshot already contains. They were in flight when the drain
+     * started, so quiesce waits for them; the backlog's permits are handed back instead, leaving
+     * those actions pending in the snapshot for the restore to run.
+     */
+    private static Set<String> firstBatchActions() {
+        return actionNames(1, WORKERS);
+    }
+
+    private static Set<String> actionNames(int from, int to) {
+        Set<String> names = new LinkedHashSet<>();
+        for (int i = from; i <= to; i++) {
+            names.add("capacity-action-" + i);
         }
-        return expected;
+        return names;
     }
 
     public static class CapacityAgent {
@@ -233,7 +254,7 @@ class ActionExecutionOperatorCapacityIntegrationTest {
         }
 
         private static void resetFirstBatchGate() {
-            FIRST_BATCH_STARTED = new CountDownLatch(NUM_ASYNC_THREADS);
+            FIRST_BATCH_STARTED = new CountDownLatch(WORKERS);
             ALLOW_FIRST_BATCH = new CountDownLatch(1);
             STARTED_COUNT.set(0);
         }
@@ -273,7 +294,7 @@ class ActionExecutionOperatorCapacityIntegrationTest {
                                             .computeIfAbsent(
                                                     actionId, ignored -> new AtomicInteger())
                                             .incrementAndGet();
-                                    if (actionNumber <= NUM_ASYNC_THREADS) {
+                                    if (actionNumber <= WORKERS) {
                                         FIRST_BATCH_STARTED.countDown();
                                         if (!ALLOW_FIRST_BATCH.await(5, TimeUnit.SECONDS)) {
                                             throw new IllegalStateException(
@@ -316,6 +337,30 @@ class ActionExecutionOperatorCapacityIntegrationTest {
 
         public static void capacityAction6(Event event, RunnerContext context) throws Exception {
             runAction(event, context, 6);
+        }
+
+        public static void capacityAction7(Event event, RunnerContext context) throws Exception {
+            runAction(event, context, 7);
+        }
+
+        public static void capacityAction8(Event event, RunnerContext context) throws Exception {
+            runAction(event, context, 8);
+        }
+
+        public static void capacityAction9(Event event, RunnerContext context) throws Exception {
+            runAction(event, context, 9);
+        }
+
+        public static void capacityAction10(Event event, RunnerContext context) throws Exception {
+            runAction(event, context, 10);
+        }
+
+        public static void capacityAction11(Event event, RunnerContext context) throws Exception {
+            runAction(event, context, 11);
+        }
+
+        public static void capacityAction12(Event event, RunnerContext context) throws Exception {
+            runAction(event, context, 12);
         }
 
         private static AgentPlan getAgentPlan(AgentConfiguration config) throws Exception {

@@ -57,27 +57,36 @@ import static org.assertj.core.api.Assumptions.assumeThat;
 
 /**
  * Component-level regression test for the checkpoint drain quiesce of the JDK&lt;21 parallel
- * engine: a worker that redeems a queued dispatch permit while the drain is active must park
- * without holding back the in-flight tasks whose completion the quiesce is waiting for.
+ * engine: a worker that redeems a queued dispatch permit while the drain is active must hand the
+ * permit back without holding back the in-flight tasks whose completion the quiesce is waiting for.
  *
- * <p>Timeline (three actions, two workers; the harness mailbox thread is the test thread, so the
- * post-barrier steps are driven from a controller thread):
+ * <p>Timeline (one blocking action per worker plus one queued action; the harness mailbox thread is
+ * the test thread, so the post-barrier steps are driven from a controller thread):
  *
  * <ol>
- *   <li>One input record queues actions A, B and C. The workers pull A and B, which block in their
- *       async sections; C's dispatch permit stays queued behind the saturated pool.
+ *   <li>One input record queues every action. The workers pull the blocking ones, which each park
+ *       in their async section holding a worker; the queued action's dispatch permit stays behind
+ *       the saturated pool.
  *   <li>The barrier arrives: the test thread enters {@code prepareSnapshotPreBarrier} and blocks in
  *       the quiesce loop.
- *   <li>The controller releases A; its worker commits A, redeems C's queued permit, sees the drain
- *       and parks.
- *   <li>The controller releases B; B's async resume must re-acquire the lock so the drain can
- *       quiesce. If it cannot, the controller flags the deadlock and interrupts the mailbox thread
- *       so the test reports instead of hanging until the JUnit timeout.
+ *   <li>The controller releases the first blocking action; its worker commits, redeems the queued
+ *       permit, sees the drain and forfeits the permit, returning its thread to the pool.
+ *   <li>The controller releases the rest; the last async resume must re-acquire the lock so the
+ *       drain can quiesce. If it cannot, the controller flags the deadlock and interrupts the
+ *       mailbox thread so the test reports instead of hanging until the JUnit timeout.
  * </ol>
+ *
+ * <p>Two further tests cover the other end of that wait, which has no bound of its own: an abort
+ * for the checkpoint being drained must end it with a failure naming the pool state, while an abort
+ * for an older checkpoint must leave the drain running.
  */
 class ActionExecutionOperatorDrainDeadlockIntegrationTest {
 
     private static final int NUM_ASYNC_THREADS = 2;
+
+    /** Workers the operator sizes the pool with; {@link DrainAgent} blocks every one of them. */
+    private static final int WORKERS =
+            ParallelExecutionCoordinator.workerCeiling(NUM_ASYNC_THREADS);
 
     /** Bound for every phase that must happen for the timeline to be set up. */
     private static final long SETUP_TIMEOUT_SECONDS = 10;
@@ -90,6 +99,9 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
     void drainQuiesceCompletesWhenQueuedPermitIsRedeemedDuringDrain() throws Exception {
         assumeThat(ContinuationActionExecutor.isContinuationSupported()).isFalse();
         DrainAgent.reset();
+        assertThat(DrainAgent.BLOCKING)
+                .as("one blocking action per worker, so no worker is free for the queued permit")
+                .hasSize(WORKERS);
 
         AgentConfiguration config = new AgentConfiguration();
         config.set(AgentExecutionOptions.NUM_ASYNC_THREADS, NUM_ASYNC_THREADS);
@@ -108,20 +120,24 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
-            // Step 1: workers block inside A's and B's async sections; C's permit stays queued.
+            // Step 1: every worker blocks in a blocking action's async section, so the queued
+            // action's permit has no worker left to redeem it.
             testHarness.processElement(new StreamRecord<>(0L));
-            assertThat(DrainAgent.A_IN_ASYNC.await(SETUP_TIMEOUT_SECONDS, TimeUnit.SECONDS))
-                    .as("action A must reach its async section")
+            assertThat(DrainAgent.BLOCKING_IN_ASYNC.await(SETUP_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+                    .as("every blocking action must reach its async section")
                     .isTrue();
-            assertThat(DrainAgent.B_IN_ASYNC.await(SETUP_TIMEOUT_SECONDS, TimeUnit.SECONDS))
-                    .as("action B must reach its async section")
-                    .isTrue();
-            assertThat(DrainAgent.C_STARTED.getCount())
-                    .as("action C must not have started: its permit is queued behind the workers")
+            assertThat(DrainAgent.QUEUED_STARTED.getCount())
+                    .as("the queued action must not have started: no worker is free for its permit")
                     .isEqualTo(1);
 
             controller =
-                    new Thread(() -> driveTimeline(observations, drainReturned, mailboxThread));
+                    new Thread(
+                            () ->
+                                    driveTimeline(
+                                            observations,
+                                            drainReturned,
+                                            mailboxThread,
+                                            operator.getExecutionCoordinator()));
             controller.setName("drain-timeline-controller");
             controller.setDaemon(true);
             controller.start();
@@ -139,8 +155,8 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
             assertThat(observations.drainEngaged)
                     .as("the mailbox thread must have entered the drain quiesce loop")
                     .isTrue();
-            assertThat(observations.workerParkedOnQueuedPermit)
-                    .as("a worker must have redeemed C's queued permit and parked during the drain")
+            assertThat(observations.workerForfeitedQueuedPermit)
+                    .as("a worker must have redeemed C's queued permit and forfeited it on drain")
                     .isTrue();
             assertThat(observations.deadlockDetected)
                     .as(
@@ -150,8 +166,8 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
                     .isFalse();
             assertThat(drainFailure).as("prepareSnapshotPreBarrier must not fail").isNull();
 
-            // The drain quiesced; the snapshot resumes dispatch, which lets the parked worker
-            // run C.
+            // The drain quiesced; the snapshot resumes dispatch, which re-submits the forfeited
+            // permit and lets C run.
             testHarness.snapshot(1L, 1L);
             operator.waitInFlightEventsFinished();
 
@@ -161,8 +177,7 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
             }
             assertThat(outputs)
                     .as("every action must complete exactly once across the checkpoint")
-                    .containsExactlyInAnyOrder(
-                            "drain-action-A", "drain-action-B", "drain-action-C");
+                    .containsExactlyInAnyOrderElementsOf(DrainAgent.expectedOutputs());
         } finally {
             DrainAgent.releaseAll();
             if (controller != null) {
@@ -174,9 +189,12 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
 
     @Test
     @Timeout(120)
-    void oldCheckpointAbortDoesNotResumeCurrentCheckpointDrain() throws Exception {
+    void oldCheckpointAbortDoesNotEndCurrentCheckpointDrain() throws Exception {
         assumeThat(ContinuationActionExecutor.isContinuationSupported()).isFalse();
         DrainAgent.reset();
+        assertThat(DrainAgent.BLOCKING)
+                .as("one blocking action per worker, so no worker is free for the queued permit")
+                .hasSize(WORKERS);
 
         AgentConfiguration config = new AgentConfiguration();
         config.set(AgentExecutionOptions.NUM_ASYNC_THREADS, NUM_ASYNC_THREADS);
@@ -197,11 +215,9 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
             testHarness.processElement(new StreamRecord<>(0L));
-            assertThat(DrainAgent.A_IN_ASYNC.await(SETUP_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+            assertThat(DrainAgent.BLOCKING_IN_ASYNC.await(SETUP_TIMEOUT_SECONDS, TimeUnit.SECONDS))
                     .isTrue();
-            assertThat(DrainAgent.B_IN_ASYNC.await(SETUP_TIMEOUT_SECONDS, TimeUnit.SECONDS))
-                    .isTrue();
-            assertThat(DrainAgent.C_STARTED.getCount()).isEqualTo(1);
+            assertThat(DrainAgent.QUEUED_STARTED.getCount()).isEqualTo(1);
 
             testHarness
                     .getTaskMailbox()
@@ -220,7 +236,8 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
                                             abortExecuted,
                                             observations,
                                             drainReturned,
-                                            mailboxThread));
+                                            mailboxThread,
+                                            operator.getExecutionCoordinator()));
             controller.setName("abort-during-drain-controller");
             controller.setDaemon(true);
             controller.start();
@@ -234,18 +251,20 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
                     .as("controller could not establish the abort-during-drain timeline")
                     .isNull();
             assertThat(observations.queuedActionAdvancedAfterAbort)
-                    .as("the queued action's worker must either park on drain or start")
+                    .as("the queued action's worker must either forfeit its permit or start")
                     .isTrue();
             assertThat(observations.queuedActionStartedBeforeSnapshot)
-                    .as("an older checkpoint abort must not resume the current checkpoint drain")
+                    .as("an older checkpoint's abort must not end the current checkpoint's drain")
                     .isFalse();
-            assertThat(DrainAgent.C_STARTED.getCount())
-                    .as("action C must stay queued until the current checkpoint snapshot resumes")
+            assertThat(DrainAgent.QUEUED_STARTED.getCount())
+                    .as("the queued action must stay queued until the current snapshot resumes")
                     .isEqualTo(1);
             assertThat(observations.deadlockDetected)
                     .as("the current checkpoint drain must still quiesce")
                     .isFalse();
-            assertThat(drainFailure).as("prepareSnapshotPreBarrier must not fail").isNull();
+            assertThat(drainFailure)
+                    .as("an older checkpoint's abort must not fail the current drain")
+                    .isNull();
 
             testHarness.snapshot(2L, 2L);
             operator.waitInFlightEventsFinished();
@@ -256,8 +275,7 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
             }
             assertThat(outputs)
                     .as("every action must complete exactly once across the checkpoint")
-                    .containsExactlyInAnyOrder(
-                            "drain-action-A", "drain-action-B", "drain-action-C");
+                    .containsExactlyInAnyOrderElementsOf(DrainAgent.expectedOutputs());
         } finally {
             DrainAgent.releaseAll();
             if (controller != null) {
@@ -267,11 +285,70 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
         }
     }
 
+    @Test
+    @Timeout(120)
+    void abortOfTheDrainedCheckpointEndsTheQuiesceWait() throws Exception {
+        assumeThat(ContinuationActionExecutor.isContinuationSupported()).isFalse();
+        DrainAgent.reset();
+
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.NUM_ASYNC_THREADS, NUM_ASYNC_THREADS);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(DrainAgent.getAgentPlan(config), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(0L));
+            assertThat(DrainAgent.BLOCKING_IN_ASYNC.await(SETUP_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+                    .as("every worker must be blocked, so the drain cannot quiesce on its own")
+                    .isTrue();
+
+            // Nothing releases the blocked actions, so only this abort can end the wait. Flink
+            // delivers it as a mail, which is what the quiesce loop yields.
+            testHarness
+                    .getTaskMailbox()
+                    .put(
+                            new Mail(
+                                    () -> operator.notifyCheckpointAborted(2L),
+                                    TaskMailbox.MAX_PRIORITY,
+                                    "abort the checkpoint being drained"));
+
+            Throwable drainFailure = catchThrowable(() -> operator.prepareSnapshotPreBarrier(2L));
+
+            assertThat(drainFailure)
+                    .as("the drain of an aborted checkpoint must fail instead of waiting forever")
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Checkpoint 2 was aborted")
+                    .hasMessageContaining("Pool state: workers=");
+
+            // The failure path resumed dispatch, so the operator still completes the record instead
+            // of staying wedged in a drain for a checkpoint that will never be taken.
+            DrainAgent.releaseAll();
+            operator.waitInFlightEventsFinished();
+
+            List<Object> outputs = new ArrayList<>();
+            for (StreamRecord<Object> record : testHarness.getRecordOutput()) {
+                outputs.add(record.getValue());
+            }
+            assertThat(outputs)
+                    .as("every action must still complete exactly once after the aborted drain")
+                    .containsExactlyInAnyOrderElementsOf(DrainAgent.expectedOutputs());
+        } finally {
+            DrainAgent.releaseAll();
+        }
+    }
+
     private void driveAbortTimeline(
             CountDownLatch abortExecuted,
             TimelineObservations observations,
             CountDownLatch drainReturned,
-            Thread mailboxThread) {
+            Thread mailboxThread,
+            ParallelExecutionCoordinator coordinator) {
         try {
             if (!abortExecuted.await(SETUP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 observations.setupFailure =
@@ -279,13 +356,16 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
                 return;
             }
 
-            DrainAgent.RELEASE_A.countDown();
+            DrainAgent.RELEASE_FIRST.countDown();
             observations.queuedActionAdvancedAfterAbort =
                     awaitCondition(
-                            () -> DrainAgent.C_STARTED.getCount() == 0 || workerParkedInDrain());
-            observations.queuedActionStartedBeforeSnapshot = DrainAgent.C_STARTED.getCount() == 0;
+                            () ->
+                                    DrainAgent.QUEUED_STARTED.getCount() == 0
+                                            || coordinator.getForfeitedPermitsForTesting() > 0);
+            observations.queuedActionStartedBeforeSnapshot =
+                    DrainAgent.QUEUED_STARTED.getCount() == 0;
 
-            DrainAgent.RELEASE_B.countDown();
+            DrainAgent.RELEASE_REST.countDown();
             if (!drainReturned.await(DRAIN_COMPLETION_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 observations.deadlockDetected = true;
                 mailboxThread.interrupt();
@@ -299,7 +379,10 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
 
     /** Drives the post-barrier timeline off the mailbox thread and records what happened. */
     private void driveTimeline(
-            TimelineObservations observations, CountDownLatch drainReturned, Thread mailboxThread) {
+            TimelineObservations observations,
+            CountDownLatch drainReturned,
+            Thread mailboxThread,
+            ParallelExecutionCoordinator coordinator) {
         try {
             // Step 2: wait until the mailbox thread is actually parked in the quiesce loop.
             observations.drainEngaged =
@@ -310,18 +393,16 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
                 return;
             }
 
-            // Step 3: free one worker; it must pick up C's queued permit and park on the drain.
-            DrainAgent.RELEASE_A.countDown();
-            observations.workerParkedOnQueuedPermit =
-                    awaitCondition(
-                            ActionExecutionOperatorDrainDeadlockIntegrationTest
-                                    ::workerParkedInDrain);
-            if (!observations.workerParkedOnQueuedPermit) {
+            // Step 3: free one worker; it must pick up the queued permit and hand it back.
+            DrainAgent.RELEASE_FIRST.countDown();
+            observations.workerForfeitedQueuedPermit =
+                    awaitCondition(() -> coordinator.getForfeitedPermitsForTesting() > 0);
+            if (!observations.workerForfeitedQueuedPermit) {
                 return;
             }
 
-            // Step 4: release the still-in-flight action; its async resume must get the lock back.
-            DrainAgent.RELEASE_B.countDown();
+            // Step 4: release the rest; the last async resume must get the lock back.
+            DrainAgent.RELEASE_REST.countDown();
             if (!drainReturned.await(DRAIN_COMPLETION_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 observations.deadlockDetected = true;
                 // Break the mailbox out of its blocking yield so the test reports instead of
@@ -338,7 +419,7 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
     /** Records what the controller observed; read by the mailbox thread after the drain call. */
     private static final class TimelineObservations {
         private volatile boolean drainEngaged;
-        private volatile boolean workerParkedOnQueuedPermit;
+        private volatile boolean workerForfeitedQueuedPermit;
         private volatile boolean queuedActionAdvancedAfterAbort;
         private volatile boolean queuedActionStartedBeforeSnapshot;
         private volatile boolean deadlockDetected;
@@ -367,17 +448,6 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
                                 && hasFrameMethod(stack, "yield"));
     }
 
-    /**
-     * Whether some worker thread has redeemed a dispatch permit during the drain and parked on the
-     * drain monitor.
-     */
-    private static boolean workerParkedInDrain() {
-        return anyThreadMatches(
-                stack ->
-                        hasFrame(stack, ParallelExecutionCoordinator.class.getName(), "runOneTask")
-                                && hasFrame(stack, "java.lang.Object", "wait"));
-    }
-
     private static boolean anyThreadMatches(Predicate<StackTraceElement[]> test) {
         for (ThreadInfo info : ManagementFactory.getThreadMXBean().dumpAllThreads(false, false)) {
             if (info != null && test.test(info.getStackTrace())) {
@@ -401,51 +471,119 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
     }
 
     /**
-     * Three actions on one input event: A and B block in their async sections until released; C is
-     * an instant no-op.
+     * One blocking action per worker, each parking in its async section until released, plus one
+     * instant action declared last so its dispatch permit has no worker left to redeem it. The
+     * first blocking action is released on its own, so exactly one worker becomes free.
      */
     public static class DrainAgent {
 
-        private static volatile CountDownLatch A_IN_ASYNC = new CountDownLatch(0);
-        private static volatile CountDownLatch B_IN_ASYNC = new CountDownLatch(0);
-        private static volatile CountDownLatch C_STARTED = new CountDownLatch(0);
-        private static volatile CountDownLatch RELEASE_A = new CountDownLatch(0);
-        private static volatile CountDownLatch RELEASE_B = new CountDownLatch(0);
+        private static final String[] BLOCKING = {
+            "drainAction0",
+            "drainAction1",
+            "drainAction2",
+            "drainAction3",
+            "drainAction4",
+            "drainAction5",
+            "drainAction6",
+            "drainAction7",
+            "drainAction8",
+            "drainAction9"
+        };
+
+        private static final String QUEUED = "drainActionQueued";
+
+        private static volatile CountDownLatch BLOCKING_IN_ASYNC = new CountDownLatch(0);
+        private static volatile CountDownLatch QUEUED_STARTED = new CountDownLatch(0);
+        private static volatile CountDownLatch RELEASE_FIRST = new CountDownLatch(0);
+        private static volatile CountDownLatch RELEASE_REST = new CountDownLatch(0);
 
         private static void reset() {
-            A_IN_ASYNC = new CountDownLatch(1);
-            B_IN_ASYNC = new CountDownLatch(1);
-            C_STARTED = new CountDownLatch(1);
-            RELEASE_A = new CountDownLatch(1);
-            RELEASE_B = new CountDownLatch(1);
+            BLOCKING_IN_ASYNC = new CountDownLatch(BLOCKING.length);
+            QUEUED_STARTED = new CountDownLatch(1);
+            RELEASE_FIRST = new CountDownLatch(1);
+            RELEASE_REST = new CountDownLatch(1);
         }
 
         private static void releaseAll() {
-            RELEASE_A.countDown();
-            RELEASE_B.countDown();
+            RELEASE_FIRST.countDown();
+            RELEASE_REST.countDown();
         }
 
-        public static void drainActionA(Event event, RunnerContext context) throws Exception {
-            runAction(event, context, "A", A_IN_ASYNC, RELEASE_A);
+        private static List<String> expectedOutputs() {
+            List<String> outputs = new ArrayList<>();
+            for (int index = 0; index < BLOCKING.length; index++) {
+                outputs.add(blockingActionId(index));
+            }
+            outputs.add("drain-action-queued");
+            return outputs;
         }
 
-        public static void drainActionB(Event event, RunnerContext context) throws Exception {
-            runAction(event, context, "B", B_IN_ASYNC, RELEASE_B);
+        private static String blockingActionId(int index) {
+            return "drain-action-" + index;
         }
 
-        public static void drainActionC(Event event, RunnerContext context) throws Exception {
-            runAction(event, context, "C", C_STARTED, null);
+        public static void drainAction0(Event event, RunnerContext context) throws Exception {
+            blockWorker(event, context, 0);
+        }
+
+        public static void drainAction1(Event event, RunnerContext context) throws Exception {
+            blockWorker(event, context, 1);
+        }
+
+        public static void drainAction2(Event event, RunnerContext context) throws Exception {
+            blockWorker(event, context, 2);
+        }
+
+        public static void drainAction3(Event event, RunnerContext context) throws Exception {
+            blockWorker(event, context, 3);
+        }
+
+        public static void drainAction4(Event event, RunnerContext context) throws Exception {
+            blockWorker(event, context, 4);
+        }
+
+        public static void drainAction5(Event event, RunnerContext context) throws Exception {
+            blockWorker(event, context, 5);
+        }
+
+        public static void drainAction6(Event event, RunnerContext context) throws Exception {
+            blockWorker(event, context, 6);
+        }
+
+        public static void drainAction7(Event event, RunnerContext context) throws Exception {
+            blockWorker(event, context, 7);
+        }
+
+        public static void drainAction8(Event event, RunnerContext context) throws Exception {
+            blockWorker(event, context, 8);
+        }
+
+        public static void drainAction9(Event event, RunnerContext context) throws Exception {
+            blockWorker(event, context, 9);
+        }
+
+        public static void drainActionQueued(Event event, RunnerContext context) throws Exception {
+            runAction(event, context, "drain-action-queued", QUEUED_STARTED, null);
+        }
+
+        private static void blockWorker(Event event, RunnerContext context, int index)
+                throws Exception {
+            runAction(
+                    event,
+                    context,
+                    blockingActionId(index),
+                    BLOCKING_IN_ASYNC,
+                    index == 0 ? RELEASE_FIRST : RELEASE_REST);
         }
 
         private static void runAction(
                 Event event,
                 RunnerContext context,
-                String name,
+                String actionId,
                 CountDownLatch started,
                 CountDownLatch release)
                 throws Exception {
             Long input = (Long) InputEvent.fromEvent(event).getInput();
-            String actionId = "drain-action-" + name;
             context.durableExecuteAsync(
                             new DurableCallable<String>() {
                                 @Override
@@ -465,8 +603,7 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
                                             && !release.await(
                                                     SETUP_TIMEOUT_SECONDS * 6, TimeUnit.SECONDS)) {
                                         throw new IllegalStateException(
-                                                "Timed out waiting for the release of action "
-                                                        + name);
+                                                "Timed out waiting for the release of " + actionId);
                                     }
                                     return actionId;
                                 }
@@ -477,19 +614,21 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
 
         private static AgentPlan getAgentPlan(AgentConfiguration config) throws Exception {
             Map<String, Action> actions = new LinkedHashMap<>();
-            for (String name : new String[] {"A", "B", "C"}) {
-                String actionName = "drainAction" + name;
-                Action action =
-                        new Action(
-                                actionName,
-                                new JavaFunction(
-                                        DrainAgent.class,
-                                        actionName,
-                                        new Class<?>[] {Event.class, RunnerContext.class}),
-                                Collections.singletonList(InputEvent.EVENT_TYPE));
-                actions.put(actionName, action);
+            for (String actionName : BLOCKING) {
+                actions.put(actionName, action(actionName));
             }
+            actions.put(QUEUED, action(QUEUED));
             return new AgentPlan(actions, new LinkedHashMap<>(), config);
+        }
+
+        private static Action action(String actionName) throws Exception {
+            return new Action(
+                    actionName,
+                    new JavaFunction(
+                            DrainAgent.class,
+                            actionName,
+                            new Class<?>[] {Event.class, RunnerContext.class}),
+                    Collections.singletonList(InputEvent.EVENT_TYPE));
         }
     }
 }
