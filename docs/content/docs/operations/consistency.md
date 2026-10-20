@@ -26,35 +26,29 @@ When a Flink job recovers from a checkpoint, it restores its state and replays t
 input received since that checkpoint. For an Agent, this can mean calling a model,
 invoking a tool, or updating an external system again.
 
-An external Action State Store lets Flink Agents reuse saved Action completions
-and durable call outcomes during recovery. Operations whose completion has not
-been saved may still run again. The consistency mode you choose determines what
-state must remain available for recovery and which work can be reused.
+The consistency mode you choose determines what state must remain available for
+recovery and which work can be reused.
 
 ## Choose a consistency mode
 
-Flink checkpointing, together with the required source and sink guarantees, lets
-each input affect the job's state and output once, even if recovery processes it
-again. Flink Agents refers to this checkpoint-based guarantee as **exactly-once
-output consistency**. Actions and external calls may still run again, so this
-mode requires them to tolerate repetition.
+With exactly-once checkpointing and the required source and sink guarantees,
+each input affects the job's state and output once, even if recovery processes it
+again. Flink Agents calls this **exactly-once output consistency**.
 
-When recovery also needs to reuse saved work, supplement Flink checkpointing with
-an Action State Store. It lets Flink Agents replay saved Action completions
-without running their bodies again, and reuse saved durable call outcomes inside
-unfinished Actions. Flink Agents calls this **exactly-once action consistency**.
-Unfinished Actions may still run again.
+Adding an external Action State Store lets recovery also reuse saved Action
+completions and durable call outcomes. Flink Agents calls this **exactly-once
+action consistency**.
 
-| Configuration | Behavior after a failure | Required setup and cost |
+| Configuration | Behavior after a failure | Requirements and trade-offs |
 | --- | --- | --- |
-| No checkpointing | The job restarts using the source's configured starting positions, without restoring Agent state or progress from a checkpoint. | No checkpoint setup. Suitable when the application can accept lost progress or repeated work. |
-| Flink checkpointing | **Exactly-once output consistency.** Flink restores checkpointed state and replays subsequent input. Actions and external calls may run again, and models or queries may return different results. | Enable exactly-once checkpointing and durable checkpoint storage, with the required source and sink guarantees. External calls must tolerate repetition. |
-| Flink checkpointing + Action State Store | **Exactly-once action consistency.** Flink Agents also reuses saved Action completions. Unfinished Actions may run again, reusing any saved durable call outcomes as they do so. | Configure checkpointing and a Kafka or Fluss Action State Store. Saving Action completions and durable call outcomes requires synchronous backend writes. Retain both the checkpoints and the required backend data. Use idempotency or reconciliation to protect external effects. |
+| No checkpointing | The job restarts from the source's configured starting positions without restoring Agent state or progress from a checkpoint. | Suitable when the application can accept lost progress or repeated work. |
+| Flink checkpointing | Flink restores checkpointed state and replays subsequent input. Actions and external calls may repeat, and models or queries may return different results. | Enable exactly-once checkpointing with durable checkpoint storage and the required source and sink guarantees. External calls must tolerate repetition. |
+| Flink checkpointing + Action State Store | Recovery replays saved completions without rerunning Action bodies. Unfinished Actions may run again, reusing saved durable call outcomes. | Add a Kafka or Fluss Action State Store. Saving Action completions and durable call outcomes requires synchronous backend writes. Retain both checkpoints and the backend records needed for recovery. Use idempotency or reconciliation to protect external effects. |
 
 ## Required setup
 
-Enable exactly-once checkpointing in the hosting Flink or PyFlink job, with source
-and sink connectors that provide the required
+Enable exactly-once checkpointing for the Flink or PyFlink job, and use source
+and sink connectors with the required
 [fault tolerance guarantees](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/connectors/datastream/guarantees/).
 Follow Flink's [checkpointing guide](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/dev/datastream/fault-tolerance/checkpointing/)
 for configuration and checkpoint storage, and
@@ -63,13 +57,11 @@ for restore procedures. Use the Flink documentation for the version you deploy.
 
 ### Configure an Action State Store
 
-For exactly-once action consistency, also configure Kafka or Fluss as the Action
-State Store backend. Set the backend options before building the Agent pipeline.
+Configure the Kafka or Fluss backend before building the Agent pipeline.
 
-The Python and Java examples use `agents_env` and `agentsEnv`, respectively,
-created as described in [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}).
-The YAML examples show the `agent:` section of the hosting job's Flink
-configuration.
+Create `agents_env` (Python) or `agentsEnv` (Java) as described in
+[Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}).
+The YAML examples show the `agent:` section of the job's Flink configuration.
 
 Each logical Agent operator needs its **own Kafka topic or Fluss table**, shared
 only by that operator's subtasks.
@@ -110,10 +102,10 @@ agent:
 {{< /tab >}}
 {{< /tabs >}}
 
-The store creates the topic if it does not exist, using 64 partitions and a
-replication factor of 1 by default. If the topic already exists, the store reuses
-it without changing its settings. For retention requirements and cleanup options,
-see [Kafka retention and cleanup](#kafka-retention-and-cleanup).
+The store creates the topic if needed, with 64 partitions and a replication
+factor of 1 by default. It reuses existing topics without changing their settings.
+For retention requirements and cleanup options, see
+[Kafka retention and cleanup](#kafka-retention-and-cleanup).
 
 #### Fluss
 
@@ -154,11 +146,11 @@ agent:
 {{< /tab >}}
 {{< /tabs >}}
 
-The store creates the database and append-only log table if they do not exist.
-It uses the `flink_agents` database and 64 buckets for a new table by default.
-Configure the table's log retention to keep the data needed by your recovery
-points; the store does not set retention when it creates the table. For an
-authenticated Fluss cluster, also set the appropriate authentication options.
+The store creates the database and append-only log table if needed. By default,
+it uses the `flink_agents` database and creates new tables with 64 buckets. It does
+not set log retention when creating the table; configure retention to preserve
+the data needed by your recovery points. If the cluster requires authentication,
+also configure the Fluss authentication options.
 
 See [Configuration]({{< ref "docs/operations/configuration" >}}) for option defaults,
 authentication settings, and configuration loading and precedence.
@@ -167,17 +159,14 @@ authentication settings, and configuration loading and precedence.
 
 ### Recovery flow
 
-Exactly-once action consistency reuses work only after the relevant execution
-records have been saved. When a job restores a checkpoint or savepoint using the
-corresponding Action State Store, it handles each Action as follows:
+When restoring a checkpoint or savepoint with its corresponding Action State
+Store, Flink Agents handles each Action as follows:
 
 1. **Check for a saved Action completion.** If one is available, replay its saved
    Sensory/Short-Term Memory updates and output Events. The Events keep their
-   original Event IDs. The Action body is skipped, completing recovery for that
-   Action.
-2. **Rerun the body of an unfinished Action.** Code and ordinary calls within it
-   may repeat. When execution reaches a durable call, check for a matching call
-   record:
+   original Event IDs. Skip the Action body.
+2. **Rerun an unfinished Action.** Ordinary calls may repeat. At each durable call,
+   check for a matching record:
 
    - **Saved success or failure:** replay the saved outcome without calling the
      function again.
@@ -187,19 +176,17 @@ corresponding Action State Store, it handles each Action as follows:
 
 ### Conditions for reusing saved records
 
-Saved records must match the same inputs and calls during replay:
+To match saved records to the correct work, replay must preserve the following:
 
 - **Preserve input order for each key.** Recovery must receive each key's inputs
   in the same order as the original execution.
-- **For custom Actions, keep the durable call sequence stable.** Use durable
-  execution for calls whose saved outcomes should be reused. Rerunning an
-  unfinished Action must reach those calls in the same order, with the same
-  inputs. See [Durable Execution]({{< ref "docs/development/create-agent/actions#durable-execution" >}})
+- **For custom Actions, keep the durable call sequence stable.** An unfinished
+  Action must reach the same durable calls in the same order, with the same inputs.
+  See [Durable Execution]({{< ref "docs/development/create-agent/actions#durable-execution" >}})
   for call identity, serialization, and Action-context requirements.
 
-Before restoring after changes to keys, Action names, result types, application
-code, or versions, review
-[Upgrades and migration](#upgrades-and-migration).
+Before restoring state after changes to keys, Action names, result types,
+application code, or versions, review [Upgrades and migration](#upgrades-and-migration).
 
 ### Limits on external side effects
 
@@ -209,16 +196,15 @@ Store cannot commit the external operation and its saved outcome as a single
 transaction.
 
 For operations that change external state, use the service's idempotency support
-or, for a durable call, provide a reconciler that can recover the earlier outcome.
+or, for a durable call, provide a reconciler that can recover the original outcome.
 See [Reconciling an in-flight call]({{< ref "docs/development/create-agent/actions#reconciling-an-in-flight-call" >}})
 for the API and requirements.
 
 ## Action State Store retention and cleanup
 
-For every checkpoint or savepoint you intend to restore, retain both the snapshot
-and its corresponding Action State Store records. Before changing retention or
-cleanup settings, decide which recovery points must remain available and select
-the oldest one you intend to keep.
+For every checkpoint or savepoint you may need to restore, retain both the
+snapshot and the Action State Store records it requires. Before changing retention
+or cleanup settings, identify the oldest recovery point you need to keep.
 
 {{< hint warning >}}
 Hashing business keys does not encrypt Action state. Saved Events, Memory updates,
@@ -233,19 +219,19 @@ Topics created by the store use `cleanup.policy=compact,delete`,
 size limits for the `delete` policy. Compaction can still reclaim older values
 for the same key.
 
-If you reuse an existing topic, check that its retention settings keep the
-records needed by every checkpoint or savepoint you intend to restore.
+For an existing topic, check that its retention settings preserve the records
+needed by every recovery point you intend to keep.
 
-A completed checkpoint already includes the Agent's progress for the work it
-covers. The corresponding execution records are no longer needed to restore that
-checkpoint, but earlier recovery points may still need them. Choose a cleanup
-method based on the recovery history you need to retain:
+A completed checkpoint includes the Agent's progress for the work it covers.
+Those execution records are no longer needed to restore that checkpoint, but
+earlier recovery points may still need them. Choose a cleanup method based on
+the recovery history you need to retain:
 
 | Method | Cleanup behavior | When to use it | Recovery impact |
 | --- | --- | --- | --- |
-| No tombstones (default) | With `kafkaActionStateTombstoneEnabled=false`, completed work is removed from the in-memory cache, while its Kafka records remain. | Kafka storage growth is acceptable and you need to retain older recovery points. | Pruning alone preserves older recovery points. Kafka retention or manual deletion can still remove required data. |
+| No tombstones (default) | With `kafkaActionStateTombstoneEnabled=false`, completed work is removed from the in-memory cache, while its Kafka records remain. | Kafka storage growth is acceptable and you need to retain older recovery points. | Cache cleanup alone does not invalidate older recovery points. Kafka retention or manual deletion can still remove required data. |
 | Per-key tombstones | The store automatically writes deletion markers for execution records covered by each completed checkpoint. Kafka can reclaim those records through background compaction. | The job only needs the latest completed checkpoint, or repeating affected Actions is acceptable. | The triggering checkpoint remains usable. Restoring an earlier checkpoint or savepoint may repeat completed Actions. |
-| Checkpoint-aligned cleanup | An administrator selects the oldest recovery point to retain. The tool records a cleanup boundary in a separate control topic, then deletes older Kafka data that point no longer needs. | You need to retain a selected checkpoint or savepoint while reclaiming older recovery history. | The selected point remains usable. With the control topic configured, recovery points requiring data below the boundary are rejected. |
+| Checkpoint-aligned cleanup | An administrator selects the oldest recovery point to retain. The tool records a cleanup boundary in a separate control topic, then deletes older Kafka data no longer needed by the selected recovery point. | You need to retain a selected checkpoint or savepoint while reclaiming space from older recovery data. | The selected point remains usable. With the control topic configured, recovery points requiring data below the boundary are rejected. |
 
 Per-key tombstones and checkpoint-aligned cleanup cannot be enabled together.
 A committed cleanup boundary takes effect even if physical deletion has not
@@ -256,9 +242,8 @@ finished.
 For per-key tombstones, set `kafkaActionStateTombstoneEnabled=true` before starting
 the job.
 
-For checkpoint-aligned cleanup, follow the procedure below.
-`KafkaActionStateCleanupTool` provides the same cleanup procedure for Java and
-Python jobs. Use the full Flink Agents distribution JAR for your Flink version
+For checkpoint-aligned cleanup, use `KafkaActionStateCleanupTool` for both Java
+and Python jobs. Use the full Flink Agents distribution JAR for your Flink version
 (`flink-agents-dist-flink-<FLINK_VERSION>-<FA_VERSION>.jar`, without the `-thin`
 classifier), the matching Flink State Processor API JAR, and Flink's `lib/` on the
 classpath. Run the tool where the recovery point and Kafka are accessible.
@@ -300,32 +285,30 @@ For the first cleanup of an existing job:
    Dedicate the control topic to this Agent operator's data topic. The tool can
    create it; see the [configuration reference]({{< ref "docs/operations/configuration#checkpoint-aligned-kafka-cleanup" >}})
    for existing-topic requirements and optional parameters.
-5. Wait for the command to succeed and print `Cleanup plan <id> is APPLIED`.
-   Restart from the **same selected recovery point**, with
-   `kafkaActionStateCleanupControlTopic` set to that control topic and
-   `kafkaActionStateTombstoneEnabled=false`.
+5. After `apply` succeeds and prints `Cleanup plan <id> is APPLIED`, set
+   `kafkaActionStateCleanupControlTopic` to the control topic and
+   `kafkaActionStateTombstoneEnabled=false`, then restart from the
+   **same selected recovery point**. Startup or recovery fails if the control
+   topic is missing or has no committed boundary.
 
 If this first cleanup fails or is interrupted, keep the job stopped and retry
 `apply` with the same plan. The boundary may already have been committed, making
 earlier recovery points unavailable.
-
-Set the control-topic option after the first successful `apply`. Startup or
-recovery fails if the configured topic is missing or has no committed boundary.
 
 With boundary enforcement enabled, you can apply later cleanup plans while the job
 runs, provided they only advance the boundary. Apply one plan at a time, and keep
 the data topic and its partition count unchanged during cleanup.
 
 {{< hint warning >}}
-Keep the same control-topic setting and its records for every subsequent run and
-restore of this recovery history. Omitting or changing that setting removes the
-protection against restoring an older point. With the control topic configured,
-the job also rejects a fresh start without a recovery marker.
+Keep the same control-topic setting and retain its records whenever you run or
+restore the job using this recovery history. Omitting or changing the setting
+removes the protection against restoring an older point. With the control topic
+configured, the job also rejects a fresh start without a recovery marker.
 {{< /hint >}}
 
 #### Switching from per-key tombstones
 
-For a job that previously emitted tombstones:
+To switch a job from per-key tombstones to checkpoint-aligned cleanup:
 
 1. Stop the job cleanly and wait for pending tombstone writes to finish.
 2. Restore the newest recovery point that is still valid under the tombstone
@@ -348,16 +331,16 @@ Action State Store.
 
 ### Check recovery conditions before a change
 
-Before restoring state after a change, check both Flink's state compatibility
-requirements and whether the application can still use its saved Action results.
-Flink may be able to read a checkpoint even when those results are no longer
-compatible with the application.
+Before restoring state after a change, check Flink's state compatibility
+requirements and confirm that the application can still use its saved Action
+results. A readable checkpoint does not by itself guarantee that saved results
+remain valid for the new code.
 
 | Planned change | What to check |
 | --- | --- |
 | Flink Agents or Flink version | Follow the target release's migration guidance and Flink's upgrade requirements. A job starting successfully does not confirm that recovery across those versions is supported. |
 | Key type or serializer | Keep the original key type and serializer configuration when reusing Action state. Custom key serializers must produce deterministic bytes. Changes to the serialized key bytes are not always detected. |
-| Action name | A renamed Action no longer matches its old completion. Keeping the same name allows recovery to reuse old output without running the new body. Check whether that saved output is still valid for the new code. |
+| Action name | Renaming an Action prevents recovery from finding its saved completion. Keeping the same name allows recovery to reuse saved output without running the new body. Check that this output is still valid for the new code. |
 | User code, Events, Memory, or durable results | Check that saved outputs and values can still be read and used, and that unfinished Actions reach the same logical calls. Runtime format checks do not verify compatibility with the application's logic. |
 | Action State Store backend | When reusing checkpoints or savepoints, preserve the original [Kafka topic]({{< ref "docs/operations/configuration" >}}#changes-to-an-existing-kafka-store) or [Fluss table]({{< ref "docs/operations/configuration" >}}#changes-to-an-existing-fluss-store), its partition or bucket layout, and [the records needed for recovery](#action-state-store-retention-and-cleanup). |
 
@@ -369,10 +352,10 @@ supported.
 
 ### Starting without existing state
 
-If the target release requires starting without restoring an existing checkpoint
-or savepoint, configure the source's starting position before starting the new job.
-If the job will reprocess input handled by the previous version, ensure external
-operations are idempotent or deduplicated to avoid repeating their effects.
+If the target release requires a fresh start without restoring a checkpoint or
+savepoint, configure the source's starting position before launching the new job.
+If it will reprocess input handled by the previous version, use idempotency or
+deduplication to prevent repeated external effects.
 
 ### Migration notes
 
