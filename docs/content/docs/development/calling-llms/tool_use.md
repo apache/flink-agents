@@ -437,9 +437,9 @@ inside each tool, such as an HTTP client read timeout.
 A batch timeout does not undo external effects or guarantee that an already
 running tool stops. Tools that change external systems should be idempotent,
 because a call may run again after recovery. See
-[Configuration]({{< ref "docs/operations/configuration" >}}) for the full async batch
+[Configuration]({{< ref "docs/operations/configuration#runtime-and-async-execution" >}}) for the full async batch
 and execution-capacity options, and
-[Durable Execution]({{< ref "docs/development/create-agent/actions#durable-execution" >}})
+[Consistency]({{< ref "docs/operations/consistency#recovery-guarantees-and-user-responsibilities" >}})
 for recovery guarantees.
 
 ## Tool response content and metadata

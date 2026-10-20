@@ -259,13 +259,12 @@ the failure.
 <span id="failures-and-recovery"></span>
 
 Model-call failures are reported after configured retries and routing fallbacks
-are exhausted. See [Core Options]({{< ref "docs/operations/configuration#core-options" >}})
+are exhausted. See [Model calls, tools, and retries]({{< ref "docs/operations/configuration#model-calls-tools-and-retries" >}})
 for retry settings and [Model Routing]({{< ref "docs/development/calling-llms/model_routing" >}})
 for fallbacks.
 
 For how calls behave after a failure and recovery, see
-[Recovery Behavior]({{< ref "docs/development/create-agent/actions#recovery-behavior" >}})
-in Actions.
+[Recovery flow]({{< ref "docs/operations/consistency#recovery-flow" >}}).
 
 ## Multimodal Messages {#message-content-blocks}
 

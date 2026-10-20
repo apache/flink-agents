@@ -281,7 +281,7 @@ behaviors:
 
 For candidates `[small, medium, big]`, selecting `big` with fallback enabled tries
 `big`, then `small`, then `medium`. Model-call retries run before fallback; see
-[Core Options]({{< ref "docs/operations/configuration#core-options" >}}).
+[Model calls, tools, and retries]({{< ref "docs/operations/configuration#model-calls-tools-and-retries" >}}).
 Failures before the call, such as an unresolved model resource, can proceed
 directly to the next candidate without retries.
 
@@ -354,7 +354,7 @@ metadata when distinguishing their usage.
 With durable execution enabled, completed routing decisions and model calls can
 be reused after recovery. Without it, a request may be routed again and select a
 different model. See
-[Recovery Behavior]({{< ref "docs/development/create-agent/actions#recovery-behavior" >}})
+[Consistency]({{< ref "docs/operations/consistency#recovery-guarantees-and-user-responsibilities" >}})
 for the persistence and replay guarantees.
 
 ## Examples

@@ -423,5 +423,6 @@ submits a complete example and shows its output:
 - [Use the Built-in ReAct Agent]({{< ref "docs/get-started/quickstart/react_agent" >}})
 - [Define an Agent with YAML]({{< ref "docs/get-started/quickstart/yaml_agent" >}})
 
-For a remote cluster, and for the consistency guarantees that apply once the job runs
-there, see [Deployment]({{< ref "docs/operations/deployment" >}}).
+For submission to a remote cluster, see
+[Deployment]({{< ref "docs/operations/deployment#submit-to-flink-cluster" >}}).
+For consistency guarantees, see [Consistency]({{< ref "docs/operations/consistency" >}}).
