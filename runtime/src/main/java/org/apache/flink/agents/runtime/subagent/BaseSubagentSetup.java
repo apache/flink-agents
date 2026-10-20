@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener;
 import org.apache.flink.agents.runtime.operator.ActionTask;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
@@ -33,13 +34,14 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Runtime base for sub-agent setups, holding the per-task id allocators and pending-call registries
- * keyed to the currently executing action task. How an invocation is issued stays an execution mode
- * owned by the concrete subclass.
+ * Runtime base for sub-agent setups, holding the per-task pending-call registries keyed to the
+ * currently executing action task. Call ids come from that action's {@link
+ * DeterministicIdAllocator}, which the context manager owns and rebinds on every switch and
+ * restore, so nothing here counts ordinals and no id depends on a lifecycle notification having
+ * arrived. How an invocation is issued stays an execution mode owned by the concrete subclass.
  */
 public abstract class BaseSubagentSetup extends SubagentSetup implements TaskLifecycleListener {
 
-    private final Map<ActionTask, DeterministicIdAllocator> perTaskAllocators = new HashMap<>();
     private final Map<ActionTask, PendingSubagentCallRegistry> perTaskRegistries = new HashMap<>();
 
     /** The task whose execution is currently issuing calls. */
@@ -60,10 +62,6 @@ public abstract class BaseSubagentSetup extends SubagentSetup implements TaskLif
 
     @Override
     public void onActionTransferred(ActionTask from, ActionTask to) {
-        DeterministicIdAllocator allocator = perTaskAllocators.remove(from);
-        if (allocator != null) {
-            perTaskAllocators.put(to, allocator);
-        }
         PendingSubagentCallRegistry registry = perTaskRegistries.remove(from);
         if (registry != null) {
             registry.setActionName(to.getAction().getName());
@@ -81,7 +79,6 @@ public abstract class BaseSubagentSetup extends SubagentSetup implements TaskLif
     @Override
     public void onActionFinishing(ActionTask task) {
         currentTask = null;
-        perTaskAllocators.remove(task);
         PendingSubagentCallRegistry registry = perTaskRegistries.remove(task);
         if (registry != null) {
             registry.checkEmpty();
@@ -131,34 +128,21 @@ public abstract class BaseSubagentSetup extends SubagentSetup implements TaskLif
     @Override
     public SubagentFuture submit(RunnerContext ctx, Object prompt, String sessionId)
             throws Exception {
-        return submit(ctx, prompt, sessionId, currentAllocator().nextCallId(sessionId));
+        return submit(ctx, prompt, sessionId, idAllocator(ctx).nextCallId(sessionId));
     }
 
     @Override
     public SubagentFuture submit(RunnerContext ctx, Object prompt) throws Exception {
-        DeterministicIdAllocator allocator = currentAllocator();
-        String sessionId = allocator.nextSessionId();
-        return submit(ctx, prompt, sessionId, allocator.nextCallId(sessionId));
+        DeterministicIdAllocator ids = idAllocator(ctx);
+        String sessionId = ids.nextSessionId();
+        return submit(ctx, prompt, sessionId, ids.nextCallId(sessionId));
     }
 
     /**
-     * The allocator of the currently executing task, scoped to one action execution so ordinals
-     * restart for the next action. Failover replays hand out the same ids.
+     * This sub-agent's id counter within the executing action's scope, so ordinals restart for the
+     * next action and a failover replay hands out the same ids.
      */
-    protected final DeterministicIdAllocator currentAllocator() {
-        if (currentTask == null) {
-            throw new IllegalStateException(
-                    "No prepared action task to assign sub-agent ids from.");
-        }
-        ActionTask task = currentTask;
-        return perTaskAllocators.computeIfAbsent(
-                task,
-                t ->
-                        new DeterministicIdAllocator(
-                                t.getKey(),
-                                t.getSequenceNumber(),
-                                t.getAction().getName(),
-                                t.getEvent(),
-                                subagentName));
+    protected final DeterministicIdAllocator idAllocator(RunnerContext ctx) {
+        return ((RunnerContextImpl) ctx).idAllocator(getSubagentName());
     }
 }

@@ -34,10 +34,12 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.agents.runtime.operator.ActionTask;
 import org.apache.flink.agents.runtime.operator.JavaActionTask;
+import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
@@ -47,16 +49,19 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The short {@code submit} forms on {@link BaseSubagentSetup}: the setup observes the task
- * lifecycle and assigns the missing ids deterministically from the executing task's caller-side
- * facts, then delegates to the full {@code submit} provided by the subclass.
+ * The short {@code submit} forms on {@link BaseSubagentSetup}: they take the missing ids from the
+ * executing action's id allocation, reached through the context they are handed, then delegate to
+ * the full {@code submit} provided by the subclass. The setup's own task-lifecycle observation now
+ * covers only the pending-call registry, which stays sub-agent specific.
  */
 public class BaseSubagentSetupTest {
 
@@ -196,30 +201,34 @@ public class BaseSubagentSetupTest {
     }
 
     @Test
-    void transferMovesBookkeepingOntoADifferentContinuation() throws Exception {
-        // The generated task of a suspended execution may carry different caller-side facts,
-        // so the bookkeeping must move onto it rather than assume the two tasks equal.
+    void transferMovesThePendingCallRegistryOntoADifferentContinuation() throws Exception {
+        // The generated task of a suspended execution may carry different caller-side facts, so the
+        // registry must move onto it rather than assume the two tasks equal. Ids are not part of
+        // that move: ActionTaskContextManager.transferContexts carries the very same scope instance
+        // over to the continuation (asserted in ActionTaskContextManagerTest), so both submissions
+        // below read one counter, as they do in production.
         RegistryExposingSetup setup = new RegistryExposingSetup();
         setup.setSubagentName(RESOURCE_NAME);
         ActionTask from = task("act", 1L);
         ActionTask to = task("act-next", 2L);
+        RunnerContextImpl carriedScope = contextWithIds(from);
 
         setup.onActionPrepared(from);
-        setup.submit(null, "a");
+        setup.submit(carriedScope, "a");
         setup.exposedRegistry().trackPendingSubagentCall("sid#call-1");
         setup.onActionTransferred(from, to);
 
         setup.onActionPrepared(to);
-        setup.submit(null, "b");
+        setup.submit(carriedScope, "b");
 
-        // The allocator moved with the execution: the session ordinal continues instead of
+        // One scope instance across the transfer, so the session ordinal continues instead of
         // restarting under the continuation's own facts.
         List<String[]> captures = AllocatingCaptureSetup.captures();
         assertThat(captures.get(0)[0]).endsWith("-0");
         assertThat(captures.get(1)[0]).endsWith("-1");
 
-        // The pending-call registry moved as well and adopted the continuation's action:
-        // finishing the continuation still reports the handle tracked under the finishing task.
+        // The pending-call registry moved and adopted the continuation's action: finishing the
+        // continuation still reports the handle tracked under the finishing task.
         assertThatThrownBy(() -> setup.onActionFinishing(to))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("act-next")
@@ -229,13 +238,13 @@ public class BaseSubagentSetupTest {
     @Test
     void reuseSharesTheFinalizationHookWithFinishing() throws Exception {
         // The replay-reuse path must close the same bookkeeping the finishing path closes,
-        // otherwise a prepared task replayed as completed would leak its allocator/registry.
+        // otherwise a prepared task replayed as completed would leak its pending-call registry.
         RegistryExposingSetup setup = new RegistryExposingSetup();
         setup.setSubagentName(RESOURCE_NAME);
         ActionTask task = task("act", 1L);
 
         setup.onActionPrepared(task);
-        setup.submit(null, "a");
+        setup.submit(contextWithIds(task), "a");
         setup.exposedRegistry().trackPendingSubagentCall("sid#call-1");
 
         assertThatThrownBy(() -> setup.onActionReused(task))
@@ -276,6 +285,35 @@ public class BaseSubagentSetupTest {
                 new Event(UUID.randomUUID(), "TestEvent", Collections.emptyMap()),
                 action,
                 sequenceNumber);
+    }
+
+    /**
+     * A context carrying {@code task}'s id counters, which is all the short {@code submit} forms
+     * read off it. Ids come from what the context manager installs rather than from the task the
+     * setup observed, so a test exercising them has to supply that same source of per-target
+     * counters, built from the task's four digest facts.
+     */
+    private static RunnerContextImpl contextWithIds(ActionTask task) {
+        RunnerContextImpl ctx =
+                new RunnerContextImpl(
+                        null,
+                        () -> {},
+                        new AgentPlan(new HashMap<>(), new HashMap<>()),
+                        null,
+                        "job");
+        Map<String, DeterministicIdAllocator> byTarget = new HashMap<>();
+        ctx.setIdAllocatorSource(
+                name ->
+                        byTarget.computeIfAbsent(
+                                name,
+                                target ->
+                                        new DeterministicIdAllocator(
+                                                task.getKey(),
+                                                task.getSequenceNumber(),
+                                                task.getAction().getName(),
+                                                task.getEvent(),
+                                                target)));
+        return ctx;
     }
 
     @Test

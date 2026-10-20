@@ -60,6 +60,8 @@ import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
 import org.apache.flink.agents.runtime.subgraph.SubgraphCallManager;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
+import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
+import org.apache.flink.agents.runtime.utils.IdAllocatorSource;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
@@ -201,6 +203,13 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     /** Current action's chat context, replaced as a unit on each task switch or restore. */
     @Nullable private ChatContext chatContext;
+
+    /**
+     * The current action's id counters, replaced on each task switch or restore. Owned by {@code
+     * ActionTaskContextManager}; this is only the reference the executing action reads through,
+     * exactly as for the memory context.
+     */
+    @Nullable private IdAllocatorSource idAllocatorSource;
 
     @Nullable private SubgraphInvocation<?> subgraphInvocation;
     private SubgraphCallManager subgraphCalls = new SubgraphCallManager();
@@ -369,6 +378,27 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     /** Returns the current action's chat context, also used by the Python bridge. */
     public ChatContext getChatContext() {
         return Preconditions.checkNotNull(chatContext, "Chat calls require an executing action");
+    }
+
+    /** Installs the current task's id counters, or clears them when it carries none. */
+    public void setIdAllocatorSource(@Nullable IdAllocatorSource idAllocatorSource) {
+        this.idAllocatorSource = idAllocatorSource;
+    }
+
+    /** The current action's id counters, read back by a transfer to hand them to its successor. */
+    @Nullable
+    public IdAllocatorSource getIdAllocatorSource() {
+        return idAllocatorSource;
+    }
+
+    /**
+     * The id counter of the executing action for one call target — a named sub-agent, or the
+     * built-in chat graph's own namespace.
+     */
+    public DeterministicIdAllocator idAllocator(String targetName) {
+        return Preconditions.checkNotNull(
+                        idAllocatorSource, "Id allocation requires an executing action")
+                .allocator(targetName);
     }
 
     public void switchActionContext(

@@ -40,6 +40,7 @@ import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.utils.IdAllocatorSource;
 import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -193,6 +194,7 @@ class ActionTaskContextManagerTest {
             RunnerContextImpl.MemoryContext memoryA = taskA.getRunnerContext().getMemoryContext();
             assertThat(memoryA).isNotNull();
             ChatContext chatA = taskA.getRunnerContext().getChatContext();
+            IdAllocatorSource idsA = taskA.getRunnerContext().getIdAllocatorSource();
             ContinuationContext continuationA =
                     ((JavaRunnerContextImpl) taskA.getRunnerContext()).getContinuationContext();
 
@@ -203,20 +205,45 @@ class ActionTaskContextManagerTest {
             assertThat(chatB).isNotSameAs(chatA);
             assertThat(chatB.getOwner()).isNotSameAs(chatA.getOwner());
             assertThat(chatB.getManager()).isSameAs(chatA.getManager());
+            IdAllocatorSource idsB = taskB.getRunnerContext().getIdAllocatorSource();
+            assertThat(idsB).isNotSameAs(idsA);
             ContinuationContext continuationB =
                     ((JavaRunnerContextImpl) taskB.getRunnerContext()).getContinuationContext();
 
             mgr.restore("a", taskA);
             assertThat(taskA.getRunnerContext().getMemoryContext()).isSameAs(memoryA);
             assertThat(taskA.getRunnerContext().getChatContext()).isSameAs(chatA);
+            assertThat(taskA.getRunnerContext().getIdAllocatorSource()).isSameAs(idsA);
             assertThat(((JavaRunnerContextImpl) taskA.getRunnerContext()).getContinuationContext())
                     .isSameAs(continuationA);
 
             mgr.restore("b", taskB);
             assertThat(taskB.getRunnerContext().getMemoryContext()).isSameAs(memoryB);
             assertThat(taskB.getRunnerContext().getChatContext()).isSameAs(chatB);
+            assertThat(taskB.getRunnerContext().getIdAllocatorSource()).isSameAs(idsB);
             assertThat(((JavaRunnerContextImpl) taskB.getRunnerContext()).getContinuationContext())
                     .isSameAs(continuationB);
+        }
+    }
+
+    @Test
+    void transferCarriesTheSameIdCountersToTheSuccessor() throws Exception {
+        try (ActionTaskContextManager mgr = newManager()) {
+            Action action = TestActions.noopAction();
+            ActionTask from = new JavaActionTask("k", new InputEvent(1L), action, 1L);
+            invokeCreateAndSetRunnerContext(mgr, from);
+            IdAllocatorSource source = from.getRunnerContext().getIdAllocatorSource();
+            String firstSessionId = from.getRunnerContext().idAllocator("agent").nextSessionId();
+
+            ActionTask to = new JavaActionTask("k", new Event("resume"), action, 2L);
+            mgr.transferContexts(from, to, new DurableExecutionManager(null));
+            invokeCreateAndSetRunnerContext(mgr, to);
+
+            // The successor counts on the very source the caller used, so its ordinals continue
+            // instead of restarting under the successor's own facts.
+            assertThat(to.getRunnerContext().getIdAllocatorSource()).isSameAs(source);
+            assertThat(to.getRunnerContext().idAllocator("agent").nextSessionId())
+                    .isNotEqualTo(firstSessionId);
         }
     }
 

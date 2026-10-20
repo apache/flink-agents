@@ -32,6 +32,7 @@ import javax.annotation.Nullable;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -49,7 +50,20 @@ public final class DeterministicIdAllocator {
     /** Creates an allocator for one action execution from the execution's caller-side facts. */
     public DeterministicIdAllocator(
             Object key, long sequenceNumber, String actionName, Event event, String targetName) {
-        this.namespace = new Namespace(key, sequenceNumber, actionName, event, targetName);
+        // The target name is required. It is the only input that separates the id ranges of two
+        // calls issued from the same execution, so a null here would collapse them onto one digest
+        // and one ordinal sequence, colliding registration keys and durable slots.
+        this.namespace =
+                new Namespace(
+                        key,
+                        sequenceNumber,
+                        actionName,
+                        event,
+                        Objects.requireNonNull(
+                                targetName,
+                                "An id allocation target name is required: the framework must"
+                                        + " inject the sub-agent resource name, and a built-in"
+                                        + " chat call supplies its own namespace."));
     }
 
     /** Creates a new, ordinal-increasing session id scoped to this task's namespace. */
@@ -59,7 +73,8 @@ public final class DeterministicIdAllocator {
 
     /**
      * Creates a new call id by appending the per-session ordinal (starting at 1) to the session id.
-     * Ordinals restart per action execution, so ids assigned here stay valid only within it.
+     * A caller-supplied session id is used verbatim and never parsed. Ordinals restart per action
+     * execution, so ids assigned here stay valid only within it.
      */
     public String nextCallId(String sessionId) {
         int ordinal = perSessionCallOrdinals.merge(sessionId, 1, Integer::sum);
@@ -105,10 +120,7 @@ public final class DeterministicIdAllocator {
         @JsonProperty("subagentName")
         private final String targetName;
 
-        /**
-         * Computed lazily on the first allocation. Digesting is mailbox-confined, so it needs no
-         * synchronization.
-         */
+        /** Computed lazily under operator ownership, so it needs no additional synchronization. */
         @JsonIgnore @Nullable private String digest;
 
         public Namespace(

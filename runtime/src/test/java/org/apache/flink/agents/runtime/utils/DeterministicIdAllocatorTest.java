@@ -26,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -252,5 +253,48 @@ class DeterministicIdAllocatorTest {
         assertFalse(sessionId.contains("myCustomActionName"));
         assertFalse(callId.contains("super-secret-key"));
         assertFalse(callId.contains("myCustomActionName"));
+    }
+
+    @Test
+    void nestedAttributeMapsAreSortedRecursively() {
+        // The sort must reach nested maps: a shallow sort would leave the inner map's iteration
+        // order in the digest, and the symptom only appears when a replay lands on another JVM.
+        Map<String, Object> innerForward = new LinkedHashMap<>();
+        innerForward.put("one", 1);
+        innerForward.put("two", 2);
+        innerForward.put("three", 3);
+        Map<String, Object> innerReversed = new LinkedHashMap<>();
+        innerReversed.put("three", 3);
+        innerReversed.put("two", 2);
+        innerReversed.put("one", 1);
+
+        Map<String, Object> outerForward = new LinkedHashMap<>();
+        outerForward.put("nested", innerForward);
+        outerForward.put("scalar", "s");
+        Map<String, Object> outerReversed = new LinkedHashMap<>();
+        outerReversed.put("scalar", "s");
+        outerReversed.put("nested", innerReversed);
+
+        DeterministicIdAllocator forward =
+                new DeterministicIdAllocator(
+                        "key-1", 7L, "actionA", new Event("my.EventType", outerForward), "agent");
+        DeterministicIdAllocator reversed =
+                new DeterministicIdAllocator(
+                        "key-1", 7L, "actionA", new Event("my.EventType", outerReversed), "agent");
+
+        assertEquals(forward.nextSessionId(), reversed.nextSessionId());
+    }
+
+    @Test
+    void targetNameIsRequired() {
+        // Fail fast rather than mint an id whose range is not separated from another target's: the
+        // target name is the only input that keeps two calls of one execution from collapsing onto
+        // one digest and one ordinal sequence, colliding registration keys and durable slots.
+        assertThatNullPointerException()
+                .isThrownBy(
+                        () ->
+                                new DeterministicIdAllocator(
+                                        "key-1", 7L, "actionA", new InputEvent("e-1"), null))
+                .withMessageContaining("target name is required");
     }
 }
