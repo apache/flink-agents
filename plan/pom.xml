@@ -71,7 +71,7 @@ under the License.
         <dependency>
             <groupId>io.github.bonede</groupId>
             <artifactId>tree-sitter</artifactId>
-            <version>0.25.3</version>
+            <version>0.26.6</version>
         </dependency>
         <dependency>
             <groupId>io.github.bonede</groupId>
