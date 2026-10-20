@@ -43,7 +43,7 @@ action consistency**.
 | --- | --- | --- |
 | No checkpointing | The job restarts from the source's configured starting positions without restoring Agent state or progress from a checkpoint. | Suitable when the application can accept lost progress or repeated work. |
 | Flink checkpointing | Flink restores checkpointed state and replays subsequent input. Actions and external calls may repeat, and models or queries may return different results. | Enable exactly-once checkpointing with durable checkpoint storage and the required source and sink guarantees. External calls must tolerate repetition. |
-| Flink checkpointing + Action State Store | Recovery replays saved completions without rerunning Action bodies. Unfinished Actions may run again, reusing saved durable call outcomes. | Add a Kafka or Fluss Action State Store. Saving Action completions and durable call outcomes requires synchronous backend writes. Retain both checkpoints and the backend records needed for recovery. Use idempotency or reconciliation to protect external effects. |
+| Flink checkpointing + Action State Store | Recovery replays saved completions without rerunning Action bodies. Unfinished Actions may run again, reusing saved durable call outcomes. | Add a Kafka or Fluss Action State Store. Saving Action completions and durable call outcomes requires synchronous backend writes. Retain both checkpoints and the backend records needed for recovery. |
 
 ## Required setup
 
