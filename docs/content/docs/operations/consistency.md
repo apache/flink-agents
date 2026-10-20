@@ -323,9 +323,8 @@ affected by past tombstones.
 
 ### Fluss retention
 
-Fluss log retention controls the physical cleanup of Action state. The per-key
-tombstones and checkpoint-aligned cleanup described above apply only to the Kafka
-Action State Store.
+Flink Agents currently provides no equivalent of Kafka's per-key tombstones or
+checkpoint-aligned cleanup for the Fluss Action State Store.
 
 ## Upgrades and migration
 
