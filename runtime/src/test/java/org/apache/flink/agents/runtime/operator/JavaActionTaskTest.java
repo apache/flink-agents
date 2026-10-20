@@ -137,6 +137,7 @@ public class JavaActionTaskTest {
                         new CachedMemoryStore(new ForTestMemoryMapState<>()),
                         new CachedMemoryStore(new ForTestMemoryMapState<>())),
                 new ArrayList<>(),
+                null,
                 KEY,
                 "observation",
                 false,

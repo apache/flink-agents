@@ -35,10 +35,10 @@ import static org.mockito.Mockito.mock;
 class ChatSubgraphDefinitionTest {
     private final UUID requestId = UUID.randomUUID();
     private final ChatSubgraphDefinition definition =
-            new ChatSubgraphDefinition(mock(AgentPlan.class), requestId);
+            new ChatSubgraphDefinition(mock(AgentPlan.class));
 
     @Test
-    void requiresExactlyOneMatchingResponse() {
+    void requiresExactlyOneResponse() {
         ChatResponseEvent response =
                 ChatResponseEvent.success(requestId, new ChatResult(ChatMessage.assistant("ok")));
         // Event conversion reconstructs the typed event; identity is not part of the contract.
@@ -47,21 +47,13 @@ class ChatSubgraphDefinitionTest {
                 .hasMessageContaining("exactly one response");
         assertThatThrownBy(() -> definition.finish(List.of(response, response)))
                 .hasMessageContaining("exactly one response");
-        assertThatThrownBy(
-                        () ->
-                                definition.finish(
-                                        List.of(
-                                                ChatResponseEvent.success(
-                                                        UUID.randomUUID(),
-                                                        new ChatResult(
-                                                                ChatMessage.assistant("other"))))))
-                .hasMessageContaining("does not match");
     }
 
     @Test
     void ordinaryObservationEventsRemainPrivateAndRuntimeFailuresAreNotCaptured() {
         assertThat(definition.matchActions(new Event("observation"))).isEmpty();
         assertThat(definition.isOutput(new Event("observation"))).isFalse();
+        // A chat response is terminal for its graph, so the failure policy does not apply.
         assertThat(definition.capturesActionFailures()).isFalse();
     }
 }

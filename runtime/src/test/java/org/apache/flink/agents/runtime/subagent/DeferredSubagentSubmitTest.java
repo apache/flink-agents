@@ -31,6 +31,7 @@ import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.api.java.functions.KeySelector;
@@ -40,12 +41,12 @@ import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * The deferred execution mode of {@link BaseDeferredSubagentSetup}: submit only registers the
@@ -57,21 +58,32 @@ public class DeferredSubagentSubmitTest {
 
     private static final String RESOURCE_NAME = "capturing";
 
-    private final RunnerContext ctx = null;
-
     @BeforeEach
     public void resetCaptures() {
         MockDeferredSubagentSetup.reset();
     }
 
-    // The short forms inherit the base's deterministic assignment, which needs a prepared task.
+    // The short forms read ids off the executing action's counters, so a context carrying none must
+    // fail fast rather than mint an id a replay could not reproduce.
 
     @Test
-    void shortFormsRequireAPreparedTask() throws Exception {
+    void shortFormsRequireAContextCarryingIdCounters() {
         BaseDeferredSubagentSetup setup = new MockDeferredSubagentSetup();
+        setup.setSubagentName(RESOURCE_NAME);
+        RunnerContextImpl withoutIds =
+                new RunnerContextImpl(
+                        null,
+                        () -> {},
+                        new AgentPlan(new HashMap<>(), new HashMap<>()),
+                        null,
+                        "job");
 
-        assertThrows(IllegalStateException.class, () -> setup.submit(ctx, "ping", "sid-1"));
-        assertThrows(IllegalStateException.class, () -> setup.submit(ctx, "ping"));
+        assertThatThrownBy(() -> setup.submit(withoutIds, "ping", "sid-1"))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("Id allocation requires an executing action");
+        assertThatThrownBy(() -> setup.submit(withoutIds, "ping"))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("Id allocation requires an executing action");
     }
 
     // Batched resolve: every pending deferred handle is prepared up front, then the prepared

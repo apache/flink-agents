@@ -28,12 +28,11 @@ from flink_agents.api.runner_context import DurableFuture, Outcome
 
 
 class _ChatFuture(DurableFuture[ChatResult]):
-    """Resolve through the Java chat coordinator, without occupying a worker."""
+    """Resolve through the Java chat call chain, without occupying a worker."""
 
     def __init__(self, ctx: Any, request: ChatRequestEvent) -> None:
         super().__init__()
         self._ctx = ctx
-        self._calls = ctx.getChatContext().getManager()
         self._request_json = request.model_dump_json()
         self._call_id: str | None = None
 
@@ -50,9 +49,9 @@ class _ChatFuture(DurableFuture[ChatResult]):
 
     def _resolve(self) -> Any:
         if self._call_id is None:
-            self._call_id = self._calls.prepareCall(self._ctx, self._request_json)
+            self._call_id = self._ctx.prepareChatCall(self._request_json)
         while True:
-            response_json = self._calls.tryCompleteCall(self._ctx, self._call_id)
+            response_json = self._ctx.tryCompleteChatCall(self._call_id)
             if response_json is not None:
                 response = ChatResponseEvent.from_event(Event.from_json(response_json))
                 try:

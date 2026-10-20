@@ -22,7 +22,6 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
-import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -40,7 +39,7 @@ class SubgraphInvocationTest {
     private final Action first = mock(Action.class);
     private final Action second = mock(Action.class);
     private final SubgraphDefinition<List<Event>> definition =
-            new SubgraphDefinition<>() {
+            new RoutingOnlyDefinition<>() {
                 @Override
                 public List<Action> matchActions(Event event) {
                     return "fanout".equals(event.getType())
@@ -87,7 +86,7 @@ class SubgraphInvocationTest {
     @Test
     void emptyGraphCanReturnAnEmptyResult() throws Exception {
         SubgraphDefinition<List<Event>> empty =
-                new SubgraphDefinition<>() {
+                new RoutingOnlyDefinition<>() {
                     @Override
                     public List<Action> matchActions(Event event) {
                         return List.of();
@@ -104,7 +103,7 @@ class SubgraphInvocationTest {
                     }
                 };
         SubgraphInvocation<List<Event>> call =
-                new SubgraphInvocation<>("empty", "key", empty, memory(), null);
+                new SubgraphInvocation<>("empty", "key", empty, null);
         assertThat(call.dispatch(new Event("start"))).isEmpty();
         assertThat(call.awaitResult()).isEmpty();
     }
@@ -195,10 +194,6 @@ class SubgraphInvocationTest {
     }
 
     private SubgraphInvocation<List<Event>> call(String id, String key) {
-        return new SubgraphInvocation<>(id, key, definition, memory(), null);
-    }
-
-    private static RunnerContextImpl.MemoryContext memory() {
-        return new RunnerContextImpl.MemoryContext(null, null);
+        return new SubgraphInvocation<>(id, key, definition, null);
     }
 }

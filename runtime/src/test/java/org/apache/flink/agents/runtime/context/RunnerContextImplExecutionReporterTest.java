@@ -331,7 +331,14 @@ class RunnerContextImplExecutionReporterTest {
         RunnerContextImpl runnerContext =
                 new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
         runnerContext.switchActionContext(
-                "chat_model_action", null, new ArrayList<>(), "business-key", "obs-1", false, null);
+                "chat_model_action",
+                null,
+                new ArrayList<>(),
+                null,
+                "business-key",
+                "obs-1",
+                false,
+                null);
 
         assertThatCode(
                         () -> {
@@ -459,6 +466,7 @@ class RunnerContextImplExecutionReporterTest {
                 "chat_model_action",
                 null,
                 new ArrayList<>(),
+                null,
                 "business-key",
                 "obs-1",
                 false,

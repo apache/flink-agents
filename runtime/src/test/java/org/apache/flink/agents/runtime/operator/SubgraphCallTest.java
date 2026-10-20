@@ -27,6 +27,8 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.memory.MemoryScope;
+import org.apache.flink.agents.runtime.subgraph.RoutingOnlyDefinition;
 import org.apache.flink.agents.runtime.subgraph.SubgraphDefinition;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
@@ -54,7 +56,7 @@ public class SubgraphCallTest {
         RunnerContextImpl runner = (RunnerContextImpl) ctx;
         Map<String, Action> actions = runner.currentPlan().getActions();
         SubgraphDefinition<Integer> definition =
-                new SubgraphDefinition<>() {
+                new RoutingOnlyDefinition<>() {
                     @Override
                     public List<Action> matchActions(Event input) {
                         if ("start".equals(input.getType())) {
@@ -77,12 +79,17 @@ public class SubgraphCallTest {
                     }
                 };
         ctx.getShortTermMemory().set("shared", "caller");
+        // Sharing the caller's store instances, rather than merely the same keyed state, is a
+        // policy this graph opts into; a call without one gets stores built over the root state.
+        RunnerContextImpl.MemoryContext callerMemory = runner.getMemoryContext();
         SubgraphInvocation<Integer> call =
                 new SubgraphInvocation<>(
                         "custom",
                         "key",
                         definition,
-                        runner.getMemoryContext(),
+                        new MemoryScope(
+                                callerMemory.getSensoryMemStore(),
+                                callerMemory.getShortTermMemStore()),
                         runner.getResourceScope());
         runner.getSubgraphCalls().register(call);
         ctx.sendEvent(new SubgraphEvent(call.getId(), new Event("start"), true));

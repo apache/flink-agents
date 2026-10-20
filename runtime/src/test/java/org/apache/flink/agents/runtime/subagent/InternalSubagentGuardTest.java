@@ -42,8 +42,8 @@ public class InternalSubagentGuardTest {
         InternalSubagentSetup setup =
                 new InternalSubagentSetup(descriptor(new AgentPlan(new Agent())), null);
 
-        assertThatThrownBy(() -> setup.prepare(null, "prompt", "session", "call"))
-                .isInstanceOf(IllegalStateException.class)
+        assertThatThrownBy(() -> setup.submit(null, "prompt", "session", "call").await())
+                .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessageContaining("stackful suspension");
     }
 

@@ -19,9 +19,13 @@
 
 A child agent registered through a descriptor exercises the whole
 operator round-trip: the Python-compiled child plan is materialized into a Java
-``InternalSubagentSetup``, the call event is sent on the mailbox thread, the
-mailbox is released while the caller awaits, and the child's actions are
-dispatched and their output accumulated into the caller's ``Result``.
+``InternalSubagentSetup``, the call is issued on the mailbox thread, and the
+handle then polls it, yielding the mailbox between polls so the child's actions
+are dispatched and their output accumulated into the caller's ``Result``.
+
+Issuing the call reads the caller's durable slot first, so a replay of an
+already completed call installs the recorded result and the child graph never
+starts — the same pre-dispatch skip the Java caller path has.
 
 Unlike the Java caller path, this does not need JDK 21: a Python coroutine
 releases the mailbox by yielding at ``await``.
@@ -40,6 +44,7 @@ future yields the ``Result``.
 and replays it identically after a failover.
 """
 
+import json
 import os
 import sysconfig
 from pathlib import Path
@@ -80,6 +85,20 @@ class EchoChildAgent(Agent):
     def echo(event: Event, ctx: RunnerContext) -> None:
         """Emit the prompt back, which the caller collects as the call result."""
         ctx.send_event(OutputEvent(output=f"echo:{InputEvent.from_event(event).input}"))
+
+
+class StructuredChildAgent(Agent):
+    """Child agent whose output is a nested payload rather than a string."""
+
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    def payload(event: Event, ctx: RunnerContext) -> None:
+        """Emit a nested structure with a null in it."""
+        ctx.send_event(
+            OutputEvent(
+                output={"answer": "hello", "nested": {"7": [1, None]}, "absent": None}
+            )
+        )
 
 
 class FailingChildAgent(Agent):
@@ -129,12 +148,27 @@ class RootAgent(Agent):
             ctx.send_event(OutputEvent(output=f"failed:{result.error_message}"))
 
 
-def _run_and_collect(child: Agent, tmp_path: Path) -> str:
+class ReportingRootAgent(Agent):
+    """Caller agent that renders the child's payload instead of forwarding it."""
+
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    async def orchestrate(event: Event, ctx: RunnerContext) -> None:
+        """Emit the child's payload as canonical JSON."""
+        prompt = InputEvent.from_event(event).input
+        child = ctx.get_resource(CHILD_SCOPE, ResourceType.AGENT)
+        future = await child.submit(ctx, prompt)
+        result = await future
+        rendered = json.dumps(result.result[0], sort_keys=True)
+        ctx.send_event(OutputEvent(output=rendered))
+
+
+def _run_and_collect(child: Agent, tmp_path: Path, root: Agent | None = None) -> str:
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_parallelism(1)
     input_stream = env.from_collection(["hello"])
 
-    root = RootAgent()
+    root = root or RootAgent()
     root.add_resource(
         CHILD_SCOPE,
         ResourceType.AGENT,
@@ -189,3 +223,14 @@ def test_python_internal_subagent_nested_call(tmp_path: Path) -> None:
     assert "relayed:echo:deep:hello" in contents, (
         f"nested call did not complete; collected: {contents!r}"
     )
+
+
+def test_python_internal_subagent_structured_payload(tmp_path: Path) -> None:
+    """A nested payload reaches the caller as Python containers, not Java objects.
+
+    Rendering it with ``json`` is the assertion: a Java object would not serialize.
+    """
+    contents = _run_and_collect(StructuredChildAgent(), tmp_path, ReportingRootAgent())
+    expected = '{"absent": null, "answer": "hello", "nested": {"7": [1, null]}}'
+
+    assert expected in contents, f"payload did not arrive; collected: {contents!r}"

@@ -237,7 +237,8 @@ public class ChatCallTest {
                 },
                 ChatCallTest.class.getMethod("leaked", Event.class, RunnerContext.class));
         AgentPlan plan = new AgentPlan(agent);
-        // One worker waits for the response, another executes asynchronous model/tool work.
+        // Awaiting a response yields the caller's continuation instead of holding a worker, so both
+        // workers stay free for the chat subgraph's asynchronous model/tool work.
         plan.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2);
         return plan;
     }
@@ -256,7 +257,7 @@ public class ChatCallTest {
     }
 
     @Test
-    void fullChatToolChatLoopWithAsyncWorkerWait(@TempDir Path logDir) throws Exception {
+    void fullChatToolChatLoopWithAsyncModelAndToolExecution(@TempDir Path logDir) throws Exception {
         AgentPlan plan = plan();
         plan.getConfig().set(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE, LoggerType.FILE);
         plan.getConfig().set(AgentConfigOptions.TRACE_LOG_OUTPUT_BASE_DIR, logDir.toString());
@@ -301,8 +302,14 @@ public class ChatCallTest {
         }
     }
 
+    /**
+     * The synchronous invoker branch: with {@code chat.async} and {@code tool-call.async} off, the
+     * built-in model and tool actions run through {@code durableExecute} and claim no worker at
+     * all, so a single-worker pool carries the whole loop. Awaiting the response does not claim one
+     * either — it yields the caller's continuation.
+     */
     @Test
-    void oneWaitWorkerSupportsSynchronousModelAndToolExecution() throws Exception {
+    void singleWorkerSupportsSynchronousModelAndToolExecution() throws Exception {
         AgentPlan plan = plan();
         plan.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 1);
         plan.getConfig().set(AgentExecutionOptions.CHAT_ASYNC, false);

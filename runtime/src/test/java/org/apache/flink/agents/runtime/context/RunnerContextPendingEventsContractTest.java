@@ -45,7 +45,7 @@ class RunnerContextPendingEventsContractTest {
         Event second = new Event("second");
         SubgraphEvent bootstrap = new SubgraphEvent("child-call", new InputEvent(1L), true);
 
-        context.switchActionContext("action", memory, buffer, "key", "obs", false, null);
+        context.switchActionContext("action", memory, buffer, null, "key", "obs", false, null);
         context.sendEvent(first);
         context.sendEvent(bootstrap);
         context.sendEvent(second);
@@ -71,7 +71,6 @@ class RunnerContextPendingEventsContractTest {
                         "child-call",
                         "key",
                         org.mockito.Mockito.mock(SubgraphDefinition.class),
-                        new RunnerContextImpl.MemoryContext(null, null),
                         null));
         Event next = new Event("next");
         SubgraphEvent nestedCall = new SubgraphEvent("nested-call", new InputEvent(1L), true);
@@ -100,15 +99,18 @@ class RunnerContextPendingEventsContractTest {
         List<Event> bufferB = new ArrayList<>();
         Event eventA = new InputEvent(1L);
 
-        context.switchActionContext("action-a", memoryA, bufferA, "key-a", "obs-a", false, null);
+        context.switchActionContext(
+                "action-a", memoryA, bufferA, null, "key-a", "obs-a", false, null);
         context.sendEvent(eventA);
         assertThat(context.drainEventsAtActionYield(null)).isEmpty();
 
-        context.switchActionContext("action-b", memoryB, bufferB, "key-b", "obs-b", false, null);
+        context.switchActionContext(
+                "action-b", memoryB, bufferB, null, "key-b", "obs-b", false, null);
         assertThat(context.drainEventsAtActionFinish(null)).isEmpty();
         context.checkNoPendingEvents();
 
-        context.switchActionContext("action-a", memoryA, bufferA, "key-a", "obs-a", false, null);
+        context.switchActionContext(
+                "action-a", memoryA, bufferA, null, "key-a", "obs-a", false, null);
         assertThat(context.drainEventsAtActionFinish(null)).containsExactly(eventA);
         context.checkNoPendingEvents();
     }

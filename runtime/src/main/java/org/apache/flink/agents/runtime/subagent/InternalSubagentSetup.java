@@ -22,28 +22,21 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.InputEvent;
-import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.subagent.InternalSubagentResourceDescriptorBuilder;
+import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.subagent.InternalSubagentPlans;
 import org.apache.flink.agents.runtime.ResourceCache;
-import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
-import org.apache.flink.agents.runtime.async.ContinuationNativeCallable;
 import org.apache.flink.agents.runtime.condition.ActionMatcher;
-import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
-import org.apache.flink.agents.runtime.operator.ActionTask;
-import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
+import org.apache.flink.agents.runtime.subgraph.SubgraphExecution;
+import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 
-import javax.annotation.Nullable;
-
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -54,24 +47,13 @@ import java.util.Map;
  * (through an ordinary resource descriptor); this runtime class owns everything the invocation
  * needs at execution time.
  *
- * <p>Execution mode is the deferred one, inherited from {@link BaseDeferredSubagentSetup}: {@link
- * #submit} returns a deferred handle whose request is prepared on first resolve. {@link #prepare}
- * then runs the mailbox-confined bootstrap — registering the invocation and sending one {@code
- * SubgraphEvent} — and returns the durable callable that waits for the child to quiesce. Unlike the
- * other deferred setups, that callable runs inline on the mailbox thread and releases it by
- * yielding the caller's continuation, so the operator can dispatch the child agent's actions in
- * between while no async-pool worker is held.
+ * <p>Calls share {@link SubgraphExecution} with built-in chat calls.
  *
- * <p>This adapter retains the child resource caches and session/call index needed by public
- * handles. The common subgraph runtime owns dispatch, action accounting and result completion.
- * Record cleanup still uses the inherited {@link
- * org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener} hooks.
- *
- * <p>Sending the event outside the durable boundary is deliberate: a replayed send carries the same
- * event attributes, so the child action resolves to the same persisted action state and replays its
- * recorded output instead of running again.
+ * <p>This adapter retains only what outlives one call: the pooled child resource caches. The calls
+ * themselves live in the operator-wide invocation registry under their {@code sessionId#callId} id,
+ * and record cleanup goes through {@code SubgraphCallManager}.
  */
-public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
+public class InternalSubagentSetup extends BaseSubagentSetup {
 
     /**
      * Serializes the child plan with the same configuration {@code RunnerContextImpl} uses for the
@@ -85,19 +67,10 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
 
     private final AgentPlan plan;
 
-    /** Nested map: sessionId → callId → invocation. */
-    private final Map<String, Map<String, InternalSubagentInvocation>> invocations =
-            new HashMap<>();
-
     private final Map<String, ResourceCache> childCaches = new HashMap<>();
 
-    private final Map<Object, List<String>> keySessionIds = new HashMap<>();
-
-    /**
-     * The runner contexts this setup registered a session-owner entry on, per session id. Used to
-     * unregister those entries when the owning record finishes.
-     */
-    private final Map<String, RunnerContextImpl> ownerContexts = new HashMap<>();
+    /** This scope's graph contract, one instance per setup since it holds no per-call state. */
+    private final InternalSubagentDefinition definition;
 
     /** Lazily built event-to-action matcher for the plan. */
     private ActionMatcher actionMatcher;
@@ -112,6 +85,11 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
             throw new IllegalArgumentException("Internal sub-agent requires a scope");
         }
         this.plan = InternalSubagentPlans.decode(descriptor);
+        this.definition = new InternalSubagentDefinition(this);
+    }
+
+    InternalSubagentDefinition definition() {
+        return definition;
     }
 
     public String getScope() {
@@ -155,170 +133,51 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
     }
 
     /**
-     * The mailbox-confined bootstrap plus the wait. Sending the bootstrap event must happen before
-     * the wait releases the mailbox, so it runs here, on the resolving thread.
-     *
-     * <p>The returned callable is {@link ContinuationNativeCallable}, so it runs inline inside the
-     * caller's continuation rather than on an async-pool worker, and its wait suspends by yielding
-     * that continuation. A worker-dispatched wait would hold a pool worker for the whole child call
-     * while the child's own durable calls queue behind it for a worker from the same finite pool —
-     * a self-deadlock at {@code num-async-threads=1} and under enough nested or concurrent waits at
-     * any size (issue #1213).
+     * Returns the handle running the common graph-call chain when it resolves. Nothing is issued
+     * here, so a handle that is never resolved issues no call.
      */
     @Override
-    protected DurableCallable<SubagentResult> prepare(
+    public SubagentFuture submit(
             RunnerContext ctx, Object prompt, String sessionId, String callId) {
-        requireMailboxSuspension(ctx);
+        return new InternalSubagentFuture(
+                sessionId, callId, ctx, this, prompt, currentTaskRegistry());
+    }
+
+    /** The call one action issues against this scope's child plan under the assigned identity. */
+    SubgraphInvocation<SubagentResult> invocation(
+            RunnerContextImpl ctx, String sessionId, String callId) {
+        return definition.newInvocation(
+                ctx, InternalSubagentDefinition.identity(sessionId, callId), ctx.getRecordKey());
+    }
+
+    /**
+     * Prepares one call for a bridge that polls it afterwards: the common chain registers the call
+     * and either installs the result its durable slot recorded or emits its bootstrap envelope.
+     *
+     * <p>The identity is supplied rather than minted here so it is reproducible after failover: a
+     * replayed call sends an envelope with the same attributes, which is what lets the child action
+     * resolve to its persisted action state instead of running again.
+     */
+    public void bootstrap(RunnerContext ctx, String sessionId, String callId, Object prompt) {
         try {
-            bootstrap(ctx, sessionId, callId, prompt);
+            RunnerContextImpl runner = (RunnerContextImpl) ctx;
+            SubgraphExecution.prepare(runner, invocation(runner, sessionId, callId), prompt);
         } catch (Exception e) {
             throw new IllegalStateException(
                     "Failed to bootstrap internal sub-agent call for scope " + scope, e);
         }
-        return new ContinuationNativeCallable<SubagentResult>() {
-            @Override
-            public String getId() {
-                return sessionId + "#" + callId;
-            }
-
-            @Override
-            public Class<SubagentResult> getResultClass() {
-                return SubagentResult.class;
-            }
-
-            @Override
-            public SubagentResult call() {
-                // Runs inline on the mailbox thread; the wait yields the continuation, so the
-                // operator can dispatch the child's actions without a pool worker being held.
-                // Failures converge into a failed SubagentResult like the other deferred setups.
-                try {
-                    return SubagentResult.ok(awaitSubagentCallYielding(ctx, sessionId, callId));
-                } catch (Exception e) {
-                    return SubagentResult.error(e);
-                }
-            }
-        };
     }
 
     /**
-     * Fail-fast guard before the wait starts. Waiting for the child must release the mailbox so the
-     * operator can dispatch the child's actions; without stackful suspension the wait would block
-     * the mailbox and deadlock, so resolving fails immediately instead.
+     * The environment this scope's child actions run in: the child plan, its cache and its JSON.
      */
-    private static void requireMailboxSuspension(RunnerContext ctx) {
-        boolean suspendable =
-                ContinuationActionExecutor.isContinuationSupported()
-                        && (!(ctx instanceof JavaRunnerContextImpl)
-                                || (((JavaRunnerContextImpl) ctx).getContinuationExecutor() != null
-                                        && ((JavaRunnerContextImpl) ctx).getContinuationContext()
-                                                != null));
-        if (!suspendable) {
-            throw new IllegalStateException(
-                    "Resolving an internal sub-agent call requires stackful suspension to release"
-                            + " the mailbox while the child runs (JDK 21+ with the Continuation"
-                            + " API); the current runtime would block the mailbox and deadlock.");
-        }
-    }
-
-    /**
-     * Registers the invocation under the framework-assigned {@code (sessionId, callId)} identity
-     * and sends the bootstrap event (mailbox-thread only), without blocking.
-     *
-     * <p>The identity is supplied rather than minted here so it is reproducible after failover: a
-     * replayed call sends an envelope with the same attributes, which is what lets the child action
-     * resolve to its persisted action state instead of running again. The record key is read from
-     * the executing task rather than an ambient holder.
-     */
-    public void bootstrap(RunnerContext ctx, String sessionId, String callId, Object prompt) {
-        ActionTask task = currentTask();
-        Object key = task != null ? task.getKey() : null;
-        RunnerContextImpl runner = (RunnerContextImpl) ctx;
-        String id = invocationId(scope, sessionId, callId);
+    public RunnerContextImpl.ResourceScope childScope(RunnerContextImpl runner) {
         ResourceCache childCache =
                 getOrCreateChildCache(
                         Thread.currentThread().getContextClassLoader(),
                         runner.currentResourceCache());
-        RunnerContextImpl.ResourceScope environment =
-                new RunnerContextImpl.ResourceScope(
-                        runner.getAgentMetricGroup(), plan, childCache, getPlanJson());
-        InternalSubagentInvocation invocation =
-                new InternalSubagentInvocation(id, key, this, environment);
-        runner.getSubgraphCalls().register(invocation);
-        invocations.computeIfAbsent(sessionId, k -> new HashMap<>()).put(callId, invocation);
-        if (key != null) {
-            keySessionIds.computeIfAbsent(key, k -> new ArrayList<>()).add(sessionId);
-        }
-        if (ctx instanceof RunnerContextImpl) {
-            // Let the shared context resolve this session off the mailbox thread (pemja await),
-            // independent of whichever scope is wired onto it at that moment.
-            RunnerContextImpl runnerContext = (RunnerContextImpl) ctx;
-            runnerContext.registerInternalCallOwner(sessionId, this);
-            ownerContexts.put(sessionId, runnerContext);
-        }
-        ctx.sendEvent(new SubgraphEvent(id, new InputEvent(prompt), true));
-    }
-
-    /** Namespaces the public session/call pair; allocation itself remains replay-stable. */
-    public static String invocationId(String scope, String sessionId, String callId) {
-        return "subagent:" + scope + ":" + sessionId + "#" + callId;
-    }
-
-    /**
-     * Blocks until the internal sub-agent call identified by {@code (sessionId, callId)} completes
-     * and returns its accumulated output. Must be invoked off the mailbox thread.
-     */
-    public List<Object> awaitSubagentCall(String sessionId, String callId) throws Exception {
-        try {
-            return requireInvocation(sessionId, callId).awaitResult();
-        } catch (java.util.concurrent.ExecutionException e) {
-            throw unwrapChildFailure(e);
-        }
-    }
-
-    /**
-     * Awaits the identified call by yielding the caller's continuation, so the wait holds no
-     * async-pool worker and the child can draw from the pool to make progress (issue #1213).
-     *
-     * <p>The wait runs inline on the mailbox thread, so the blocking {@link #awaitSubagentCall} is
-     * not an option here — it would pin the mailbox and stall the very child it waits for. Only a
-     * Java action reaches {@link #prepare}; Python bootstraps through {@code
-     * RunnerContextImpl.bootstrapSubagentCallForScope} and blocks on its own async worker instead.
-     */
-    private List<Object> awaitSubagentCallYielding(
-            RunnerContext ctx, String sessionId, String callId) throws Exception {
-        InternalSubagentInvocation invocation = requireInvocation(sessionId, callId);
-        return invocation.awaitResult((JavaRunnerContextImpl) ctx);
-    }
-
-    private InternalSubagentInvocation requireInvocation(String sessionId, String callId) {
-        InternalSubagentInvocation invocation = getInvocation(sessionId, callId);
-        if (invocation == null) {
-            throw new IllegalStateException(
-                    "No internal sub-agent call registered for sessionId="
-                            + sessionId
-                            + ", callId="
-                            + callId);
-        }
-        return invocation;
-    }
-
-    /**
-     * Surfaces the child's failure directly, so the caller's {@link SubagentResult} carries the
-     * failing action's exception rather than the future's plumbing.
-     */
-    private static Exception unwrapChildFailure(java.util.concurrent.ExecutionException e) {
-        Throwable cause = e.getCause();
-        return cause instanceof Exception ? (Exception) cause : e;
-    }
-
-    /** The identified invocation, or {@code null} when this setup owns none. */
-    @Nullable
-    public InternalSubagentInvocation getInvocation(String sessionId, String callId) {
-        Map<String, InternalSubagentInvocation> calls = invocations.get(sessionId);
-        if (calls == null) {
-            return null;
-        }
-        return calls.get(callId);
+        return new RunnerContextImpl.ResourceScope(
+                runner.getAgentMetricGroup(), plan, childCache, getPlanJson());
     }
 
     /**
@@ -337,23 +196,5 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
                                 userCodeClassLoader,
                                 rootResourceCache,
                                 planJson));
-    }
-
-    /**
-     * Record lifecycle: drop this setup's sessions minted under {@code key} and their statuses.
-     * Idempotent — safe across layers and repeated notifications.
-     */
-    @Override
-    public void onRecordFinished(Object key) {
-        List<String> sessionIds = keySessionIds.remove(key);
-        if (sessionIds != null) {
-            for (String sid : sessionIds) {
-                invocations.remove(sid);
-                RunnerContextImpl owner = ownerContexts.remove(sid);
-                if (owner != null) {
-                    owner.unregisterInternalCallOwner(sid);
-                }
-            }
-        }
     }
 }

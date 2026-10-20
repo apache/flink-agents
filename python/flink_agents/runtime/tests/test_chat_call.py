@@ -36,20 +36,12 @@ class Bridge:
         self.starts = 0
         self.polls = 0
 
-    def getChatContext(self):
-        return self
-
-    def getManager(self):
-        return self
-
-    def prepareCall(self, ctx, request_json):
-        assert ctx is self
+    def prepareChatCall(self, request_json):
         self.starts += 1
         self.request = Event.from_json(request_json)
         return "call-1"
 
-    def tryCompleteCall(self, ctx, call_id):
-        assert ctx is self
+    def tryCompleteChatCall(self, call_id):
         assert call_id == "call-1"
         self.polls += 1
         return self.response.model_dump_json() if self.response else None
@@ -129,11 +121,11 @@ def test_bridge_failure_is_not_cached_as_chat_outcome(monkeypatch):
     ctx, bridge = context()
     future = ctx.chat("model", [])
 
-    def fail_poll(ctx, call_id) -> None:
+    def fail_poll(call_id) -> None:
         msg = "state unavailable"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(bridge, "tryCompleteCall", fail_poll)
+    monkeypatch.setattr(bridge, "tryCompleteChatCall", fail_poll)
     with pytest.raises(RuntimeError, match="state unavailable"):
         next(future.__await__())
     assert not future._is_done()

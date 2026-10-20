@@ -17,61 +17,52 @@
  */
 package org.apache.flink.agents.runtime.subagent;
 
-import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.OutputEvent;
-import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
-import org.apache.flink.agents.runtime.subgraph.SubgraphDefinition;
+import org.apache.flink.agents.runtime.memory.MemoryScope;
+import org.apache.flink.agents.runtime.subgraph.SubgraphExecution;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 
-import java.util.List;
-import java.util.stream.Collectors;
+import javax.annotation.Nullable;
 
 /**
- * Subagent-specific result adapter. The common invocation owns action accounting and completion;
- * the setup retains this reference only to implement session/call lookup for public handles.
+ * One internal sub-agent call. The common invocation owns routing, action accounting and
+ * completion; this class supplies the sub-agent's environment and the identity a bridge names its
+ * call by.
+ *
+ * <p>The result type is the durable one, {@link SubagentResult}, so a replay installs the recorded
+ * result into the invocation instead of translating between two shapes.
  */
-public final class InternalSubagentInvocation extends SubgraphInvocation<List<Object>> {
+public final class InternalSubagentInvocation extends SubgraphInvocation<SubagentResult> {
+
     public InternalSubagentInvocation(
             String id,
-            Object key,
-            InternalSubagentSetup setup,
+            @Nullable Object key,
+            InternalSubagentDefinition definition,
             RunnerContextImpl.ResourceScope environment) {
         super(
                 id,
                 key,
-                new Definition(setup),
-                RunnerContextImpl.MemoryContext.createChildContext(),
+                definition,
+                // A sub-agent does not share memory with its caller, so the call gets stores of
+                // its own instead of inheriting the enclosing ones.
+                MemoryScope.isolated(),
                 environment);
     }
 
-    private static final class Definition implements SubgraphDefinition<List<Object>> {
-        private final InternalSubagentSetup setup;
-
-        private Definition(InternalSubagentSetup setup) {
-            this.setup = setup;
-        }
-
-        @Override
-        public List<Action> matchActions(Event event) {
-            return setup.matchActions(event);
-        }
-
-        @Override
-        public boolean isOutput(Event event) {
-            return OutputEvent.EVENT_TYPE.equals(event.getType());
-        }
-
-        @Override
-        public List<Object> finish(List<Event> outputs) {
-            return outputs.stream()
-                    .map(event -> OutputEvent.fromEvent(event).getOutput())
-                    .collect(Collectors.toList());
-        }
-
-        @Override
-        public boolean capturesActionFailures() {
-            return true;
-        }
+    /**
+     * Takes the identified call's result for a bridge that polls it: the child's terminal outcome
+     * once the graph has quiesced, or {@code null} while it still runs so the bridge can yield the
+     * mailbox and come back.
+     *
+     * <p>The polling turn is {@link SubgraphExecution#tryFinish}, which owns the registry lookup
+     * and the null-while-running contract; what stays here is this kind's own identity. A child
+     * failure stays inside the returned result rather than being thrown for the bridge to catch.
+     */
+    @Nullable
+    public static SubagentResult tryComplete(
+            RunnerContextImpl context, String sessionId, String callId) throws Exception {
+        return SubgraphExecution.tryFinish(
+                context, InternalSubagentDefinition.identity(sessionId, callId));
     }
 }

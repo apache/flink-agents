@@ -21,13 +21,30 @@ These companions are execution-mode agnostic. The execution modes build
 on them, so the framework never needs to know how a request is issued.
 """
 
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from flink_agents.api.subagent import (
     SubagentFuture,
     SubagentFutures,
     SubagentResult,
 )
+
+
+@runtime_checkable
+class PhasedSubagentFuture(Protocol):
+    """A handle with separate preparation and execution phases.
+
+    :class:`SubagentFutureGroup` prepares every member before executing any;
+    preparation need not issue the call.
+    """
+
+    def prepare(self) -> Any:
+        """Prepare the call without waiting for it. Idempotent."""
+        ...
+
+    def execute(self) -> Any:
+        """Wait for the prepared call, preparing it first if awaited on its own."""
+        ...
 
 
 class PendingSubagentCallRegistry:
@@ -119,22 +136,20 @@ class SubagentFutureGroup(SubagentFutures):
     def __await__(self) -> Any:
         """Wait for every handle in submission order.
 
-        Pending deferred handles are prepared before any execution
-        starts, then executed one by one.
+        Pending phased handles are prepared before any execution starts, then
+        executed one by one.
         """
-        # Late import: deferred handles build on this module.
-        from flink_agents.runtime.deferred_subagent import DeferredSubagentFuture
-
         pending = [
             future
             for future in self._futures
-            if isinstance(future, DeferredSubagentFuture) and not future.done()
+            if isinstance(future, PhasedSubagentFuture) and not future.done()
         ]
+        _check_not_mixed_internal_and_deferred(pending)
         for future in pending:
             future.prepare()
-        # TODO(#926): execute the prepared calls as one batch once durable
-        # execution supports batched submission; until then the prepared
-        # calls are executed one by one.
+        # TODO(#926): wait for the issued calls as one batch once durable
+        # execution supports batched submission; until then they are waited
+        # for one by one.
         for future in pending:
             yield from future.execute()
         outcomes = []
@@ -142,3 +157,35 @@ class SubagentFutureGroup(SubagentFutures):
             outcome = yield from future.__await__()
             outcomes.append(outcome)
         return outcomes
+
+
+def _check_not_mixed_internal_and_deferred(pending: list) -> None:
+    """Fail when a group mixes internal and deferred handles: the two consult
+    the calling action's durable journal in different phases, so mixing them
+    currently breaks durable recovery.
+    """
+    # Imported here because both modules import this one for SubagentFutureGroup.
+    from flink_agents.runtime.deferred_subagent import DeferredSubagentFuture
+    from flink_agents.runtime.internal_subagent import InternalSubagentFuture
+
+    internal = None
+    deferred = None
+    for future in pending:
+        if isinstance(future, InternalSubagentFuture):
+            internal = future
+        elif isinstance(future, DeferredSubagentFuture):
+            deferred = future
+    if internal is not None and deferred is not None:
+        msg = (
+            f"A combined sub-agent group cannot mix the internal call "
+            f"{_describe(internal)} with the deferred call {_describe(deferred)}: "
+            f"the two consult this action's durable journal in different phases, "
+            f"so recovery cannot replay the reads in the written order. Resolve "
+            f"the two calls separately."
+        )
+        raise RuntimeError(msg)
+
+
+def _describe(future: SubagentFuture) -> str:
+    """Name a handle the way the Java-side rejection does."""
+    return f"{type(future).__name__} {future.identity}"

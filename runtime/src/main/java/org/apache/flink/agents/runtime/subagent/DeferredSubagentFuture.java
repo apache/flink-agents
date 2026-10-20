@@ -30,7 +30,7 @@ import java.util.concurrent.CancellationException;
 import java.util.function.Supplier;
 
 /** Deferred handle to one sub-agent invocation. */
-public final class DeferredSubagentFuture extends SubagentFuture {
+public final class DeferredSubagentFuture extends SubagentFuture implements PhasedSubagentFuture {
 
     private final RunnerContext ctx;
     @Nullable private final PendingSubagentCallRegistry registry;
@@ -56,15 +56,15 @@ public final class DeferredSubagentFuture extends SubagentFuture {
         }
     }
 
-    /** Prepares the request if it has not been prepared yet; must run on the mailbox thread. */
-    DurableCallable<SubagentResult> prepare() {
+    /** Prepares the request if it has not been prepared yet. */
+    @Override
+    public void prepare() {
         if (cancelled) {
             throw new CancellationException("Sub-agent call cancelled: " + identity());
         }
         if (prepared == null) {
             prepared = preparedSupplier.get();
         }
-        return prepared;
     }
 
     /**
@@ -74,8 +74,10 @@ public final class DeferredSubagentFuture extends SubagentFuture {
      * <p>A system-level failure escaping durable execution propagates and fails the action instead
      * of being folded into an error result.
      */
-    void execute() throws Exception {
-        complete(ctx.durableExecuteAsync(prepare()).await());
+    @Override
+    public void execute() throws Exception {
+        prepare();
+        complete(ctx.durableExecuteAsync(prepared).await());
     }
 
     /**

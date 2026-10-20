@@ -34,6 +34,7 @@ from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.resource_provider import JavaResourceProvider
 from flink_agents.runtime.internal_subagent import InternalSubagentCallFactory
 from flink_agents.runtime.resource_cache import ResourceCache
+from flink_agents.runtime.tests.test_base_subagent import _run
 
 
 class Request(BaseModel):
@@ -71,16 +72,17 @@ def test_descriptor_round_trip_builds_a_python_caller_with_metadata() -> None:
     assert cache.get_resource("second", ResourceType.AGENT).scope == "second"
     assert json.dumps(provider.descriptor.arguments) == before
     assert cache.get_resource("child", ResourceType.AGENT) is setup
-    # The Python caller retains mailbox bootstrap plus deferred worker await.
+    # The Python caller issues on the mailbox thread, then polls the child to completion.
     ctx = create_autospec(InternalSubagentCallFactory, instance=True, spec_set=True)
-    ctx.await_subagent_call.return_value = ["answer"]
-    _, call, _ = setup.prepare(ctx, {"question": "hello"}, "session", "call")
-    ctx.bootstrap_subagent_call.assert_called_once_with(
+    ctx.try_complete_internal_subagent_call.return_value = SubagentResult.ok(["answer"])
+    future = _run(
+        setup.submit_with_identity(ctx, {"question": "hello"}, "session", "call")
+    )
+    assert _run(future) == SubagentResult.ok(["answer"])
+    ctx.bootstrap_internal_subagent_call.assert_called_once_with(
         "child", "session", "call", {"question": "hello"}
     )
-    result = call()
-    assert result == SubagentResult.ok(["answer"])
-    ctx.await_subagent_call.assert_called_once_with("session", "call")
+    ctx.try_complete_internal_subagent_call.assert_called_once_with("session", "call")
     cache.close()
 
 

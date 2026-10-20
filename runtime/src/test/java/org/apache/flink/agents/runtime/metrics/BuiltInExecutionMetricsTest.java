@@ -72,6 +72,7 @@ class BuiltInExecutionMetricsTest {
                 ACTION_NAME,
                 null,
                 new ArrayList<>(),
+                null,
                 "key",
                 "obs",
                 false,

@@ -36,7 +36,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Condition filtering inside an internal sub-agent scope: {@link
  * InternalSubagentSetup#matchActions} applies the same event-type and condition-expression matching
- * the root router uses, evaluated against the forwarded delegate event.
+ * the root router uses, evaluated against the forwarded delegate event. Also pins the scope's
+ * failure policy, which the shared subgraph chain consults for more than the error result.
  */
 class InternalSubagentMatchTest {
 
@@ -58,6 +59,20 @@ class InternalSubagentMatchTest {
 
         List<Action> filteredOut = setup.matchActions(new Event("unrelated.type"));
         assertThat(filteredOut).isEmpty();
+    }
+
+    /**
+     * This scope declares that a child action's ordinary failure becomes the call's own error
+     * result, and the shared subgraph chain reads the same declaration. Only the declaration is
+     * pinned here; running a failing child belongs to the suites that can build one.
+     */
+    @Test
+    void scopeDeclaresItFoldsChildActionFailures() throws Exception {
+        InternalSubagentSetup setup =
+                new InternalSubagentSetup(
+                        descriptor(plan(action("typed", InputEvent.EVENT_TYPE))), null);
+
+        assertThat(setup.definition().capturesActionFailures()).isTrue();
     }
 
     private static Action action(String name, String... triggerConditions) throws Exception {

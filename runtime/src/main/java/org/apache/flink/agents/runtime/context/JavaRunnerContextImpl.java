@@ -31,6 +31,7 @@ import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.async.ContinuationNativeCallable;
+import org.apache.flink.agents.runtime.chat.ChatDurableFuture;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 
 import java.time.Duration;
@@ -354,7 +355,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
     }
 
     @Override
-    protected <T> T resolveAsync(Callable<T> callable) throws Exception {
+    public <T> T resolveAsync(Callable<T> callable) throws Exception {
 
         Supplier<T> wrappedSupplier =
                 () -> {

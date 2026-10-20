@@ -38,7 +38,6 @@ import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
-import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl.ExecutionReportingContext;
 import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
 import org.apache.flink.agents.runtime.lifecycle.PythonTaskLifecycleListener;
@@ -791,18 +790,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             throws Exception {
         // 2. Invoke the action task.
         long sequenceNumber = stateManager.getSequenceNumber();
-        // A resumed child action already carries its scope (transferred across the suspend);
-        // create it only on first dispatch. Computed before the context is wired so the shared
-        // context is scope-aware for the whole invocation.
-        RunnerContextImpl.ResourceScope resourceScope = null;
-        if (actionTask.isSubgraphEvent()) {
-            SubgraphEvent envelope = (SubgraphEvent) actionTask.event;
-            resourceScope =
-                    contextManager
-                            .getSubgraphCalls()
-                            .get(envelope.getInvocationId())
-                            .getResourceScope();
-        }
         contextManager.createAndSetRunnerContext(
                 actionTask,
                 contextKey,
@@ -815,7 +802,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 stateManager.getShortTermMemState(),
                 pythonBridge.getPythonRunnerContext(),
                 ltm,
-                resourceScope,
                 this::createExecutionReportingContext);
         notifyActionPrepared(actionTask);
 
@@ -1649,10 +1635,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         stateManager.getShortTermMemState(),
                         pythonBridge.getPythonRunnerContext(),
                         ltm,
-                        // The parallel engine runs only without continuation support, which
-                        // internal sub-agents require, so a sub-agent event never reaches this
-                        // path and there is no scope to bind here.
-                        null,
                         ActionExecutionOperator.this::createExecutionReportingContext);
 
                 // The synthetic noop input action stays lifecycle-silent.

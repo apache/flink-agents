@@ -49,6 +49,7 @@ from flink_agents.api.runner_context import (
     Outcome,
     RunnerContext,
 )
+from flink_agents.api.subagent import SubagentResult
 from flink_agents.api.trace import ExecutionReporter
 from flink_agents.runtime.chat_future import _ChatFuture
 from flink_agents.runtime.close_utils import failure_of, first_or_logged
@@ -1739,31 +1740,48 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             kwargs,
         )
 
-    def bootstrap_subagent_call(
+    def bootstrap_internal_subagent_call(
         self, scope: str, session_id: str, call_id: str, prompt: Any
     ) -> None:
-        """Bootstrap an internal sub-agent call under the assigned identity.
+        """Issue an internal sub-agent call under the assigned identity.
 
         Implements
         :class:`~flink_agents.runtime.internal_subagent.InternalSubagentCallFactory`.
-        Delegates to the Java ``RunnerContextImpl.bootstrapSubagentCallForScope``,
-        which resolves the materialized sub-agent setup by ``scope`` and sends
-        the bootstrap event. Must run on the mailbox thread.
+        Delegates to the Java
+        ``RunnerContextImpl.bootstrapInternalSubagentCallForScope``, which
+        resolves the materialized sub-agent setup by ``scope``, reads the
+        caller's durable slot, and sends the bootstrap event only on a miss.
+        Must run on the mailbox thread.
         """
-        self._j_runner_context.bootstrapSubagentCallForScope(
+        self._j_runner_context.bootstrapInternalSubagentCallForScope(
             scope, session_id, call_id, prompt
         )
 
-    def await_subagent_call(self, session_id: str, call_id: str) -> list:
-        """Block until the identified internal sub-agent call quiesces.
+    def try_complete_internal_subagent_call(
+        self, session_id: str, call_id: str
+    ) -> SubagentResult | None:
+        """Take an issued internal sub-agent call's result, if it has one.
 
         Implements
         :class:`~flink_agents.runtime.internal_subagent.InternalSubagentCallFactory`.
-        Delegates to the Java ``RunnerContextImpl.awaitSubagentCall``. Must run
-        off the mailbox thread (e.g. on the durable-execution async worker) so
-        the mailbox stays free to dispatch the child agent's actions.
+        Delegates to the Java ``RunnerContextImpl.tryCompleteInternalSubagentCall``,
+        which returns ``None`` while the child graph still runs and the result as
+        JSON once it does not, so the payload's types come from the bridge rather
+        than from the child. A child failure rides inside the result rather than
+        being raised, so anything raised here belongs to the call itself. Must run
+        on the mailbox thread.
         """
-        return list(self._j_runner_context.awaitSubagentCall(session_id, call_id))
+        result_json = self._j_runner_context.tryCompleteInternalSubagentCall(
+            session_id, call_id
+        )
+        if result_json is None:
+            return None
+        payload = json.loads(result_json)
+        return SubagentResult(
+            success=payload["success"],
+            result=payload["result"],
+            error_message=payload["errorMessage"],
+        )
 
     @property
     @override

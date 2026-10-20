@@ -106,12 +106,6 @@ public abstract class BaseSubagentSetup extends SubagentSetup implements TaskLif
                 task, t -> new PendingSubagentCallRegistry(t.getAction().getName()));
     }
 
-    /** The task whose execution is currently issuing calls, or {@code null} outside one. */
-    @Nullable
-    protected final ActionTask currentTask() {
-        return currentTask;
-    }
-
     /**
      * Injected by the framework with the setup's resource name when the resource is materialized.
      */

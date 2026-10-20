@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.flink.agents.runtime.context;
+package org.apache.flink.agents.runtime.chat;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
@@ -29,12 +29,14 @@ import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
-import org.apache.flink.agents.runtime.chat.ChatCallManager;
-import org.apache.flink.agents.runtime.chat.ChatCallOwner;
-import org.apache.flink.agents.runtime.chat.ChatContext;
-import org.apache.flink.agents.runtime.chat.ChatInvocation;
+import org.apache.flink.agents.runtime.context.ActionStatePersister;
+import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.subgraph.SubgraphCallManager;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
+import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
+import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -47,8 +49,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -57,15 +58,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
-/** Exercises the real continuation/worker boundary, not an inline mock of executeAsync. */
+/** Exercises the real continuation boundary, not an inline mock of executeAsync. */
 @EnabledForJreRange(min = JRE.JAVA_21)
 @Timeout(10)
 class ChatDurableFutureTest {
-    private final ChatCallManager manager = new ChatCallManager();
+    private final SubgraphCallManager calls = new SubgraphCallManager();
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void waitsOnWorkerAndRecordsOnlyOneTerminalResponse(boolean failed) throws Exception {
+    void yieldsWithoutWorkerAndRecordsOnlyOneTerminalResponse(boolean failed) throws Exception {
         InspectingExecutor executor = new InspectingExecutor();
         try {
             ActionState state = new ActionState(new Event("input"));
@@ -77,26 +78,26 @@ class ChatDurableFutureTest {
             context.sendEvent(ordinary);
             Runnable action = () -> awaitTwice(handle, failed);
 
+            // The wait suspends by yielding the continuation, so the async pool is never entered.
             assertThat(executor.executeAction(context.getContinuationContext(), action)).isFalse();
-            assertThat(executor.workerStarted.await(5, TimeUnit.SECONDS)).isTrue();
-            assertThat(executor.worker.get()).isNotSameAs(Thread.currentThread());
+            assertThat(executor.submissions).isZero();
+            assertThat(executor.worker.get()).isNull();
             assertThat(state.getCallResults()).isEmpty();
-            ChatInvocation call = dispatchedCall(context);
+            SubgraphInvocation<ChatResponseEvent> call = dispatchedCall(context);
             assertThat(context.getPendingEvents()).containsExactly(ordinary);
-            call.complete(
+            call.dispatch(
                     failed
-                            ? ChatResponseEvent.failed(
-                                    call.getRequestId(), "provider refused", 1, 1)
-                            : ChatResponseEvent.success(call.getRequestId(), resultWithMetadata()));
+                            ? ChatResponseEvent.failed(UUID.randomUUID(), "provider refused", 1, 1)
+                            : ChatResponseEvent.success(UUID.randomUUID(), resultWithMetadata()));
             finish(executor, context, action);
 
-            assertThat(executor.submissions).isEqualTo(1);
+            assertThat(executor.submissions).isZero();
             assertThat(writes).hasValue(1);
             assertThat(state.getCallResults()).hasSize(1);
             // A FAILED response is still a recorded response, not a wait/execution exception.
             assertThat(state.getCallResults().get(0).isSuccess()).isTrue();
             assertThat(context.getDurableExecutionContext().getCurrentCallIndex()).isEqualTo(1);
-            assertThatThrownBy(() -> manager.get(call.getId()))
+            assertThatThrownBy(() -> chatCall(context, call.getId()))
                     .hasMessageContaining("Missing subgraph call");
 
             JavaRunnerContextImpl restored =
@@ -113,7 +114,7 @@ class ChatDurableFutureTest {
                                     () -> awaitTwice(replay, failed)))
                     .isTrue();
             assertThat(restored.getPendingEvents()).isEmpty();
-            assertThat(executor.submissions).isEqualTo(1);
+            assertThat(executor.submissions).isZero();
             assertThat(restored.getDurableExecutionContext().getCurrentCallIndex()).isEqualTo(1);
         } finally {
             executor.close();
@@ -121,36 +122,7 @@ class ChatDurableFutureTest {
     }
 
     @Test
-    void interruptedWaitPropagatesWithoutRecordingAChatFailure() throws Exception {
-        InspectingExecutor executor = new InspectingExecutor();
-        try {
-            ActionState state = new ActionState(new Event("input"));
-            JavaRunnerContextImpl context =
-                    context(
-                            executor,
-                            state,
-                            (k, s, a, e, saved) -> {
-                                throw new AssertionError("Interrupted wait must not be persisted");
-                            });
-            AtomicReference<Exception> error = new AtomicReference<>();
-            Runnable action = captureFailure(context.chat("model", List.of()), error);
-            assertThat(executor.executeAction(context.getContinuationContext(), action)).isFalse();
-            assertThat(executor.workerStarted.await(5, TimeUnit.SECONDS)).isTrue();
-            ChatInvocation call = dispatchedCall(context);
-            executor.worker.get().interrupt();
-            finish(executor, context, action);
-
-            assertThat(error.get()).isInstanceOf(InterruptedException.class);
-            assertThat(call.isDone()).isFalse();
-            assertThat(state.getCallResults()).isEmpty();
-            assertThat(context.getDurableExecutionContext().getCurrentCallIndex()).isZero();
-        } finally {
-            executor.close();
-        }
-    }
-
-    @Test
-    void persistenceFailureAfterWorkerWaitIsNotConvertedToAChatFailure() throws Exception {
+    void persistenceFailureAfterYieldingWaitIsNotConvertedToAChatFailure() throws Exception {
         InspectingExecutor executor = new InspectingExecutor();
         try {
             IllegalStateException failure = new IllegalStateException("store unavailable");
@@ -164,13 +136,13 @@ class ChatDurableFutureTest {
             AtomicReference<Exception> error = new AtomicReference<>();
             Runnable action = captureFailure(context.chat("model", List.of()), error);
             assertThat(executor.executeAction(context.getContinuationContext(), action)).isFalse();
-            ChatInvocation call = dispatchedCall(context);
-            call.complete(
+            SubgraphInvocation<ChatResponseEvent> call = dispatchedCall(context);
+            call.dispatch(
                     ChatResponseEvent.success(
-                            call.getRequestId(), new ChatResult(ChatMessage.assistant("answer"))));
+                            UUID.randomUUID(), new ChatResult(ChatMessage.assistant("answer"))));
             finish(executor, context, action);
             assertThat(error.get()).isSameAs(failure);
-            assertThat(call.awaitResponse().isSuccess()).isTrue();
+            assertThat(call.awaitResult().isSuccess()).isTrue();
         } finally {
             executor.close();
         }
@@ -215,10 +187,16 @@ class ChatDurableFutureTest {
         };
     }
 
-    private ChatInvocation dispatchedCall(JavaRunnerContextImpl context) {
+    private SubgraphInvocation<ChatResponseEvent> dispatchedCall(JavaRunnerContextImpl context) {
         List<Event> events = context.drainEventsAtActionYield(null);
         assertThat(events).singleElement().isInstanceOf(SubgraphEvent.class);
-        return manager.get(((SubgraphEvent) events.get(0)).getInvocationId());
+        return chatCall(context, ((SubgraphEvent) events.get(0)).getInvocationId());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static SubgraphInvocation<ChatResponseEvent> chatCall(
+            JavaRunnerContextImpl context, String id) {
+        return (SubgraphInvocation<ChatResponseEvent>) context.getSubgraphCalls().get(id);
     }
 
     private static void finish(
@@ -247,20 +225,28 @@ class ChatDurableFutureTest {
                 new RunnerContextImpl.MemoryContext(null, null),
                 new ArrayList<>(),
                 "key",
+                "key",
                 "observation",
                 false,
                 null);
         context.setContinuationContext(new ContinuationContext());
-        context.setChatContext(
-                new ChatContext(manager, new ChatCallOwner("key", 1, "action", input)));
+        context.setSubgraphCalls(calls);
+        Map<String, DeterministicIdAllocator> byTarget = new HashMap<>();
+        context.setIdAllocatorSource(
+                name ->
+                        byTarget.computeIfAbsent(
+                                name,
+                                target ->
+                                        new DeterministicIdAllocator(
+                                                "key", 1, "action", input, target)));
         context.setDurableExecutionContext(
                 new RunnerContextImpl.DurableExecutionContext(
                         "key", 1, mock(Action.class), input, state, persister));
         return context;
     }
 
+    /** Probes that awaiting a chat response never dispatches work to the async pool. */
     private static final class InspectingExecutor extends ContinuationActionExecutor {
-        private final CountDownLatch workerStarted = new CountDownLatch(1);
         private final AtomicReference<Thread> worker = new AtomicReference<>();
         private int submissions;
 
@@ -276,7 +262,6 @@ class ChatDurableFutureTest {
                     context,
                     () -> {
                         worker.set(Thread.currentThread());
-                        workerStarted.countDown();
                         return supplier.get();
                     });
         }
