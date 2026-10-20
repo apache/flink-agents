@@ -45,7 +45,7 @@ It provides a step by step introduction on how to install Flink Agents and build
 
 ### How to Operate an Agent
 
-* [Deployment]({{< ref "docs/operations/deployment" >}}), [Configuration]({{< ref "docs/operations/configuration" >}}), and [Monitoring]({{< ref "docs/operations/monitoring" >}}) - Deploy, configure, and monitor agents
+* [Deployment]({{< ref "docs/operations/deployment" >}}), [Consistency]({{< ref "docs/operations/consistency" >}}), [Configuration]({{< ref "docs/operations/configuration" >}}), and [Monitoring]({{< ref "docs/operations/monitoring" >}}) - Deploy, configure, recover, and monitor agents
 
 <--->
 

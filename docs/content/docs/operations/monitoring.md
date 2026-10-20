@@ -1,6 +1,6 @@
 ---
 title: Monitoring
-weight: 3
+weight: 4
 type: docs
 ---
 <!--
@@ -100,7 +100,7 @@ These metrics describe LLM, Tool, Skill, MCP Server and sub-agent calls that the
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.numOfLlmCallsSucceeded | Model invocations that returned successfully. [1] [6] | Counter |
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.numOfLlmCallsFailed | Model invocations that failed. [1] [6] | Counter |
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.llmCallLatencyMs | Time for one model invocation, excluding structured-output parsing and retry waits. [1] | Histogram |
-| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryCount | Additional invocations made by framework retries (`max-retries > 0`); recorded only when a retry occurs. See [retry-wait-interval]({{< ref "docs/operations/configuration#core-options" >}}). | Counter |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryCount | Additional invocations made by framework retries (`max-retries > 0`); recorded only when a retry occurs. See [retry-wait-interval]({{< ref "docs/operations/configuration#model-calls-tools-and-retries" >}}). | Counter |
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryWaitSec | Backoff time accumulated by framework retries; recorded only when a retry occurs. | Counter |
 | **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsSucceeded | Successful calls to the Tool. [2] [6] | Counter |
 | **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsFailed | Failed calls to the Tool. [2] [6] | Counter |
@@ -233,15 +233,15 @@ You can read the logs of a running job in the Flink Web UI:
 
 ## Trace Log
 
-Trace Log records Events, Action executions, and component calls as structured JSON. By default, it records only Events at `STANDARD` level. Configure [`trace-log.targets`]({{< ref "docs/operations/configuration#trace-log-targets" >}}) to select other entities or change their level.
+Trace Log records Events, Action executions, and component calls as structured JSON. By default, it records only Events at `STANDARD` level. Configure [recording targets](#recording-targets) to select other entities or change their level.
 
 Trace Log writes are best effort. A failed write does not fail Event processing or the job; the first failure is logged at `WARN`, later ones at `DEBUG`, and each one increments `traceLogWriteFailures`.
 
 ### Recording Targets
 
-A target's `scope` supports `EVENT_ONLY` (the default), which records only Events, and `ALL`, which records all entity types the framework observes. The example below uses `ALL`.
+Use `trace-log.targets` to choose which entities to record and at which level. Omitting it records only Events at `STANDARD`. An explicit target list replaces that default; an empty list records nothing.
 
-To record Events, Actions, and component calls at `STANDARD`, with full attributes for the `search` Tool, configure:
+For example, this configuration records Events, Actions, and component calls at `STANDARD`, with full attributes for the `search` Tool:
 
 ```yaml
 agent:
@@ -251,17 +251,120 @@ agent:
         level: STANDARD
       - scope: {tool: search}
         level: VERBOSE
+    standard:
+      max-string-length: 2000
+      max-array-elements: 20
+      max-depth: 5
     output-type: FILE
     base-dir: /tmp/flink-agent-logs
+    pretty-print: false
 ```
 
-This example uses file output so the records can be read locally. Each target combines a `scope` with an optional `level`. The specific Tool target overrides the `ALL` preset. Use `level: "OFF"` to suppress a matching entity. Selecting an entity does not automatically select its parents or children.
+This example uses file output so the records can be read locally. The [Recording Level](#recording-level) section explains how the selected level and the `standard` limits affect the recorded data.
 
-See [Trace log targets]({{< ref "docs/operations/configuration#trace-log-targets" >}}) for the complete matching, inheritance, and validation rules. The [Recording Level](#recording-level) section below explains how the selected level affects the recorded data.
+Java and Python can configure the same selection with `TraceLogTarget` through `TRACE_LOG_TARGETS`:
+
+{{< tabs >}}
+{{< tab "python" >}}
+
+```python
+from flink_agents.api.core_options import AgentConfigOptions
+from flink_agents.api.trace_log import TraceLogLevel, TraceLogTarget
+
+agents_env.get_config().set(
+    AgentConfigOptions.TRACE_LOG_TARGETS,
+    [
+        TraceLogTarget.all(TraceLogLevel.STANDARD),
+        TraceLogTarget.tool("search", TraceLogLevel.VERBOSE),
+    ],
+)
+```
+
+{{< /tab >}}
+{{< tab "java" >}}
+
+```java
+import java.util.List;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.api.logger.TraceLogLevel;
+import org.apache.flink.agents.api.logger.TraceLogTarget;
+
+agentsEnv.getConfig().set(
+        AgentConfigOptions.TRACE_LOG_TARGETS,
+        List.of(
+                TraceLogTarget.all(TraceLogLevel.STANDARD),
+                TraceLogTarget.tool("search", TraceLogLevel.VERBOSE)));
+```
+
+{{< /tab >}}
+{{< /tabs >}}
+
+`TraceLogTarget` provides `all()` and whole-type factories `events()`, `actions()`, `tools()`, `llms()`, `parsers()`, and `subagents()`. The corresponding singular factories accept a name, such as `event("OrderCreated")` or `tool("search")`. All factories accept an optional `TraceLogLevel`. Omitting it preserves inheritance: `tool("search")` inherits the level of a matching Tool type target or `ALL`, as described below. Targets are immutable.
+
+#### Choosing scopes and names
+
+Each target combines a `scope` with an optional `level`. In YAML, `EVENT_ONLY` selects Events, and `ALL` selects all entity types the framework observes. Use a category selector to narrow the selection to a named entity, such as `{tool: search}`. The category keys are `event`, `action`, `tool`, `llm`, `parser`, and `subagent`. A value of `"*"` selects the whole type: `{event: "*"}` is equivalent to `EVENT_ONLY`.
+
+For a custom entity type reported through `ExecutionReporter`, use the generic form `{entityType: custom, entityName: name}`; omit `entityName` to select the whole type. `TraceLogTarget.entity("retriever", "catalog")` makes the same selection as `scope: {entityType: retriever, entityName: catalog}`.
+
+For `entityName`, use the logical name from your Agent's code or configuration. Trace Log records and target selectors use the same name:
+
+| `entityType` | What to use as `entityName` | Example |
+|--------------|----------------------------|---------|
+| `event` | The Event type used when emitting or subscribing to Events. | `OrderCreated` |
+| `action` | The name used to declare the Action in the Agent. | `create_order` |
+| `llm` | The registered ChatModel Resource name used by the call. | `primary_model` |
+
+For example, `scope: {llm: primary_model}` selects calls to the Resource named `primary_model`. Its configured model or deployment is recorded separately in `entityMetadata.model`.
+
+Entity names match exactly. A name ending in `.*` matches its namespace and descendants: `{event: "com.foo.*"}` matches `com.foo` and `com.foo.Event`, but not `com.foobar.Event`. Other wildcard forms are unsupported.
+
+Direct model or tool calls inside an Action are not automatically recorded as separate calls, even with `scope: ALL`. Selecting an entity does not automatically select its parents or children. For example, selecting a Tool does not select its parent Action; recorded relationships retain their IDs even when related records are omitted.
+
+#### Matching scopes and inheriting levels
+
+For each entity, matching scopes are considered from most to least specific:
+
+| Order | Matching scope |
+|-------|----------------|
+| 1 | Exact entity name within its type |
+| 2 | Namespace prefixes within its type, from longest to shortest |
+| 3 | Entity type (`EVENT_ONLY` is the `event` type scope) |
+| 4 | `ALL` |
+
+The first explicitly specified `level` in this chain applies. An omitted `level` inherits from the next matching scope and does not override it. If at least one scope matches but no matching scope specifies `level`, the entity uses `STANDARD`. If no scope matches, no record is written. Target order does not affect the result.
+
+An explicit `OFF` stops inheritance and suppresses recording. A more specific scope can enable recording by explicitly setting `STANDARD` or `VERBOSE`; omitting `level` continues to inherit `OFF`. In YAML, write `level: "OFF"` with quotes so Python does not interpret it as a boolean.
+
+For example, a Tool type target at `VERBOSE` supplies the level to matching namespace and exact-name targets that omit it. A matching namespace target at `OFF` suppresses an exact-name target that omits `level`, while an exact-name target with explicit `STANDARD` or `VERBOSE` enables that entity. `EVENT_ONLY` applies only to Events; its level does not affect a Tool target.
+
+An `ALL` target at `OFF` can provide a disabled baseline, with more specific targets explicitly enabling recording. It is unnecessary when selecting only one entity type. To record only Tools:
+
+```yaml
+agent:
+  trace-log:
+    targets:
+      - scope: {tool: "*"}
+        level: VERBOSE
+```
+
+To record everything except one Tool, use a local `OFF` target:
+
+```yaml
+agent:
+  trace-log:
+    targets:
+      - scope: ALL
+        level: STANDARD
+      - scope: {tool: search}
+        level: "OFF"
+```
+
+For accepted target shapes, duplicate-target validation, and all observability options, see the [Configuration reference]({{< ref "docs/operations/configuration#observability" >}}).
 
 ### Output
 
-The default output is **SLF4J**. Select **file** output with `trace-log.output-type: FILE` or by setting a non-empty `trace-log.base-dir`; a configured base directory takes precedence over `output-type`.
+The default output is **SLF4J**. Select **file** output with `trace-log.output-type: FILE` or by setting a nonblank `trace-log.base-dir`; a configured base directory takes precedence over `output-type`.
 
 **SLF4J (default).** Records go to the logger category `org.apache.flink.agents.TraceLog`. In Flink's default log4j2 setup, where `log.file` is set, Flink Agents adds an appender that writes them as plain JSON to `{log.file}.trace-log.log`; in the Flink Web UI, the file is listed in the TaskManager's **Log List**, and it can be passed directly to the [Trace Tree reader](#trace-tree-reader). An existing configuration for this logger is respected. If no dedicated logger is configured and `log.file` is absent, records follow the inherited logging configuration, normally the root logger; a custom appender should write JSON without log prefixes if you want to read it with the Trace Tree reader. If the automatic appender cannot be configured, a warning is logged and the existing logging configuration handles output. All subtasks on a TaskManager share this destination, so each record also carries `jobId`, `taskName` and `subtaskId`.
 
@@ -315,6 +418,10 @@ For an Event, `attributes` contains its payload and `entityMetadata` its ID and 
 ```
 
 `producerExecutionId` identifies the Action execution that produced the Event, `upstreamEventId` the preceding Event in its flow, and `upstreamActionName` the associated Action. A runtime-generated Event may have an upstream Event without an Action producer. Action records carry `triggerEventId`, linking the execution to the Event that triggered it. When an Action is not selected, its selected component calls still keep their `parentExecutionId`.
+
+When recovery reuses a completed Action, its saved output Events keep their original
+Event IDs. Trace Log `entityMetadata` records their relationships to the current
+trigger Event.
 
 An LLM call uses its configured ChatModel Resource as `entityName`:
 

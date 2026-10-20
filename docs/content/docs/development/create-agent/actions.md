@@ -562,8 +562,9 @@ For example, if an Action fails after a profile lookup has completed and its res
 been persisted, recovery can reuse that profile instead of querying the service again.
 Code outside the durable call may still run again when the Action is re-executed.
 
-Durable execution requires an external action state store. Configure it as described in
-[Exactly-Once Action Consistency]({{< ref "docs/operations/deployment#exactly-once-action-consistency" >}}).
+To save and reuse call outcomes during recovery, configure checkpointing and an external
+Action State Store as described in
+[Consistency]({{< ref "docs/operations/consistency#configure-an-action-state-store" >}}).
 
 #### A Durable Call
 
@@ -628,18 +629,10 @@ Java's `getResultClass()` provides the type needed to deserialize a saved result
 
 #### Recovery Behavior
 
-When recovery re-executes an unfinished Action and reaches a durable call:
-
-| State of the matching call | Recovery behavior |
-| --- | --- |
-| A successful result has been persisted | Return the saved result without calling the function again. |
-| A failure has been persisted | Replay the failure without calling the function again. |
-| No completed outcome has been persisted | Execute the function again, or use the reconciler for a previously recorded in-flight call. |
-
-An external operation may finish before its result is persisted. If a failure occurs in
-that interval, calling the operation again can repeat its side effects. For such
-operations, use the external service's idempotency support or a reconciler that can
-recover the existing outcome.
+See [Recovery flow]({{< ref "docs/operations/consistency#recovery-flow" >}}) for how recovery
+handles saved outcomes and in-flight calls, and
+[Limits on external side effects]({{< ref "docs/operations/consistency#limits-on-external-side-effects" >}})
+for operations that may repeat.
 
 #### Reconciling an In-flight Call
 
@@ -799,15 +792,31 @@ worker and batch limits. Concurrency between Actions has additional requirements
   the cross-language Flink versions below.
 - **Python Actions:** use `async def` and the framework's futures and `gather` APIs.
 
-See [Core Options]({{< ref "docs/operations/configuration#core-options" >}}) for worker-pool
-and concurrency limits. These scheduling requirements apply to both ordinary and durable
-async calls. Durable calls additionally require the configured action state store.
+The experimental parallel engine also uses `num-async-threads` to limit concurrent
+Action workers. `max-in-flight-input-records` limits admitted inputs per operator
+subtask, including inputs queued for a key already being processed. At that limit,
+further admission waits for a record to finish. Inputs for the same key commit in
+input order. The continuation engine and plans with Python Actions ignore this
+input limit. If the experimental engine behaves unexpectedly, set
+`parallel-execution.enabled=false` and report an issue.
+
+See [Runtime and async execution]({{< ref "docs/operations/configuration#runtime-and-async-execution" >}})
+for worker-pool and batch limits. These scheduling requirements apply to both
+ordinary and durable async calls. To persist durable call outcomes for recovery,
+also configure an [Action State Store]({{< ref "docs/operations/consistency#configure-an-action-state-store" >}}).
 
 #### Cross-language Async Requirements
 
 Async calls between Java and Python require Flink **1.20.5+**, **2.0.2+**, **2.1.3+**,
-**2.2.1+**, or **2.3+**, within the respective release line. This includes built-in chat
-and context-retrieval Actions that use a Resource implemented in the other language.
+**2.2.1+**, or **2.3+**, within the respective release line. This includes built-in Chat
+and context retrieval Actions that use a Resource implemented in the other language.
+
+The built-in Chat and context retrieval Actions fall back to synchronous calls if
+the Resource is implemented in the other language and the runtime cannot support
+that async call. Java Decision Model calls that reach Python use the same fallback.
+Setting `chat.async`, `decision.async`, or `rag.async` to `false` also selects
+synchronous execution. These switches do not disable durable execution; saving
+call outcomes still requires an Action State Store.
 
 A call may cross into the other language and call back once into its starting language.
 For example, a Python Action can call a Java chat model setup that uses a Python connection.
@@ -884,10 +893,17 @@ missing value.
 
 #### Condition Evaluation Failures
 
-Reading a missing attribute without a guard or applying an operation to an incompatible
-value can fail while evaluating a condition for an Event. For failure handling options, see
-[`action.trigger-condition.evaluate-failure-strategy`]({{< ref "docs/operations/configuration#core-options" >}})
-in Configuration.
+Reading a missing attribute without a guard, applying an operation to an
+incompatible value, or returning a non-Boolean value can fail while evaluating a
+condition for an Event. The default `WARN_AND_SKIP` strategy logs a warning and
+treats that condition as false; later OR conditions can still match the Action.
+`FAIL` throws `IllegalStateException` and fails the Flink task, whose recovery
+follows the job's restart configuration.
+
+Plan-validation failures and failures when compiling or statically checking a
+condition occur during initialization and are not handled by this strategy.
+See [`action.trigger-condition.evaluate-failure-strategy`]({{< ref "docs/operations/configuration#condition-handling" >}})
+for the configuration option.
 
 #### Limitations
 

@@ -1,6 +1,6 @@
 ---
 title: Configuration
-weight: 2
+weight: 3
 type: docs
 ---
 <!--
@@ -24,16 +24,12 @@ under the License.
 
 ## How to configure Flink Agents
 
-There are two ways to configure Flink Agents, listed in order of **priority from high to low**:
+Set options through `AgentsExecutionEnvironment` or the `agent` section of a
+Flink YAML configuration file. Values set on the environment override values loaded
+from YAML.
 
-1. **Setting via the AgentsExecutionEnvironment**
-2. **Setting via a Flink YAML configuration file**
-
-The AgentsExecutionEnvironment applies to Agents from the AgentsExecutionEnvironment, and the Flink YAML configuration file applies to all Flink Agents Jobs using the same configuration file.
-
-{{< hint info >}}
-In case of duplicate keys, the value from the highest priority will override those from lower priorities.
-{{< /hint >}}
+Environment settings apply to Agents added to that environment. YAML settings apply
+to jobs that load the same file.
 
 ### Setting via the AgentsExecutionEnvironment
 
@@ -50,8 +46,7 @@ agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 # Get configuration object from the environment
 config = agents_env.get_config()
 
-# Set custom configuration using a direct key (string-based key)
-# This is suitable for user-defined or non-standardized settings.
+# Set an option using its string key
 config.set_int("kafkaActionStateTopicNumPartitions", 128)
 
 # Set framework-level configuration using a predefined ConfigOption class
@@ -70,7 +65,7 @@ AgentsExecutionEnvironment agentsEnv = AgentsExecutionEnvironment.getExecutionEn
 // Get configuration object
 Configuration config = agentsEnv.getConfig();
 
-// Set custom configuration using key (direct string key)
+// Set an option using its string key
 config.setInt("kafkaActionStateTopicNumPartitions", 128);  // Kafka topic partitions count
 
 // Set the list of event listeners
@@ -85,13 +80,11 @@ config.set(AgentExecutionOptions.MAX_RETRIES, 3);
 
 ### Setting via the Flink YAML configuration file
 
-The former `ErrorHandlingStrategy` API and `error-handling-strategy` option have been removed. To enable retries, set `max-retries` to a positive number (for example, 3 to retain the former `RETRY` mode's default budget). Its default is now 0, preserving the previous default behavior of making no retries. Terminal Chat failures are reported through failed `ChatResponseEvent` events instead of a `FAIL` or `IGNORE` policy.
-
 Flink Agents allows reading configurations from the Flink YAML configuration file.
 
 #### Format
 
-As part of the Flink configuration file, the flink agents configuration must follow this format, with all agent-specific settings nested under the `agent` key:
+Nest Flink Agents settings under the `agent` key:
 
 ```yaml
 agent:
@@ -103,261 +96,263 @@ agent:
 
 #### Loading Behavior
 
-By default, the configuration is automatically loaded from `$FLINK_HOME/conf/config.yaml`.
+When creating an `AgentsExecutionEnvironment` for a Flink job, Flink Agents loads
+the `agent` section from the configuration directory specified by `FLINK_CONF_DIR`.
+Set this environment variable before creating the environment:
 
-**Special Condition**
+```bash
+export FLINK_CONF_DIR="/path/to/flink/conf"
+```
 
-In the following case, Flink Agents may not locate the corresponding configuration file, necessitating manual configuration. If the file is not set, no configuration file will be loaded, potentially resulting in unexpected behavior or failures.
+`FLINK_CONF_DIR` points to a directory. Java reads `config.yaml` from that directory.
+Python reads `flink-conf.yaml` if it exists, otherwise `config.yaml`.
 
-- **For MiniCluster**:
-  Manual setup is **required** — always export the environment variable before running the job:
-
-  ```bash
-  export FLINK_CONF_DIR="path/to/your/config.yaml"
-  ```
-
-  This ensures that Flink can locate and load the configuration file correctly.
+If `FLINK_CONF_DIR` is unset, no YAML configuration file is loaded. Configuration
+through `AgentsExecutionEnvironment` still works and overrides values loaded from
+the file.
 
 ## Built-in configuration options
 
-### Core Options
-Here is the list of all built-in core configuration options.
+<span id="core-options"></span>
 
-| Key                       | Default                    | Type                  | Description                                                                                                                                                                                                                                                     |
-|---------------------------|----------------------------|-----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `event-listeners`         | none                       | `List<String>`        | The list of event listener class names. Each class must implement the EventListener interface and provide a public no-argument constructor. {{< hint warning >}} Note: Currently, custom event listeners are only supported in Java. {{< /hint >}} |
-| `action.trigger-condition.evaluate-failure-strategy` | `WARN_AND_SKIP` | ConditionEvaluationFailureStrategy | Handles failures while evaluating a trigger condition for an individual Event, including missing attributes, incompatible values, or a non-Boolean result. <br/><ul><li>`WARN_AND_SKIP` (default): log a warning, treat that condition as false, and continue with later OR conditions.</li><li>`FAIL`: throw `IllegalStateException` and fail the Flink task; recovery follows the job's restart configuration.</li></ul> Plan-validation failures and runtime compilation or static type-check failures occur during initialization and are not handled by this option. |
-| `max-retries`             | 0                          | int                   | Number of additional attempts per model call, including routing judge calls. Defaults to 0 (no retries).                                                                                                                                                                                                     |
-| `retry-wait-interval`     | 1                          | int                   | Base wait interval in seconds between retries. Uses exponential backoff: the actual wait time for the Nth retry is `retry-wait-interval * 2^(N-1)` seconds. For example, with default 1s, waits are 1s, 2s, 4s, etc. The built-in chat and decision actions report retry count and total wait time in `ChatResponseEvent` and `DecisionResponseEvent`, respectively, and record metrics (`retryCount`, `retryWaitSec`) under the configured model resource name. |
-| `chat.async`              | true                       | boolean               | Whether chat asynchronously for built-in chat action.                                                                                                                                                                                                           |
-| `decision.async`          | true                       | boolean               | Whether the built-in decision action invokes the model through durable async execution. Java calls through Python fall back to synchronous execution when the Flink runtime does not support asynchronous Python calls. |
-| `tool-call.async`         | true                       | boolean               | Whether the built-in tool-call action runs each tool via durable async execution. See [Parallel tool-call batches]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}}) for how this switch works with the batch settings below. |
-| `async.batch.parallelism` | os cpu count | int | Maximum concurrent calls in one async batch, including batches created with `ctx.gather(...)`. `1` runs calls sequentially. Actual concurrency is also limited by `num-async-threads`. See [Parallel tool-call batches]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}}). |
-| `async.batch.timeout.ms` | -1 (disabled) | long (milliseconds) | Overall timeout for one async batch. Non-positive values disable it. A timeout does not guarantee that running calls stop or undo their external effects. See [Timeouts and external effects]({{< ref "docs/development/calling-llms/tool_use#timeouts-and-external-effects" >}}) for tool-call behavior and constraints. |
-| `rag.async`               | true                       | boolean               | Whether retrieve context asynchronously for built-in context retrieval action.                                                                                                                                                                                  |
-| `num-async-threads` | os cpu count * 2 | int | Controls execution capacity for asynchronous calls. `async.batch.parallelism` separately limits concurrency within each batch. See [Parallel tool-call batches]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}}) for tool-call concurrency guidance. |
-| `parallel-execution.enabled` | true                    | boolean               | Whether plans with only **Java Actions** run Actions concurrently on the parallel execution engine when the continuation-based engine is unavailable (**JDK < 21**). Plans declaring Python Resources additionally require a Flink version supporting [cross-language async calls]({{< ref "docs/development/create-agent/actions#cross-language-async-requirements" >}}). Same-key input records commit in input order, with exactly-once checkpoint semantics. Set to `false` to use the serial engine. Ignored when the JDK 21 coroutine engine is available, and for plans containing **Python** actions, which never use the parallel engine. {{< hint warning >}}**Experimental.** If you observe unexpected behavior on JDK < 21, set this option to `false` and report an issue.{{< /hint >}} |
-| `max-in-flight-input-records` | 100                   | int                   | Maximum number of input records that may be in flight concurrently. Only enforced by the **JDK < 21** parallel execution engine for plans with only **Java Actions**; the JDK 21 coroutine engine and plans containing **Python** actions ignore it. Every admitted record consumes one unit of budget; at the cap, admission of further records blocks until an in-flight record retires. |
-| `job-identifier`          | none                       | String                | The unique identifier of job, remaining consistent after restoring from a savepoint. If not set, uses flink job id.                                                                                                                                             |
-| `short-term-memory.state-ttl.ms` | 0                    | long                  | Time-to-live for short-term memory state in milliseconds. Set to a value greater than 0 to enable TTL; 0 disables it.                                                                                                                                           |
-| `short-term-memory.state-ttl.update-type` | `ON_READ_AND_WRITE` | ShortTermMemoryTtlUpdate | Update policy for short-term memory TTL. Only applies when `short-term-memory.state-ttl.ms` is greater than 0. Valid values: `ON_CREATE_AND_WRITE`, `ON_READ_AND_WRITE`. An enabled run-begin memory snapshot also refreshes TTL for entries it reads under `ON_READ_AND_WRITE`. |
-| `short-term-memory.state-ttl.visibility` | `NEVER_RETURN_EXPIRED` | ShortTermMemoryTtlVisibility | Visibility policy for expired short-term memory state. Only applies when `short-term-memory.state-ttl.ms` is greater than 0. Valid values: `NEVER_RETURN_EXPIRED`, `RETURN_EXPIRED_IF_NOT_CLEANED_UP`.                                                        |
+### Observability
 
-### Trace Log Options
+See [Monitoring]({{< ref "docs/operations/monitoring" >}}) for Trace Log output and
+record selection, and [Memory Observability]({{< ref "docs/development/memory/memory_events" >}})
+for the agent-run begin event and custom Event listeners.
 
-Trace Log records Events, Action executions, and calls made within Actions. See [Monitoring]({{< ref "docs/operations/monitoring#trace-log" >}}) for output formats and the Trace Tree reader.
+<span id="trace-log-options"></span>
 
 | Key | Default | Type | Description |
-|-----|---------|------|-------------|
-| `trace-log.output-type` | `SLF4J` | LoggerType | Trace log output: `SLF4J` writes JSON through a dedicated SLF4J logger, visible in Flink's Web UI Logs tab; `FILE` writes per-subtask files. A non-empty `trace-log.base-dir` forces `FILE`, even when `SLF4J` is selected. |
-| `trace-log.base-dir` | (none) | String | Directory for file output; a non-empty value forces `FILE`. When file output is selected without a directory, uses `java.io.tmpdir/flink-agents`. |
-| `trace-log.pretty-print` | false | boolean | Format JSON over multiple lines. When false, each record occupies one line (JSONL). |
-| `trace-log.targets` | `[{scope: EVENT_ONLY, level: STANDARD}]` | List of objects | Match records and control the recording level. Each target uses `scope` and optional `level`; see [Trace log targets](#trace-log-targets). |
-| `trace-log.standard.max-string-length` | 2000 | int | Maximum attribute string length at `STANDARD` level. No effect at `VERBOSE`. |
-| `trace-log.standard.max-array-elements` | 20 | int | Maximum attribute array length at `STANDARD` level. No effect at `VERBOSE`. |
-| `trace-log.standard.max-depth` | 5 | int | Maximum attribute nesting depth at `STANDARD` level. Deeper objects are summarized. No effect at `VERBOSE`. |
+| --- | --- | --- | --- |
+| `agent-run.begin-event` | false | boolean | Emit an `AgentRunBeginEvent` with a short-term memory value snapshot before running the Actions triggered by each input. Independent of `memory.generate-event`. |
+| `event-listeners` | none | `List<String>` | Fully qualified Java `EventListener` class names. Each class must provide a public no-argument constructor. Python listener implementations are not supported. |
+| `trace-log.base-dir` | (none) | String | Directory for Trace Log files. A nonblank value selects `FILE`, overriding `trace-log.output-type`. When unset, file output uses `${java.io.tmpdir}/flink-agents`. |
+| `trace-log.output-type` | `SLF4J` | LoggerType | Trace Log destination: `SLF4J` uses the Trace Log logger; `FILE` writes one file per operator subtask. See [Output]({{< ref "docs/operations/monitoring#output" >}}) for logging configuration and file locations. |
+| `trace-log.pretty-print` | false | boolean | Write multiline JSON when `true`, or compact single-line JSON when `false`. Applies to both output types. |
+| `trace-log.standard.max-array-elements` | 20 | int | Maximum elements retained in each attribute array at `STANDARD` level. `0` disables this limit. No effect at `VERBOSE`. |
+| `trace-log.standard.max-depth` | 5 | int | Nesting depth at which attribute objects are summarized at `STANDARD` level. `0` disables this limit. No effect at `VERBOSE`. |
+| `trace-log.standard.max-string-length` | 2000 | int | Maximum characters retained in each attribute string at `STANDARD` level. `0` disables this limit. No effect at `VERBOSE`. |
+| `trace-log.targets` | `[{scope: EVENT_ONLY, level: STANDARD}]` | List of objects | Select Trace Log entities and their recording levels. Each target requires `scope` and may specify `level`; see [Trace log targets](#trace-log-targets). |
 
 #### Trace log targets
 
-Every target combines a `scope` with an optional `level`. Omitting `targets` records only Events at `STANDARD`. An explicit list replaces that default; an empty list records nothing.
+`trace-log.targets` is a list of target objects. Omitting the option records Events
+at `STANDARD`. An explicit list replaces this default; an empty list records nothing.
 
-For example, this configuration records all entities at `STANDARD`, with full attributes for the `search` Tool:
+Each target has the following fields:
 
-```yaml
-agent:
-  trace-log:
-    targets:
-      - scope: ALL
-        level: STANDARD
-      - scope: {tool: search}
-        level: VERBOSE
-    standard:
-      max-string-length: 2000
-      max-array-elements: 20
-      max-depth: 5
-    output-type: FILE
-    base-dir: /tmp/flink-agent-logs
-    pretty-print: false
-```
+- `scope` (required): `EVENT_ONLY`, `ALL`, a category selector with exactly one of
+  `event`, `action`, `tool`, `llm`, `parser`, or `subagent`, or a generic selector with
+  `entityType` and optional `entityName`. Do not mix category and generic fields.
+  A category value of `"*"`, or a generic selector without `entityName`, selects the
+  whole entity type. `EVENT_ONLY` is equivalent to `{event: "*"}`.
+- `level` (optional): `OFF`, `STANDARD`, or `VERBOSE`. An omitted level inherits
+  from matching scopes; it does not automatically mean `STANDARD`. In YAML, quote
+  `level: "OFF"` so Python does not interpret it as a boolean.
 
-Java and Python can configure targets with `TraceLogTarget` through the same `TRACE_LOG_TARGETS` option:
+Duplicate scopes may combine an omitted level with an explicit level or repeat the
+same explicit level. Conflicting explicit levels for the same scope are rejected
+when logging starts. This also applies to equivalent Event type selectors.
 
-{{< tabs >}}
-{{< tab "python" >}}
+For YAML and API examples, entity naming, and level inheritance, see
+[Recording Targets]({{< ref "docs/operations/monitoring#recording-targets" >}}).
 
-```python
-from flink_agents.api.core_options import AgentConfigOptions
-from flink_agents.api.trace_log import TraceLogLevel, TraceLogTarget
+The old `event-log.*`, `eventLoggerType`, `baseLogDir`, and `prettyPrint` keys are
+unsupported and rejected at startup. Use `trace-log.targets`, `trace-log.standard.*`,
+and the output options above.
 
-agents_env.get_config().set(
-    AgentConfigOptions.TRACE_LOG_TARGETS,
-    [
-        TraceLogTarget.all(TraceLogLevel.STANDARD),
-        TraceLogTarget.tool("search", TraceLogLevel.VERBOSE),
-    ],
-)
-```
+### Condition handling
 
-{{< /tab >}}
-{{< tab "java" >}}
+See [Condition Evaluation Failures]({{< ref "docs/development/create-agent/actions#condition-evaluation-failures" >}})
+for trigger condition behavior and initialization failures.
 
-```java
-import java.util.List;
-import org.apache.flink.agents.api.configuration.AgentConfigOptions;
-import org.apache.flink.agents.api.logger.TraceLogLevel;
-import org.apache.flink.agents.api.logger.TraceLogTarget;
+| Key | Default | Type | Description |
+| --- | --- | --- | --- |
+| `action.trigger-condition.evaluate-failure-strategy` | `WARN_AND_SKIP` | ConditionEvaluationFailureStrategy | Behavior when evaluating a trigger condition for an Event fails. `WARN_AND_SKIP` logs a warning and treats the condition as false; `FAIL` fails the Flink task. Initialization failures are not affected. See [Condition Evaluation Failures]({{< ref "docs/development/create-agent/actions#condition-evaluation-failures" >}}). |
 
-agentsEnv.getConfig().set(
-        AgentConfigOptions.TRACE_LOG_TARGETS,
-        List.of(
-                TraceLogTarget.all(TraceLogLevel.STANDARD),
-                TraceLogTarget.tool("search", TraceLogLevel.VERBOSE)));
-```
+### Model calls, tools, and retries
 
-{{< /tab >}}
-{{< /tabs >}}
+See [Chat]({{< ref "docs/development/calling-llms/chat#handle-success-and-failure" >}})
+and [Decision Models]({{< ref "docs/development/decision_models#event-driven-calls" >}})
+for model-call outcomes and retries, and [Context Retrieval]({{< ref "docs/development/vector-search/vector_stores#built-in-events-and-actions" >}})
+for vector-store queries. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}})
+for tool-call batches and timeout behavior, and [Execution Metrics]({{< ref "docs/operations/monitoring#execution-metrics" >}})
+for retry metrics.
 
-`TraceLogTarget` provides `all()` and whole-type factories `events()`, `actions()`, `tools()`, `llms()`, `parsers()`, and `subagents()`. The corresponding singular factories accept a name, such as `event("OrderCreated")` or `tool("search")`. All factories accept an optional `TraceLogLevel`. Omitting it preserves inheritance: `tool("search")` inherits the level of a matching Tool type target or `ALL`, as described below. Targets are immutable.
+| Key | Default | Type | Description |
+| --- | --- | --- | --- |
+| `chat.async` | true | boolean | Enable durable async execution for built-in Chat model calls, including routing judge calls. `false` selects synchronous execution. |
+| `decision.async` | true | boolean | Enable durable async execution for built-in Decision Model calls. `false` selects synchronous execution. |
+| `max-retries` | 0 | int | Maximum retries after the initial attempt of a built-in Chat or Decision Model call, including routing judge calls. Non-positive values disable retries. |
+| `rag.async` | true | boolean | Enable durable async execution for vector-store queries made by the built-in context retrieval Action. `false` selects synchronous execution. |
+| `retry-wait-interval` | 1 | int | Base wait in seconds between retries controlled by `max-retries`. The wait before retry N is `retry-wait-interval * 2^(N-1)`. Non-positive values retry without waiting. |
+| `tool-call.async` | true | boolean | Enable durable async execution for ordinary tools handled by the built-in Tool Call Action. With `false`, these calls run synchronously, one at a time. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}}) for batch behavior. |
 
-In YAML, `scope` accepts `EVENT_ONLY` (match Events), `ALL` (match all entities), or a selector object. Use one of the keys `event`, `action`, `tool`, `llm`, `parser`, or `subagent` with an entity name, for example `{event: OrderCreated}`. The value `"*"` selects that whole type: `{event: "*"}` is equivalent to `EVENT_ONLY`.
+These async switches select how built-in calls execute. Synchronous calls still
+use durable execution; saving outcomes for recovery requires an
+[Action State Store]({{< ref "docs/operations/consistency#configure-an-action-state-store" >}}).
+See [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}})
+for cross-language async requirements and synchronous fallbacks.
 
-The generic form `{entityType: custom, entityName: name}` also supports custom entity types reported through `ExecutionReporter`; omit `entityName` to select the whole type. Use `TraceLogTarget.entity(...)` for the same selection in Java or Python. For example, `TraceLogTarget.entity("retriever", "catalog")` corresponds to `scope: {entityType: retriever, entityName: catalog}`. Each selector object must contain exactly one category key, or the generic `entityType` and optional `entityName` fields. Multiple category keys and mixing a category key with the generic fields are rejected.
+The `ErrorHandlingStrategy` API and `error-handling-strategy` option have been
+removed. Configure retries with `max-retries`; see Chat for terminal failure handling.
 
-Direct model or tool calls inside an Action are not automatically recorded as separate calls, even with `scope: ALL`.
+### Runtime and async execution
 
-`entityType` identifies the kind of object to observe. For `entityName`, use the logical name from your Agent's code or configuration. Trace Log records and target selectors use the same name. Common examples are:
+See [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}})
+for JDK, scheduling, and cross-language requirements. Batch limits also apply to
+the built-in [parallel tool-call batches]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}}).
 
-| `entityType` | What to use as `entityName` | Example |
-|--------------|----------------------------|---------|
-| `event` | The Event type used when emitting or subscribing to Events. | `OrderCreated` |
-| `action` | The name used to declare the Action in the Agent. | `create_order` |
-| `llm` | The registered ChatModel Resource name used by the call. | `primary_model` |
+| Key | Default | Type | Description |
+| --- | --- | --- | --- |
+| `async.batch.parallelism` | os cpu count | int | Maximum concurrent calls in one `ctx.gather(...)` batch, including ordinary, durable, and built-in tool calls. Values of `1` or less run calls sequentially. Worker-pool capacity can further limit concurrency. |
+| `async.batch.timeout.ms` | -1 (disabled) | long (milliseconds) | Overall timeout for one `ctx.gather(...)` batch, in milliseconds. Non-positive values disable it. A timeout does not guarantee that running calls stop and cannot undo their external effects. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#timeouts-and-external-effects" >}}) for built-in tool-batch behavior. |
+| `job-identifier` | none | String | Stable job identifier used to scope Mem0 long-term memory. Keep an explicit value unchanged across restores. If unset, the initial Flink JobID is stored in operator state and reused when restoring a checkpoint or savepoint. |
+| `max-in-flight-input-records` | 100 | int | Maximum input records in flight per Agent operator subtask on the experimental parallel engine. Must be positive. The limit is ignored by continuation-based execution and plans containing Python Actions. See [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}}). |
+| `num-async-threads` | os cpu count * 2 | int | Worker threads per async execution pool on each Agent operator subtask. Must be positive. `async.batch.parallelism` separately limits concurrency within each batch; see [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}}) for scheduling behavior. |
+| `parallel-execution.enabled` | true | boolean | **Experimental.** Enable the parallel engine for eligible plans with only Java Actions when continuation-based execution is unavailable. `false` selects serial execution. Ignored by the continuation engine and plans containing Python Actions. See [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}}) for JDK and Python Resource requirements. |
 
-For example, `scope: {llm: primary_model}` selects calls to the Resource named `primary_model`. Its configured model or deployment is recorded separately in `entityMetadata.model`.
+### Memory
 
-Entity names match exactly. A name ending in `.*` matches its namespace and descendants: `{event: "com.foo.*"}` matches `com.foo` and `com.foo.Event`, but not `com.foobar.Event`. Other wildcard forms are unsupported. A category selector with `"*"`, or a generic selector without `entityName`, matches the whole type.
+#### Memory events {#memory-event-options}
 
-`level` accepts `OFF`, `STANDARD`, and `VERBOSE`. `OFF` writes no record. `STANDARD` truncates or summarizes attributes using the `standard` limits; `VERBOSE` retains full attributes. Both recording settings preserve all identity and relationship fields, entity metadata, timestamps, statuses, and problem categories. Media payload sanitization applies at both recording settings. See [Recording Level]({{< ref "docs/operations/monitoring#recording-level" >}}) for the truncation format and media handling. In YAML, write `level: "OFF"` with quotes so Python does not interpret it as a boolean.
-
-For each entity, matching scopes are considered from most to least specific:
-
-| Order | Matching scope |
-|-------|----------------|
-| 1 | Exact entity name within its type |
-| 2 | Namespace prefixes within its type, from longest to shortest |
-| 3 | Entity type (`EVENT_ONLY` is the `event` type scope) |
-| 4 | `ALL` |
-
-The first explicitly specified `level` in this chain applies. An omitted `level` inherits from the next matching scope and does not override it. If at least one scope matches but no matching scope specifies `level`, the entity uses `STANDARD`. If no scope matches, no record is written. Target order does not affect the result.
-
-An explicit `OFF` stops inheritance and suppresses recording. A more specific scope can enable recording by explicitly setting `STANDARD` or `VERBOSE`; omitting `level` continues to inherit `OFF`.
-
-For example, a Tool type target at `VERBOSE` supplies the level to matching namespace and exact-name targets that omit it. A matching namespace target at `OFF` suppresses an exact-name target that omits `level`, while an exact-name target with explicit `STANDARD` or `VERBOSE` enables that entity. `EVENT_ONLY` applies only to Events; its level does not affect a Tool target.
-
-Duplicate targets for the same scope merge an omitted level with an explicit level and accept repeated identical explicit levels. Different explicit levels for the same scope are rejected when logging starts, regardless of target order. This includes equivalent targets expressed as `EVENT_ONLY`, `{event: "*"}`, or `{entityType: event}`. For example, `EVENT_ONLY` without `level` and `{event: "*"}` with `VERBOSE` merge into one Event type target at `VERBOSE`. Typed targets, mapping objects, and YAML follow the same validation, matching, and inheritance rules.
-
-Selecting a Tool does not automatically select its parent Action; recorded relationships retain their IDs even when related records are omitted.
-
-An `ALL` preset with `level: "OFF"` disables its default range, while a more specific target with explicit `STANDARD` or `VERBOSE` can enable recording. A preset is unnecessary when selecting only one entity type. To record only Tools:
-
-```yaml
-agent:
-  trace-log:
-    targets:
-      - scope: {tool: "*"}
-        level: VERBOSE
-```
-
-To record everything except one Tool, use a local `OFF` target:
-
-```yaml
-agent:
-  trace-log:
-    targets:
-      - scope: ALL
-        level: STANDARD
-      - scope: {tool: search}
-        level: "OFF"
-```
-
-The old `event-log.*`, `eventLoggerType`, `baseLogDir`, and `prettyPrint` configuration keys are unsupported and rejected at startup. Migrate selection and verbosity to `targets`, truncation limits to `trace-log.standard.*`, and output settings to `trace-log.output-type`, `trace-log.base-dir`, and `trace-log.pretty-print`.
-
-### Memory Event Options
-
-The eight `memory.generate-event*` options have no raw `ConfigOption` default. When a sub-key and the master switch are both unset, the runtime uses the effective default shown below. See [Memory Observability]({{< ref "docs/development/memory/memory_events" >}}) for resolution order, event payloads, and subscription examples.
+An explicitly configured operation-specific switch overrides `memory.generate-event`.
+If neither is set, the effective default below applies. See
+[Memory Observability]({{< ref "docs/development/memory/memory_events" >}}) for event
+payloads and subscription examples. The independent `agent-run.begin-event` switch
+is listed under [Observability](#observability).
 
 | Key | Raw default | Effective default | Type | Description |
-|-----|-------------|-------------------|------|-------------|
-| `memory.generate-event` | unset | per-operation defaults | boolean | Master fallback for unset operation-specific switches. |
-| `memory.generate-event.short-term-write` | unset | on | boolean | Emit short-term memory write events. |
-| `memory.generate-event.short-term-read` | unset | off | boolean | Emit short-term memory read events. |
-| `memory.generate-event.sensory-write` | unset | on | boolean | Emit sensory memory write events. |
-| `memory.generate-event.sensory-read` | unset | off | boolean | Emit sensory memory read events. |
-| `memory.generate-event.long-term-update` | unset | on | boolean | Emit long-term memory add/delete events. |
-| `memory.generate-event.long-term-get` | unset | on | boolean | Emit long-term memory get events. |
-| `memory.generate-event.long-term-search` | unset | on | boolean | Emit long-term memory search events. |
-| `agent-run.begin-event` | false | off | boolean | Opt in to the agent-run begin event. Independent of the memory-event master switch. |
+| --- | --- | --- | --- | --- |
+| `memory.generate-event` | unset | per-operation defaults | boolean | Fallback value for operation-specific memory-event switches that are unset. |
+| `memory.generate-event.long-term-get` | unset | on | boolean | Emit Events describing long-term memory reads. |
+| `memory.generate-event.long-term-search` | unset | on | boolean | Emit Events describing long-term memory searches. |
+| `memory.generate-event.long-term-update` | unset | on | boolean | Emit Events describing long-term memory additions, updates, deletions, and memory-set deletion. |
+| `memory.generate-event.sensory-read` | unset | off | boolean | Emit Events describing sensory memory reads. |
+| `memory.generate-event.sensory-write` | unset | on | boolean | Emit Events describing sensory memory writes. |
+| `memory.generate-event.short-term-read` | unset | off | boolean | Emit Events describing short-term memory reads. |
+| `memory.generate-event.short-term-write` | unset | on | boolean | Emit Events describing short-term memory writes. |
 
-### Action State Store
+#### Short-term memory TTL
+
+See [Short-Term Memory TTL]({{< ref "docs/development/memory/sensory_and_short_term_memory#short-term-memory-ttl" >}})
+for TTL behavior and setup examples.
+
+| Key | Default | Type | Description |
+| --- | --- | --- | --- |
+| `short-term-memory.state-ttl.ms` | 0 | long | Short-term memory TTL in milliseconds. A positive value enables expiration; non-positive values disable it. |
+| `short-term-memory.state-ttl.update-type` | `ON_READ_AND_WRITE` | ShortTermMemoryTtlUpdate | When TTL is enabled, refresh expiration on creation and writes (`ON_CREATE_AND_WRITE`), or also on reads (`ON_READ_AND_WRITE`). |
+| `short-term-memory.state-ttl.visibility` | `NEVER_RETURN_EXPIRED` | ShortTermMemoryTtlVisibility | When TTL is enabled, never return expired state (`NEVER_RETURN_EXPIRED`), or allow it until cleanup (`RETURN_EXPIRED_IF_NOT_CLEANED_UP`). |
+
+### Action consistency
+
+<span id="action-state-store"></span>
+
+For consistency modes, setup examples, and recovery behavior, see
+[Consistency]({{< ref "docs/operations/consistency" >}}).
 
 #### Common
 
 | Key                          | Default          | Type    | Description                                                                              |
 |------------------------------|------------------|---------|------------------------------------------------------------------------------------------|
-| `actionStateStoreBackend`    | (none)           | String  | The backend for action state store. Supported values: `"kafka"`, `"fluss"`.              |
+| `actionStateStoreBackend` | (none) | String | Action State Store backend: `"kafka"` or `"fluss"` (case-insensitive). When unset, no external Action State Store is enabled. |
 
 #### Kafka-based Action State Store
 
-Here are the configuration options for Kafka-based Action State Store.
+Dedicate one topic to each logical Agent operator, shared by that operator's
+subtasks. Separate operators in the same job need separate topics.
+
+The store creates the configured topic if it does not exist, and reuses an existing
+topic without changing its settings. The partition-count and replication-factor
+options apply only when creating a topic.
+
+The Kafka Action State Store and its cleanup tool currently expose no configuration
+for passing Kafka client SASL/SSL settings.
 
 | Key                                 | Default                  | Type    | Description                                                                 |
 |-------------------------------------|--------------------------|---------|-----------------------------------------------------------------------------|
-| `kafkaBootstrapServers`             | "localhost:9092"         | String  | The config parameter specifies the Kafka bootstrap server.                  |
-| `kafkaActionStateTopic`             | (none)                   | String  | The Kafka topic for action state. Dedicate it to one logical Flink Agents operator, shared by that operator's subtasks. |
-| `kafkaActionStateTopicNumPartitions`| 64                       | Integer | The config parameter specifies the number of partitions for the Kafka action state topic. |
-| `kafkaActionStateTopicReplicationFactor` | 1                     | Integer | The config parameter specifies the replication factor for the Kafka action state topic. |
-| `kafkaActionStateTombstoneEnabled`  | false                    | Boolean | Whether pruning sends tombstone records so log compaction can reclaim pruned keys on a compacted action-state topic. Off by default: pruning does not invalidate older restore points, but the topic continues to grow. When enabled, the checkpoint whose completion triggers pruning remains usable, but restoring an earlier checkpoint or savepoint may replay later tombstones and re-execute already completed actions. Enable only if the job never restores from earlier checkpoints or savepoints, or if re-executing actions is acceptable. |
-| `kafkaActionStateCleanupControlTopic` | (none)                 | String  | Separate, single-partition topic containing committed checkpoint-aligned cleanup boundaries. It must use `cleanup.policy=compact` without delete retention, differ from the action-state topic, and be dedicated to the same job recovery history. Setting it enables boundary enforcement during recovery. It cannot be combined with `kafkaActionStateTombstoneEnabled`. |
+| `kafkaActionStateCleanupControlTopic` | (none) | String | Separate topic containing committed checkpoint-aligned cleanup boundaries. When configured, recovery rejects points requiring data below the boundary. Mutually exclusive with `kafkaActionStateTombstoneEnabled=true`. See [Checkpoint-aligned Kafka cleanup](#checkpoint-aligned-kafka-cleanup) for prerequisites. |
+| `kafkaActionStateTombstoneEnabled` | false | Boolean | Write deletion markers for execution records covered by completed checkpoints. Enabling this may cause completed Actions to run again when restoring older checkpoints or savepoints. Mutually exclusive with `kafkaActionStateCleanupControlTopic`. See [Kafka retention and cleanup]({{< ref "docs/operations/consistency#kafka-retention-and-cleanup" >}}) for the recovery trade-off. |
+| `kafkaActionStateTopic` | (none) | String | Topic storing Action state. Required when `actionStateStoreBackend` is `kafka`. |
+| `kafkaActionStateTopicNumPartitions` | 64 | Integer | Number of partitions when creating the topic. Does not change an existing topic. |
+| `kafkaActionStateTopicReplicationFactor` | 1 | Integer | Replication factor when creating the topic. Does not change an existing topic. |
+| `kafkaBootstrapServers` | "localhost:9092" | String | Bootstrap servers for the Kafka Action State Store. |
+
+##### Changes to an existing Kafka store
+
+When reusing checkpoints or savepoints with this store:
+
+- Keep the original topic and partition count. Increasing the partition count
+  prevents recovery from existing snapshots and causes checkpoints of the running
+  job to fail. Do not delete and recreate the topic or switch to a replacement,
+  even if it has the same name and partition count.
+- Retention changes and manual deletion must preserve the records needed by every
+  recovery point you intend to retain. See
+  [Kafka retention and cleanup]({{< ref "docs/operations/consistency" >}}#kafka-retention-and-cleanup).
+- Once a checkpoint-aligned cleanup boundary has been committed, keep the same
+  `kafkaActionStateCleanupControlTopic` configuration and its committed history
+  for all subsequent runs and restores.
 
 ##### Checkpoint-aligned Kafka cleanup
 
-Checkpoint-aligned cleanup is an explicit administrative operation. `KafkaActionStateCleanupTool` provides the same command-line workflow for Java and Python jobs. Run it with the Flink Agents runtime JAR and the matching Flink State Processor API JAR on the classpath:
+`KafkaActionStateCleanupTool` requires the following configuration and recovery
+constraints:
 
-```text
-plan --checkpoint PATH (--operator-uid UID | --operator-uid-hash HASH) --output FILE
-apply --plan FILE --bootstrap-servers SERVERS --control-topic TOPIC [--replication-factor N]
-```
+- The data topic must use `cleanup.policy=compact,delete`, `retention.ms=-1`, and
+  `retention.bytes=-1`. These are also the settings used when the store creates a
+  new data topic.
+- The control topic must differ from the data topic, have exactly one partition,
+  and use `cleanup.policy=compact` without delete retention. Dedicate it to the
+  same logical Agent operator and physical data topic; do not share it across
+  operators.
+- Before enabling `kafkaActionStateCleanupControlTopic` on the job, the control
+  topic must exist and contain a committed cleanup boundary. A missing topic or
+  committed history prevents recovery.
+- Per-key tombstones must be disabled. Cleanup boundaries can move only forward;
+  run only one `apply` operation at a time.
+- The `plan` command accepts only versioned Kafka recovery markers. Legacy map
+  markers can still be used for job recovery, but cannot authorize cleanup.
 
-The `plan` command reads all recovery markers from the selected checkpoint or savepoint through Flink's State Processor API, creates a deterministic plan using the earliest required offset per partition, and refuses to overwrite an existing output file. Legacy map markers can still be restored by a job, but cannot authorize deletion because they do not identify the physical Kafka topic. The `apply` command verifies the content-derived plan ID before contacting Kafka. Plan files must contain exactly one JSON document; trailing content is rejected. The optional `--replication-factor` controls replication when creating the control topic, defaults to `1`, and must be between `1` and `32767`.
+The `apply` command's optional `--replication-factor` controls creation of the
+control topic. It defaults to `1` and accepts values from `1` to `32767`.
 
-Review and retain the plan's deterministic JSON before applying it. The coordinator verifies that the selected offsets are still available, writes `COMMITTED` before calling Kafka `deleteRecords`, verifies every resulting beginning offset, and then writes `APPLIED`. Reapplying the same plan retries an interrupted committed operation without changing its boundary. Set `kafkaActionStateCleanupControlTopic` on the job only after the first plan is committed; recovery requires the configured topic to exist and contain a committed boundary, and fails closed if the topic is missing or empty.
-
-Physical prefix cleanup requires the action-state data topic to use `cleanup.policy=compact,delete`, `retention.ms=-1`, and `retention.bytes=-1`. The store uses those settings when it creates a new topic. Before applying cleanup to an existing topic, alter it to those values. The `delete` policy enables Kafka's `deleteRecords` API, while both retention limits remain disabled so Kafka cannot independently retire records that a supported checkpoint still needs. Apply validates these effective settings before writing `COMMITTED` and rechecks them immediately before and after deletion.
-
-For the first cleanup on an existing job, stop the job, create and apply the plan from the recovery point that will become the oldest supported one, and restart from that same point with `kafkaActionStateCleanupControlTopic` configured. This avoids a failover window in which the old running job does not yet know the committed boundary. Once the job is running with boundary enforcement enabled, later forward-only plans may be applied while it runs. Run only one `apply` operation at a time; concurrent incomparable plans fail closed and require operator intervention. Do not recreate the action-state topic or change its partitions while an apply operation is running: the coordinator checks the topic ID and partition set before and after deletion, but Kafka addresses `deleteRecords` by topic name and cannot atomically fence topic lifecycle changes.
-
-The action-state topic and control topic must be dedicated to one job's recovery history. Once any boundary has been committed, every future run and restore of that history must retain the same control-topic configuration; omitting or changing it removes logical boundary enforcement. The boundary can move only forward. A checkpoint whose marker is below the committed boundary is rejected even if Kafka has not finished physical deletion.
-
-Per-key tombstones and checkpoint-aligned cleanup are mutually exclusive. Tombstones are not tied to the selected recovery boundary and could invalidate a checkpoint that checkpoint-aligned cleanup promises to retain.
-
-To migrate a job that previously emitted tombstones, first stop it cleanly so its Kafka producer closes and all accepted tombstone sends finish. Restart from the newest recovery point that is valid under the tombstone mode's existing recovery trade-off, with `kafkaActionStateTombstoneEnabled=false` and no cleanup control topic configured. After that attempt completes a new checkpoint or savepoint, stop it again, create and apply the first cleanup plan from that new recovery point, and restart from the same point with `kafkaActionStateCleanupControlTopic` configured. The new marker is after every old tombstone; selecting an older recovery point cannot provide the same guarantee because replay may still encounter those tombstones.
+For the procedure and command examples, see
+[Cleanup steps]({{< ref "docs/operations/consistency" >}}#cleanup-steps). Jobs that
+previously emitted tombstones must first follow
+[Switching from per-key tombstones]({{< ref "docs/operations/consistency" >}}#switching-from-per-key-tombstones).
 
 #### Fluss-based Action State Store
 
-Here are the configuration options for Fluss-based Action State Store.
+Dedicate one table to each logical Agent operator, shared by that operator's
+subtasks. Separate operators in the same job need separate tables.
 
-When taking a checkpoint, the store captures the bucket end offsets and then synchronously appends a fresh copy of each cached action state needed for replay before saving that recovery marker. States whose input sequence is at or below the key’s last completed sequence number in this checkpoint are skipped. Completed actions in unfinished inputs and all states for keys without a completed sequence number are still refreshed. This keeps durable call results available even when they were persisted before the checkpoint. Skipped states remain cached until checkpoint completion prunes them. Each snapshot adds one write per state needed for replay, so large numbers of unfinished inputs and frequent checkpoints increase Fluss traffic and checkpoint latency. A failed refresh fails the checkpoint.
-
-Fluss log retention must preserve the records from every checkpoint or savepoint you intend to restore. Refreshing state does not protect older restore points from retention or repair recovery markers created before this fix.
+The store creates the configured database and append-only log table if they do not
+exist, and reuses an existing table. The bucket-count option applies only when
+creating a table. SASL options apply when `flussSecurityProtocol` is `SASL`; they
+are ignored for `PLAINTEXT`.
 
 | Key                          | Default          | Type    | Description                                                                              |
 |------------------------------|------------------|---------|------------------------------------------------------------------------------------------|
-| `flussBootstrapServers`      | "localhost:9123" | String  | The Fluss bootstrap servers address.                                                     |
-| `flussActionStateDatabase`   | "flink_agents"   | String  | The Fluss database name for storing action state.                                        |
-| `flussActionStateTable`      | (none)           | String  | The Fluss table for action state. Dedicate it to one logical Flink Agents operator, shared by that operator's subtasks. |
-| `flussActionStateTableBuckets` | 64             | Integer | The number of buckets for the Fluss action state table.                                  |
-| `flussSecurityProtocol`      | "PLAINTEXT"      | String  | The authentication protocol for Fluss client. Valid values: `PLAINTEXT` (default, no authentication), `SASL` (SASL/PLAIN authentication). |
-| `flussSaslMechanism`         | "PLAIN"          | String  | The SASL mechanism for Fluss authentication.                                             |
-| `flussSaslJaasConfig`        | (none)           | String  | The JAAS configuration string for Fluss SASL authentication.                             |
-| `flussSaslUsername`          | (none)           | String  | The username for Fluss SASL authentication.                                              |
-| `flussSaslPassword`          | (none)           | String  | The password for Fluss SASL authentication.                                              |
+| `flussActionStateDatabase` | "flink_agents" | String | Database containing the Action State Store table. |
+| `flussActionStateTable` | (none) | String | Append-only log table storing Action state. Required when `actionStateStoreBackend` is `fluss`. |
+| `flussActionStateTableBuckets` | 64 | Integer | Number of buckets when creating the table. Does not change an existing table. |
+| `flussBootstrapServers` | "localhost:9123" | String | Bootstrap servers for the Fluss Action State Store. |
+| `flussSaslJaasConfig` | (none) | String | JAAS configuration for Fluss SASL authentication. Takes precedence over `flussSaslUsername` and `flussSaslPassword`. |
+| `flussSaslMechanism` | "PLAIN" | String | SASL mechanism used when `flussSecurityProtocol` is `SASL`. Use `PLAIN` for SASL/PLAIN authentication. |
+| `flussSaslPassword` | (none) | String | Password for SASL/PLAIN authentication. Set together with `flussSaslUsername` when `flussSaslJaasConfig` is unset. |
+| `flussSaslUsername` | (none) | String | Username for SASL/PLAIN authentication. Set together with `flussSaslPassword` when `flussSaslJaasConfig` is unset. |
+| `flussSecurityProtocol` | "PLAINTEXT" | String | Fluss client authentication protocol: `PLAINTEXT` (no authentication) or `SASL` (SASL/PLAIN authentication), case-insensitive. |
+
+##### Changes to an existing Fluss store
+
+When reusing checkpoints or savepoints with this store:
+
+- Keep the original cluster, database, table, and bucket layout. Do not change the
+  bucket count, recreate the table, or switch to a replacement table. A replacement
+  with the same name and bucket count may not be detected during recovery.
+- Preserve the append-only log table type and the schema used by Flink Agents,
+  including column types and order.
+- Log retention changes and manual truncation must preserve the records needed
+  by every recovery point you intend to retain. See
+  [Fluss retention]({{< ref "docs/operations/consistency" >}}#fluss-retention).

@@ -433,8 +433,8 @@ parent's. The work happens in your own code or in a remote agent service. The pa
 only submits to it and waits for the outcome. The framework cannot perform that work
 for you, because it does not know your protocol. So you write the part that performs
 one invocation, and the framework supplies everything around it. It runs your code
-under durable execution, and after a failover it replays the recorded result instead
-of calling your code again.
+under durable execution; [Durability and failover](#durability-and-failover) describes
+how saved outcomes are reused.
 
 What you write is a setup class. Its only job is to carry out one invocation, so it
 declares no actions and no events of its own. It extends a framework base class and
@@ -706,9 +706,9 @@ An async sub-agent talks to a service that runs the task for you. The service ac
 the work and answers at once, and you query it later for the run's status and
 result.
 
-An async setup starts the remote run when the caller submits, through one durable
-POST. Waiting for the result then polls the run's status until it reaches a terminal
-state, and fetches it.
+An async setup submits the remote run through durable execution when the caller
+submits. Waiting for the result then polls the run's status until it reaches a
+terminal state, and fetches it.
 
 The base class owns that submit-poll-fetch composition, along with the durable
 execution and the crash-window recovery. You supply the three transport calls it is
@@ -880,10 +880,10 @@ agents:
 
 {{< /tabs >}}
 
-The base class also recovers the crash window between "POST sent" and "POST durably
-recorded". On recovery it probes the run's status first, and it re-posts only when the
-probe reports that the run never started. Override `reconcileSubmitRequest` /
-`reconcile_submit_request` only if your service needs a different repair.
+When recovery revisits a recorded in-flight submission, the default reconciler
+probes the run's status first and re-submits only when the probe reports that the
+run never started. Override `reconcileSubmitRequest` / `reconcile_submit_request`
+if your service needs a different repair.
 
 ## Invoke a sub-agent
 
@@ -1202,26 +1202,30 @@ triggers recovery.
 
 ## Durability and failover
 
-A sub-agent call always runs through
+Sub-agent calls use
 [durable execution]({{< ref "docs/development/create-agent/actions#durable-execution" >}}).
-Its result is persisted and replayed on recovery, so the work is not repeated after
-a failover. There is no durability toggle and no sub-agent timeout option.
+To persist invocation outcomes for recovery, configure checkpointing and an
+[Action State Store]({{< ref "docs/operations/consistency#configure-an-action-state-store" >}}).
+Recovery can then reuse saved outcomes. See
+[Consistency]({{< ref "docs/operations/consistency#recovery-guarantees-and-user-responsibilities" >}})
+for replay behavior and limits on external side effects. There is no per-sub-agent
+durability toggle or sub-agent timeout option.
 
 - Identities are replay-stable. Without explicit ids, the framework assigns
   `session_id` and `call_id` from the executing action and the sub-agent's resource
   name, so a replay of the same call gets the same ids. The ids are opaque, so do not
   parse them. Two sub-agents called from one action never collide, because the
   resource name is part of the namespace.
-- A deferred call runs under the durable id you build in `prepare`, so a replay
-  re-issues the same logical invocation. A remote keyed on the same values then reuses
-  the original work instead of starting a second one. The reconciler is optional.
-  Without it, a crash between the call landing and its result being persisted re-runs
-  the sub-agent and duplicates its side effects, so supply one whenever the work
-  cannot be repeated.
-- An async call reuses one identity for both its POST and its poll, so your service
-  sees at most one run per call.
-- An internal sub-agent's child actions have their own persisted state, so a replay
-  reuses the recorded child output instead of running the child again.
+- A deferred call uses the durable id you build in `prepare`. Supply a reconciler
+  when the remote operation cannot be safely repeated; see
+  [Deferred execution](#deferred-execution).
+- An async call uses the same identity for submission, status queries, and result
+  fetching. Your service must associate them with one logical run and handle
+  repeated submissions idempotently. The default submission reconciler probes for
+  that run before re-submitting; see
+  [Async (pub/sub) execution](#async-pubsub-execution).
+- For an internal sub-agent, recovery can reuse saved child Action completions and
+  outputs. Unfinished child Actions may run again.
 
 ## Metrics and Trace Log
 

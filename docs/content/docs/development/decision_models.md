@@ -534,8 +534,10 @@ when the runtime does not support asynchronous Python calls.
 
 When an Action State Store is configured, successful and failed provider outcomes
 are recorded through the durable execution API, so recovery can replay persisted
-outcomes. A provider request whose outcome was not persisted may run again after
-recovery. Each attempt emits model execution reports. Retry metrics and available
+outcomes. See [Consistency]({{< ref "docs/operations/consistency#recovery-flow" >}})
+for recovery guarantees.
+
+Each attempt emits model execution reports. Retry metrics and available
 token counts are recorded under the named model resource; missing token counts
 remain unreported. Accumulated retry metrics are also recorded when execution
 exits with an exception.

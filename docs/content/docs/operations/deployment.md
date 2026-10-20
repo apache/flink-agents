@@ -84,60 +84,11 @@ For all available options, see the [Flink CLI documentation](https://nightlies.a
 Now you should see a Flink job submitted to the Flink Cluster in Flink web UI (typically accessible at http://&lt;jobmanagerHost&gt;:8081).
 
 
+<span id="exactly-once-output-consistency"></span>
+<span id="exactly-once-action-consistency"></span>
+
 ## Consistency Guarantees
 
-Flink Agents leverage Flink’s checkpointing to provide **exactly-once output consistency**. Exactly-once output consistency does not mean each event is processed only once; it means that every event will affect the state and output result exactly once. This is sufficient for typical data-processing use cases where the processing of data does not cause any external side effects.
-
-However, actions in Flink Agents can trigger external side effects (for example, sending an email or invoking an external API). These side effects should not be executed more than once. To address this, Flink Agents support **exactly-once action consistency** by leveraging an external action state store.
-
-### Exactly-Once Output Consistency
-
-When a job runs on a Flink cluster, Flink periodically takes checkpoints. See [Flink Checkpointing](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/state/checkpoints/) for details.  
-After recovery from a checkpoint, Flink Agents reprocess events that arrived after that checkpoint. As a result, any actions triggered by those events may be executed again.
-
-### Exactly-Once Action Consistency
-
-To enable exactly-once action consistency, configure an external action state store.
-Flink Agents record state for each Action in this store. After recovering from a
-checkpoint, the framework reuses Actions whose completion was persisted, including
-their stored Sensory/Short-Term Memory updates and output Events. Unfinished Actions
-may execute again.
-
-When a completed Action is reused during recovery, its stored output Events keep their original Event IDs. The runtime records their relationships to the current trigger Event in Trace Log `entityMetadata`.
-
-The same store also saves individual call outcomes for
-[Durable Execution]({{< ref "docs/development/create-agent/actions#durable-execution" >}}).
-When an unfinished Action runs again, durable calls can reuse persisted outcomes.
-An external operation can finish before its outcome is saved, so recovery may repeat
-that operation. Use idempotent operations or reconciliation for external side effects;
-see [Recovery Behavior]({{< ref "docs/development/create-agent/actions#recovery-behavior" >}}).
-
-{{< hint info >}}
-**Note**: Currently, Kafka and Fluss are supported as the external action state store.
-{{< /hint >}}
-
-{{< hint warning >}}
-The action-state key format changed in Flink Agents 0.4 and action-state records written by earlier versions are unsupported. When upgrading, use a fresh Kafka topic or Fluss table and start without an older checkpoint or savepoint. Recovery validates the current fields, but cannot reliably distinguish every older record from the current format.
-
-Action-state keys contain a digest of the serialized key. Changing key types or serializer configuration when recovering existing state is unsupported, even if Flink accepts the change for keyed state: the same key can serialize to different bytes, causing recovery to miss completed actions and repeat their side effects. These changes are not detected by the action-state store. Preserve the original key types and serializer configuration for recovery. Custom key serializers must produce deterministic bytes.
-
-Action-state keys identify an action by its name. Keeping an action's name across a code change lets recovery reuse its completed results; renaming an action makes its recorded results unreachable, so it is executed again on the next recovery.
-
-Dedicate each Kafka topic or Fluss table to one logical Flink Agents operator, shared by that operator's subtasks. Action-state keys do not contain a job or operator namespace, so sharing a backend between logical operators can allow otherwise identical records to collide.
-{{< /hint >}}
-
-The business-key component stored in the backend is a SHA-256 digest rather than the serialized key itself. This keeps record keys bounded and avoids embedding raw key bytes, but it is not encryption; protect the action-state backend with appropriate access controls.
-
-See [Action State Store Configuration]({{< ref "docs/operations/configuration#action-state-store" >}}) for configuration options.
-
-{{< hint warning >}}
-**Note**: Enabling Kafka action-state tombstones can invalidate checkpoints or savepoints older than the prune and cause completed actions to execute again. See [Action State Store Configuration]({{< ref "docs/operations/configuration#action-state-store" >}}) for the recovery trade-off.
-{{< /hint >}}
-
-{{< hint warning >}}
-**Note**: A committed checkpoint-aligned Kafka cleanup boundary permanently makes older recovery points unsupported. Every subsequent run and restore must use the same cleanup control topic so the runtime can reject those recovery points before replay. See [Checkpoint-aligned Kafka cleanup]({{< ref "docs/operations/configuration#checkpoint-aligned-kafka-cleanup" >}}).
-{{< /hint >}}
-
-{{< hint info >}}
-**Note**: Exactly-once action consistency is guaranteed only if, after recovering from the same checkpoint, inputs for each key arrive in the same order as before recovery. If this ordering requirement is not met, the system falls back to exactly-once output consistency.
-{{< /hint >}}
+Before submitting the job, choose and configure its consistency mode. See
+[Consistency]({{< ref "docs/operations/consistency" >}}) for required setup,
+recovery guarantees, retention and cleanup, and upgrade guidance.
