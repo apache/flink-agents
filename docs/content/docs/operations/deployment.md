@@ -91,4 +91,4 @@ Now you should see a Flink job submitted to the Flink Cluster in Flink web UI (t
 
 Before submitting the job, choose and configure its consistency mode. See
 [Consistency]({{< ref "docs/operations/consistency" >}}) for required setup,
-recovery guarantees, retention and cleanup, and upgrade guidance.
+recovery guarantees, retention and cleanup.

@@ -354,12 +354,3 @@ affected by past tombstones.
 Flink Agents currently provides no equivalent of Kafka's per-key tombstones or
 checkpoint-aligned cleanup for the Fluss Action State Store. Instead, use Fluss's
 own log retention settings to manage record retention and cleanup.
-
-## Migration notes
-
-### Flink Agents 0.4
-
-Flink Agents 0.4 changes the Action State Store record key format and does not
-support records written by earlier versions. When upgrading from an earlier
-version, use a new Kafka topic or Fluss table and submit the new job without
-restoring a checkpoint or savepoint from the previous version.
