@@ -84,6 +84,7 @@ under the License.
                                     <artifact>org.apache.flink:flink-agents-*</artifact>
                                     <excludes>
                                         <exclude>org/apache/flink/agents/**</exclude>
+                                        <exclude>META-INF/versions/*/org/apache/flink/agents/**</exclude>
                                     </excludes>
                                 </filter>
                             </filters>

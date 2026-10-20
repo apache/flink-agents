@@ -111,6 +111,7 @@
                                     <artifact>*:*</artifact>
                                     <includes>
                                         <include>org/apache/flink/agents/**</include>
+                                        <include>META-INF/versions/*/org/apache/flink/agents/**</include>
                                     </includes>
                                 </filter>
                             </filters>
