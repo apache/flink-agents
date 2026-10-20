@@ -252,7 +252,7 @@ ChatResult result = ctx.chat(
         .await();
 ```
 
-Use the result in the same Action. Java awaits require JDK 21 and the runtime
+Use the result in the same Action. Java awaits require the runtime
 configuration described in [Using ctx.chat]({{< ref "docs/development/calling-llms/chat#using-ctx-chat" >}}).
 {{< /tab >}}
 {{< /tabs >}}

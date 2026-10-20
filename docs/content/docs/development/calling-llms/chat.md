@@ -222,9 +222,14 @@ tool timeouts apply; `ctx.chat` adds no whole-call timeout.
 <span id="java-runtime-requirements"></span>
 
 {{< hint warning >}}
-Java `ctx.chat` calls require JDK 21.
-Earlier JDK versions are not supported: awaiting the call throws before sending
-the request. Use [Chat Events](#chat-events) on those versions.
+A Java `ctx.chat` call needs a runtime that releases the operator while the chat
+graph runs: JDK 21+ with continuation-based execution, or the experimental
+parallel execution engine on JDK 11–20. With neither, awaiting the call throws
+before the request is sent; use [Chat Events](#chat-events) on those versions.
+See [JDK and Scheduling Requirements]({{< ref "docs/development/create-agent/actions#jdk-and-scheduling-requirements" >}})
+for the parallel engine's plan and configuration prerequisites. On that engine the
+waiting Action keeps its worker thread, so concurrent or nested chat calls can
+exhaust the worker pool.
 Python `ctx.chat` calls do not require JDK 21.
 A job that runs on JDK 21 also needs
 `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` in `env.java.opts.all`,

@@ -1281,7 +1281,12 @@ If you supply your own IDs, keep them unchanged when the same call is retried.
 
 ### Result types after recovery
 
-Python persists result payloads with cloudpickle and restores their Python types.
+Python persists the result payload of an external sub-agent call with cloudpickle
+and restores its Python types. An internal call's result is recorded by the Java
+runtime as JSON, so a Python caller reads JSON values from it: map keys are
+strings, and nested containers and nulls decode as Python JSON values. Custom
+Python objects are not preserved, and the values are the same on the first
+execution and after recovery.
 Java persists them as JSON, so a custom object returned by `getResult()` can be
 restored as a map after recovery. Use `getResult(Class<T>)` to obtain the expected
 Java type on both the first execution and after recovery.
@@ -1324,9 +1329,18 @@ Trace Log selection does not affect metrics collection.
 - Create an internal child with the same Java or Python Agent API as its parent.
   An external setup and the action invoking it must use the same language;
   cross-language calls to external setups are not supported.
-- Calling an internal sub-agent from Java requires JDK 21+ with the Continuation
-  API available. This additional requirement does not apply to Python callers or
-  external sub-agents.
+- Calling an internal sub-agent from Java requires a runtime that releases the
+  operator while the child graph runs: JDK 21+ with the Continuation API, or the
+  experimental parallel execution engine on JDK 11–20. With neither, resolving the
+  call fails before the child starts. See
+  [JDK and Scheduling Requirements]({{< ref "docs/development/create-agent/actions#jdk-and-scheduling-requirements" >}}).
+  This additional requirement does not apply to Python callers or external
+  sub-agents.
+- On the parallel execution engine, every Action of an internal child must be a
+  Java Action, or the job fails when the operator opens. A caller that waits there
+  keeps its worker thread, so concurrent or nested internal calls can exhaust the
+  worker pool. See
+  [Runtime and async execution]({{< ref "docs/operations/configuration#runtime-and-async-execution" >}}).
 - There is no per-call sub-agent timeout setting.
 - For multiple model-driven calls, enabling `tool-call.async` with
   `async.batch.parallelism` above 1 allows external async tasks to overlap if the
