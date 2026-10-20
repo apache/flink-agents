@@ -352,19 +352,11 @@ for the hosting job. The checks above identify recovery requirements and known
 risks. They do not establish which Flink Agents and Flink version combinations are
 supported.
 
-### Starting without existing state
-
-If the target release requires a fresh start without restoring a checkpoint or
-savepoint, configure the source's starting position before launching the new job.
-Depending on that starting position, the new job may reprocess input handled by
-the previous version. If it does, use idempotency or deduplication to prevent
-repeated external effects.
-
 ### Migration notes
 
 #### Flink Agents 0.4
 
 Flink Agents 0.4 changes the Action State Store record key format and does not
 support records written by earlier versions. When upgrading from an earlier
-version, use a new Kafka topic or Fluss table and
-[start without restoring an earlier checkpoint or savepoint](#starting-without-existing-state).
+version, use a new Kafka topic or Fluss table and submit the new job without
+restoring a checkpoint or savepoint from the previous version.
