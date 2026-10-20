@@ -20,6 +20,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from pyflink.common import Row
 
 from flink_agents.api.chat_message import MessageRole
 from flink_agents.api.events.event import InputEvent
@@ -38,7 +39,7 @@ from flink_agents.examples.quickstart.agents.table_review_analysis_agent import 
     ("agent", "payload"),
     [
         (ReviewAnalysisAgent, {"id": "product", "review": "damaged"}),
-        (TableReviewAnalysisAgent, {"id": "product", "review": "damaged"}),
+        (TableReviewAnalysisAgent, Row(id="product", review="damaged")),
         (
             ProductSuggestionAgent,
             {"id": "product", "score_hist": ["1"], "unsatisfied_reasons": ["damaged"]},

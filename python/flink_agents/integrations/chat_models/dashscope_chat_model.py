@@ -21,10 +21,14 @@ import uuid
 from typing import Any, Dict, List, Mapping, Sequence
 
 from dashscope import Generation
-from pydantic import BaseModel, Field
+from pydantic import Field
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema, render_output_schema
+from flink_agents.api.agents.types import (
+    OutputSchema,
+    native_output_model,
+    render_output_schema,
+)
 from flink_agents.api.chat_message import (
     ChatMessage,
     MessageRole,
@@ -68,23 +72,6 @@ _NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
 )
 
 
-def _native_output_model(
-    output_schema: OutputSchema | None,
-) -> type[BaseModel] | None:
-    """The model a schema translates natively to, or ``None`` where none applies.
-
-    ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
-    translation and keeps the prompt-engineering fallback.
-
-    Separate from the render below because the caller-conflict check needs to know
-    whether a schema will be sent, and under what name, before anything is rendered.
-    """
-    schema = getattr(output_schema, "output_schema", None)
-    if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
-        return None
-    return schema
-
-
 def _native_response_format(
     output_schema: OutputSchema | None,
 ) -> Dict[str, Any] | None:
@@ -100,7 +87,7 @@ def _native_response_format(
     but declares no fields is sent as it is, leaving the provider to accept or refuse
     the document it receives.
     """
-    model = _native_output_model(output_schema)
+    model = native_output_model(output_schema)
     if model is None:
         return None
     return {
@@ -273,7 +260,7 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         bool
             ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass.
         """
-        return _native_output_model(output_schema) is not None
+        return native_output_model(output_schema) is not None
 
     def chat(
         self,
@@ -339,7 +326,7 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
             # schema turns out to render to, and reporting a render failure instead
             # would describe the wrong problem. The name is read off the model class,
             # so this needs no rendered document.
-            native_model = _native_output_model(output_schema)
+            native_model = native_output_model(output_schema)
             if "response_format" in kwargs:
                 msg = (
                     f"The {native_model.__name__} output schema is sent as "

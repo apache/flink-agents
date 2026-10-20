@@ -29,7 +29,7 @@ Flink Agents provides `ReActAgent` as a built-in subclass of `Agent` that implem
 ReAct Agent is a general paradigm that combines reasoning and action capabilities to solve complex tasks. A `ReActAgent` requires a chat model. You can optionally provide a prompt, an output schema, tools, and skills; the model then decides how to achieve the goal and when to use the capabilities you expose.
 
 {{< hint info >}}
-The snippets on this page are fragments that each focus on a single concept. For an end-to-end runnable walkthrough, see the [Use the Built-in ReAct Agent]({{< ref "docs/get-started/quickstart/react_agent" >}}) and the full source: [`react_agent_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/react_agent_example.py) (Python) and [`ReActAgentExample.java`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/ReActAgentExample.java) (Java).
+The snippets on this page are fragments that each focus on a single concept. For an end-to-end runnable walkthrough, see the [Use the Built-in ReAct Agent]({{< ref "docs/get-started/quickstart/react_agent" >}}) and the full source: {{< gh_link file="python/flink_agents/examples/quickstart/react_agent_example.py" name="`react_agent_example.py`" >}} (Python) and {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/ReActAgentExample.java" name="`ReActAgentExample.java`" >}} (Java).
 {{< /hint >}}
 
 ## Create a ReAct Agent

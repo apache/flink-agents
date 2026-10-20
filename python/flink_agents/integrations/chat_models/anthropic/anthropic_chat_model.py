@@ -24,12 +24,13 @@ from typing import Any, Dict, List, Mapping, Sequence
 from anthropic import Anthropic, transform_schema
 from anthropic._types import NOT_GIVEN
 from anthropic.types import MessageParam, TextBlockParam, ToolParam
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import Field, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.agents.types import (
     OutputSchema,
     contains_open_object,
+    native_output_model,
     render_output_schema,
 )
 from flink_agents.api.chat_message import (
@@ -371,26 +372,6 @@ def _supports_sampling_params(effective_model: str | None) -> bool:
     return effective_model not in _SAMPLING_UNSUPPORTED_MODELS
 
 
-def _native_output_model(output_schema: Any) -> type[BaseModel] | None:
-    """The model a schema translates natively to, or ``None`` where none applies.
-
-    ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
-    translation and keeps the prompt-engineering fallback.
-
-    Separate from the render below because the feasibility check has to know whether a
-    schema would be sent without rendering it, and rendering raises on a schema it
-    cannot express.
-    """
-    if output_schema is None:
-        return None
-    model = (
-        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
-    )
-    if not (isinstance(model, type) and issubclass(model, BaseModel)):
-        return None
-    return model
-
-
 def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
     """Build the Anthropic ``output_config`` for a native structured-output request.
 
@@ -408,7 +389,7 @@ def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
     but declares no fields is sent as it is, leaving the provider to accept or refuse
     the document it receives.
     """
-    model = _native_output_model(output_schema)
+    model = native_output_model(output_schema)
     if model is None:
         return None
     return {
@@ -560,7 +541,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             admits no undeclared keys, and the caller supplied no ``output_config`` of
             its own.
         """
-        model = _native_output_model(output_schema)
+        model = native_output_model(output_schema)
         return (
             model is not None
             and (model_kwargs is None or "output_config" not in model_kwargs)

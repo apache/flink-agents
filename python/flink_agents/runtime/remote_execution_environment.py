@@ -99,10 +99,10 @@ class RemoteAgentBuilder(AgentBuilder):
 
     @property
     def t_env(self) -> StreamTableEnvironment:
-        """Get or crate table environment."""
+        """Get or create the table environment for the input stream."""
         if self.__t_env is None:
             self.__t_env = StreamTableEnvironment.create(
-                stream_execution_environment=self.__env
+                stream_execution_environment=self.__input.get_execution_environment()
             )
         return self.__t_env
 

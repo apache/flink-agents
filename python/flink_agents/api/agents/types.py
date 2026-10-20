@@ -68,6 +68,31 @@ class OutputSchema(BaseModel):
         return self
 
 
+def native_output_model(output_schema: OutputSchema | None) -> type[BaseModel] | None:
+    """The Pydantic model an output schema would be sent natively as, or ``None``.
+
+    Kept apart from ``render_output_schema`` because a connection makes two checks
+    before rendering: whether native structured output can apply, and whether the
+    schema conflicts with a caller-supplied response format. Neither check renders
+    the schema. Rendering raises on a schema it cannot express, so the check would
+    report a render failure instead of its own answer.
+
+    Args:
+        output_schema: The output schema requested for the response, if any.
+
+    Returns:
+        The ``BaseModel`` subclass the schema holds. ``None`` covers both no schema at
+        all and a ``RowTypeInfo``, which has no native translation and keeps the
+        prompt-engineering fallback.
+    """
+    model = (
+        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
+    )
+    if not (isinstance(model, type) and issubclass(model, BaseModel)):
+        return None
+    return model
+
+
 def render_output_schema(
     model: type[BaseModel], render: Callable[[type[BaseModel]], dict[str, Any]]
 ) -> dict[str, Any]:

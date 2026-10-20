@@ -47,15 +47,15 @@ if TYPE_CHECKING:
 
 
 class TableKeySelector(KeySelector):
-    """KeySelector for extracting key from dictionary input (Table data)."""
+    """KeySelector for extracting the product id from a Table Row."""
 
     def get_key(self, value: Any) -> str:
-        """Extract key from dictionary.
+        """Extract the product id from a Table Row or mapping.
 
         Parameters
         ----------
         value : Any
-            The input value, expected to be a dictionary with 'id' key.
+            The input value, with an 'id' field.
 
         Returns:
         -------
@@ -72,11 +72,11 @@ class TableReviewAnalysisAgent(Agent):
     """An agent that analyzes product reviews from Flink Table input.
 
     This agent is designed to work with Flink Table API. It receives input as
-    dictionary (when using from_table()) and produces analysis results including
-    satisfaction score and reasons for dissatisfaction.
+    a pyflink.common.Row (when using from_table()) and produces analysis results
+    including satisfaction score and reasons for dissatisfaction.
 
     The main difference from ReviewAnalysisAgent is that this agent handles
-    dictionary input instead of Pydantic objects.
+    Row input instead of Pydantic objects.
     """
 
     @prompt
@@ -116,14 +116,14 @@ class TableReviewAnalysisAgent(Agent):
     @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
-        """Process input event from Table data (dictionary format).
+        """Process input event from Table data (Row format).
 
-        When using from_table(), the input is a dictionary with keys matching
-        the table column names.
+        When using from_table(), the input is a Row with fields matching
+        the table column names. Use row.as_dict() if a dictionary is needed.
         """
-        input_dict = cast("InputEvent", event).input
-        product_id = str(input_dict["id"])
-        review_text = str(input_dict["review"])
+        input_row = cast("InputEvent", event).input
+        product_id = str(input_row["id"])
+        review_text = str(input_row["review"])
 
         ctx.short_term_memory.set("id", product_id)
 

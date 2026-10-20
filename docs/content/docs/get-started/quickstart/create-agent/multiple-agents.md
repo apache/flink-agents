@@ -159,7 +159,9 @@ The Java table declares only the `id` and `review` columns.
 
 ### Analyze Each Row with the Review Agent
 
-A Table row reaches the Action as a `dict` in Python and a `Row` in Java. Build Your First Agent
+A Table row reaches the Action as a `pyflink.common.Row` in Python and an
+`org.apache.flink.types.Row` in Java. In Python, access fields with `row["id"]` or call
+`row.as_dict()` when dictionary methods such as `.get()` are needed. Build Your First Agent
 gave its Agent a `ProductReview` object in Python and a JSON string in Java, so this example
 defines a second Agent class, `TableReviewAnalysisAgent`, for the row input. It redeclares the
 prompt, tool, and chat model setup that `ReviewAnalysisAgent` declares, and `ReviewAnalysisAgent`
@@ -171,7 +173,7 @@ itself is unchanged. The key selector that reads `id` out of a row travels with 
 {{< tab "Python" >}}
 ```python
 class TableKeySelector(KeySelector):
-    """KeySelector for extracting key from dictionary input (Table data)."""
+    """KeySelector for extracting the product id from a Table Row."""
 
     def get_key(self, value: Any) -> str:
         if isinstance(value, dict):
@@ -186,14 +188,14 @@ class TableReviewAnalysisAgent(Agent):
     @action(EventType.InputEvent)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
-        """Process input event from Table data (dictionary format).
+        """Process input event from Table data (Row format).
 
-        When using from_table(), the input is a dictionary with keys matching
-        the table column names.
+        When using from_table(), the input is a Row with fields matching
+        the table column names. Use row.as_dict() if a dictionary is needed.
         """
-        input_dict = cast("InputEvent", event).input
-        product_id = str(input_dict["id"])
-        review_text = str(input_dict["review"])
+        input_row = cast("InputEvent", event).input
+        product_id = str(input_row["id"])
+        review_text = str(input_row["review"])
         # Rest of the body is the one Build Your First Agent shows. It keeps the id in
         # short-term memory and sends ChatRequestEvent.
         ...
@@ -274,7 +276,8 @@ One review is too little to suggest an improvement, so the job groups the per-re
 product id in a one-minute tumbling window and reduces each group to a `ProductReviewSummary`. That
 type is declared in the shared types file and carries the product id, the score distribution, and
 the collected unsatisfied reasons. Python returns the summary object, and Java emits it as JSON
-text, because the next stage reads it back with Jackson.
+text, because the next stage reads it back with Jackson. Scores outside 1–5 are excluded from
+the distribution; if none are valid, all five percentages are `0.0%`. The reasons are still retained.
 
 {{< tabs "Aggregate in a Window" >}}
 
@@ -298,7 +301,9 @@ class AggregateScoreDistributionAndDislikeReasons(ProcessWindowFunction):
                 rating_counts[rating - 1] += 1
             reason_list = reason_list + element.reasons
         total = sum(rating_counts)
-        percentages = [round((x / total) * 100, 1) for x in rating_counts]
+        percentages = [
+            round((x / total) * 100, 1) if total else 0.0 for x in rating_counts
+        ]
         formatted_percentages = [f"{p}%" for p in percentages]
         return [
             ProductReviewSummary(

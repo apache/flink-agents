@@ -329,8 +329,8 @@ The complete example sends arithmetic questions such as `What is (2 + 3) * 4?` t
 
 | Language | Example job | Agent definition | Skill instructions |
 |----------|-------------|------------------|--------------------|
-| Python | [skills_agent_example.py](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/skills_agent_example.py) | [MathAgent](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/agents/math_agent.py) | [SKILL.md](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/resources/skills/math-calculator/SKILL.md) |
-| Java | [SkillsAgentExample.java](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/SkillsAgentExample.java) | [MathAgent](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/agents/MathAgent.java) | [SKILL.md](https://github.com/apache/flink-agents/blob/main/examples/src/main/resources/skills/math-calculator/SKILL.md) |
+| Python | {{< gh_link file="python/flink_agents/examples/quickstart/skills_agent_example.py" name="skills_agent_example.py" >}} | {{< gh_link file="python/flink_agents/examples/quickstart/agents/math_agent.py" name="MathAgent" >}} | {{< gh_link file="python/flink_agents/examples/quickstart/resources/skills/math-calculator/SKILL.md" name="SKILL.md" >}} |
+| Java | {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/SkillsAgentExample.java" name="SkillsAgentExample.java" >}} | {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/agents/MathAgent.java" name="MathAgent" >}} | {{< gh_link file="examples/src/main/resources/skills/math-calculator/SKILL.md" name="SKILL.md" >}} |
 
 The Python example loads its bundled skill through `Skills.from_package`; the Java example uses `Skills.fromClasspath`. Make `bash` and `bc` available on the TaskManagers and prepare the Ollama model configured by the example (`qwen3.5:9b`).
 

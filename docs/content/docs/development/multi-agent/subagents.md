@@ -31,58 +31,53 @@ input, the sub-agent does the work, and the parent receives the outcome as a
 `SubagentResult`. Use one when the delegated work is multi-step or long-running and
 should run isolated from the parent.
 
-The work runs either inside the job or outside it. An *internal* sub-agent is a
-child `Agent`, including a `ReActAgent`, compiled into the parent's plan. The
-child's own actions and events run in the same job. An *external* sub-agent has no
-plan of its own. The work happens in your own code or in a remote agent service,
-outside the parent's event loop. It takes one of two forms, *deferred* or *async
-(pub/sub)*.
+There are two kinds of sub-agents:
 
-Either way, the call is initiated by the model or by you. In *model-driven
-delegation* you list the sub-agent on a chat model setup and the model chooses when
-to delegate. In *caller-driven delegation* one of your actions submits the task
-itself.
+- **Internal**: a child `Agent`, such as a workflow agent or a `ReActAgent`. It runs
+  in the same Flink job as the parent, with its own actions and events.
+- **External**: custom code or a remote agent service that performs the delegated
+  task. You provide a setup class that connects the parent to that implementation.
+
+Both kinds support two ways to delegate a task:
+
+- **Model-driven**: bind the sub-agents to a chat model. The model decides whether
+  to delegate, chooses a sub-agent, and
+  supplies its input. The framework invokes the sub-agent and returns the outcome
+  to the model as a tool result, so the model can use it in its next response.
+- **Caller-driven**: call the sub-agent explicitly from one of the parent's actions.
+  Your code chooses the sub-agent, submits the input, and awaits the result. The
+  result returns to your action, which decides what to do next. Use this when your
+  workflow determines when to delegate.
 
 Every sub-agent call runs through
 [durable execution]({{< ref "docs/development/create-agent/actions#durable-execution" >}}).
 
 ## Declare a sub-agent
 
-A sub-agent enters the parent's plan as a resource registered under
-`ResourceType.AGENT`. The name you register it under is the name that invocations and
-metrics use. What you register depends on the form. An internal sub-agent registers
-a child `Agent`. An external sub-agent registers a descriptor that names your setup
-class. A YAML file declares either form, as
+Register a sub-agent on the parent under `ResourceType.AGENT` and give it a name.
+Use that name when calling the sub-agent from an action or binding it to a chat model.
+The following sections show how to register internal and external sub-agents.
+
+Both kinds can also be declared in YAML. See
 [Declaring sub-agents]({{< ref "docs/development/create-agent/yaml#declaring-sub-agents" >}})
-describes. See [Resources]({{< ref "docs/development/create-agent/resources" >}})
-for the common registration and access model.
+for YAML examples and [Resources]({{< ref "docs/development/create-agent/resources" >}})
+for resource registration and access.
 
-### Internal: compile a child agent {#declare-an-internal-sub-agent}
+### Internal: use an existing agent {#declare-an-internal-sub-agent}
 
-Nothing in a child's own code marks it as a sub-agent. The child is an ordinary
-agent with its own resources, actions, and event loop, and it runs standalone
-exactly as written. A parent registers it as an `AGENT` resource, and that
-registration is the whole of the difference. It gives the child a name in the
-parent's plan. It can also give the child an input schema, so a chat model can call
-it. And it supplies the caller that submits input and awaits the child's outputs.
-
-Any `Agent` can serve as the child. The two common kinds are a workflow agent and a
-`ReActAgent`. Either way, the child's plan is compiled into the parent's when the
-parent's plan is built.
+An internal sub-agent is an ordinary `Agent`, such as a workflow agent or a
+`ReActAgent`, with its own resources and actions. Register it on the parent as an
+`AGENT` resource so the parent can submit tasks to it and receive its results.
 
 #### A workflow agent as the child
 
-Any workflow agent can serve as the child. The one used through this page is built
-the way
-[Using Chat Events]({{< ref "docs/development/calling-llms/chat#usage-example" >}})
-builds an agent that owns a chat model, and this page calls it `ReviewAgent`. It has
-a connection resource, a model setup, an action that turns an `InputEvent` into a
-`ChatRequestEvent`, and an action that turns the `ChatResponseEvent` into
-`OutputEvent`s.
+The example below uses a workflow agent named `ReviewAgent` to review a code diff
+and return feedback. For how to build an agent that calls a chat model, see
+[Using Chat Events]({{< ref "docs/development/calling-llms/chat#usage-example" >}}).
 
-The one part a sub-agent changes is how that first action reads its input. A
-caller-driven call passes the object the caller submitted. A model-driven call
-passes the arguments map built from the input schema.
+Its input-handling action supports both delegation styles. When called from an
+action, it receives the submitted input directly. When called by a model, it
+receives an arguments map whose fields are defined by the input schema.
 
 {{< tabs "Read the Input in a Child Action" >}}
 
@@ -130,27 +125,27 @@ public static void ask(Event event, RunnerContext ctx) throws Exception {
 
 {{< /tabs >}}
 
-While a call runs, the child behaves like a scoped agent of its own:
+When you call an internal sub-agent:
 
-- Its `OutputEvent`s are accumulated, in order, into the call's result instead of
-  landing on the parent's context. See
-  [the result](#the-result) for the shape.
-- It resolves resources against its own plan. Register the resources a child uses,
-  such as its chat model connection, on the child itself. In Python a resource
-  registered solely on the parent is not visible to the child.
-- Its sensory and short-term memory start empty for each call, including calls
-  continuing a session, and are shared by the child's actions within that call.
-  Long-term memory, when configured, is shared with the caller.
-- It may register and await sub-agents of its own, so nesting is unbounded in
-  depth.
+- The parent receives the child's outputs as the call's result, in emission order.
+  See [the result](#the-result) for the result structure.
+- The child first looks for resources registered on itself, then falls back to
+  resources registered on the root agent. You can share a chat model connection
+  by registering it on the root, or override it on a child using the same name
+  and resource type. This also applies to nested sub-agents.
+- The child's sensory and short-term memory start empty for each call, even when
+  reusing a session ID. Its actions share this memory during the call. Long-term
+  memory, when configured, is shared with the caller.
+- The child can also register and call sub-agents of its own.
 
-Registering the child takes one of two forms, and which one you need follows from who
-calls it, the model or one of your actions. A model can delegate only to a sub-agent
-it can describe and build arguments for, so a child exposed to a model needs the
-descriptor form. A child that only your actions call can register as-is, and that
-registration wraps it in a descriptor carrying nothing else.
+Choose the registration form based on how the child will be called:
 
-Which parameters the descriptor must carry depends on the same thing.
+- **Model-driven**: use the builder shown below to register the child with an input
+  type or schema. Add a description to help the model decide when to use it.
+- **Caller-driven only**: you can register the `Agent` directly. A description and
+  input declaration are optional.
+
+When using the builder, the parameters are:
 
 | Parameter | Model-driven calls | Caller-driven calls |
 |---|---|---|
@@ -200,8 +195,9 @@ parent.addResource(
 
 {{< /tabs >}}
 
-`ReviewRequest` describes the arguments the child accepts, and the Java form is a bean.
-Where no type fits, a JSON schema string declares the same arguments:
+`input_type` defines the arguments a model supplies when calling the sub-agent,
+using a Pydantic model in Python or a Java bean. You can also use `input_schema`
+to describe the same arguments directly with JSON Schema:
 
 {{< tabs "Declare the Input as a Schema" >}}
 
@@ -239,16 +235,12 @@ parent.addResource(
 
 {{< /tabs >}}
 
-Declare either an input type or an input schema, not both. A declaration that carries
-both is rejected when the descriptor is built. In Python the type must be a pydantic
-model, and a type that is not is rejected there too.
+Choose either `input_type` or `input_schema`. With either form, a model-driven
+call passes the arguments to the child as a Python dictionary or a Java `Map`.
+For example, declaring `ReviewRequest` above means the child receives
+`{"code": "..."}`, not a `ReviewRequest` instance.
 
-An input type is a shorthand for a schema. The framework derives the schema from the
-type and registers that, so use a type when you already have one and a schema when
-you do not. Nothing is ever converted into an instance of the type. The sub-agent
-receives the arguments as a map keyed by the schema's field names.
-
-For calls an action makes itself, the child registers as-is:
+If you only call the sub-agent from actions, you can also register the agent directly:
 
 {{< tabs "Register the Child Agent Directly" >}}
 
@@ -269,9 +261,11 @@ parent.addResource("reviewer", ResourceType.AGENT, new ReviewAgent());
 This form carries no description and no input declaration, so a chat model rejects
 the sub-agent at setup time rather than calling it with no arguments.
 
-A YAML file names the child instead of instantiating it. Its entry carries an
-`agent` field holding the name of another Agent in the same document, along with the
-description and the input schema.
+In YAML, use the `agent` field to reference a child agent by name. The child can
+be defined in the same file or loaded earlier into the same execution environment.
+You can also provide a description and an input schema. See
+[Internal sub-agents in YAML]({{< ref "docs/development/create-agent/yaml#internal-sub-agents" >}})
+for examples and loading order.
 
 #### A ReActAgent as the child
 
@@ -352,24 +346,26 @@ parent.addResource(
 
 {{< /tabs >}}
 
-With a prompt, each schema field fills the placeholder of the same name. See
-[Prompt]({{< ref "docs/development/react_agent#prompt" >}}). A string input from an
-action fills a placeholder named `input`. Declare a field for every placeholder the
-prompt uses. Both examples reuse the connection the previous example registers on the
-child:
+When the child has a prompt, define an input schema whose fields match the prompt's
+placeholders. In the example below, the prompt contains `{diff}`, so the schema
+declares a `diff` field. Pass `{"diff": "..."}` when calling this child.
+
+If an action passes a plain string instead of an argument map, the string fills a
+placeholder named `{input}`. Use `{input}` in the child's prompt for this form of
+input. See [Prompt]({{< ref "docs/development/react_agent#prompt" >}}) for details.
+
+Connection configuration is unchanged from the previous example and is omitted below.
 
 {{< tabs "Use a ReActAgent With a Prompt" >}}
 
 {{< tab "Python" >}}
 ```python
-chat_model_descriptor = ResourceDescriptor(
-    clazz=ResourceName.ChatModel.OLLAMA_SETUP,
-    connection="reviewer_connection",
-    model="qwen3:8b",
-)
-
 reviewer = ReActAgent(
-    chat_model=chat_model_descriptor,
+    chat_model=ResourceDescriptor(
+        clazz=ResourceName.ChatModel.OLLAMA_SETUP,
+        connection="reviewer_connection",
+        model="qwen3:8b",
+    ),
     prompt=Prompt.from_text(
         "Review the following code diff and report any problems:\n\n{diff}"
     ),
@@ -393,15 +389,12 @@ parent.add_resource(
 
 {{< tab "Java" >}}
 ```java
-ResourceDescriptor chatModelDescriptor =
-        ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
-                .addInitialArgument("connection", "reviewerConnection")
-                .addInitialArgument("model", "qwen3:8b")
-                .build();
-
 ReActAgent reviewer =
         new ReActAgent(
-                chatModelDescriptor,
+                ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
+                        .addInitialArgument("connection", "reviewerConnection")
+                        .addInitialArgument("model", "qwen3:8b")
+                        .build(),
                 Prompt.fromText(
                         "Review the following code diff and report any problems:\n\n{diff}"),
                 null);
@@ -428,24 +421,12 @@ text. So keep the two in step when you change either.
 
 ### External: write a setup class {#declare-an-external-sub-agent}
 
-An external sub-agent has no plan of its own, and it is not compiled into the
-parent's. The work happens in your own code or in a remote agent service. The parent
-only submits to it and waits for the outcome. The framework cannot perform that work
-for you, because it does not know your protocol. So you write the part that performs
-one invocation, and the framework supplies everything around it. It runs your code
-under durable execution so recovery can reuse saved results. See
-[Durability and failover](#durability-and-failover) for the required setup.
+An external sub-agent delegates work to your own code or a remote agent service.
+To use an external sub-agent, extend `DeferredSubagentSetup`
+(`BaseDeferredSubagentSetup` in Java) or `BaseAsyncSubagentSetup`, implement the
+methods for calling your code or service, and register it on the parent agent.
 
-What you write is a setup class. Its only job is to carry out one invocation, so it
-declares no actions and no events of its own. It extends a framework base class and
-implements the methods that class declares.
-
-Registration names the setup class in a descriptor, and both languages construct the
-setup from the descriptor at runtime. Registering a setup instance instead is
-rejected.
-
-The invocation itself is carried out in one of two modes, *deferred* and *async
-(pub/sub)*. Which one you write follows from your remote interface.
+Choose between *deferred* and *async (pub/sub)* based on the interface you are calling:
 
 | | Deferred | Async (pub/sub) |
 |---|---|---|
@@ -455,76 +436,18 @@ The invocation itself is carried out in one of two modes, *deferred* and *async
 
 #### Deferred execution
 
-A deferred setup sends nothing when the caller submits. It only registers the
-invocation. The request goes out when the caller first awaits the result. So a call
-that is cancelled instead never issues its request.
+A deferred sub-agent starts its request when the caller first awaits the result.
+Submitting the call alone does not send a request. Cancelling it before the first
+await therefore prevents the request from being sent.
 
-What you write is the interaction itself, in the `prepare` method of your setup class.
-`prepare` runs once per invocation and returns the durable call that carries it. The
-example is one blocking request, and whatever else your call does is yours to decide,
-because the framework does not know your protocol.
+Implement `prepare` to define the function that sends the request and returns a
+`SubagentResult`. In Python, return `(key, call, reconcile)`; in Java, return a
+`DurableCallable<SubagentResult>`. The example below performs one request and leaves
+out the optional reconciler.
 
-The framework assigns `session_id` and `call_id` before it calls `prepare`, and they
-are the only values that a replay reproduces. The durable id you build from them is
-the key that recovery matches a recorded result against. When the key matches, your
-call is not run again. So build the key from those two values alone. Anything else in
-it, a timestamp for instance, makes a replay look up a different key and run the work
-a second time. Passing the same values to your own remote lets it recognize a
-re-issued request as the same one.
-
-The reconciler is optional. Omitting it leaves one crash window uncovered, and
-[Durability and failover](#durability-and-failover) describes that window. Supply one
-when the work cannot be repeated.
-
-{{< tabs "Supply a Reconciler" >}}
-
-{{< tab "Python" >}}
-```python
-def prepare(
-    self, ctx: RunnerContext, prompt: Any, session_id: str, call_id: str
-) -> PreparedTriple:
-    key = f"{session_id}#{call_id}"
-
-    def call() -> SubagentResult:
-        return SubagentResult.ok(post_review(self.endpoint, prompt, key))
-
-    # Consulted only during recovery, when this call is revisited and no result was
-    # recorded for it. It takes no arguments. Return the recovered outcome, because
-    # an exception here is a system-level failure that fails the action instead of
-    # reaching the caller.
-    def reconcile() -> SubagentResult:
-        # fetch_review_by_key is your own lookup; not part of Flink Agents.
-        found = fetch_review_by_key(self.endpoint, key)
-        if found is None:
-            return SubagentResult.error("the review service has no record of this call")
-        return SubagentResult.ok(found)
-
-    return (key, call, reconcile)
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-```java
-// Inside the DurableCallable that prepare returns, alongside getId() and call().
-
-// Consulted only during recovery, when this call is revisited and no result was
-// recorded for it. Return the recovered outcome, because an exception here is a
-// system-level failure that fails the action instead of reaching the caller.
-@Override
-public Callable<SubagentResult> reconciler() {
-    return () -> {
-        // fetchReviewByKey is your own lookup; not part of Flink Agents.
-        String found = fetchReviewByKey(endpoint, key);
-        if (found == null) {
-            return SubagentResult.error("the review service has no record of this call");
-        }
-        return SubagentResult.ok(found);
-    };
-}
-```
-{{< /tab >}}
-
-{{< /tabs >}}
+Build the call's key from the supplied `session_id` and `call_id`, as shown below,
+so it stays the same during recovery. You can also pass this key to your service
+so it can recognize repeated requests for the same work.
 
 {{< tabs "Deferred Sub-agent Setup" >}}
 
@@ -629,9 +552,12 @@ public class RemoteReviewSetup extends BaseDeferredSubagentSetup {
 
 {{< /tabs >}}
 
-Register the setup under the name invocations will use. Every descriptor argument
-beyond the built-in ones is configuration for the setup to read back. In Python it
-reads them as model fields, and in Java through the public
+Register the external sub-agent using a `ResourceDescriptor` that names its setup
+class. Both Java and Python require this form; passing a setup instance directly
+is not supported. Give the resource the name the parent will use to call it.
+
+Every descriptor argument beyond the built-in ones is configuration for the setup
+to read back. In Python it reads them as model fields, and in Java through the public
 `(ResourceDescriptor, ResourceContext)` constructor. The `endpoint` above is such
 configuration, not a built-in transport.
 
@@ -700,28 +626,92 @@ Two constraints apply to the entry:
 - The entry's language must match the loader. A Python YAML file names a Python
   class and may not set `type: java`. A Java YAML file must set `type: java`.
 
+<a id="optional-reconciler"></a>
+
+**Optional reconciler**
+
+If repeating a request could duplicate its effects, add a reconciler that checks
+your service for the existing outcome. During recovery, the framework uses this
+lookup when no result was recorded for the call. See
+[Durability and failover](#durability-and-failover) for how this handles a failure
+after the service has completed the work but before the result is persisted.
+
+The following code adds a reconciler to the setup above:
+
+{{< tabs "Supply a Reconciler" >}}
+
+{{< tab "Python" >}}
+```python
+def prepare(
+    self, ctx: RunnerContext, prompt: Any, session_id: str, call_id: str
+) -> PreparedTriple:
+    key = f"{session_id}#{call_id}"
+
+    def call() -> SubagentResult:
+        return SubagentResult.ok(post_review(self.endpoint, prompt, key))
+
+    # Consulted only during recovery, when this call is revisited and no result was
+    # recorded for it. It takes no arguments. Return the recovered outcome, because
+    # an exception here is a system-level failure that fails the action instead of
+    # reaching the caller.
+    def reconcile() -> SubagentResult:
+        # fetch_review_by_key is your own lookup; not part of Flink Agents.
+        found = fetch_review_by_key(self.endpoint, key)
+        if found is None:
+            return SubagentResult.error("the review service has no record of this call")
+        return SubagentResult.ok(found)
+
+    return (key, call, reconcile)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+// Inside the DurableCallable that prepare returns, alongside getId() and call().
+
+// Consulted only during recovery, when this call is revisited and no result was
+// recorded for it. Return the recovered outcome, because an exception here is a
+// system-level failure that fails the action instead of reaching the caller.
+@Override
+public Callable<SubagentResult> reconciler() {
+    return () -> {
+        // fetchReviewByKey is your own lookup; not part of Flink Agents.
+        String found = fetchReviewByKey(endpoint, key);
+        if (found == null) {
+            return SubagentResult.error("the review service has no record of this call");
+        }
+        return SubagentResult.ok(found);
+    };
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
 #### Async (pub/sub) execution
 
-An async sub-agent talks to a service that runs the task for you. The service accepts
-the work and answers at once, and you query it later for the run's status and
-result.
+Use an async sub-agent when a service accepts a task and completes it later.
+The call has three steps:
 
-An async setup starts the remote run when the caller submits, through a durable
-POST. Waiting for the result then polls the run's status until it reaches a terminal
-state, and fetches it.
+1. **Submit the task.** When the parent submits the call, send a request to start
+   the task on the remote service.
+2. **Query its status.** When the caller awaits the result, the framework repeatedly
+   checks whether the task has completed or failed.
+3. **Fetch the result.** Once the task completes, retrieve its result. If the task
+   fails, the caller receives an error result without a separate fetch.
 
-The base class owns that submit-poll-fetch composition, along with the durable
-execution and the crash-window recovery. You supply the three transport calls it is
-built from:
+Extend `BaseAsyncSubagentSetup` and implement these methods for your service:
 
-- `callSubmitRequest` / `call_submit_request` starts the run.
-- `callQueryStatus` / `call_query_status` returns a `RunStatus`, one of
-  `notStarted()`, `running()`, `completed()`, or `failed(error)`. It must be a
-  read-only probe with no side effects. Report an expected failure as a `FAILED`
-  status.
-- `callFetchResult` / `call_fetch_result` returns the `SubagentResult`. It must be
-  an idempotent read, because a replay may call it again. The status snapshot never
-  carries the payload, and a failed run is reported without fetching at all.
+| Step | Python | Java |
+|---|---|---|
+| Submit | `call_submit_request` | `callSubmitRequest` |
+| Query status | `call_query_status` | `callQueryStatus` |
+| Fetch result | `call_fetch_result` | `callFetchResult` |
+
+Each method receives `session_id` and `call_id` (`sessionId` and `callId` in Java)
+to identify the same task. The example below combines them into a task ID used by
+the service. The status method returns a `RunStatus`, and the fetch method returns
+a `SubagentResult`. Report an expected task failure as a `FAILED` status.
 
 {{< tabs "Async Sub-agent Setup" >}}
 
@@ -732,8 +722,8 @@ from typing import Any
 from flink_agents.api.subagent import SubagentResult
 from flink_agents.runtime.async_subagent import BaseAsyncSubagentSetup, RunStatus
 
-# client(...) and task_id stand for your own transport client and run-id
-# scheme; neither is part of Flink Agents.
+# client(...) is your service client; task_id is how your service identifies tasks.
+# Neither is part of Flink Agents.
 
 
 class RemoteRunSetup(BaseAsyncSubagentSetup):
@@ -756,12 +746,6 @@ class RemoteRunSetup(BaseAsyncSubagentSetup):
         return SubagentResult.ok(
             client(self.endpoint).fetch(task_id=f"{session_id}#{call_id}")
         )
-
-    # Optional, and a no-op by default, so a cancelled call leaves the remote run
-    # going. A replay may propagate the same cancellation again, so your remote has
-    # to accept it twice.
-    def call_cancel_request(self, session_id: str, call_id: str) -> None:
-        client(self.endpoint).cancel(task_id=f"{session_id}#{call_id}")
 ```
 {{< /tab >}}
 
@@ -772,8 +756,8 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.runtime.subagent.BaseAsyncSubagentSetup;
 
-// client() and taskId(...) stand for your own transport client and run-id
-// scheme; neither is part of Flink Agents.
+// client() is your service client; taskId(...) builds the service's task ID.
+// Neither is part of Flink Agents.
 public class RemoteRunSetup extends BaseAsyncSubagentSetup {
 
     private final String endpoint;
@@ -791,7 +775,7 @@ public class RemoteRunSetup extends BaseAsyncSubagentSetup {
 
     @Override
     protected RunStatus callQueryStatus(String sessionId, String callId) {
-        // TaskStatus is your own transport type, not a framework type.
+        // TaskStatus is the status type returned by your service client.
         TaskStatus probe = client().status(taskId(sessionId, callId));
         if (probe == null) {
             return RunStatus.notStarted();
@@ -808,14 +792,6 @@ public class RemoteRunSetup extends BaseAsyncSubagentSetup {
     @Override
     protected SubagentResult callFetchResult(String sessionId, String callId) throws Exception {
         return client().fetchResult(taskId(sessionId, callId));
-    }
-
-    // Optional, and a no-op by default, so a cancelled call leaves the remote run
-    // going. A replay may propagate the same cancellation again, so your remote has
-    // to accept it twice.
-    @Override
-    protected void callCancelRequest(String sessionId, String callId) {
-        client().cancel(taskId(sessionId, callId));
     }
 }
 ```
@@ -880,29 +856,53 @@ agents:
 
 {{< /tabs >}}
 
-When recovery revisits a recorded in-flight submission, the default reconciler
-probes the run's status first and re-posts only when the probe reports that the run
-never started. Override `reconcileSubmitRequest` / `reconcile_submit_request` only
-if your service needs a different repair.
+<a id="recovery-and-cancellation"></a>
+
+**Recovery and cancellation**
+
+If a failure occurs after the submission request was sent but before its completion
+was recorded, recovery first queries the task's status. The framework resubmits the
+request only if the service reports that the task has not started. Override
+`reconcile_submit_request` (`reconcileSubmitRequest` in Java) if your service needs
+a different recovery procedure. See [Durability and failover](#durability-and-failover)
+for more details.
+
+Status queries must be read-only. Fetching the result must also be safe to repeat,
+since recovery may fetch it again.
+
+To cancel the remote task when the caller cancels the call, implement
+`call_cancel_request` (`callCancelRequest` in Java) in your setup class. Without this
+optional method, cancelling the call leaves the remote task running. The service
+must accept repeated cancellation requests, since recovery may send them again.
+
+{{< tabs "Cancel an Async Sub-agent Task" >}}
+
+{{< tab "Python" >}}
+```python
+# Add this method to RemoteRunSetup.
+def call_cancel_request(self, session_id: str, call_id: str) -> None:
+    client(self.endpoint).cancel(task_id=f"{session_id}#{call_id}")
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+// Add this method to RemoteRunSetup.
+@Override
+protected void callCancelRequest(String sessionId, String callId) {
+    client().cancel(taskId(sessionId, callId));
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 ## Invoke a sub-agent
 
-A sub-agent is invoked in one of two ways, model-driven or caller-driven. The
-difference you see is where the result goes.
-
-In model-driven delegation the result returns to the model. The sub-agent is offered
-to the model as a tool, so your action sends a `ChatRequestEvent` and the model
-answers with a call to the sub-agent. The result goes back to the model as the tool
-observation, and the model reasons over it until a final `ChatResponseEvent` reaches
-your action.
-
-In caller-driven delegation the result returns to your action. An action that needs
-the delegated outcome calls the sub-agent itself, with no model in the loop.
-
-Both ways end in the same call. Your action, or the framework on the model's behalf,
-runs `submit(ctx, prompt)` on the registered name. That call returns a
-`SubagentFuture`, which is the handle for that one call. Awaiting the handle yields
-the call's `SubagentResult`.
+- **Model-driven**: the model chooses and calls a sub-agent, then uses the result
+  to continue processing the task.
+- **Caller-driven**: an action explicitly calls a sub-agent, awaits its result,
+  and decides how to use it.
 
 ### Delegate from a chat model
 
@@ -937,28 +937,22 @@ The model sees `reviewer` as a tool, described by the registration's description
 input schema. A schema is required for model-selected calls. A missing description
 falls back to a generic delegation description.
 
-The arguments the model sends become the sub-agent's input, and its outputs return to
-the model as the tool observation. The model can then keep reasoning over them. For
-an internal sub-agent, the observation is the JSON encoding of the full output list
-described in [the result](#the-result). That holds even when the child emits a single
-output, so the shape does not depend on how many outputs the child emits.
-
-An external setup class can state the shape of that observation. It declares
-`result_type()` in Python or `getResultType()` in Java, and the default reports the
-result as it arrived. Declare one to narrow a wider payload, or to convert a payload
-that is not already JSON-compatible. An internal sub-agent has no such declaration, so
-its observation is always the JSON encoding of its output list. This shapes the
-observation only. A caller that awaits the handle gets the result the sub-agent
-produced, as [the result](#the-result) describes.
+The model's arguments become the sub-agent's input. Its result returns to the model
+as a tool observation, which the model can use to continue processing the task.
+See [The result](#the-result) for the result format.
 
 The external sub-agents `remote_reviewer` and `remote_runner` are offered the same
 way. Only their registration differs.
 
 ### Call from an action
 
-An action can submit input to a registered sub-agent directly and await its
-outcome. This path needs no description and no input declaration, so it also works
-for a child registered as-is.
+An action can call a registered sub-agent directly, without declaring a description
+or input schema. Pass the input to `submit(ctx, prompt)` to obtain a `SubagentFuture`,
+then await that future to get a `SubagentResult`.
+
+In Python, `submit` is a coroutine: use `await reviewer.submit(...)` to obtain the
+future, then `await future` for the result. The action must therefore be `async`.
+In Java, `submit` returns the future directly, and `await()` returns its result.
 
 {{< tabs "Call a Sub-agent From an Action" >}}
 
@@ -1000,17 +994,10 @@ public class DelegatingAgent extends Agent {
 
 {{< /tabs >}}
 
-What you pass to `submit` is what the sub-agent receives. An internal child gets it
-as its `InputEvent` payload, and a model-driven call passes the arguments map
-instead. What comes back is a `SubagentResult`. For the internal sub-agent used here,
-its `result` is the list of `OutputEvent` payloads the child emitted. That is why the
-example reads `result.result[0]`. An external sub-agent returns whatever its setup
-produces.
-
-In Python `submit` is a coroutine, so the call is awaited in two phases and the
-action must be `async`. In Java `submit` returns the handle directly and `await()`
-yields the result. The same two calls drive `remote_reviewer` and `remote_runner`
-unchanged. Only the registration differs.
+An internal child receives the submitted input as its `InputEvent` payload. The
+example reads the first output from the internal `reviewer`; see
+[The result](#the-result) for how to read internal and external sub-agent results.
+Use the same `submit` and await methods to call `remote_reviewer` or `remote_runner`.
 
 ## Manage sub-agent calls
 
@@ -1021,12 +1008,19 @@ your own records.
 
 ### Fan out to several sub-agents
 
-`combine` groups handles into a `SubagentFutures`, and resolving the batch resolves
-every handle in it. `gather` does not accept a `SubagentFuture`, so handles batch this
-way instead. The batch prepares every handle before it runs any of them. Preparing an
-internal child starts that child, so the children's work can overlap. An external
-deferred setup issues its request only when the batch runs it, so those requests do
-not overlap. The results come back in the order the handles were added.
+Use `combine` to wait for several sub-agent calls together. Results are returned in
+the order the calls were added, regardless of completion order. Whether their work
+can overlap depends on the sub-agent type:
+
+| Sub-agent type | Execution behavior |
+|---|---|
+| Internal | Child agents can run concurrently. |
+| External deferred | Requests run one at a time; `combine` does not make them concurrent. |
+| External async | Tasks start when submitted and can run concurrently if the remote service supports it. |
+
+In Python, use `combine` to await `SubagentFuture` objects together.
+`ctx.gather` does not accept these objects, and `asyncio.gather` is not supported
+in agent actions.
 
 {{< tabs "Fan Out to Several Sub-agents" >}}
 
@@ -1056,37 +1050,48 @@ List<SubagentResult> outcomes = first.combine(second).awaitAll();
 
 ### Continue a session
 
-Pass the `session_id` of an earlier handle to continue that conversation. The new
-call gets a fresh `call_id` in the same session. Whether a conversation can be
-continued across actions is up to the implementation.
+An external sub-agent can continue a conversation if its remote service supports
+sessions. Its setup must map `session_id` to a remote session and use that session
+for subsequent requests. The conversation context is stored by the remote service.
+
+The following example assumes `session_reviewer` is an external sub-agent registered
+with such a setup. Pass the first call's `session_id` to continue the conversation;
+the second call gets a new `call_id` while using the same remote session.
 
 {{< tabs "Continue a Session" >}}
 
 {{< tab "Python" >}}
 ```python
-reviewer = ctx.get_resource("reviewer", ResourceType.AGENT)
+reviewer = ctx.get_resource("session_reviewer", ResourceType.AGENT)
 
-first = await reviewer.submit(ctx, "review the diff")
+first = await reviewer.submit(ctx, "Review this diff: ...")
 first_result = await first
 
-second = await reviewer.submit(ctx, "now the tests", first.session_id)
+second = await reviewer.submit(
+    ctx, "Which issue should I fix first?", first.session_id
+)
 second_result = await second
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```java
-SubagentSetup reviewer = (SubagentSetup) ctx.getResource("reviewer", ResourceType.AGENT);
+SubagentSetup reviewer =
+        (SubagentSetup) ctx.getResource("session_reviewer", ResourceType.AGENT);
 
-SubagentFuture first = reviewer.submit(ctx, "review the diff");
+SubagentFuture first = reviewer.submit(ctx, "Review this diff: ...");
 SubagentResult firstResult = first.await();
 
-SubagentFuture second = reviewer.submit(ctx, "now the tests", first.getSessionId());
+SubagentFuture second =
+        reviewer.submit(ctx, "Which issue should I fix first?", first.getSessionId());
 SubagentResult secondResult = second.await();
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
+
+Internal sub-agents do not retain conversation context between calls, even when
+reusing a session ID.
 
 ### Cancel and resolve
 
@@ -1143,26 +1148,52 @@ three fields:
 | Field | Java | Carries |
 |---|---|---|
 | `success` | `isSuccess()` | Whether the call succeeded |
-| `result` | `getResult()` | The answer on success. For an internal sub-agent, the list of `OutputEvent` payloads in emission order. For an external one, whatever the setup produces, such as a string or an object |
+| `result` | `getResult()` | The answer on success |
 | `error_message` | `getErrorMessage()` | The reason on failure |
 
-A result a model observes must be JSON-compatible. That means string map keys,
-finite numbers, and no cycles. The framework normalizes the result on its way into
-the tool observation, and one it cannot normalize fails the delegation.
+**Internal sub-agent results**
 
-A failover restores the recorded result, and the two languages restore it
-differently. Python persists the payload with cloudpickle, so a replay hands it back
-with the type the sub-agent produced. Java persists it as JSON, so `getResult()`
-hands back a map after a replay, because recovery re-binds the recorded payload
-without your type. `getResult(Class<T>)` converts on the first run and after a
-replay alike, so prefer it when you want your own type back.
+An internal sub-agent returns a list of its `OutputEvent` payloads in emission
+order, even when it emits only one output. The following example reads the first
+output from the `reviewer` shown earlier:
 
-{{< tabs "Read a SubagentResult" >}}
+{{< tabs "Read an Internal Sub-agent Result" >}}
 
 {{< tab "Python" >}}
 ```python
 if result.success:
-    # The payload keeps the type the sub-agent produced, after a replay too.
+    ctx.send_event(OutputEvent(output=result.result[0]))
+else:
+    ctx.send_event(OutputEvent(output=f"failed: {result.error_message}"))
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+import java.util.List;
+
+if (result.isSuccess()) {
+    List<?> outputs = (List<?>) result.getResult();
+    ctx.sendEvent(new OutputEvent(outputs.get(0)));
+} else {
+    ctx.sendEvent(new OutputEvent("failed: " + result.getErrorMessage()));
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+**External sub-agent results**
+
+An external sub-agent returns the value its setup supplies, such as a string or an
+object. This example assumes the setup returns a Python dictionary with a `verdict`
+key, or a Java `Review` bean with a public `verdict` field:
+
+{{< tabs "Read an External Sub-agent Result" >}}
+
+{{< tab "Python" >}}
+```python
+if result.success:
     ctx.send_event(OutputEvent(output=result.result["verdict"]))
 else:
     ctx.send_event(OutputEvent(output=f"failed: {result.error_message}"))
@@ -1172,7 +1203,6 @@ else:
 {{< tab "Java" >}}
 ```java
 if (result.isSuccess()) {
-    // Review is your own type, the shape this sub-agent produces.
     Review review = result.getResult(Review.class);
     ctx.sendEvent(new OutputEvent(review.verdict));
 } else {
@@ -1182,6 +1212,24 @@ if (result.isSuccess()) {
 {{< /tab >}}
 
 {{< /tabs >}}
+
+In Java, use `getResult(Class<T>)` when reading a result as your own type. It also
+works after recovery; see [Result types after recovery](#result-types-after-recovery).
+
+**Results returned to a model**
+
+For a model-driven call, an internal sub-agent's tool observation is the JSON
+encoding of its full output list, even when the child emits a single output.
+
+An external setup can declare `result_type()` in Python or `getResultType()` in Java
+to shape the tool observation, for example to narrow a wider payload or convert it
+to a JSON-compatible form. By default, it uses the result as returned by the setup.
+This declaration affects only what the model observes; an action awaiting the call
+receives the result the setup produced.
+
+A result a model observes must be JSON-compatible. That means string map keys,
+finite numbers, and no cycles. The framework normalizes the result on its way into
+the tool observation, and one it cannot normalize fails the delegation.
 
 ### How failures surface
 
@@ -1195,47 +1243,59 @@ triggers recovery.
 - A failed result reaches a model as a tool observation that names the sub-agent and
   the reason, so the model can decide what to do next. An exception while submitting
   or awaiting is reported the same way.
-- A failing child action does not fail the job. It surfaces through the caller's
-  result. The text in `error_message` is not a contract, so test for the failure
-  rather than for the message.
-- A result that is not JSON-compatible fails the delegation rather than the job.
+- Ordinary exceptions from a child action are returned as a failed result.
+  Cancellation and fatal errors still propagate. The text in `error_message` is
+  not a contract, so test for the failure rather than for the message.
+- For model-driven calls, a result that cannot be converted to JSON is reported
+  as a failed delegation.
 
 ## Durability and failover
 
-A sub-agent call always runs through
+Sub-agent calls use
 [durable execution]({{< ref "docs/development/create-agent/actions#durable-execution" >}}).
-Saving and reusing its result after a failover requires checkpointing and an
-[Action State Store]({{< ref "docs/operations/consistency#configure-an-action-state-store" >}}).
-See [Consistency]({{< ref "docs/operations/consistency#recovery-guarantees-and-user-responsibilities" >}})
-for replay conditions and limits on repeated effects. There is no durability toggle
-and no sub-agent timeout option.
+With checkpointing and an
+[Action State Store]({{< ref "docs/operations/consistency#configure-an-action-state-store" >}}),
+recovery reuses persisted results. Work whose result has not been persisted may
+run again, so external services need to handle retried requests. See
+[Consistency]({{< ref "docs/operations/consistency#recovery-guarantees-and-user-responsibilities" >}})
+for replay conditions and limits on repeated effects.
 
-- Identities are replay-stable. Without explicit ids, the framework assigns
-  `session_id` and `call_id` from the executing action and the sub-agent's resource
-  name, so a replay of the same call gets the same ids. The ids are opaque, so do not
-  parse them. Two sub-agents called from one action never collide, because the
-  resource name is part of the namespace.
-- A deferred call runs under the durable id you build in `prepare`, so a replay
-  re-issues the same logical invocation. A remote service that deduplicates these values
-  can reuse the original work instead of starting a second one. The reconciler is optional.
-  Without it, a crash between the call landing and its result being persisted re-runs
-  the sub-agent and may duplicate its side effects, so supply one whenever the work
-  cannot be repeated safely.
-- An async call reuses one identity for both its POST and its poll. Your service
-  must handle repeated submissions idempotently to avoid starting a second run.
-- An internal sub-agent can reuse saved child Action completions and outputs.
-  Unfinished child Actions may run again.
+The framework generates stable `session_id` and `call_id` values for recovery.
+If you supply your own IDs, keep them unchanged when the same call is retried.
+
+- **Internal**: recovery reuses the child's persisted action state and outputs.
+  Work not yet recorded may run again.
+- **External deferred**: build the key returned by `prepare` from `session_id` and
+  `call_id`. Adding a timestamp or another changing value prevents recovery from
+  finding the original result. If the service completed the work but the result
+  was not persisted, a reconciler can look up the outcome. Without one, recovery
+  repeats the request. Use a reconciler or service-side deduplication when repeating
+  the work would cause duplicate effects. See [Optional reconciler](#optional-reconciler).
+- **External async**: if submission completed but was not recorded, recovery queries
+  the task's status and resubmits only when it reports `NOT_STARTED`. The service
+  must reliably identify the existing task using the same IDs. If a submitted task
+  can be missing from status queries, the service must also deduplicate repeated
+  submissions to avoid starting it twice. Status queries, result fetches, and
+  cancellation requests must be safe to repeat. See
+  [Recovery and cancellation](#recovery-and-cancellation).
+
+### Result types after recovery
+
+Python persists result payloads with cloudpickle and restores their Python types.
+Java persists them as JSON, so a custom object returned by `getResult()` can be
+restored as a map after recovery. Use `getResult(Class<T>)` to obtain the expected
+Java type on both the first execution and after recovery.
 
 ## Metrics and Trace Log
 
-Only the delegations a model requests are reported. A sub-agent you drive yourself
-from an action emits no sub-agent metrics and no sub-agent trace records. Add
-[custom metrics]({{< ref "docs/operations/monitoring#how-to-add-custom-metrics" >}})
-if you need to observe that path.
+The framework reports sub-agent metrics for model-driven calls, grouped by the
+registered sub-agent name under the `subagent` scope. These calls are not also
+counted as Tool calls.
 
-A model-driven delegation is counted under a `subagent` scope keyed by the registered
-sub-agent name. It is reported there only and never also as a tool, so the scope's
-cardinality is bounded by your plan.
+Calls made directly from actions do not automatically produce sub-agent metrics or
+sub-agent Trace Log records. Add
+[custom metrics]({{< ref "docs/operations/monitoring#how-to-add-custom-metrics" >}})
+if you need to monitor those calls.
 
 | Metric | Counts |
 |---|---|
@@ -1246,33 +1306,32 @@ cardinality is bounded by your plan.
 Full metric paths and types are in
 [Execution Metrics]({{< ref "docs/operations/monitoring#execution-metrics" >}}).
 
-The same delegations appear in
-[Trace Log]({{< ref "docs/operations/monitoring#trace-log" >}}) as call records with
-`entityType: "subagent"`. The default target records events only, so select the
-`subagent` scope, or `ALL`, to get them.
+To include model-driven calls in
+[Trace Log]({{< ref "docs/operations/monitoring#trace-log" >}}), configure
+[`trace-log.targets`]({{< ref "docs/operations/configuration#trace-log-targets" >}})
+with `scope: {subagent: "*"}` or `scope: ALL`. These records have
+`entityType: "subagent"`. The default configuration records only Events;
+Trace Log selection does not affect metrics collection.
 
 ## Restrictions
 
-- Recursive registration is rejected when the plan is built, whether the cycle runs
-  through a child, through the root agent, or directly back to itself.
-- Registering the same child `Agent` instance under two names compiles it once and
-  shares the plan.
-- `_subagent_` is a reserved prefix. A sub-agent reaches a model as a tool whose name
-  carries it, and no tool may be registered under the prefix, including a tool an MCP
-  server advertises. A tool and a sub-agent may therefore share a name, because the
-  prefix keeps the two namespaces apart. See
+- Internal sub-agent registrations must not form a cycle. An agent cannot register
+  itself as a child, directly or through other agents.
+- Tool names must not start with the reserved `_subagent_` prefix. This also applies
+  to Tools provided by MCP servers. A Tool and a sub-agent can otherwise use the
+  same registered name. See
   [Tool Use]({{< ref "docs/development/calling-llms/tool_use" >}}).
-- A sub-agent declared in one language cannot be driven from the other. Delegation
-  resolves the `AGENT` resource in the executing language only.
-- Resolving an internal sub-agent call in Java requires JDK 21+ with the Continuation
-  API. On an older runtime the call fails fast rather than hanging. Python callers
-  and external sub-agents have no JDK requirement.
-- When a model emits several sub-agent calls in one turn, and `tool-call.async` is
-  enabled with `async.batch.parallelism` above 1, the framework submits every call
-  before awaiting any of them. An async sub-agent starts its remote run during that
-  submit, so those runs overlap. A deferred or internal call does its work while it
-  is awaited, so it does not overlap on this path. Batching handles yourself differs
-  for an internal child, as
-  [Fan out to several sub-agents](#fan-out-to-several-sub-agents) describes. Results
-  still land on their own call ids, in the model's call order. See
-  [Configuration]({{< ref "docs/operations/configuration" >}}).
+- Create an internal child with the same Java or Python Agent API as its parent.
+  An external setup and the action invoking it must use the same language;
+  cross-language calls to external setups are not supported.
+- Calling an internal sub-agent from Java requires JDK 21+ with the Continuation
+  API available. This additional requirement does not apply to Python callers or
+  external sub-agents.
+- There is no per-call sub-agent timeout setting.
+- For multiple model-driven calls, enabling `tool-call.async` with
+  `async.batch.parallelism` above 1 allows external async tasks to overlap if the
+  remote service supports concurrent execution. Internal and external deferred
+  calls still run one at a time on this path. Results are returned in the model's
+  call order. For concurrent internal calls from an action, see
+  [Fan out to several sub-agents](#fan-out-to-several-sub-agents). See
+  [Configuration]({{< ref "docs/operations/configuration" >}}) for these settings.

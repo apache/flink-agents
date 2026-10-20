@@ -39,6 +39,7 @@ import sysconfig
 from pathlib import Path
 from typing import Any
 
+import pytest
 from pyflink.common import Encoder
 from pyflink.common.typeinfo import Types
 from pyflink.datastream import KeySelector, StreamExecutionEnvironment
@@ -61,6 +62,7 @@ from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
+from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.subagent import InternalSubagentResourceDescriptorBuilder
@@ -172,13 +174,8 @@ class ToolCallingChildConnection(BaseChatModelConnection):
         )
 
 
-def _child_react_agent() -> ReActAgent:
-    """A ReActAgent with neither a prompt nor an output schema.
-
-    The connection is registered on the child itself, keeping the child plan
-    self-contained: a child scope resolves resources against the child plan
-    only, so the connection must live there.
-    """
+def _child_react_agent(*, local_connection: bool = True) -> ReActAgent:
+    """A bare ReActAgent using either its own or the root's connection."""
     child = ReActAgent(
         chat_model=ResourceDescriptor(
             clazz=f"{ScriptedModelSetup.__module__}.{ScriptedModelSetup.__name__}",
@@ -186,14 +183,19 @@ def _child_react_agent() -> ReActAgent:
             model="mock-model",
         ),
     )
-    child.add_resource(
+    if local_connection:
+        _register_child_connection(child)
+    return child
+
+
+def _register_child_connection(agent: Agent) -> None:
+    agent.add_resource(
         "child_connection",
         ResourceType.CHAT_MODEL_CONNECTION,
         ResourceDescriptor(
             clazz=f"{ChildScriptedConnection.__module__}.{ChildScriptedConnection.__name__}",
         ),
     )
-    return child
 
 
 def _tool_calling_child_react_agent() -> ReActAgent:
@@ -234,8 +236,8 @@ class CallerRootAgent(Agent):
             ctx.send_event(OutputEvent(output=msg))
 
 
-def _delegating_parent() -> ReActAgent:
-    """A bare ReActAgent parent that declares the child to its model.
+def _delegating_parent(*, shared_connection: bool = False) -> ReActAgent:
+    """A prompted ReActAgent parent that declares the child to its model.
 
     Sub-classing ReActAgent would trip the plan compiler, which rejects
     inherited ``@action`` methods on a concrete agent, so the parent is a
@@ -248,7 +250,10 @@ def _delegating_parent() -> ReActAgent:
             model="mock-model",
             subagents=[CHILD_SCOPE],
         ),
+        prompt=Prompt.from_text("PARENT ONLY: {input}"),
     )
+    if shared_connection:
+        _register_child_connection(parent)
     parent.add_resource(
         "parent_connection",
         ResourceType.CHAT_MODEL_CONNECTION,
@@ -261,7 +266,7 @@ def _delegating_parent() -> ReActAgent:
         CHILD_SCOPE,
         ResourceType.AGENT,
         InternalSubagentResourceDescriptorBuilder()
-        .agent(_child_react_agent())
+        .agent(_child_react_agent(local_connection=not shared_connection))
         .description("Reviews a code diff.")
         .input_schema(
             '{"type":"object","properties":{"input":{"type":"string"}},'
@@ -297,10 +302,28 @@ def _run_and_collect(root: Agent, tmp_path: Path) -> str:
     return "".join(p.read_text() for p in result_dir.rglob("*") if p.is_file())
 
 
-def test_caller_driven_react_subagent(tmp_path: Path) -> None:
+@pytest.mark.parametrize("connection_scope", ["child", "root", "nested_root", "override"])
+def test_caller_driven_react_subagent(tmp_path: Path, connection_scope: str) -> None:
     """A submitted string runs the child's ReAct loop and returns its answer."""
     root = CallerRootAgent()
-    root.add_resource(CHILD_SCOPE, ResourceType.AGENT, _child_react_agent())
+    child = _child_react_agent(local_connection=connection_scope in {"child", "override"})
+    if connection_scope in {"root", "nested_root"}:
+        _register_child_connection(root)
+    if connection_scope == "override":
+        # This connection would ask for an unavailable tool if the child failed
+        # to prefer its own connection registered under the same name and type.
+        root.add_resource(
+            "child_connection",
+            ResourceType.CHAT_MODEL_CONNECTION,
+            ResourceDescriptor(
+                clazz=f"{ToolCallingChildConnection.__module__}.{ToolCallingChildConnection.__name__}",
+            ),
+        )
+    if connection_scope == "nested_root":
+        middle = CallerRootAgent()
+        middle.add_resource(CHILD_SCOPE, ResourceType.AGENT, child)
+        child = middle
+    root.add_resource(CHILD_SCOPE, ResourceType.AGENT, child)
 
     contents = _run_and_collect(root, tmp_path)
 
@@ -311,9 +334,14 @@ def test_caller_driven_react_subagent(tmp_path: Path) -> None:
     )
 
 
-def test_model_driven_react_subagent_delegation(tmp_path: Path) -> None:
+@pytest.mark.parametrize("shared_connection", [False, True])
+def test_model_driven_react_subagent_delegation(
+    tmp_path: Path, shared_connection: bool
+) -> None:
     """A model-issued delegation reaches the declared child and closes the loop."""
-    contents = _run_and_collect(_delegating_parent(), tmp_path)
+    contents = _run_and_collect(
+        _delegating_parent(shared_connection=shared_connection), tmp_path
+    )
 
     # The final answer echoes the tool observation, proving the whole loop: the
     # model's {"input": ...} arguments became the child's user message through
@@ -322,6 +350,7 @@ def test_model_driven_react_subagent_delegation(tmp_path: Path) -> None:
     # this parent answer does -- so both fragments here mean the round-trip
     # completed; the assertion stays split because the observation carries the
     # result in the framework's string form, not verbatim.
+    assert "PARENT ONLY" not in contents
     assert "observed:" in contents, f"no observation echoed; collected: {contents!r}"
     assert "child saw: review the diff" in contents, (
         f"child output missing from the loop; collected: {contents!r}"

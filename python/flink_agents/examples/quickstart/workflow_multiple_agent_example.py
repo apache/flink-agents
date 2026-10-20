@@ -66,7 +66,9 @@ class AggregateScoreDistributionAndDislikeReasons(ProcessWindowFunction):
                 rating_counts[rating - 1] += 1
             reason_list = reason_list + element.reasons
         total = sum(rating_counts)
-        percentages = [round((x / total) * 100, 1) for x in rating_counts]
+        percentages = [
+            round((x / total) * 100, 1) if total else 0.0 for x in rating_counts
+        ]
         formatted_percentages = [f"{p}%" for p in percentages]
         return [
             ProductReviewSummary(

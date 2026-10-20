@@ -28,7 +28,8 @@ import pytest
 import yaml
 from pyflink.common import Row
 from pyflink.common.typeinfo import ExternalTypeInfo, Types
-from pyflink.table import DataTypes, Schema
+from pyflink.datastream import StreamExecutionEnvironment
+from pyflink.table import DataTypes, Schema, StreamTableEnvironment
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.events.event import Event
@@ -606,3 +607,35 @@ def test_to_table_rejects_schema_in_output_type_slot():
         pytest.raises(TypeError, match="pass a Table Schema as schema="),
     ):
         builder.to_table(output_type=_output_schema())
+
+
+@pytest.mark.parametrize("provide_table_env", [False, True])
+@pytest.mark.parametrize("use_schema", [False, True])
+def test_datastream_to_table_uses_input_environment(provide_table_env, use_schema):
+    """Build real Table views with and without an explicit TableEnvironment.
+
+    Stub only agent execution: stream ownership, keying, row conversion and
+    Table planning use PyFlink. This catches a missing environment on the lazy path.
+    """
+    env = StreamExecutionEnvironment.get_execution_environment()
+    t_env = StreamTableEnvironment.create(env) if provide_table_env else None
+    remote_env = RemoteExecutionEnvironment(env=env, t_env=t_env)
+    payload = cloudpickle.dumps({"id": 1, "label": "a", "score": 1.5})
+    raw = env.from_collection([payload])
+    builder = remote_env.from_datastream(raw, key_selector=lambda _: "key")
+    with patch.object(RemoteAgentBuilder, "_raw_output_stream", return_value=raw):
+        if use_schema:
+            table = builder.to_table(schema=_output_schema())
+        else:
+            table = builder.to_table(output_type=ModelOutput)
+        cached_env = builder.t_env
+        builder.to_table(output_type=ModelOutput)
+    assert table.get_schema().get_field_names() == ["id", "label", "score"]
+    assert builder.t_env is cached_env
+    if provide_table_env:
+        assert builder.t_env is t_env
+    # The Table view belongs to the original job, rather than a new environment.
+    output = builder.t_env.to_data_stream(table)
+    assert output.get_execution_environment()._j_stream_execution_environment.equals(
+        env._j_stream_execution_environment
+    )

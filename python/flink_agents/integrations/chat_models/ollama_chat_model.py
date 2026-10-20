@@ -21,10 +21,14 @@ import uuid
 from typing import Any, Dict, List, Literal, Mapping, Sequence
 
 from ollama import Client, Image, Message
-from pydantic import BaseModel, Field
+from pydantic import Field
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema, render_output_schema
+from flink_agents.api.agents.types import (
+    OutputSchema,
+    native_output_model,
+    render_output_schema,
+)
 from flink_agents.api.chat_message import (
     Base64Source,
     ChatMessage,
@@ -49,26 +53,6 @@ DEFAULT_CONTEXT_WINDOW = 2048
 DEFAULT_REQUEST_TIMEOUT = 30.0
 
 
-def _native_output_model(output_schema: Any) -> type[BaseModel] | None:
-    """The model a schema translates natively to, or ``None`` where none applies.
-
-    ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
-    translation and keeps the prompt-engineering fallback.
-
-    Separate from the render below because the feasibility check has to know whether a
-    schema would be sent without rendering it, and rendering raises on a schema it
-    cannot express.
-    """
-    if output_schema is None:
-        return None
-    model = (
-        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
-    )
-    if not (isinstance(model, type) and issubclass(model, BaseModel)):
-        return None
-    return model
-
-
 def _native_format(output_schema: Any) -> Dict[str, Any] | None:
     """Build the Ollama ``format`` payload for a native structured-output request.
 
@@ -77,7 +61,7 @@ def _native_format(output_schema: Any) -> Dict[str, Any] | None:
     prompt-engineering fallback. A schema that cannot be rendered raises through
     ``render_output_schema``, naming the model, like the other connections.
     """
-    model = _native_output_model(output_schema)
+    model = native_output_model(output_schema)
     if model is None:
         return None
     return render_output_schema(model, lambda m: m.model_json_schema())
@@ -199,7 +183,7 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         bool
             ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass.
         """
-        return _native_output_model(output_schema) is not None
+        return native_output_model(output_schema) is not None
 
     def chat(
         self,

@@ -749,7 +749,13 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             from flink_agents.plan.agent_plan import AgentPlan
 
             scoped_plan = AgentPlan.model_validate_json(plan_json)
-            cache = ResourceCache(scoped_plan.resource_providers, scoped_plan.config)
+            # Match Java's child scopes: local resources override resources
+            # shared by the root, including for nested sub-agents.
+            cache = ResourceCache(
+                scoped_plan.resource_providers,
+                scoped_plan.config,
+                parent=self.__resource_cache,
+            )
             cache.set_java_resource_adapter(self.__j_resource_adapter)
             entry = (scoped_plan, cache)
             self.__scoped_resource_caches[plan_json] = entry

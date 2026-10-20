@@ -181,9 +181,9 @@ public class ElasticsearchVectorStore extends BaseVectorStore
         this.numCandidates = descriptor.getArgument("num_candidates");
 
         if (this.k != null && this.numCandidates != null) {
-            if (this.k < this.numCandidates) {
+            if (this.numCandidates < this.k) {
                 throw new IllegalArgumentException(
-                        "'k' should be greater or equals than 'num_candidates'");
+                        "'num_candidates' should be greater than or equal to 'k'");
             }
         }
 
@@ -318,8 +318,8 @@ public class ElasticsearchVectorStore extends BaseVectorStore
         m.put("vector_field", this.vectorField);
         m.put("dims", this.dims);
         if (this.k != null) {
-            // Expose as top_k (preferred name); keep legacy key for compatibility if referenced
-            m.put("top_k", this.k);
+            // queryEmbedding() reads this under "k"; expose it under the same key
+            m.put("k", this.k);
         }
         if (this.numCandidates != null) {
             m.put("num_candidates", this.numCandidates);
@@ -626,6 +626,8 @@ public class ElasticsearchVectorStore extends BaseVectorStore
             SearchRequest.Builder builder =
                     new SearchRequest.Builder()
                             .index(index)
+                            // k selects neighbours; size bounds hits and defaults to 10.
+                            .size(Math.min(limit, k))
                             .knn(
                                     kb -> {
                                         kb.field(this.vectorField)

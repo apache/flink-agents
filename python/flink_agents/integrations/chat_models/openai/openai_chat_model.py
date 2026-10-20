@@ -26,12 +26,13 @@ from openai import NOT_GIVEN, OpenAI
 # has existed at this path since the structured-output support in openai 1.66.3.
 # A future openai bump that moves it will fail loudly on import here.
 from openai.lib._pydantic import to_strict_json_schema
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import Field, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.agents.types import (
     OutputSchema,
     contains_open_object,
+    native_output_model,
     render_output_schema,
 )
 from flink_agents.api.chat_message import ChatMessage
@@ -89,26 +90,6 @@ _NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
 )
 
 
-def _native_output_model(output_schema: Any) -> type[BaseModel] | None:
-    """The model a schema translates natively to, or ``None`` where none applies.
-
-    ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
-    translation and keeps the prompt-engineering fallback.
-
-    Separate from the render below because the feasibility check has to know whether a
-    schema would be sent without rendering it, and rendering raises on a schema it
-    cannot express.
-    """
-    if output_schema is None:
-        return None
-    model = (
-        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
-    )
-    if not (isinstance(model, type) and issubclass(model, BaseModel)):
-        return None
-    return model
-
-
 def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
     """Build the OpenAI ``response_format`` for a native structured-output request.
 
@@ -122,7 +103,7 @@ def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
     but declares no fields is sent as it is, leaving the provider to accept or refuse
     the document it receives.
     """
-    model = _native_output_model(output_schema)
+    model = native_output_model(output_schema)
     if model is None:
         return None
     return {
@@ -317,7 +298,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass whose schema
             admits no undeclared keys.
         """
-        model = _native_output_model(output_schema)
+        model = native_output_model(output_schema)
         return model is not None and not contains_open_object(model)
 
     def chat(

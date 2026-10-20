@@ -328,7 +328,7 @@ vectorStore.delete(null, "my_collection", null, Map.of());
 {"user_id": "u1", "run_id": "r1"}
 ```
 
-`None` / `null` means "no filter". Richer operators (ranges, set membership, OR, NOT, etc.) are out of scope here. Callers needing backend-specific operators should pass them through `extra_args` (Python `VectorStoreQuery.extra_args` or `**kwargs`) or `extraArgs` (Java) — for example, ChromaDB's native `where` dict. Implementations that receive an unsupported operator via `filters` raise `NotImplementedError` (Python) or `UnsupportedOperationException` (Java).
+`None` / `null` means "no filter". Richer operators (ranges, set membership, OR, NOT, etc.) are out of scope here. Callers needing backend-specific operators should pass them through `extra_args` (Python `VectorStoreQuery.extra_args` or `**kwargs`) or `extraArgs` (Java) — for example, ChromaDB's native `where` dict. An unsupported operator is not portable. Chroma and Milvus reject some operator forms locally with `NotImplementedError` (Python) or `UnsupportedOperationException` (Java); other forms, and the other backends, can fail later or silently match nothing. Do not rely on catching a particular exception.
 
 ### Usage Example
 

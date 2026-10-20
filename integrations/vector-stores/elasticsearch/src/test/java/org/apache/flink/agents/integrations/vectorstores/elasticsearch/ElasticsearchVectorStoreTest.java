@@ -310,4 +310,92 @@ public class ElasticsearchVectorStoreTest {
 
         ((CollectionManageableVectorStore) store).deleteCollection(name);
     }
+
+    /**
+     * Builds a store whose descriptor sets a store-level {@code k}, mirroring {@link
+     * #initialize()}.
+     */
+    private static BaseVectorStore storeWithK(int k) throws Exception {
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder(ElasticsearchVectorStore.class.getName())
+                        .addInitialArgument("embedding_model", "embeddingModel")
+                        .addInitialArgument(
+                                "host",
+                                System.getenv().getOrDefault("ES_HOST", "http://localhost:9200"))
+                        .addInitialArgument("dims", 5)
+                        .addInitialArgument("username", "elastic")
+                        .addInitialArgument("password", System.getenv("ES_PASSWORD"))
+                        .addInitialArgument("k", k)
+                        .build();
+        BaseVectorStore kStore =
+                new ElasticsearchVectorStore(
+                        descriptor,
+                        ResourceContext.fromGetResource(ElasticsearchVectorStoreTest::getResource));
+        kStore.open();
+        return kStore;
+    }
+
+    /** Documents sharing one direction, with explicit embeddings so no embed stub is needed. */
+    private static List<Document> sameDirectionDocs(int count, String prefix) {
+        List<Document> docs = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            Document doc =
+                    new Document(
+                            prefix + " document " + i, Map.of("src", "test"), prefix + "_" + i);
+            doc.setEmbedding(new float[] {1.0f, 0.0f, 0.0f, 0.0f, 0.0f});
+            docs.add(doc);
+        }
+        return docs;
+    }
+
+    @Test
+    public void testStoreLevelKDoesNotExceedQueryLimit() throws Exception {
+        // Contract: VectorStoreQuery.limit is the maximum number of documents returned. A
+        // store-level k chooses how many neighbours the KNN clause considers; reaching
+        // queryEmbedding through the merged store kwargs must not widen the result past limit.
+        String name = "store_k_bounded_by_limit";
+        BaseVectorStore kStore = storeWithK(8);
+        try {
+            ((CollectionManageableVectorStore) kStore).createCollectionIfNotExists(name, Map.of());
+            kStore.addEmbedding(sameDirectionDocs(12, "k_bounded"), name, Collections.emptyMap());
+            Thread.sleep(1000);
+
+            List<Document> hits =
+                    kStore.query(
+                                    new VectorStoreQuery(
+                                            "Elasticsearch is a search engine",
+                                            3,
+                                            name,
+                                            Collections.emptyMap()))
+                            .getDocuments();
+
+            Assertions.assertEquals(3, hits.size());
+        } finally {
+            ((CollectionManageableVectorStore) kStore).deleteCollection(name);
+            kStore.close();
+        }
+    }
+
+    @Test
+    public void testQueryLimitAboveElasticsearchDefaultSizeIsHonored() throws Exception {
+        // Elasticsearch defaults size to 10, so a larger limit has to be sent explicitly or the
+        // result is silently truncated below what the caller asked for.
+        String name = "limit_above_default_size";
+        ((CollectionManageableVectorStore) store).createCollectionIfNotExists(name, Map.of());
+        store.addEmbedding(sameDirectionDocs(12, "limit_12"), name, Collections.emptyMap());
+        Thread.sleep(1000);
+
+        List<Document> hits =
+                store.query(
+                                new VectorStoreQuery(
+                                        "Elasticsearch is a search engine",
+                                        12,
+                                        name,
+                                        Collections.emptyMap()))
+                        .getDocuments();
+
+        Assertions.assertEquals(12, hits.size());
+
+        ((CollectionManageableVectorStore) store).deleteCollection(name);
+    }
 }

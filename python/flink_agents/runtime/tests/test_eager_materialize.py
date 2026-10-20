@@ -24,14 +24,17 @@ without a live interpreter.
 """
 
 from typing import Any
+from unittest.mock import Mock
 
 from flink_agents.api.resource import ResourceType
+from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.resource_provider import (
     JavaResourceProvider,
     PythonResourceProvider,
     PythonSerializableResourceProvider,
 )
 from flink_agents.runtime.flink_runner_context import FlinkRunnerContext
+from flink_agents.runtime.resource_cache import ResourceCache
 
 
 class _StubResourceCache:
@@ -205,3 +208,22 @@ def test_close_closes_the_root_and_every_scoped_cache() -> None:
     assert scoped_a.closed is True
     assert scoped_b.closed is True
     assert ctx._FlinkRunnerContext__scoped_resource_caches == {}
+
+
+def test_new_child_scopes_can_resolve_root_resources() -> None:
+    """Lazy lookup and eager materialization share the root-backed child cache."""
+    ctx, root_cache = _context({})
+    ctx._FlinkRunnerContext__scoped_resource_caches = {}
+    ctx._FlinkRunnerContext__j_resource_adapter = None
+    ctx._j_runner_context = Mock()
+
+    for name in ("child", "nested_child"):
+        plan_json = AgentPlan(actions={}, agent_name=name).model_dump_json()
+        # Inherited resources must not be materialized or owned by the child.
+        assert ctx.eager_materialize(ResourceType.CHAT_MODEL.value, plan_json) == {}
+        ctx._j_runner_context.getActiveScopePlanJson.return_value = plan_json
+        cache = ctx._FlinkRunnerContext__active_resource_cache()
+        assert isinstance(cache, ResourceCache)
+        assert cache.get_resource("shared", ResourceType.CHAT_MODEL) == "resource:shared"
+
+    assert root_cache.resolved == [("shared", ResourceType.CHAT_MODEL)] * 2

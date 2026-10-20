@@ -19,12 +19,11 @@ from typing import Any, List, Mapping
 
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.agents.types import OutputSchema, native_output_model
 from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.openai.openai_chat_model import (
     OpenAIChatModelConnection,
     OpenAIChatModelSetup,
-    _native_output_model,
 )
 
 DEFAULT_VLLM_API_BASE_URL = "http://localhost:8000/v1"
@@ -104,7 +103,7 @@ class VLLMChatModelConnection(OpenAIChatModelConnection):
         rules, and its guided decoding honours ``additionalProperties``, so a map
         keeps its value type. Only a ``BaseModel`` subclass has a native translation.
         """
-        return _native_output_model(output_schema) is not None
+        return native_output_model(output_schema) is not None
 
 
 class VLLMChatModelSetup(OpenAIChatModelSetup):

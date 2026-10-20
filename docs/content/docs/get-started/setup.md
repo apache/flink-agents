@@ -179,7 +179,7 @@ pip install flink-agents apache-flink==${FLINK_VERSION}
 ```
 
 {{< hint warning >}}
-**Apple Silicon (macOS arm64) + Python 3.12**: `apache-flink` depends on `apache-beam`, which ships no macOS arm64 wheel for Python 3.12, so pip builds it from source. The build pulls the latest `setuptools` (>=82), which removed `pkg_resources`, causing `ModuleNotFoundError: No module named 'pkg_resources'`. That is an upstream issue, tracked in [setuptools#5174](https://github.com/pypa/setuptools/issues/5174). Constrain the build's setuptools to fix it:
+**Apple Silicon (macOS arm64)**: `apache-flink` depends on `apache-beam`, and none of the `apache-beam` versions that `apache-flink` 1.20 through 2.3 accept ships a macOS arm64 wheel, so pip builds it from source on every supported Python version. The build pulls the latest `setuptools` (>=82), which removed `pkg_resources`, causing `ModuleNotFoundError: No module named 'pkg_resources'`. That is an upstream issue, tracked in [setuptools#5174](https://github.com/pypa/setuptools/issues/5174). Constrain the build's setuptools to fix it:
 
 ```shell
 echo "setuptools<82" > /tmp/constraint.txt
@@ -192,7 +192,7 @@ PIP_CONSTRAINT=/tmp/constraint.txt pip install flink-agents apache-flink==${FLIN
 **Clone the repository:**
 
 ```shell
-git clone https://github.com/apache/flink-agents.git
+git clone --branch {{< branch >}} https://github.com/apache/flink-agents.git
 ```
 
 **Build and install:**
@@ -209,7 +209,7 @@ cd flink-agents
 cd ..
 ```
 
-On Apple Silicon with Python 3.12, that `pip install` can fail while building `apache-beam`. See
+On Apple Silicon, that `pip install` can fail while building `apache-beam`. See
 the warning in [From Official Release](#from-official-release) for the fix.
 
 This script will:
@@ -269,6 +269,17 @@ export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["pu
 {{< hint info >}}
 **Note:** You can add the `export PYTHONPATH=...` line to your shell profile (`~/.bash_profile`, `~/.bashrc`, `~/.zprofile`, or `~/.zshrc`) to set it permanently. This way, it will be automatically configured in all future terminal sessions.
 {{< /hint >}}
+
+### Known Limitation: Successive Python Jobs on a Session Cluster
+
+Restart the session cluster before you submit another Flink Agents job that uses the Python
+runtime, including Java jobs whose Agents have Python components. For the local cluster,
+run `$FLINK_HOME/bin/stop-cluster.sh` and then `$FLINK_HOME/bin/start-cluster.sh`.
+
+Successive jobs on the same TaskManager have known Python import and cache limitations.
+When the Flink Agents distribution JAR is not in `$FLINK_HOME/lib`, a later job can also
+fail to start with `NoSuchFieldException: loadedLibraryNames` or a `ClassCastException`
+on `pemja.core.object.PyObject`.
 
 ### Install Flink Agents Java Library (Java Flink jobs)
 
