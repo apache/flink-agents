@@ -111,6 +111,10 @@ class BashToolTest {
 
     @Test
     void interruptionPropagatesInsteadOfReturningToolResult() {
+        // Create the parser before interrupting. If this is the JVM's first parser use and
+        // tree-sitter's native library isn't on disk yet, tree-sitter writes it under a file
+        // lock, and that lock fails on an interrupted thread.
+        BashValidator.validate("sleep 1", List.of("sleep"), List.of(), null);
         Thread.currentThread().interrupt();
         try {
             CancellationException failure =
