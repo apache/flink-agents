@@ -43,13 +43,6 @@ if [[ `basename $CURR_DIR` != "tools" ]] ; then
   exit 1
 fi
 
-# Check JDK version - must be JDK 21
-JAVA_VERSION=$(java -version 2>&1 | head -1 | cut -d'"' -f2 | cut -d'.' -f1)
-if [[ "$JAVA_VERSION" != "21" ]]; then
-  echo "Error: JDK 21 is required for release. Current version: $(java -version 2>&1 | head -1)"
-  exit 1
-fi
-
 if [ "$(uname)" == "Darwin" ]; then
     SHASUM="shasum -a 512"
 else
