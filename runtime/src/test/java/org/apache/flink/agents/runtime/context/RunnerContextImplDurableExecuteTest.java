@@ -25,6 +25,8 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.operator.parallel.ActionTaskLifecycleException;
+import org.apache.flink.agents.runtime.operator.parallel.UncapturableException;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,6 +34,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -170,6 +173,87 @@ class RunnerContextImplDurableExecuteTest {
         CallResult pending =
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
         assertTrue(pending.isPending(), "interrupted pending slot should remain unfinalized");
+    }
+
+    @Test
+    void frameworkFaultIsNotPersistedAsADurableFailure() {
+        RunnerContextImpl context = createContext(new ActionState(null));
+        UncapturableException fault =
+                ActionTaskLifecycleException.suspendFailed(new IllegalStateException("no context"));
+        TestDurableCallable<String> callable =
+                new TestDurableCallable<>(
+                        "tool-call",
+                        String.class,
+                        () -> {
+                            throw fault;
+                        });
+
+        UncapturableException thrown =
+                assertThrows(UncapturableException.class, () -> context.durableExecute(callable));
+
+        assertSame(fault, thrown, "the shell must reach the caller with its marker intact");
+        assertEquals(0, persistCallCount.get());
+        assertEquals(0, context.getDurableExecutionContext().getActionState().getCallResultCount());
+    }
+
+    @Test
+    void frameworkFaultArrivingWrappedIsNotPersistedAsADurableFailure() {
+        RunnerContextImpl context = createContext(new ActionState(null));
+        UncapturableException fault =
+                ActionTaskLifecycleException.resumeFailed(
+                        new IllegalStateException("no context"), null);
+        TestDurableCallable<String> callable =
+                new TestDurableCallable<>(
+                        "tool-call",
+                        String.class,
+                        () -> {
+                            throw new ExecutionException(fault);
+                        });
+
+        ExecutionException thrown =
+                assertThrows(ExecutionException.class, () -> context.durableExecute(callable));
+
+        assertSame(fault, thrown.getCause());
+        assertEquals(0, persistCallCount.get());
+        assertEquals(0, context.getDurableExecutionContext().getActionState().getCallResultCount());
+    }
+
+    @Test
+    void frameworkFaultLeavesTheReconcilableSlotForRecoveryToRerun() throws Exception {
+        RunnerContextImpl context = createContext(new ActionState(null));
+        UncapturableException fault =
+                ActionTaskLifecycleException.suspendFailed(new IllegalStateException("no context"));
+        TestReconcilableCallable<String> callable =
+                new TestReconcilableCallable<>(
+                        "recon-call",
+                        String.class,
+                        () -> {
+                            throw fault;
+                        },
+                        () -> fail("reconcile should not be called on initial execution"));
+
+        assertThrows(UncapturableException.class, () -> context.durableExecute(callable));
+
+        // Reserving the slot is all that is written, so a restart drives the call again once the
+        // fault is corrected instead of replaying it as a recorded failure.
+        assertEquals(1, persistCallCount.get());
+        CallResult slot =
+                context.getDurableExecutionContext().getActionState().getCallResults().get(0);
+        assertTrue(slot.isPending(), "a framework fault must leave the slot unfinalized");
+
+        ActionState restored =
+                org.apache.flink.agents.runtime.actionstate.ActionStateSerde.deserialize(
+                        org.apache.flink.agents.runtime.actionstate.ActionStateSerde.serialize(
+                                lastPersistedState));
+        RunnerContextImpl replay = createContext(restored);
+        TestReconcilableCallable<String> recovered =
+                new TestReconcilableCallable<>(
+                        "recon-call",
+                        String.class,
+                        () -> fail("a pending slot is reconciled, not re-executed"),
+                        () -> "ok");
+
+        assertEquals("ok", replay.durableExecute(recovered));
     }
 
     @Test

@@ -33,6 +33,7 @@ import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.memory.MemoryScope;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionContextLifecycle;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.subgraph.SubgraphCallManager;
@@ -108,7 +109,20 @@ class ActionTaskContextManager implements AutoCloseable {
         this.actionTaskContexts = new HashMap<>();
         this.continuationActionExecutor =
                 new ContinuationActionExecutor(
-                        numAsyncThreads, asyncThreadCleanup, parallelExecutionLock, this::restore);
+                        numAsyncThreads,
+                        asyncThreadCleanup,
+                        parallelExecutionLock,
+                        new ParallelExecutionContextLifecycle() {
+                            @Override
+                            public void suspend(Object key, ActionTask task) {
+                                operator.suspendParallelAction(task);
+                            }
+
+                            @Override
+                            public void resume(Object key, ActionTask task) {
+                                operator.resumeParallelAction(key, task);
+                            }
+                        });
     }
 
     SubgraphCallManager getSubgraphCalls() {
@@ -151,6 +165,20 @@ class ActionTaskContextManager implements AutoCloseable {
         private List<Event> pendingEvents = new ArrayList<>();
         @Nullable private ExecutionReportingContext executionReportingContext;
         @Nullable private String contextKey;
+
+        /**
+         * Whether the task currently owns an execution phase on the parallel engine, so a
+         * suspend/resume pair cannot re-emit {@code onActionPrepared} for a phase already open.
+         */
+        private boolean lifecycleActive;
+    }
+
+    boolean isLifecycleActive(ActionTask actionTask) {
+        return requireContexts(actionTask).lifecycleActive;
+    }
+
+    void setLifecycleActive(ActionTask actionTask, boolean active) {
+        requireContexts(actionTask).lifecycleActive = active;
     }
 
     private boolean hasContexts(ActionTask actionTask) {

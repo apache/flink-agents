@@ -193,7 +193,6 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
             // Holding the lock from here on: every failure is funneled to the mailbox (an uncaught
             // throwable would only kill this pool thread silently), and the lock is returned
             // unless a shutdown interrupt aborted the work's async re-acquire.
-            boolean ownsLock = true;
             try {
                 ParallelExecutionTaskQueue.Node node = schedule.pollPendingNode();
                 ParallelExecutionTask work = workFactory.get();
@@ -206,9 +205,9 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
                 if (workerExecutor.isShutdown() && !parallelExecutionLock.isHeldByCurrentThread()) {
                     // A shutdown interrupt aborted the work's async re-acquire, so this worker no
                     // longer owns the lock: abandon the task without completing or releasing it.
-                    ownsLock = false;
                     return;
                 }
+                parallelExecutionLock.checkReentrant();
                 schedule.markDone(node);
                 mailboxDispatcher.execute(() -> completeOnMailbox(node), "complete action task");
             } catch (Throwable t) {
@@ -218,7 +217,7 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
                         },
                         "throw action task scheduling failure");
             } finally {
-                if (ownsLock) {
+                if (parallelExecutionLock.isHeldByCurrentThread()) {
                     parallelExecutionLock.releaseToMain();
                 }
             }
@@ -243,7 +242,6 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
                     break;
                 }
                 try {
-                    head.getWork().restoreContext();
                     head.getWork().commit();
                     lastCommitted = head.getWork();
                 } finally {

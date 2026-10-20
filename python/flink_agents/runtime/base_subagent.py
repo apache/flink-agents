@@ -182,15 +182,21 @@ class BaseSubagentSetup(SubagentSetup, TaskLifecycleListener, ABC):
         )
 
     def on_action_transferred(self, from_task: Any, to_task: Any) -> None:
-        """Move the finishing task's bookkeeping onto the generated task."""
+        """Unbind the yielding task and preserve its bookkeeping for resumption."""
         from_identity = Namespace.from_task(from_task).task_identity
-        to_identity = Namespace.from_task(to_task).task_identity
+        to_namespace = Namespace.from_task(to_task)
+        to_identity = to_namespace.task_identity
+        self._clear_current_namespace(from_identity)
+        if from_identity == to_identity:
+            # A worker-to-mailbox handoff retains the same task: it resumes the
+            # same logical action, so its allocator and registry must survive.
+            return
         allocator = self._per_task_allocators.pop(from_identity, None)
         if allocator is not None:
             self._per_task_allocators[to_identity] = allocator
         registry = self._per_task_registries.pop(from_identity, None)
         if registry is not None:
-            registry.set_action_name(Namespace.from_task(to_task).action_name)
+            registry.set_action_name(to_namespace.action_name)
             self._per_task_registries[to_identity] = registry
 
     def on_action_finishing(self, task: Any) -> None:
@@ -198,9 +204,8 @@ class BaseSubagentSetup(SubagentSetup, TaskLifecycleListener, ABC):
 
         The replay-reuse path reaches the same finalization through
         ``on_action_reused``, keeping the prepared/terminal pairing intact on
-        both paths. A failed invocation intentionally skips this cleanup: the
-        failure fails the run and the task is replayed on the restarted
-        operator, so stale entries cannot outlive the run.
+        both paths. A failed invocation only clears the current binding,
+        leaving its allocator and registry for the existing failure handling.
         """
         self._current_namespace = None
         identity = Namespace.from_task(task).task_identity
@@ -212,6 +217,17 @@ class BaseSubagentSetup(SubagentSetup, TaskLifecycleListener, ABC):
     def on_action_reused(self, task: Any) -> None:
         """Reuse is a terminal outcome like finishing, so share finalization."""
         self.on_action_finishing(task)
+
+    def on_action_failed(self, task: Any, error: Any) -> None:
+        """Unbind only the failed task without finalizing pending calls."""
+        self._clear_current_namespace(Namespace.from_task(task).task_identity)
+
+    def _clear_current_namespace(self, identity: str) -> None:
+        if (
+            self._current_namespace is not None
+            and self._current_namespace.task_identity == identity
+        ):
+            self._current_namespace = None
 
     # --------------------------------------------------------------------------------
     # Identity injected by the framework

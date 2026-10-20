@@ -21,7 +21,7 @@ import logging
 import os
 import time
 from collections.abc import Mapping
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import CancelledError, ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable, Dict, Literal
@@ -674,8 +674,8 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         # registered via add_task_lifecycle_listener() (aligned with the Java
         # operator's taskLifecycleListeners).
         self.__task_lifecycle_listeners: list = []
-        # The namespace of the task the operator last reported prepared, extracted
-        # eagerly so no pemja reference is retained across calls. Replayed onto a
+        # The namespace of the task's current prepared phase, extracted eagerly
+        # so no pemja reference is retained across calls. Replayed onto a
         # sub-agent handle materialized lazily during the action body — see
         # __observe_subagent_setup().
         self.__prepared_namespace: Any = None
@@ -876,7 +876,10 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
     def notify_action_transferred(self, from_task: Any, to_task: Any) -> None:
         """Fan out the operator's onActionTransferred to the listeners."""
-        self.__capture_prepared_namespace(to_task)
+        # A transfer may retain the same task (a worker-to-mailbox handoff on the
+        # parallel engine), so the next phase's namespace is left to its own
+        # onActionPrepared rather than assumed to be the successor's here.
+        self.__prepared_namespace = None
         for listener in self.__task_lifecycle_listeners:
             listener.on_action_transferred(from_task, to_task)
 
@@ -899,8 +902,35 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
     def notify_action_failed(self, task: Any, error: Any) -> None:
         """Fan out the operator's onActionFailed to the task lifecycle listeners."""
+        from flink_agents.runtime.base_subagent import Namespace
+
+        try:
+            failed_identity = Namespace.from_task(task).task_identity
+        except Exception:
+            # Placeholder tasks expose no accessor surface; nothing to unbind.
+            failed_identity = None
+        if (
+            failed_identity is not None
+            and self.__prepared_namespace is not None
+            and self.__prepared_namespace.task_identity == failed_identity
+        ):
+            self.__prepared_namespace = None
         for listener in self.__task_lifecycle_listeners:
-            listener.on_action_failed(task, error)
+            # Guarded per listener, so one listener's failure neither starves the
+            # remaining ones nor derails the failure being reported. Exception
+            # rather than BaseException: a KeyboardInterrupt or SystemExit raised
+            # here is not a listener bug, and swallowing it into a warning would
+            # hide an operator's attempt to stop the process.
+            try:
+                listener.on_action_failed(task, error)
+            except CancelledError:  # noqa: PERF203
+                # CancelledError derives from Exception, so the guard below would
+                # otherwise demote the caller's control flow to a warning.
+                raise
+            except Exception:
+                # The warning is the whole report: `error` is a pemja proxy, so
+                # nothing attached to it reaches the throwable Java rethrows.
+                logger.warning("Task failure listener failed", exc_info=True)
 
     def notify_record_finished(self, key: Any) -> None:
         """Fan out the operator's onRecordFinished to the task lifecycle listeners."""

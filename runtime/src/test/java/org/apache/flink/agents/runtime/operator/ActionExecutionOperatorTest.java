@@ -72,6 +72,7 @@ import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionContextLifecycle;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionCoordinator;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionTask;
@@ -1569,7 +1570,16 @@ public class ActionExecutionOperatorTest {
         ParallelExecutionLock lock = new ParallelExecutionLock();
         ContinuationActionExecutor batch =
                 new ContinuationActionExecutor(
-                        1, interpreters::releaseCurrentThreadInterpreter, lock, (key, task) -> {});
+                        1,
+                        interpreters::releaseCurrentThreadInterpreter,
+                        lock,
+                        new ParallelExecutionContextLifecycle() {
+                            @Override
+                            public void suspend(Object key, ActionTask task) {}
+
+                            @Override
+                            public void resume(Object key, ActionTask task) {}
+                        });
         Callable<String> pythonCall =
                 () ->
                         interpreters.withInterpreter(
@@ -1588,9 +1598,6 @@ public class ActionExecutionOperatorTest {
                 new ParallelExecutionTask() {
                     @Override
                     public void setup(Object key, long recordIndex, long taskIndex) {}
-
-                    @Override
-                    public void restoreContext() {}
 
                     @Override
                     public void execute() {

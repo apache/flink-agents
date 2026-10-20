@@ -26,15 +26,20 @@ class TaskLifecycleListener:
     Mirrors the Java ``TaskLifecycleListener``: the operator drives Python
     actions on the JVM and forwards each lifecycle callback here over pemja.
     Every callback defaults to a no-op, so an implementation overrides only
-    the ones it cares about.
+    the ones it cares about. Callbacks are serialized within one operator:
+    on the mailbox thread for cooperative execution, or under the execution
+    lock for parallel execution. No fixed thread affinity is guaranteed.
 
-    Pairing semantics: ``on_action_prepared`` pairs with exactly one terminal
-    callback -- ``on_action_finishing`` followed by ``on_action_finished`` on
-    normal completion, ``on_action_reused`` when a replay skips an
-    already-completed action, ``on_action_failed`` on invocation failure, or
-    ``on_action_transferred`` when a non-finished task hands its context over
-    to the task it generated. ``on_action_started`` fires at most once per
-    action execution; the gate is checkpointed with the task, so a failover
+    Pairing semantics: ``on_action_prepared`` enters an execution phase after
+    the task's contexts are bound, not necessarily another body invocation.
+    The phase ends with ``on_action_finishing`` followed by
+    ``on_action_finished`` on normal completion, ``on_action_reused`` when a
+    replay skips an already-completed action, or ``on_action_transferred``
+    when the task yields execution. A transfer may retain the same task,
+    including a worker-to-mailbox handoff. ``on_action_failed`` reports a task
+    processing failure; it is not a phase exit and does not imply an open
+    phase. ``on_action_started`` fires at most once per action execution; the
+    gate is checkpointed with the task, so a failover
     replay re-emits ``on_record_start`` but not ``on_action_started``.
 
     Exception contract: the framework allows a listener to inspect state and
@@ -50,17 +55,23 @@ class TaskLifecycleListener:
         """
 
     def on_action_prepared(self, task: Any) -> None:
-        """A task's context is wired up and it is ready to run.
+        """A task's contexts are fully bound for the phase it is entering.
 
-        Fires on every preparation, including re-preparation of a suspended
-        or resumed task.
+        Fires again after a handoff or suspension; the phase need not invoke
+        the action body again.
         """
 
     def on_action_started(self, task: Any) -> None:
         """An action execution is about to run for the first time."""
 
     def on_action_transferred(self, from_task: Any, to_task: Any) -> None:
-        """A non-finished task handed its context to the task it generated."""
+        """A task is yielding execution.
+
+        Unbind the current task and move bookkeeping from ``from_task`` to
+        ``to_task``, preserving it unchanged when both identify the same task.
+        What comes next is either ``on_action_prepared`` for a further phase
+        or ``on_action_failed``.
+        """
 
     def on_action_finishing(self, task: Any) -> None:
         """A task completed but its result is not persisted yet.
@@ -82,10 +93,14 @@ class TaskLifecycleListener:
         """
 
     def on_action_failed(self, task: Any, error: Any) -> None:
-        """An action invocation failed.
+        """Processing an action task failed.
 
         Purely observational: perceive the failure for logging, metrics, or
         bookkeeping cleanup, but never compensate or decide on rethrowing.
+
+        Not a phase exit, and it does not imply an open phase: a task that
+        failed after a transfer arrives here with no ``on_action_prepared`` in
+        between, so cleanup must tolerate a task it already unbound.
         """
 
     def on_record_finished(self, key: Any) -> None:

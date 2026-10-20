@@ -22,8 +22,8 @@ import javax.annotation.Nullable;
 /**
  * A self-describing unit of worker execution for the parallel execution engine. A pool thread
  * {@link #setup} + {@link #execute()}s it (pull, prepare, run; result or failure stored inside);
- * the mailbox thread later {@link #restoreContext()} + {@link #commit()}s each done key-group head
- * in order and calls {@link #finishGroup} once per drain.
+ * the mailbox thread later {@link #commit()}s each done key-group head in order and calls {@link
+ * #finishGroup} once per drain.
  */
 public interface ParallelExecutionTask {
 
@@ -32,9 +32,6 @@ public interface ParallelExecutionTask {
      * Called once on the worker thread under the lock, before {@link #execute()}.
      */
     void setup(Object key, long recordIndex, long taskIndex);
-
-    /** Re-establishes the runner context and Flink key for this work (used by the commit drain). */
-    void restoreContext();
 
     /**
      * Runs the action on a worker thread: pulls and prepares the next queued task, invokes the

@@ -152,24 +152,38 @@ def test_replay_assigns_the_same_ids() -> None:
 
 
 def test_allocation_continues_across_task_steps() -> None:
-    """Each step of a suspended task re-prepares with the same facts, and
-    the allocator persists, so the session ordinal continues instead of
-    restarting.
-    """
+    """Same-task handoffs preserve allocator ordinals and pending handles."""
     setup = _RecordingBaseSetup()
-    setup.on_action_prepared(_FakeTask())
+    task = _FakeTask()
+    setup.on_action_prepared(task)
     first = _run(setup.submit(None, "p"))
+    allocator = setup._current_allocator()
+    registry = setup.pending_call_registry()
+    registry.track_pending_subagent_call(first.identity)
 
-    setup.on_action_prepared(_FakeTask())
+    setup.on_action_transferred(task, task)
+    assert setup.pending_call_registry() is None
+    with pytest.raises(RuntimeError, match="No prepared action task"):
+        _run(setup.submit(None, "outside execution"))
+
+    setup.on_action_prepared(task)
+    assert setup._current_allocator() is allocator
+    assert setup.pending_call_registry() is registry
     second = _run(setup.submit(None, "p"))
+    next_call = _run(setup.submit(None, "p", first.session_id))
 
     assert first.session_id.endswith("-0")
     assert second.session_id.endswith("-1")
-    assert second.session_id != first.session_id
+    assert next_call.call_id == f"{first.session_id}-2"
+    with pytest.raises(RuntimeError, match=first.identity):
+        registry.check_empty()
+    registry.untrack_pending_subagent_call(first.identity)
+    setup.on_action_finishing(task)
+    assert setup.pending_call_registry() is None
 
 
 def test_transfer_moves_bookkeeping_onto_a_different_continuation() -> None:
-    """The generated task may carry a different identity than the finishing
+    """The generated task may carry a different identity than the yielding
     task, so the allocator and the pending-call registry are re-keyed onto
     it instead of assumed equal.
     """
@@ -179,10 +193,17 @@ def test_transfer_moves_bookkeeping_onto_a_different_continuation() -> None:
 
     setup.on_action_prepared(from_task)
     first = _run(setup.submit(None, "p"))
-    setup.pending_call_registry().track_pending_subagent_call("sid#call-1")
+    allocator = setup._current_allocator()
+    registry = setup.pending_call_registry()
+    registry.track_pending_subagent_call("sid#call-1")
     setup.on_action_transferred(from_task, to_task)
+    assert setup.pending_call_registry() is None
+    with pytest.raises(RuntimeError, match="No prepared action task"):
+        _run(setup.submit(None, "outside execution"))
 
     setup.on_action_prepared(to_task)
+    assert setup._current_allocator() is allocator
+    assert setup.pending_call_registry() is registry
     second = _run(setup.submit(None, "p"))
 
     # The allocator moved with the execution: the session ordinal continues
@@ -192,21 +213,46 @@ def test_transfer_moves_bookkeeping_onto_a_different_continuation() -> None:
 
     # The pending-call registry moved as well, and adopted the continuation's
     # action: finishing the continuation still reports the handle tracked
-    # under the finishing task.
+    # under the yielding task.
     with pytest.raises(RuntimeError, match=r"act-next.*sid#call-1"):
         setup.on_action_finishing(to_task)
+    assert setup.pending_call_registry() is None
+    assert not setup._per_task_allocators
+    assert not setup._per_task_registries
 
 
-def test_finished_task_drops_its_bookkeeping() -> None:
-    """After the task finishes, short forms have no task to assign from."""
+@pytest.mark.parametrize("terminal", ["on_action_finishing", "on_action_reused"])
+def test_finished_task_drops_its_bookkeeping(terminal: str) -> None:
+    """After either normal terminal, no current binding or bookkeeping remains."""
     setup = _RecordingBaseSetup()
     setup.on_action_prepared(_FakeTask())
     _run(setup.submit(None, "p"))
+    setup.pending_call_registry()
 
-    setup.on_action_finishing(_FakeTask())
+    getattr(setup, terminal)(_FakeTask())
 
+    assert setup.pending_call_registry() is None
+    assert not setup._per_task_allocators
+    assert not setup._per_task_registries
     with pytest.raises(RuntimeError, match="No prepared action task"):
         _run(setup.submit(None, "p"))
+
+
+@pytest.mark.parametrize("terminal", ["on_action_finishing", "on_action_reused"])
+def test_normal_terminals_still_reject_pending_calls(terminal: str) -> None:
+    """Finishing and reuse retain the existing unresolved-handle check."""
+    setup = _RecordingBaseSetup()
+    task = _FakeTask()
+    setup.on_action_prepared(task)
+    _run(setup.submit(None, "p"))
+    setup.pending_call_registry().track_pending_subagent_call("sid#pending")
+
+    with pytest.raises(RuntimeError, match="sid#pending"):
+        getattr(setup, terminal)(task)
+
+    assert setup.pending_call_registry() is None
+    assert not setup._per_task_allocators
+    assert not setup._per_task_registries
 
 
 def test_new_action_restarts_call_ordinal_for_a_reused_session_id() -> None:
@@ -258,19 +304,82 @@ def test_interleaved_executions_of_one_action_keep_apart() -> None:
     first = _run(setup.submit(None, "p"))
     left = setup.pending_call_registry()
     left.track_pending_subagent_call(first.identity)
+    setup.on_action_transferred(first_task, first_task)
+    assert setup.pending_call_registry() is None
 
     setup.on_action_prepared(second_task)
     _run(setup.submit(None, "p"))
     setup.on_action_finishing(second_task)
+    assert setup.pending_call_registry() is None
 
     # The finished execution dropped only its own bookkeeping.
     setup.on_action_prepared(first_task)
     resumed = _run(setup.submit(None, "p"))
     assert resumed.session_id.endswith("-1")
     assert setup.pending_call_registry() is left
+    with pytest.raises(RuntimeError, match=first.identity):
+        left.check_empty()
 
     left.untrack_pending_subagent_call(first.identity)
     setup.on_action_finishing(first_task)
+    assert setup.pending_call_registry() is None
+
+
+def test_failure_unbinds_only_matching_task_without_finalizing_calls() -> None:
+    """Failure preserves both tasks' bookkeeping without checking pending calls."""
+    setup = _RecordingBaseSetup()
+    failed = _FakeTask(action_name="failed")
+    other = _FakeTask(action_name="other")
+    setup.on_action_prepared(failed)
+    first = _run(setup.submit(None, "p"))
+    allocator = setup._current_allocator()
+    registry = setup.pending_call_registry()
+    registry.track_pending_subagent_call(first.identity)
+    setup.on_action_transferred(failed, failed)
+
+    setup.on_action_prepared(other)
+    other_handle = _run(setup.submit(None, "p"))
+    other_allocator = setup._current_allocator()
+    other_registry = setup.pending_call_registry()
+    other_registry.track_pending_subagent_call(other_handle.identity)
+    setup.on_action_failed(failed, RuntimeError("failed"))
+    assert setup._current_allocator() is other_allocator
+    assert setup.pending_call_registry() is other_registry
+    assert setup._current_namespace.action_name == "other"
+
+    # A fresh proxy for the same task must match by task facts, not Python identity.
+    setup.on_action_failed(_FakeTask(action_name="other"), RuntimeError("other"))
+    assert setup.pending_call_registry() is None
+    with pytest.raises(RuntimeError, match="No prepared action task"):
+        _run(setup.submit(None, "outside execution"))
+
+    setup.on_action_prepared(failed)
+    assert setup._current_allocator() is allocator
+    assert setup.pending_call_registry() is registry
+    with pytest.raises(RuntimeError, match=first.identity):
+        registry.check_empty()
+    setup.on_action_transferred(failed, failed)
+    setup.on_action_prepared(other)
+    assert setup._current_allocator() is other_allocator
+    assert setup.pending_call_registry() is other_registry
+    with pytest.raises(RuntimeError, match=other_handle.identity):
+        other_registry.check_empty()
+
+
+def test_transfer_without_bookkeeping_does_not_materialize_it() -> None:
+    """Handoffs do not create allocators or registries before they are needed."""
+    setup = _RecordingBaseSetup()
+    task = _FakeTask()
+    continuation = _FakeTask(action_name="continuation")
+    setup.on_action_prepared(task)
+    setup.on_action_transferred(task, task)
+    setup.on_action_prepared(task)
+    setup.on_action_transferred(task, continuation)
+    setup.on_action_prepared(continuation)
+
+    assert not setup._per_task_allocators
+    assert not setup._per_task_registries
+    assert setup._current_namespace.action_name == "continuation"
 
 
 def test_explicit_identity_passes_through_untouched() -> None:

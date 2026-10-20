@@ -58,6 +58,7 @@ import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.memory.MemoryValueObservation;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.operator.parallel.UncapturableException;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentInvocation;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
 import org.apache.flink.agents.runtime.subgraph.SubgraphCallManager;
@@ -978,6 +979,10 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 }
                 throw e;
             }
+            // A framework fault is not this call's outcome, so it is not recorded as one.
+            if (UncapturableException.isUncapturable(e)) {
+                throw e;
+            }
             exception = e;
         }
 
@@ -1342,6 +1347,10 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 if (CancellationUtils.isInterruption(e)) {
                     Thread.currentThread().interrupt();
                 }
+                throw e;
+            }
+            // A framework fault is not this call's outcome, so it is not recorded as one.
+            if (UncapturableException.isUncapturable(e)) {
                 throw e;
             }
             exception = e;

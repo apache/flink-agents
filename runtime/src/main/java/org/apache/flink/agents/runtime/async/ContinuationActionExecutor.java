@@ -17,8 +17,10 @@
  */
 package org.apache.flink.agents.runtime.async;
 
-import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionContextRestorer;
+import org.apache.flink.agents.runtime.operator.parallel.ActionTaskLifecycleException;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionContextLifecycle;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
+import org.apache.flink.agents.runtime.operator.parallel.UncapturableException;
 
 import javax.annotation.Nullable;
 
@@ -33,16 +35,16 @@ import java.util.function.Supplier;
  * multi-release variant backed by the Continuation API).
  *
  * <p>On the parallel path a {@link ParallelExecutionLock} and {@link
- * ParallelExecutionContextRestorer} are wired in: {@link #executeAsync} releases the lock while the
- * blocking work runs inline, then re-acquires worker ownership and restores the runner context.
- * Without a lock it runs synchronously.
+ * ParallelExecutionContextLifecycle} are wired in: async calls suspend the task context before
+ * releasing the lock, then resume it after re-acquiring worker ownership. Blocking single calls run
+ * inline; batches run on managed workers. Without a lock no lifecycle callbacks run.
  */
 public class ContinuationActionExecutor {
 
     private final AsyncBatchExecutor batchExecutor;
 
     @Nullable private final ParallelExecutionLock parallelExecutionLock;
-    @Nullable private final ParallelExecutionContextRestorer contextRestorer;
+    @Nullable private final ParallelExecutionContextLifecycle contextLifecycle;
 
     /** Creates a new ContinuationActionExecutor. */
     public ContinuationActionExecutor(int numAsyncThreads) {
@@ -51,7 +53,7 @@ public class ContinuationActionExecutor {
 
     /**
      * Creates a new ContinuationActionExecutor. On the JDK&lt;21 parallel MVP path both {@code
-     * parallelExecutionLock} and {@code contextRestorer} are supplied; otherwise they are {@code
+     * parallelExecutionLock} and {@code contextLifecycle} are supplied; otherwise they are {@code
      * null} and {@link #executeAsync} runs synchronously.
      *
      * <p>Batches use a separate managed pool so action workers waiting for their children cannot
@@ -61,10 +63,10 @@ public class ContinuationActionExecutor {
             int numAsyncThreads,
             Runnable threadCleanup,
             @Nullable ParallelExecutionLock parallelExecutionLock,
-            @Nullable ParallelExecutionContextRestorer contextRestorer) {
+            @Nullable ParallelExecutionContextLifecycle contextLifecycle) {
         this.batchExecutor = new AsyncBatchExecutor(numAsyncThreads, threadCleanup);
         this.parallelExecutionLock = parallelExecutionLock;
-        this.contextRestorer = contextRestorer;
+        this.contextLifecycle = contextLifecycle;
     }
 
     /**
@@ -96,13 +98,7 @@ public class ContinuationActionExecutor {
             return supplier.get();
         }
 
-        parallelExecutionLock.checkReentrant();
-        parallelExecutionLock.release();
-        try {
-            return supplier.get();
-        } finally {
-            reacquireAndRestore(context);
-        }
+        return executeWithLockHandoff(context, supplier::get);
     }
 
     /**
@@ -126,23 +122,53 @@ public class ContinuationActionExecutor {
             return batchExecutor.execute(suppliers, timeout, maxParallelism);
         }
 
+        return executeWithLockHandoff(
+                context, () -> batchExecutor.execute(suppliers, timeout, maxParallelism));
+    }
+
+    /**
+     * Runs {@code supplier} with the execution lock handed off: the task context is suspended and
+     * the lock released so the mailbox and other workers can progress, then worker ownership is
+     * re-acquired at this task's priority and its context resumed before control returns to the
+     * caller.
+     *
+     * <p>A suspend or resume failure is a framework fault, not a business result, so it surfaces as
+     * an {@link ActionTaskLifecycleException} inside its {@link UncapturableException} shell and
+     * never as the supplier's own outcome. A resume failure after a supplier failure keeps the
+     * supplier failure as the suppressed cause.
+     */
+    private <T> T executeWithLockHandoff(ContinuationContext context, Callable<T> supplier)
+            throws Exception {
         parallelExecutionLock.checkReentrant();
-        parallelExecutionLock.release();
         try {
-            return batchExecutor.execute(suppliers, timeout, maxParallelism);
+            contextLifecycle.suspend(context.getKey(), context.getActionTask());
+        } catch (Throwable failure) {
+            throw ActionTaskLifecycleException.suspendFailed(failure);
+        }
+        parallelExecutionLock.release();
+        Throwable supplierFailure = null;
+        try {
+            return supplier.call();
+        } catch (Throwable failure) {
+            supplierFailure = failure;
+            throw failure;
         } finally {
-            reacquireAndRestore(context);
+            reacquireWorkerOwnership(context);
+            try {
+                contextLifecycle.resume(context.getKey(), context.getActionTask());
+            } catch (Throwable failure) {
+                throw ActionTaskLifecycleException.resumeFailed(failure, supplierFailure);
+            }
         }
     }
 
     /**
-     * Re-acquires worker ownership and restores the runner context. An interrupt flag left set by
-     * the call (for example by code that re-interrupts after catching {@link InterruptedException})
-     * must not discard its outcome, so the flag is cleared for the wait and restored afterward. A
-     * new interrupt during the wait, such as the coordinator's shutdown interrupts, still aborts
-     * it.
+     * Re-acquires worker ownership at this task's priority. An interrupt flag left set by the call
+     * (for example by code that re-interrupts after catching {@link InterruptedException}) must not
+     * discard its outcome, so the flag is cleared for the wait and restored afterward. A new
+     * interrupt during the wait, such as the coordinator's shutdown interrupts, still aborts it.
      */
-    private void reacquireAndRestore(ContinuationContext context) throws InterruptedException {
+    private void reacquireWorkerOwnership(ContinuationContext context) throws InterruptedException {
         boolean interrupted = Thread.interrupted();
         try {
             parallelExecutionLock.acquireByWorker(context.getRecordIndex(), context.getTaskIndex());
@@ -151,7 +177,6 @@ public class ContinuationActionExecutor {
                 Thread.currentThread().interrupt();
             }
         }
-        contextRestorer.restore(context.getKey(), context.getActionTask());
     }
 
     /**

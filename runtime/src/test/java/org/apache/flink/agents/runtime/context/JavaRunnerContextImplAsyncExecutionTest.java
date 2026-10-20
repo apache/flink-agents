@@ -26,6 +26,8 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.operator.ActionTask;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionContextLifecycle;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.Test;
@@ -152,9 +154,17 @@ class JavaRunnerContextImplAsyncExecutionTest {
                         1,
                         () -> {},
                         lock,
-                        (key, task) -> {
-                            lock.checkReentrant();
-                            restored.set(true);
+                        new ParallelExecutionContextLifecycle() {
+                            @Override
+                            public void suspend(Object key, ActionTask task) {
+                                lock.checkReentrant();
+                            }
+
+                            @Override
+                            public void resume(Object key, ActionTask task) {
+                                lock.checkReentrant();
+                                restored.set(true);
+                            }
                         });
         JavaRunnerContextImpl context = createContext(executor, new ContinuationContext());
         ExecutorService worker = Executors.newSingleThreadExecutor();

@@ -23,6 +23,7 @@ import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.MemoryScope;
+import org.apache.flink.agents.runtime.operator.parallel.UncapturableException;
 
 import javax.annotation.Nullable;
 
@@ -151,14 +152,18 @@ public class SubgraphInvocation<R> {
         tryComplete();
     }
 
-    /** Only ordinary action-body failures can become a graph outcome. */
+    /**
+     * Only ordinary action-body failures can become a graph outcome. Anything carrying an {@link
+     * UncapturableException} is excluded too, so a framework fault fails the job instead of being
+     * reported as this call's own result. The scan walks causes because either can arrive wrapped.
+     */
     public final boolean capturesActionFailure(Throwable failure) {
         if (!(failure instanceof Exception) || CancellationUtils.isCancellation(failure)) {
             return false;
         }
         Throwable cause = failure;
         for (int depth = 0; cause != null && depth < 64; depth++, cause = cause.getCause()) {
-            if (cause instanceof Error) {
+            if (cause instanceof Error || cause instanceof UncapturableException) {
                 return false;
             }
             if (cause.getCause() == cause) {

@@ -20,12 +20,17 @@ package org.apache.flink.agents.runtime.operator.parallel;
 import org.apache.flink.agents.runtime.operator.ActionTask;
 
 /**
- * Restores the shared runner context to a resuming action task. Called by the async executor after
- * a worker re-acquires the lock, so the shared context is repointed at the task's key, memory,
- * continuation, and durable-execution contexts before control returns to user code.
+ * Detaches and restores the shared runner context around a parallel execution ownership handoff.
+ * Called by the async executor around the window in which a worker holds no lock, so the shared
+ * context is detached from the yielding task before another worker can bind it, and repointed at
+ * the task's key, memory, continuation, and durable-execution contexts after ownership is
+ * re-acquired.
  */
-@FunctionalInterface
-public interface ParallelExecutionContextRestorer {
+public interface ParallelExecutionContextLifecycle {
 
-    void restore(Object key, ActionTask actionTask);
+    /** Suspends the task context while the worker still owns the execution lock. */
+    void suspend(Object key, ActionTask actionTask);
+
+    /** Restores and prepares the task context after the worker re-acquires the execution lock. */
+    void resume(Object key, ActionTask actionTask);
 }

@@ -902,11 +902,6 @@ class ParallelExecutionCoordinatorTest {
         }
 
         @Override
-        public void restoreContext() {
-            events.add("restore-" + id);
-        }
-
-        @Override
         public void execute() {
             events.add("execute-" + id);
             if (asyncLock != null) {
@@ -942,6 +937,7 @@ class ParallelExecutionCoordinatorTest {
 
         @Override
         public void commit() {
+            events.add("restore-" + id);
             if (commitFailure != null) {
                 throw commitFailure;
             }

@@ -317,9 +317,6 @@ class ParallelExecutionPythonResourceTest {
         public void setup(Object key, long recordIndex, long taskIndex) {}
 
         @Override
-        public void restoreContext() {}
-
-        @Override
         public void execute() {
             try {
                 action.run();

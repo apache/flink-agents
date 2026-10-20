@@ -323,9 +323,6 @@ public final class PythonResourceWorkerLifetimeScenario {
         }
 
         @Override
-        public void restoreContext() {}
-
-        @Override
         public void execute() {
             try {
                 if (executionLock == null) {

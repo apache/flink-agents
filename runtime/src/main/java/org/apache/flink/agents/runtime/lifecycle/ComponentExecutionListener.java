@@ -30,8 +30,9 @@ import org.apache.flink.agents.api.trace.TraceRecord;
  * <p>Invariants a listener may rely on, and must not break:
  *
  * <ul>
- *   <li>Callbacks for an operator are serialized by the runtime's execution context. They may run
- *       on the mailbox thread or on a worker holding the execution lock.
+ *   <li>Callbacks are serialized within one operator: on the mailbox thread for cooperative
+ *       execution, or under the execution lock for parallel execution. No fixed thread affinity is
+ *       guaranteed.
  *   <li>An exception thrown by a listener is logged and swallowed, so reporting never fails the
  *       reporting component and never starves the remaining listeners.
  *   <li>The call's identity and relationship to its containing Action are populated before the

@@ -65,6 +65,11 @@ public class TaskLifecycleListenerNotificationTest {
         RecordingListener.EVENTS.clear();
     }
 
+    private static boolean usesParallelWorker(AgentPlan plan) {
+        return plan.getConfig().get(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED)
+                && !ContinuationActionExecutor.isContinuationSupported();
+    }
+
     /** Plain listener that records every lifecycle notification it receives. */
     public static class RecordingListener implements TaskLifecycleListener {
 
@@ -178,33 +183,27 @@ public class TaskLifecycleListenerNotificationTest {
             testHarness.processElement(new StreamRecord<>(7L));
             operator.waitInFlightEventsFinished();
 
-            assertThat(RecordingListener.EVENTS)
-                    .containsExactly(
-                            "recordStart:7",
-                            "prepared:handleInput",
-                            "started:handleInput",
-                            "finishing:handleInput",
-                            "finished:handleInput",
-                            "recordFinished:7");
+            List<String> expectedRound =
+                    new ArrayList<>(
+                            List.of(
+                                    "recordStart:7",
+                                    "prepared:handleInput",
+                                    "started:handleInput"));
+            if (usesParallelWorker(plan)) {
+                expectedRound.addAll(
+                        List.of("transferred:handleInput->handleInput", "prepared:handleInput"));
+            }
+            expectedRound.addAll(
+                    List.of("finishing:handleInput", "finished:handleInput", "recordFinished:7"));
+            assertThat(RecordingListener.EVENTS).containsExactlyElementsOf(expectedRound);
 
             // A second record on the same key starts and finishes its own round.
             testHarness.processElement(new StreamRecord<>(7L));
             operator.waitInFlightEventsFinished();
 
-            assertThat(RecordingListener.EVENTS)
-                    .containsExactly(
-                            "recordStart:7",
-                            "prepared:handleInput",
-                            "started:handleInput",
-                            "finishing:handleInput",
-                            "finished:handleInput",
-                            "recordFinished:7",
-                            "recordStart:7",
-                            "prepared:handleInput",
-                            "started:handleInput",
-                            "finishing:handleInput",
-                            "finished:handleInput",
-                            "recordFinished:7");
+            List<String> expectedRecords = new ArrayList<>(expectedRound);
+            expectedRecords.addAll(expectedRound);
+            assertThat(RecordingListener.EVENTS).containsExactlyElementsOf(expectedRecords);
         }
     }
 
@@ -359,12 +358,14 @@ public class TaskLifecycleListenerNotificationTest {
             testHarness.processElement(new StreamRecord<>(7L));
             operator.waitInFlightEventsFinished();
 
-            assertThat(RecordingListener.EVENTS)
-                    .containsExactly(
-                            "recordStart:7",
-                            "prepared:handleInput",
-                            "reused:handleInput",
-                            "recordFinished:7");
+            List<String> expected =
+                    new ArrayList<>(List.of("recordStart:7", "prepared:handleInput"));
+            if (usesParallelWorker(plan)) {
+                expected.addAll(
+                        List.of("transferred:handleInput->handleInput", "prepared:handleInput"));
+            }
+            expected.addAll(List.of("reused:handleInput", "recordFinished:7"));
+            assertThat(RecordingListener.EVENTS).containsExactlyElementsOf(expected);
         }
     }
 
@@ -373,8 +374,8 @@ public class TaskLifecycleListenerNotificationTest {
 
     @Test
     void resumedInFlightRecordReEmitsRecordStart() throws Exception {
-        // Force serial: the parallel engine drains in-flight tasks before checkpoint, so no
-        // in-flight record survives the snapshot — this test exercises the serial restore path.
+        // Keep this test on serial restore. Parallel checkpoints can also retain queued roots
+        // whose workers have not started.
         AgentConfiguration serialConfig = new AgentConfiguration();
         serialConfig.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
         AgentPlan plan = new AgentPlan(new SyncAgent(), serialConfig);
@@ -537,8 +538,22 @@ public class TaskLifecycleListenerNotificationTest {
                             .isEqualTo("transferred:handleInput->handleInput");
                     assertThat(suspensionRounds.get(i + 1)).isEqualTo("prepared:handleInput");
                 }
+            } else if (usesParallelWorker(plan)) {
+                // One off-lock async call, then the worker-to-mailbox handoff.
+                assertThat(RecordingListener.EVENTS)
+                        .containsExactly(
+                                "recordStart:5",
+                                "prepared:handleInput",
+                                "started:handleInput",
+                                "transferred:handleInput->handleInput",
+                                "prepared:handleInput",
+                                "transferred:handleInput->handleInput",
+                                "prepared:handleInput",
+                                "finishing:handleInput",
+                                "finished:handleInput",
+                                "recordFinished:5");
             } else {
-                // JDK 11 fallback runs the action synchronously: no suspension, no transfer.
+                // Serial fallback runs the action synchronously: no suspension, no transfer.
                 assertThat(RecordingListener.EVENTS)
                         .containsExactly(
                                 "recordStart:5",
@@ -581,12 +596,17 @@ public class TaskLifecycleListenerNotificationTest {
                     .hasStackTraceContaining("action boom");
 
             // The failure notification replaces the finishing/finished/recordFinished tail.
-            assertThat(RecordingListener.EVENTS)
-                    .containsExactly(
-                            "recordStart:7",
-                            "prepared:handleInput",
-                            "started:handleInput",
-                            "failed:handleInput");
+            List<String> expected =
+                    new ArrayList<>(
+                            List.of(
+                                    "recordStart:7",
+                                    "prepared:handleInput",
+                                    "started:handleInput"));
+            if (usesParallelWorker(plan)) {
+                expected.add("transferred:handleInput->handleInput");
+            }
+            expected.add("failed:handleInput");
+            assertThat(RecordingListener.EVENTS).containsExactlyElementsOf(expected);
         }
     }
 }

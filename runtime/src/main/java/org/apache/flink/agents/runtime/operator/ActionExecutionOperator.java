@@ -1588,6 +1588,39 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     /**
+     * Closes the task's execution phase before its worker releases the lock, so the phase's
+     * lifecycle pairing survives a handoff to another worker or to the mailbox. The task keeps its
+     * contexts; only its claim on the shared runner context is given up.
+     */
+    void suspendParallelAction(ActionTask task) {
+        parallelExecutionLock.checkReentrant();
+        checkState(contextManager.isLifecycleActive(task), "Action is not active.");
+        contextManager.setLifecycleActive(task, false);
+        notifyActionTransferred(task, task);
+    }
+
+    /**
+     * Reopens the task's execution phase after ownership is re-acquired: rebinds the shared context
+     * to the task, then re-emits preparation for the phase about to run.
+     */
+    void resumeParallelAction(Object key, ActionTask task) {
+        parallelExecutionLock.checkReentrant();
+        checkState(!contextManager.isLifecycleActive(task), "Action is already active.");
+        contextManager.restore(key, task);
+        prepareParallelAction(task);
+    }
+
+    private void prepareParallelAction(ActionTask task) {
+        // The synthetic noop input action stays lifecycle-silent.
+        if (!isInternalNoopInputAction(task.action)) {
+            // Framework state first, then the announcement: onActionPrepared says this task's
+            // execution phase is open, so the flag suspend/resume check must already say so.
+            contextManager.setLifecycleActive(task, true);
+            notifyActionPrepared(task);
+        }
+    }
+
+    /**
      * A single action task's full worker lifecycle on the parallel engine: a pool thread {@code
      * setup}s and {@code execute}s it under the lock; the mailbox thread later restores and commits
      * it. All task-specific processing lives here; the operator keeps only mailbox flow.
@@ -1601,6 +1634,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         private ActionTask actionTask;
         private long sequenceNumber;
         private boolean replayCompletedAction;
+
+        /**
+         * Whether this work's action reports lifecycle callbacks (the noop input action does not).
+         */
+        private boolean lifecyclePrepared;
 
         @Nullable private ActionTask.ActionTaskResult result;
         @Nullable private Throwable failure;
@@ -1622,6 +1660,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 setCurrentKey(key);
                 ActionTask task = pollNextActionTask();
                 checkState(task != null, "Action task queue was empty.");
+                this.actionTask = task;
 
                 contextManager.createAndSetRunnerContext(
                         task,
@@ -1637,11 +1676,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         ltm,
                         ActionExecutionOperator.this::createExecutionReportingContext);
 
-                // The synthetic noop input action stays lifecycle-silent.
-                boolean lifecycleVisible = !isInternalNoopInputAction(task.action);
-                if (lifecycleVisible) {
-                    notifyActionPrepared(task);
-                }
+                lifecyclePrepared = !isInternalNoopInputAction(task.action);
+                prepareParallelAction(task);
 
                 long seq = stateManager.getSequenceNumber();
                 ActionState state =
@@ -1669,11 +1705,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 context.setActionTask(task);
                 context.setPriority(recordIndex, taskIndex);
 
-                this.actionTask = task;
                 this.sequenceNumber = seq;
                 this.replayCompletedAction = replay;
 
                 // Run: replay a durably-completed action from its persisted state, or invoke it.
+                // A failure is reported by commit(), not here: the suspend below closes this
+                // worker's phase, and the failure belongs to the mailbox phase that surfaces it.
                 if (replay) {
                     MemoryUpdateReplayer.replay(
                             task.getRunnerContext().getShortTermMemory(),
@@ -1681,12 +1718,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     MemoryUpdateReplayer.replay(
                             task.getRunnerContext().getSensoryMemory(),
                             state.getSensoryMemoryUpdates());
-                    if (lifecycleVisible) {
-                        notifyActionReused(task);
-                    }
                     result = task.new ActionTaskResult(true, state.getOutputEvents(), null);
                 } else {
-                    if (lifecycleVisible) {
+                    if (lifecyclePrepared) {
                         notifyActionStarted(task);
                     }
                     try {
@@ -1698,20 +1732,20 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                         getRuntimeContext().getUserCodeClassLoader(),
                                         pythonBridge.getPythonActionExecutor());
                     } catch (Throwable actionFailure) {
+                        // The discard below goes through the shared context, so a worker that no
+                        // longer holds the execution lock must not make it: shutdown can interrupt
+                        // re-acquisition before the caller context is restored, and a handoff that
+                        // raises a framework fault may have left the shared context bound to
+                        // another task. Its serial twin in processActionTask runs on the mailbox
+                        // and owns its context unconditionally, so it needs no such guard.
+                        if (!parallelExecutionLock.isHeldByCurrentThread()) {
+                            throw actionFailure;
+                        }
                         try {
                             task.getRunnerContext().discardMemoryObservation();
                         } catch (Throwable discardFailure) {
                             if (discardFailure != actionFailure) {
                                 actionFailure.addSuppressed(discardFailure);
-                            }
-                        }
-                        if (lifecycleVisible) {
-                            try {
-                                notifyActionFailed(task, actionFailure);
-                            } catch (Throwable notifyFailure) {
-                                if (notifyFailure != actionFailure) {
-                                    actionFailure.addSuppressed(notifyFailure);
-                                }
                             }
                         }
                         throw actionFailure;
@@ -1722,17 +1756,26 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 if (CancellationUtils.isInterruption(t)) {
                     Thread.currentThread().interrupt();
                 }
+            } finally {
+                // Close this work's execution phase before the lock is handed back, so it pairs
+                // with the preparation commit() re-emits instead of leaking into it.
+                if (parallelExecutionLock.isHeldByCurrentThread()
+                        && lifecyclePrepared
+                        && contextManager.isLifecycleActive(actionTask)) {
+                    try {
+                        suspendParallelAction(actionTask);
+                    } catch (Throwable transferFailure) {
+                        // The body's failure came first and is why this task failed at all, so it
+                        // stays primary and the cleanup failure is suppressed -- the ordering
+                        // try-with-resources gives a close() failure.
+                        if (failure == null) {
+                            failure = transferFailure;
+                        } else if (failure != transferFailure) {
+                            failure.addSuppressed(transferFailure);
+                        }
+                    }
+                }
             }
-        }
-
-        @Override
-        public void restoreContext() {
-            parallelExecutionLock.checkReentrant();
-            if (failure != null) {
-                // Preparation failed before a context existed; commit() will rethrow the failure.
-                return;
-            }
-            contextManager.restore(key, actionTask);
         }
 
         @Override
@@ -1742,26 +1785,33 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         @Override
         public void commit() throws Exception {
-            if (failure != null) {
-                throw new ActionTaskExecutionException("Failed to execute action task", failure);
-            }
-            checkState(result != null, "Action task completion result must not be null.");
-            // On this engine an action always finishes in one invoke (the base executor runs
-            // durableExecuteAsync inline); an unfinished result would mean the Loom overlay or a
-            // non-Java task leaked in — fail fast rather than run an untested branch.
-            checkState(
-                    result.isFinished(),
-                    "Parallel-engine action did not finish in one invoke: %s",
-                    actionTask.action.getName());
-
-            // The synthetic noop input action stays lifecycle-silent.
-            boolean lifecycleVisible = !isInternalNoopInputAction(actionTask.action);
+            parallelExecutionLock.checkReentrant();
             try {
+                if (failure != null) {
+                    if (actionTask != null) {
+                        builtInMetrics.markInputRunFailed(
+                                actionTask.getTraceContext().getInputRunId());
+                    }
+                    throw failure;
+                }
+                // Reopen the phase execute() closed before handing the lock back. This also rebinds
+                // the shared context and Flink key per head, which the commit drain needs: it walks
+                // a whole key group, so a head must not inherit the previous head's binding.
+                resumeParallelAction(key, actionTask);
+                checkState(result != null, "Action task completion result must not be null.");
+                // On this engine an action always finishes in one invoke (the base executor runs
+                // durableExecuteAsync inline); an unfinished result would mean the Loom overlay or
+                // a non-Java task leaked in — fail fast rather than run an untested branch.
+                checkState(
+                        result.isFinished(),
+                        "Parallel-engine action did not finish in one invoke: %s",
+                        actionTask.action.getName());
+
                 contextManager.removeContexts(actionTask);
                 durableExecManager.removeDurableContext(actionTask);
 
                 if (!replayCompletedAction) {
-                    if (lifecycleVisible) {
+                    if (lifecyclePrepared) {
                         notifyActionFinishing(actionTask);
                     }
                     durableExecManager.maybePersistTaskResult(
@@ -1771,12 +1821,17 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                             actionTask.event,
                             actionTask.getRunnerContext(),
                             result);
-                    if (lifecycleVisible) {
+                    if (lifecyclePrepared) {
                         notifyActionFinished(actionTask);
                     }
+                } else if (lifecyclePrepared) {
+                    // Reported here rather than where execute() detects the replay: that phase was
+                    // closed by its suspend, and the resume above reopened the one this terminal
+                    // callback belongs to, which would otherwise get none.
+                    notifyActionReused(actionTask);
                 }
             } catch (Throwable t) {
-                if (lifecycleVisible) {
+                if (lifecyclePrepared && actionTask != null) {
                     notifyActionFailed(actionTask, t);
                 }
                 throw new ActionTaskExecutionException("Failed to execute action task", t);
@@ -1794,7 +1849,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 }
             }
 
-            if (!isInternalNoopInputAction(actionTask.action)) {
+            if (lifecyclePrepared) {
                 builtInMetrics.markActionExecuted(actionTask.action.getName());
             }
             actionTask.getRunnerContext().persistMemory();

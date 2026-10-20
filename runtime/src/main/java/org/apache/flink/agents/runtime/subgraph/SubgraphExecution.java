@@ -23,6 +23,8 @@ import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.EventAttachmentUtils;
+import org.apache.flink.agents.runtime.operator.parallel.UncapturableException;
+import org.apache.flink.util.ExceptionUtils;
 
 import javax.annotation.Nullable;
 
@@ -191,8 +193,19 @@ public final class SubgraphExecution {
             if (!invocation.capturesActionFailures()) {
                 throw e;
             }
-            Throwable cause = e.getCause();
-            return invocation.captureActionFailure(cause != null ? cause : e);
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            // The last gate before a failure becomes this call's own result, so it is where the
+            // contract is enforced for whoever implements captureActionFailure next: a framework
+            // fault is rethrown as found -- the very instance, keeping its type and stack -- rather
+            // than folded into an answer the caller cannot distinguish from its child's own.
+            // Unreachable while capturesActionFailure keeps refusing to complete a call
+            // exceptionally with one.
+            Optional<UncapturableException> uncapturable =
+                    ExceptionUtils.findThrowable(cause, UncapturableException.class);
+            if (uncapturable.isPresent()) {
+                throw uncapturable.get();
+            }
+            return invocation.captureActionFailure(cause);
         }
     }
 }
