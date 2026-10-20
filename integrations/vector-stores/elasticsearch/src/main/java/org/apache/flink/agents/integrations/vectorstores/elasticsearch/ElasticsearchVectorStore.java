@@ -626,6 +626,8 @@ public class ElasticsearchVectorStore extends BaseVectorStore
             SearchRequest.Builder builder =
                     new SearchRequest.Builder()
                             .index(index)
+                            // k selects neighbours; size bounds hits and defaults to 10.
+                            .size(Math.min(limit, k))
                             .knn(
                                     kb -> {
                                         kb.field(this.vectorField)
