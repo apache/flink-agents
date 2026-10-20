@@ -388,7 +388,8 @@ agents:
       - name: my_llm
         clazz: ollama
         connection: my_connection      # references the shared connection
-        thinking: false
+        model: qwen3:8b
+        think: false
 
   - name: agent2
     description: The second agent
@@ -396,7 +397,8 @@ agents:
       - name: my_llm
         clazz: ollama
         connection: my_connection      # same shared connection reused
-        thinking: true
+        model: qwen3:8b
+        think: true
 
 # shared resource at the file level
 chat_model_connections:
