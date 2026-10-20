@@ -42,10 +42,11 @@ class TaskLifecycleListener:
     """
 
     def on_record_start(self, key: Any) -> None:
-        """The first task of an input record is about to be prepared.
+        """An input record was admitted for processing.
 
-        Also re-emitted when an in-flight record resumes after a failover,
-        so listeners observe a paired bracket for the replayed round.
+        Fires whether or not the record triggers any action. Also re-emitted
+        when an in-flight record resumes after a failover, so listeners
+        observe a paired bracket for the replayed round.
         """
 
     def on_action_prepared(self, task: Any) -> None:
@@ -89,6 +90,9 @@ class TaskLifecycleListener:
 
     def on_record_finished(self, key: Any) -> None:
         """Every task spawned by an input record has completed.
+
+        A record that spawned none is retired here as well, so the bracket
+        ``on_record_start`` opened always closes.
 
         Implementations must make their per-record cleanup idempotent: after
         a failover replay the notification may not arrive again for records

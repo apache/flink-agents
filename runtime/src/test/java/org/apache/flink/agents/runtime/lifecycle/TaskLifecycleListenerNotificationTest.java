@@ -463,7 +463,7 @@ public class TaskLifecycleListenerNotificationTest {
     }
 
     @Test
-    void recordWithoutTriggeredActionsEmitsNoLifecycleEvents() throws Exception {
+    void recordWithoutTriggeredActionsStillEmitsTheRecordBracket() throws Exception {
         AgentPlan plan = new AgentPlan(new EmptyAgent());
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
@@ -478,8 +478,11 @@ public class TaskLifecycleListenerNotificationTest {
             testHarness.processElement(new StreamRecord<>(3L));
             operator.waitInFlightEventsFinished();
 
-            // No task was ever created, so the start/finished pair stays closed.
-            assertThat(RecordingListener.EVENTS).isEmpty();
+            // The record was admitted and retired even though no task was ever created, so the
+            // bracket still closes -- with nothing between its two ends, since the internal noop
+            // that retires the round on the parallel engine reports no action callback.
+            assertThat(RecordingListener.EVENTS)
+                    .containsExactly("recordStart:3", "recordFinished:3");
         }
     }
 

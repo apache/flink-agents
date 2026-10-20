@@ -29,7 +29,9 @@ import org.apache.flink.agents.runtime.operator.ActionTask;
  *
  * <ul>
  *   <li>{@code onRecordStart}/{@code onRecordFinished} bracket the processing of one input record
- *       for a key; a record that triggers no actions emits neither callback.
+ *       for a key. The bracket is unconditional: it depends on the record being admitted and
+ *       retired, not on whether any action ran, so a record that triggers no actions still emits
+ *       both.
  *   <li>{@code onActionPrepared} fires on every preparation of an action task, including
  *       re-preparation of a suspended or resumed task, and pairs with exactly one of the terminal
  *       callbacks: {@code onActionFinishing} followed by {@code onActionFinished} on normal
@@ -48,10 +50,10 @@ import org.apache.flink.agents.runtime.operator.ActionTask;
 public interface TaskLifecycleListener {
 
     /**
-     * The first action task of the input record of {@code key} has just been created and is about
-     * to be prepared. Also re-emitted when the task chain of a record that was in flight at
-     * snapshot time resumes after a failover, so listeners observe a paired bracket for the
-     * replayed round.
+     * The input record of {@code key} has been admitted for processing and is about to trigger its
+     * actions, if it triggers any. Also re-emitted when the task chain of a record that was in
+     * flight at snapshot time resumes after a failover, so listeners observe a paired bracket for
+     * the replayed round.
      *
      * @param key the Flink key of the input record starting processing.
      */
@@ -120,9 +122,9 @@ public interface TaskLifecycleListener {
 
     /**
      * Every task spawned by the input record of {@code key} has completed and the record is fully
-     * processed. Implementations must make their per-record cleanup idempotent: after a failover
-     * replay the notification may not be delivered again for records that completed before the
-     * snapshot.
+     * processed; a record that spawned none is retired here as well. Implementations must make
+     * their per-record cleanup idempotent: after a failover replay the notification may not be
+     * delivered again for records that completed before the snapshot.
      *
      * @param key the Flink key of the finished input record.
      */

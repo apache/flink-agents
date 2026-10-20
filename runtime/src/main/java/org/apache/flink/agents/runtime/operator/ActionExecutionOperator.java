@@ -597,6 +597,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 }
                 stateManager.addProcessingKey(key);
                 stateManager.initOrIncSequenceNumber();
+                if (freshRecordRound) {
+                    // Announced once the record's own bookkeeping is in place and before anything
+                    // it triggers, so a listener never sees this record's action callbacks outside
+                    // the bracket: emitting the begin event can already hand a task to a worker.
+                    notifyRecordStart(key);
+                }
                 tryEmitAgentRunBeginEvent(key, contextKey, event, eventTraceContext);
             }
             // We then obtain the triggered action and add ActionTasks to the waiting processing
@@ -611,10 +617,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                     event,
                                     stateManager.getSequenceNumber(),
                                     eventTraceContext));
-                    if (freshRecordRound) {
-                        notifyRecordStart(key);
-                        freshRecordRound = false;
-                    }
                     if (parallelExecutionWithoutCoroutineEnabled) {
                         // Add one task node per queued task; a worker pulls+prepares it later.
                         executionCoordinator.addTask(key);
@@ -725,10 +727,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         lastCommitted.actionTask.getRunnerContext().clearSensoryMemory();
         durableExecManager.updateLastCompletedSequenceNumber(lastCommitted.sequenceNumber);
-        // Mirror the serial path: notify record finished. Noop rounds stay silent.
-        if (!isInternalNoopInputAction(lastCommitted.actionTask.action)) {
-            notifyRecordFinished(key);
-        }
+        // The bracket belongs to the record, so a round retired by the internal noop reports its
+        // finish too.
+        notifyRecordFinished(key);
         int removedCount = stateManager.removeProcessingKey(key);
         inFlightInputRecords--;
         checkState(
@@ -758,7 +759,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
             ActionTask actionTask = pollNextActionTask();
             if (actionTask == null) {
+                // This record triggered no action but was still admitted, so it retires the way a
+                // round that ran retires: close the bracket, give back the in-flight budget, mark
+                // the input run completed. A round whose only task was the internal noop, which the
+                // parallel engine synthesizes, never reaches here.
+                notifyRecordFinished(key);
                 int removedCount = stateManager.removeProcessingKey(key);
+                inFlightInputRecords--;
                 checkState(
                         removedCount == 1,
                         "Current processing key count for key "
