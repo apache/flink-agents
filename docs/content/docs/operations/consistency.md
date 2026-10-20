@@ -260,21 +260,6 @@ For the first cleanup of an existing job:
    and `kafkaActionStateTombstoneEnabled=false`, then restart from the
    **same selected recovery point**.
 
-If the first cleanup fails or is interrupted, keep the job stopped and retry
-`apply` with the same plan: the boundary may already have been committed, making
-earlier recovery points unavailable.
-
-Once boundary enforcement is enabled, later plans may be applied while the job
-runs. Apply one plan at a time, only advance the boundary, and keep the data topic
-and its partition count unchanged during cleanup.
-
-{{< hint warning >}}
-Keep the same cleanup control topic configured and retain its committed records
-for every subsequent run and restore of this recovery history. Omitting or
-changing the topic removes boundary enforcement; with it configured, the job also
-rejects a fresh start without a recovery marker.
-{{< /hint >}}
-
 {{< details title="Command examples" >}}
 
 Run the tool where the recovery point and Kafka are accessible. The classpath
@@ -308,6 +293,21 @@ java -cp "$FLINK_HOME/lib/*:<FLINK_AGENTS_DIST_JAR>:<FLINK_STATE_PROCESSOR_API_J
 A successful apply prints `Cleanup plan <id> is APPLIED`.
 
 {{< /details >}}
+
+If the first cleanup fails or is interrupted, keep the job stopped and retry
+`apply` with the same plan: the boundary may already have been committed, making
+earlier recovery points unavailable.
+
+Once boundary enforcement is enabled, later plans may be applied while the job
+runs. Apply one plan at a time, only advance the boundary, and keep the data topic
+and its partition count unchanged during cleanup.
+
+{{< hint warning >}}
+Keep the same cleanup control topic configured and retain its committed records
+for every subsequent run and restore of this recovery history. Omitting or
+changing the topic removes boundary enforcement; with it configured, the job also
+rejects a fresh start without a recovery marker.
+{{< /hint >}}
 
 #### Switching from per-key tombstones
 
