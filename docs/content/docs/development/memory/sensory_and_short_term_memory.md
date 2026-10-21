@@ -27,7 +27,7 @@ under the License.
 
 Sensory memory is a temporary storage mechanism in Flink Agents designed for data that only needs to persist during a single agent run.
 
-Sensory memory will be auto cleaned after an agent run finished, which means isolation between agent runs. It provides a convenient way to store intermediate results, tool call contexts, and other temporary data without the overhead of persistence across multiple runs.
+Sensory memory is automatically cleared after an agent run finishes, which provides isolation between agent runs. It provides a convenient way to store intermediate results, tool call contexts, and other temporary data without the overhead of persistence across multiple runs.
 
 ### Short-Term Memory
 
@@ -44,7 +44,7 @@ through a previously obtained `MemoryObject`. See
 Sensory Memory is ideal for:
 
 - **Intermediate results and temporary information** which will be used later by other actions in the same agent run.
-- **Passing data through multiple actions**, reduce unnecessary data copy and serialization.
+- **Passing data through multiple actions**, reducing unnecessary data copying and serialization.
 
 {{< hint warning >}}
 Do not use Sensory Memory for data that needs to persist across multiple agent runs. Use Short-Term Memory or [Long-Term Memory]({{< ref "docs/development/memory/long_term_memory" >}}) instead.
@@ -54,10 +54,10 @@ Do not use Sensory Memory for data that needs to persist across multiple agent r
 Short-Term Memory is ideal for:
 
 - **Persistent Data**: Data needs to persist across multiple runs.
-- **Complete original data retrieval**: User want to retrieve the exact same data they have written to memory.
+- **Complete original data retrieval**: Users want to retrieve the exact same data they have written to memory.
 
 {{< hint warning >}}
-Short-Term Memory is designed for complete original data retrival. For use case that need get the concise and highly related context, consider using [Long-Term Memory]({{< ref "docs/development/memory/long_term_memory" >}}) instead.
+Short-Term Memory is designed for complete original data retrieval. For use cases that need concise and highly related context, consider using [Long-Term Memory]({{< ref "docs/development/memory/long_term_memory" >}}) instead.
 {{< /hint >}}
 
 ## Data Types & Operations
@@ -66,25 +66,25 @@ Sensory memory and short-term memory have the same data types and operations. Th
 
 ### MemoryObject
 
-The root of the sensory memory and short-term memory is `MemoryObject`. User can use it to store a series of key-value pairs.
+Sensory memory and short-term memory each have a root `MemoryObject`, which users can use to store a series of key-value pairs.
 
 ### Supported Value Types
 
-The key of the pairs stored in `MemoryObject` must be a string. The supported value types differ between Java and Python.
+Keys stored in a `MemoryObject` must be strings. The supported value types differ between Java and Python.
 
 **Java** supports a broad set of types:
 
 - **Primitive Types**: integer, float, boolean, string
 - **Collections**: list, map
 - **Java POJOs**: See [Flink POJOs](https://nightlies.apache.org/flink/flink-docs-master/docs/dev/datastream/fault-tolerance/serialization/types_serialization/#pojos) for details.
-- **General Class Types**: Any objects that can be serialized by kryo. See [General Class Types](https://nightlies.apache.org/flink/flink-docs-master/docs/dev/datastream/fault-tolerance/serialization/types_serialization/#general-class-types) for details.
-- **Memory Object**: The value can also be a `MemoryObject`, which means users can store nested objects.
+- **General Class Types**: Any objects that can be serialized by Kryo. See [General Class Types](https://nightlies.apache.org/flink/flink-docs-master/docs/dev/datastream/fault-tolerance/serialization/types_serialization/#general-class-types) for details.
 
 **Python** is restricted to recursively *checkpoint-stable* values:
 
 - **Primitive Types**: `None`, `bool`, `int`, `float`, `str`, `bytes`
 - **Collections**: `list`, and `dict` with `str` keys (values are recursively validated)
-- **Memory Object**: A nested `MemoryObject` created via `new_object()`.
+
+**Nested objects:** A `MemoryObject` is not a value passed to `set()`. Create nested object nodes with `new_object()` in Python or `newObject()` in Java, and then write their fields.
 
 Anything else — Pydantic models, `uuid.UUID`, `Enum`, custom classes, `tuple`, `set`, `bytearray`, or a `dict` with non-`str` keys — is **rejected by `set()` with a `TypeError`**. Exact `bytes` is supported (it converts to a native Java `byte[]`), but `bytearray` and `bytes` subclasses are not — Pemja wraps them as non-checkpoint-stable objects rather than materializing a `byte[]`.
 
@@ -154,10 +154,6 @@ public static void processEvent(Event event, RunnerContext ctx) throws Exception
 
 {{< /tabs >}}
 
-{{< hint info >}}
-Unlike other types, user should use `new_object` to write a `MemoryObject`.
-{{< /hint >}}
-
 #### Nested Object
 
 There are two ways to access fields of a nested object. Users can choose whichever they like.
@@ -216,9 +212,10 @@ age = (int) memory.get("user.age").getValue();
 
 #### When to use
 
-`MemoryRef` is useful for passing data across multiple actions via memory. We recommend user to use `MemoryRef` for large data in events rather than original data. It can bring follow benefit:
-* **Reduce the event payload size**: The size of `MemoryRef` is usually typically smaller than that of the original data. Events are widely used in Flink Agents - action orchestration, observability and fault tolerance, etc. Therefore, reducing the event size can help avoid unnecessary overheads.
-* **Avoid unnecessary data copy & SerDe**: When traveling through actions, only the reference of data needs to be copied and serialized.
+`MemoryRef` is useful for passing data across multiple actions via memory. For large data, use a `MemoryRef` in events rather than the original data. It provides the following benefits:
+
+* **Reduce the event payload size**: The size of a `MemoryRef` is typically smaller than that of the original data. Events are widely used in Flink Agents for action orchestration, observability, and fault tolerance. Therefore, reducing event size can help avoid unnecessary overhead.
+* **Avoid unnecessary data copy & SerDe**: Only a reference to the data needs to be copied and serialized between actions.
 
 {{< tabs "Memory Reference" >}}
 
@@ -281,7 +278,7 @@ public static void secondAction(Event event, RunnerContext ctx) throws Exception
 
 Sensory Memory is automatically cleared by the framework after each agent run completes. This cleanup happens:
 
-- **When**: After the agent run finishes processing all events trigger by one input event.
+- **When**: After the agent run finishes processing all events triggered by one input event.
 - **What**: All data stored in sensory memory is cleared.
 - **Why**: Isolation across agent runs.
 - **Framework Responsibility**: The framework handles cleanup automatically; no user action required.
@@ -332,7 +329,7 @@ agents_config.set(
 {{< tab "Java" >}}
 ```java
 AgentsExecutionEnvironment agentsEnv = AgentsExecutionEnvironment.getExecutionEnvironment(env);
-AgentConfiguration agentsConfig = (AgentConfiguration) agentsEnv.getConfig();
+Configuration agentsConfig = agentsEnv.getConfig();
 
 agentsConfig.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, 60_000L);
 agentsConfig.set(

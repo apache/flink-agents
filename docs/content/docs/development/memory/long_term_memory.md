@@ -31,9 +31,14 @@ Long-Term Memory currently supports the [Mem0](https://github.com/mem0ai/mem0) b
 ## Prerequisites
 
 Declare the following resources in your agent plan:
+
 - A [ChatModel]({{< ref "docs/development/calling-llms/chat-models" >}}) for memory extraction and management
 - An [EmbeddingModel]({{< ref "docs/development/vector-search/embedding_models" >}}) for vector generation
-- A [VectorStore]({{< ref "docs/development/vector-search/vector_stores" >}}) for persistent storage
+- A [VectorStore]({{< ref "docs/development/vector-search/vector_stores" >}}) that supports collection management (`CollectionManageableVectorStore`) for persistent storage
+
+See [Manage collections]({{< ref "docs/development/vector-search/vector_stores#manage-collections" >}}) for the built-in providers that support collection management.
+
+Mem0 Long-Term Memory uses the Python runtime with both the Java and Python APIs. Follow [Setup]({{< ref "docs/get-started/setup" >}}) to install the Python package and configure `PYTHONPATH`.
 
 > **Java prerequisite:** Mem0 invokes the chat and embedding models on its own thread executor, which relies on the async-friendly pemja fix. When Mem0 Long-Term Memory is configured together with Java actions, the runtime requires a Flink version of `1.20.5`, `2.0.2`, `2.1.3`, `2.2.1`, `2.3.0` or higher; otherwise it throws at startup. Either upgrade Flink or use the Python API.
 
@@ -116,7 +121,7 @@ agentsConfig.set(
 {{< /tabs >}}
 
 {{< hint info >}}
-If `JOB_IDENTIFIER` is not configured, the Flink job ID will be used by default.
+If `JOB_IDENTIFIER` is not configured, the current Flink JobID is used as the job identifier and stored in operator state. If that operator state is restored, its stored identifier is reused.
 {{< /hint >}}
 
 ## Data Model
@@ -149,6 +154,7 @@ A named collection of memory items. Memory sets provide logical grouping and iso
 ```python
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import InputEvent, Event
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.runner_context import RunnerContext
 
 @action(EventType.InputEvent)
@@ -259,10 +265,10 @@ items = memory_set.get(ids="mem_123abc")
 # Get multiple items by IDs
 items = memory_set.get(ids=["mem_123abc", "mem_456def"])
 
-# Get all items
+# Get up to 100 items using the default limit
 all_items = memory_set.get()
 
-# Get with metadata filter
+# Get up to 100 items with a metadata filter using the default limit
 work_items = memory_set.get(filters={"category": "work"})
 
 # Access item properties
@@ -285,10 +291,10 @@ List<MemorySetItem> items = memorySet.get(List.of("item_id_1"), null, null);
 // Get multiple items by IDs
 items = memorySet.get(List.of("item_id_1", "item_id_2"), null, null);
 
-// Get all items
+// Get up to 100 items using the default limit
 List<MemorySetItem> allItems = memorySet.get(null, null, null);
 
-// Get with metadata filter
+// Get up to 100 items with a metadata filter using the default limit
 List<MemorySetItem> workItems = memorySet.get(null, Map.of("category", "work"), null);
 
 // Access item properties
@@ -469,7 +475,7 @@ results = memorySet.search(
 
 ### Usage Snippet
 
-The snippets below show how to read from and write to Long-Term Memory inside an action.
+The snippets below show how to read from and write to Long-Term Memory inside an action. They assume the configured resources are already registered; resource declarations and job setup are omitted.
 
 {{< tabs "Usage Snippet" >}}
 
@@ -478,14 +484,16 @@ The snippets below show how to read from and write to Long-Term Memory inside an
 ```python
 from pyflink.datastream import StreamExecutionEnvironment
 
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.core_options import AgentConfigOptions
 from flink_agents.api.events.event import InputEvent, OutputEvent, Event
+from flink_agents.api.events.event_type import EventType
 from flink_agents.api.memory.long_term_memory import LongTermMemoryOptions
 from flink_agents.api.runner_context import RunnerContext
 
-class PersonalizedAssistant:
+class PersonalizedAssistant(Agent):
     
     @action(EventType.InputEvent)
     @staticmethod
@@ -560,7 +568,7 @@ public static void processEvent(Event event, RunnerContext ctx) throws Exception
 Long-Term Memory automatically provides context isolation through Flink's keyed partition model. Each keyed partition normally maintains its own isolated set of memories.
 
 The isolation hierarchy works as follows:
-- **Job-level** (`JOB_IDENTIFIER`): Separates memories between different Flink jobs
+- **Job-level** (`JOB_IDENTIFIER`): Separates memories by job identifier
 - **Partition-level** (keyed partition key): Separates memories between different keys within the same job
 - **Set-level** (memory set name): Separates memories between different logical categories within the same partition
 

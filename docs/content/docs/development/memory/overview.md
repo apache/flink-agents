@@ -28,7 +28,7 @@ Memory is a system that remembers information about previous interactions. Memor
 It underpins long-horizon reasoning, continual adaptation, and effective interaction with complex
 environments.<sup>[1](https://arxiv.org/pdf/2512.13564)</sup>
 
-We propose a distributed memory system for flink-agents that mirrors human cognitive processes. The solution implements four memory types: Sensory Memory, Short-term Memory, Long-term Memory and Knowledge, based on their visibility, retention and derivation.
+We propose a distributed memory system for flink-agents that mirrors human cognitive processes. The solution defines four memory types: Sensory Memory, Short-Term Memory, Long-Term Memory and Knowledge, based on their visibility, retention and derivation. Knowledge is not supported yet.
 
 ## Memory Types
 
@@ -48,14 +48,14 @@ Flink Agents classifies memory types based on visibility, retention and derivati
 * **Use Case**: Store temporary data generated during the agent execution which is only needed for a single run. For example, tool call context, or the data users want to pass to other agent actions.
 * **Characteristics**: Isolation between agent runs, which means the memory will be automatically cleaned up by the framework when an agent run is completed.
 
-For more details, see [Sensory & Short-term Memory]({{< ref "docs/development/memory/sensory_and_short_term_memory" >}}).
+For more details, see [Sensory & Short-Term Memory]({{< ref "docs/development/memory/sensory_and_short_term_memory" >}}).
 
 ### Short-Term Memory
 * **Use Case**: Store data generated during the agent execution. 
-  * Compared to sensory memory, the lifecycle of stored data can across multiple runs.
-  * Compared to long-term memory, user need retrieve all the original data they have written to the memory.
+  * Compared to sensory memory, the lifecycle of stored data can span multiple runs.
+  * Compared to long-term memory, users need to retrieve all the original data they have written to the memory.
 * **Characteristics**: 
-  * The lifecycle of the stored data can across multiple runs. 
+  * The lifecycle of the stored data can span multiple runs.
   * Complete original data retrieval.
   * Supports optional automatic expiration and cleanup.
 
@@ -63,7 +63,7 @@ For more details, see [Sensory & Short-Term Memory]({{< ref "docs/development/me
 
 ### Long-Term Memory
 * **Use Case**: Store data generated during the agent execution, but compared to short-term memory,
-the data may expand rapidly as the agent execution, which requires compaction to provide concise and highly related context.
+the data may expand rapidly as the agent executes, requiring compaction to provide concise and highly related context.
 * **Characteristics**: 
   * Support for compacting similar items.
   * Support for semantic search.
@@ -80,4 +80,4 @@ For more details, see [Long-Term Memory]({{< ref "docs/development/memory/long_t
 | **Storage**           | Flink State                                | Flink State                                   | External Vector Store                         |
 | **Access Pattern**    | Key-Value / Nested Objects                 | Key-Value / Nested Objects                    | Semantic Search                               |
 | **Use Case**          | Temporary execution states of an agent run | Exact information shared across multiple runs | Large, compactable and searchable information |
-| **Types of Contents** | Any primitive/object                       | Any primitive/object                          | String, ChatMessage                           |
+| **Types of Contents** | Flink-serializable Java values; Python checkpoint-stable built-ins | Flink-serializable Java values; Python checkpoint-stable built-ins | String                                       |
