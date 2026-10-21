@@ -253,10 +253,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private transient boolean drainAborted;
 
     /**
-     * Number of input records currently being processed (one per active key), compared against
-     * {@link #maxInFlightInputRecords} to apply input backpressure. Maintained on the mailbox
-     * thread alongside {@code addProcessingKey}/{@code removeProcessingKey} and rebuilt from the
-     * recovered processing keys.
+     * Number of admitted input records not yet retired, including pending inputs for busy keys,
+     * compared against {@link #maxInFlightInputRecords} to apply input backpressure. Maintained on
+     * the mailbox thread and rebuilt from the recovered processing keys and pending input events.
      */
     private transient int inFlightInputRecords;
 
@@ -521,6 +520,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         processElementInternal(record);
                     });
         } else {
+            if (ContinuationActionExecutor.isContinuationSupported()) {
+                // Mails run while yielding can change the current key, so set the record's key
+                // after the last yield.
+                while (inFlightInputRecords >= maxInFlightInputRecords) {
+                    mailboxExecutor.yield();
+                }
+                super.setKeyContextElement1(record);
+            }
             processElementInternal(record);
         }
     }
@@ -545,10 +552,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         try {
             eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
 
+            // An input that triggers no Actions keeps its key active until its retirement mail
+            // runs, so check the active keys rather than the queued Action tasks.
             boolean currentKeyBusy =
                     parallelExecutionWithoutCoroutineEnabled
                             ? executionCoordinator.hasOutstanding(getCurrentKey())
-                            : stateManager.hasMoreActionTasks();
+                            : stateManager.isProcessingKey(key);
             if (currentKeyBusy) {
                 // If there are already actions being processed for the current key, the newly
                 // incoming event should be queued and processed later. Therefore, we add it to

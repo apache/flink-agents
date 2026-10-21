@@ -71,6 +71,7 @@ import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionContextLifecycle;
@@ -120,6 +121,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -696,6 +698,112 @@ public class ActionExecutionOperatorTest {
             testHarness.processElement(new StreamRecord<>(1L));
             testHarness.processElement(new StreamRecord<>(2L));
             testHarness.processElement(new StreamRecord<>(3L));
+            operator.endInput();
+            operator.waitInFlightEventsFinished();
+
+            assertThat(testHarness.getRecordOutput())
+                    .extracting(StreamRecord::getValue)
+                    .containsExactly("single-1", "single-3");
+            assertThat(operator.getOperatorStateManager().getProcessingKeys()).isEmpty();
+        }
+    }
+
+    @Test
+    @Timeout(10)
+    void nonParallelEnginesRetireInputWithoutTriggeredActionsAtInFlightLimit() throws Exception {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
+        config.set(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS, 1);
+        AgentPlan agentPlan = new AgentPlan(new HashMap<>(), new HashMap<>(), config);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // The second record waits at the limit until the first one retires.
+            testHarness.processElement(new StreamRecord<>(1L));
+            testHarness.processElement(new StreamRecord<>(2L));
+            operator.waitInFlightEventsFinished();
+
+            assertThat(operator.getOperatorStateManager().getProcessingKeys()).isEmpty();
+            assertThat(testHarness.getRecordOutput()).isEmpty();
+        }
+    }
+
+    @Test
+    @Timeout(10)
+    void nonParallelEnginesProcessRecordAdmittedAtInFlightLimitUnderItsOwnKey() throws Exception {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
+        config.set(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS, 1);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getAgentPlanWithConfig(config), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+            List<Object> recordStartKeys = new CopyOnWriteArrayList<>();
+            operator.addTaskLifecycleListener(
+                    new TaskLifecycleListener() {
+                        @Override
+                        public void onRecordStart(Object key) {
+                            recordStartKeys.add(key);
+                        }
+                    });
+
+            // While the second record waits, the first record's mails set the current key to 1L.
+            testHarness.processElement(new StreamRecord<>(1L));
+            testHarness.processElement(new StreamRecord<>(2L));
+            operator.waitInFlightEventsFinished();
+
+            assertThat(recordStartKeys).containsExactly(1L, 2L);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {2, 3})
+    @Timeout(10)
+    void nonParallelEnginesAdvancePastPendingInputWithoutTriggeredActions(int maxInFlight)
+            throws Exception {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
+        config.set(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS, maxInFlight);
+        Action action =
+                new Action(
+                        "pending-events-single",
+                        new JavaFunction(
+                                TestAgent.class,
+                                "pendingEventsSingleAction",
+                                new Class<?>[] {Event.class, RunnerContext.class}),
+                        Collections.singletonList("type == EventType.InputEvent && input != 2"));
+        Map<String, Action> actions = new HashMap<>();
+        actions.put(action.getName(), action);
+        AgentPlan agentPlan = new AgentPlan(actions, new HashMap<>(), config);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> 0L,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Input 2 triggers no Actions; input 3 must still run after it.
+            testHarness.processElement(new StreamRecord<>(1L));
+            testHarness.processElement(new StreamRecord<>(2L));
+            testHarness.processElement(new StreamRecord<>(3L));
+            assertThat(operator.getOperatorStateManager().getProcessingKeys()).containsExactly(0L);
+
             operator.endInput();
             operator.waitInFlightEventsFinished();
 

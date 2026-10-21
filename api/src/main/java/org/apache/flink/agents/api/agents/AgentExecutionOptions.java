@@ -44,10 +44,10 @@ public class AgentExecutionOptions {
             new ConfigOption<>("parallel-execution.enabled", Boolean.class, true);
 
     /**
-     * Maximum number of input records that may be in flight concurrently. Only enforced by the
-     * JDK&lt;21 parallel execution engine for pure-Java agents; the JDK 21 coroutine engine and
-     * plans containing Python actions ignore it. Every admitted record consumes one unit of budget;
-     * at the cap, admission of further records blocks until an in-flight record retires.
+     * Maximum number of input records that may be in flight concurrently on each operator subtask,
+     * enforced by continuation-based execution and the JDK&lt;21 parallel execution engine; serial
+     * execution ignores it. Every admitted record consumes one unit of budget; at the cap,
+     * admission of further records blocks until an in-flight record retires.
      */
     public static final ConfigOption<Integer> MAX_IN_FLIGHT_INPUT_RECORDS =
             new ConfigOption<>("max-in-flight-input-records", Integer.class, 100);

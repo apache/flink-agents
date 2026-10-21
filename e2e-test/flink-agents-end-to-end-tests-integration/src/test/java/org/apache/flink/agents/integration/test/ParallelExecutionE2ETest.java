@@ -27,12 +27,10 @@ import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
-import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.CloseableIterator;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -56,8 +54,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 /**
  * End-to-end scenarios for parallel action execution, covering fan-out, broadcast, multi-key,
  * context switch, same-key input order, capacity, failure propagation and backpressure. The suite
- * runs on both execution engines; only the backpressure scenario is specific to the JDK&lt;21
- * blocking-inline engine.
+ * runs on both execution engines, including the input admission backpressure scenario.
  *
  * <p>Timing observations are collected in the in-JVM {@link TimingLog} (valid because every
  * scenario runs on a same-JVM MiniCluster). Its append order is worker completion order, so
@@ -1080,11 +1077,6 @@ public class ParallelExecutionE2ETest {
     @Test
     @Timeout(25)
     public void maxInFlightInputRecordsThrottlesAdmission() throws Exception {
-        // Input admission backpressure is only enforced by the JDK<21 blocking-inline engine.
-        Assumptions.assumeFalse(
-                ContinuationActionExecutor.isContinuationSupported(),
-                "MAX_IN_FLIGHT_INPUT_RECORDS is only enforced by the JDK<21 blocking-inline"
-                        + " engine");
         List<String> outputs =
                 runJob(
                         new BackpressureAgent(),

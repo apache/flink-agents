@@ -304,10 +304,11 @@ class AgentExecutionOptions:
         default=True,
     )
 
-    # Maximum number of input records that may be in flight concurrently. Only
-    # enforced by the Java JDK<21 parallel execution engine for pure-Java
-    # agents; the JDK 21 coroutine engine and plans containing Python actions
-    # ignore it.
+    # Maximum number of input records that may be in flight concurrently on
+    # each operator subtask, enforced by continuation-based execution and the
+    # Java JDK<21 parallel execution engine; serial execution ignores it. At
+    # the cap, admission of further records waits until an in-flight record
+    # retires.
     MAX_IN_FLIGHT_INPUT_RECORDS = ConfigOption(
         key="max-in-flight-input-records",
         config_type=int,
