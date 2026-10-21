@@ -642,6 +642,34 @@ def test_build_agents_supports_type_java(tmp_path: Path) -> None:
     assert conn.arguments["requestTimeout"] == 120
 
 
+def test_build_agents_resolves_mcp_alias_at_both_scopes(tmp_path: Path) -> None:
+    source = tmp_path / "mcp.yaml"
+    source.write_text(
+        """mcp_servers:
+  - name: shared_mcp
+    clazz: mcp
+    endpoint: http://127.0.0.1:8000/mcp
+agents:
+  - name: a
+    mcp_servers:
+      - name: local_mcp
+        clazz: mcp
+        type: python
+        endpoint: http://127.0.0.1:8001/mcp
+"""
+    )
+
+    agents, shared_resources, _ = build_agents(source)
+
+    for descriptor in [
+        shared_resources[ResourceType.MCP_SERVER]["shared_mcp"],
+        agents["a"].resources[ResourceType.MCP_SERVER]["local_mcp"],
+    ]:
+        assert descriptor.language == "python"
+        assert descriptor.target_module == "flink_agents.integrations.mcp.mcp"
+        assert descriptor.target_clazz == "MCPServer"
+
+
 def test_build_agents_rejects_type_java_for_unsupported_resource(
     tmp_path: Path,
 ) -> None:

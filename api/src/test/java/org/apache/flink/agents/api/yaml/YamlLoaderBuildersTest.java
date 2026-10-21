@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.function.PythonFunction;
 import org.apache.flink.agents.api.prompt.Prompt;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -92,10 +93,28 @@ class YamlLoaderBuildersTest {
     }
 
     @Test
+    void descriptorPythonMCPServerResolvesAlias() throws Exception {
+        DescriptorSpec spec =
+                M.readValue(
+                        "name: x\n"
+                                + "clazz: mcp\n"
+                                + "type: python\n"
+                                + "endpoint: http://127.0.0.1:8000/mcp\n",
+                        DescriptorSpec.class);
+        ResourceDescriptor descriptor = YamlLoader.buildDescriptor(spec, ResourceType.MCP_SERVER);
+
+        assertThat(descriptor).isInstanceOf(PythonResourceDescriptor.class);
+        assertThat(descriptor.getModule()).isEqualTo("flink_agents.integrations.mcp.mcp");
+        assertThat(descriptor.getClazz()).isEqualTo("MCPServer");
+        assertThat(descriptor.getInitialArguments())
+                .containsExactlyEntriesOf(Map.of("endpoint", "http://127.0.0.1:8000/mcp"));
+    }
+
+    @Test
     void descriptorPythonRejectedForUnsupportedKind() throws Exception {
         DescriptorSpec spec =
                 M.readValue("name: x\nclazz: anything\ntype: python\n", DescriptorSpec.class);
-        assertThatThrownBy(() -> YamlLoader.buildDescriptor(spec, ResourceType.MCP_SERVER))
+        assertThatThrownBy(() -> YamlLoader.buildDescriptor(spec, ResourceType.AGENT))
                 .hasMessageContaining("python");
     }
 

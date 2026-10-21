@@ -94,6 +94,13 @@ def test_resolve_clazz_replaces_alias_per_resource_type() -> None:
     assert embed_conn.endswith("OllamaEmbeddingModelConnection")
 
 
+def test_resolve_clazz_replaces_mcp_alias() -> None:
+    assert (
+        resolve_clazz("mcp", ResourceType.MCP_SERVER)
+        == "flink_agents.integrations.mcp.mcp.MCPServer"
+    )
+
+
 def test_resolve_clazz_passes_through_fqn() -> None:
     assert (
         resolve_clazz("my.custom.Klass", ResourceType.CHAT_MODEL) == "my.custom.Klass"

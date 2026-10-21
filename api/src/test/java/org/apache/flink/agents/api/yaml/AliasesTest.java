@@ -66,6 +66,12 @@ class AliasesTest {
     }
 
     @Test
+    void clazzAliasCoversPythonMCPServer() {
+        String fqn = Aliases.resolveClazz("mcp", ResourceType.MCP_SERVER, Language.PYTHON);
+        assertThat(fqn).isEqualTo("flink_agents.integrations.mcp.mcp.MCPServer");
+    }
+
+    @Test
     void clazzAliasCoversChatModelJavaGeminiAndAzureOpenAI() {
         String geminiConn =
                 Aliases.resolveClazz("gemini", ResourceType.CHAT_MODEL_CONNECTION, Language.JAVA);

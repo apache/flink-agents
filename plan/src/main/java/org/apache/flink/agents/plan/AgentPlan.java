@@ -661,12 +661,18 @@ public class AgentPlan implements Serializable {
                     }
                 }
             } else if (type == MCP_SERVER) {
-                if (!entry.getValue().isEmpty()) {
-                    throw new UnsupportedOperationException(
-                            "Adding an MCP server via Agent.addResource is not supported."
-                                    + " Declare the MCP server with a @MCPServer-annotated static"
-                                    + " method on your Agent class so its tools and prompts can be"
-                                    + " discovered.");
+                for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
+                    String name = kv.getKey();
+                    ResourceDescriptor descriptor =
+                            requireResourceDescriptor(name, type, kv.getValue());
+                    if (!isPythonResource(descriptor)) {
+                        throw new UnsupportedOperationException(
+                                "Adding a Java MCP server via Agent.addResource is not supported."
+                                        + " Declare it with a @MCPServer-annotated static method on"
+                                        + " your Agent class so its tools and prompts can be"
+                                        + " discovered.");
+                    }
+                    addResourceProvider(new PythonResourceProvider(name, MCP_SERVER, descriptor));
                 }
             } else if (type == ResourceType.AGENT) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {

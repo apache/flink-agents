@@ -159,6 +159,41 @@ class YamlLoaderBuildAgentsTest {
     }
 
     @Test
+    void mcpServersSupportAgentAndSharedPythonResources(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("mcp.yaml");
+        Files.writeString(
+                file,
+                "mcp_servers:\n"
+                        + "  - name: shared_mcp\n"
+                        + "    clazz: mcp\n"
+                        + "    endpoint: http://127.0.0.1:8000/mcp\n"
+                        + "agents:\n"
+                        + "  - name: a\n"
+                        + "    mcp_servers:\n"
+                        + "      - name: local_mcp\n"
+                        + "        clazz: mcp\n"
+                        + "        type: python\n"
+                        + "        endpoint: http://127.0.0.1:8001/mcp\n");
+
+        LoadedFile out = YamlLoader.buildAgents(file);
+        for (ResourceDescriptor descriptor :
+                new ResourceDescriptor[] {
+                    (ResourceDescriptor)
+                            out.getSharedResources().get(ResourceType.MCP_SERVER).get("shared_mcp"),
+                    (ResourceDescriptor)
+                            out.getAgents()
+                                    .get("a")
+                                    .getResources()
+                                    .get(ResourceType.MCP_SERVER)
+                                    .get("local_mcp")
+                }) {
+            assertThat(descriptor).isInstanceOf(PythonResourceDescriptor.class);
+            assertThat(descriptor.getModule()).isEqualTo("flink_agents.integrations.mcp.mcp");
+            assertThat(descriptor.getClazz()).isEqualTo("MCPServer");
+        }
+    }
+
+    @Test
     void sharedSectionsExposedSeparatelyFromAgents() {
         LoadedFile out = YamlLoader.buildAgents(FIXTURES.resolve("with_shared.yaml"));
 

@@ -172,6 +172,12 @@ public final class Aliases {
         vsPython.put("mem0", ResourceName.VectorStore.Python.MEM0_VECTOR_STORE);
         ca.put(ResourceType.VECTOR_STORE, buildLangBuckets(vsJava, vsPython));
 
+        // MCP_SERVER
+        ca.put(
+                ResourceType.MCP_SERVER,
+                buildLangBuckets(
+                        Map.of(), Map.of("mcp", "flink_agents.integrations.mcp.mcp.MCPServer")));
+
         CLAZZ_ALIASES = Collections.unmodifiableMap(ca);
     }
 

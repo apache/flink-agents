@@ -666,6 +666,32 @@ public class AgentPlanTest {
     }
 
     @Test
+    public void testYamlPythonMCPServerUsesPythonResourceProvider(@TempDir Path tmp)
+            throws Exception {
+        Path file = tmp.resolve("mcp.yaml");
+        Files.writeString(
+                file,
+                "agents:\n"
+                        + "  - name: a\n"
+                        + "    mcp_servers:\n"
+                        + "      - name: yamlMcpServer\n"
+                        + "        clazz: mcp\n"
+                        + "        type: python\n"
+                        + "        endpoint: http://127.0.0.1:8000/mcp\n");
+        Agent agent = YamlLoader.buildAgents(file).getAgents().get("a");
+
+        AgentPlan plan = new AgentPlan(agent);
+
+        ResourceProvider provider =
+                plan.getResourceProviders().get(ResourceType.MCP_SERVER).get("yamlMcpServer");
+        assertThat(provider).isInstanceOf(PythonResourceProvider.class);
+        assertThat(((PythonResourceProvider) provider).getDescriptor().getModule())
+                .isEqualTo("flink_agents.integrations.mcp.mcp");
+        assertThat(((PythonResourceProvider) provider).getDescriptor().getClazz())
+                .isEqualTo("MCPServer");
+    }
+
+    @Test
     public void testAddResourceMCPServerRejectedWithGuidance() {
         Agent agent = new Agent();
         ResourceDescriptor descriptor =

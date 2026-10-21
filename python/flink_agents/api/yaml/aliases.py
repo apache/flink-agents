@@ -157,6 +157,11 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "milvus": ResourceName.VectorStore.Java.MILVUS_VECTOR_STORE,
         },
     },
+    ResourceType.MCP_SERVER: {
+        "python": {
+            "mcp": ResourceName.MCP_SERVER,
+        },
+    },
 }
 
 

@@ -132,7 +132,8 @@ public final class YamlLoader {
                             ResourceType.DECISION_MODEL_CONNECTION,
                             ResourceType.EMBEDDING_MODEL,
                             ResourceType.EMBEDDING_MODEL_CONNECTION,
-                            ResourceType.VECTOR_STORE)
+                            ResourceType.VECTOR_STORE,
+                            ResourceType.MCP_SERVER)
                     .contains(resourceType)) {
                 throw new IllegalArgumentException(
                         "type='python' is not supported for " + resourceType.getValue());

@@ -749,6 +749,12 @@ Vector-store aliases:
 | `s3_vectors`    | —              | S3 Vectors      |
 | `milvus`        | —              | Milvus          |
 
+MCP-server aliases:
+
+| Alias | `type: python` | `type: java` |
+| ----- | -------------- | ------------ |
+| `mcp` | MCP Server     | —            |
+
 The full alias tables live in `flink_agents.api.yaml.aliases` (Python) and `org.apache.flink.agents.api.yaml.Aliases` (Java).
 
 ### Cross-language agents
@@ -814,8 +820,8 @@ Application payloads must use the supported
 Cross-language support varies by component:
 
 - `actions`, `tools`, `chat_model_connections`, `chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, and `vector_stores` support both directions: `type: python` when loaded from Java, and `type: java` when loaded from Python.
-- `decision_model_connections` and `decision_model_setups` support only Java-to-Python cross-language use: Java-loaded YAML can use Python implementations, but Python-loaded YAML cannot use Java implementations.
-- Other components, including `mcp_servers` and external `subagents`, do not support cross-language use.
+- `decision_model_connections`, `decision_model_setups`, and `mcp_servers` support only Java-to-Python cross-language use: Java-loaded YAML can use Python implementations, but Python-loaded YAML cannot use Java implementations.
+- Other components, including external `subagents`, do not support cross-language use.
 
 ## YAML API Specification
 
