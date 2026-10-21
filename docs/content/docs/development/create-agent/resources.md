@@ -271,11 +271,12 @@ for these workflows.
 ## Cross-Language Resources
 
 An Agent can use supported Resource implementations from either Java or Python.
-This applies to chat model connections and setups, decision model connections
-and setups, embedding model connections and setups, and vector stores. Choose
-an implementation based on the provider capabilities you need; the Agent's
-definition language does not require the implementation to use that same
-language.
+Chat model connections and setups, embedding model connections and setups, and
+vector stores support cross-language use in both directions. Decision model
+connections and setups support cross-language use only from Java to Python:
+Java Agents can use Python implementations, but Python Agents cannot use Java
+implementations. Within these limits, choose an implementation based on the
+provider capabilities you need.
 
 | Calling language | Descriptor for the other language | Implementation class |
 |---|---|---|
