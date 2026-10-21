@@ -770,6 +770,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         "Current key" + key + " is missing from the segmentedQueue.");
                 eventRouter.processEligibleWatermarks(super::processWatermark);
                 builtInMetrics.markInputRunCompleted(currentInputRunId);
+                // An Action condition can leave an input without tasks; start the input queued
+                // behind it, as a finished input does.
+                Event pendingInputEvent = pollNextPendingInputEvent();
+                if (pendingInputEvent != null) {
+                    processInputEvent(key, pendingInputEvent);
+                }
                 return;
             }
             currentInputRunId = actionTask.getTraceContext().getInputRunId();

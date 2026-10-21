@@ -631,6 +631,46 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
+    @Timeout(10)
+    void nonParallelEnginesProcessInputQueuedBehindInputWithoutTriggeredActions() throws Exception {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
+        Action action =
+                new Action(
+                        "pending-events-single",
+                        new JavaFunction(
+                                TestAgent.class,
+                                "pendingEventsSingleAction",
+                                new Class<?>[] {Event.class, RunnerContext.class}),
+                        Collections.singletonList("type == EventType.InputEvent && input != 2"));
+        Map<String, Action> actions = new HashMap<>();
+        actions.put(action.getName(), action);
+        AgentPlan agentPlan = new AgentPlan(actions, new HashMap<>(), config);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> 0L,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // Inputs 2 and 3 queue behind input 1 for the same key; input 2 triggers no Actions.
+            testHarness.processElement(new StreamRecord<>(1L));
+            testHarness.processElement(new StreamRecord<>(2L));
+            testHarness.processElement(new StreamRecord<>(3L));
+            operator.endInput();
+            operator.waitInFlightEventsFinished();
+
+            assertThat(testHarness.getRecordOutput())
+                    .extracting(StreamRecord::getValue)
+                    .containsExactly("single-1", "single-3");
+            assertThat(operator.getOperatorStateManager().getProcessingKeys()).isEmpty();
+        }
+    }
+
+    @Test
     @Timeout(30)
     void backpressureBlocksAdmissionAtCapAndReleasesOnRetirement() throws Exception {
         assumeFalse(ContinuationActionExecutor.isContinuationSupported());
