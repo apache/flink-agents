@@ -56,6 +56,7 @@ Cross-language support is available for the following component APIs:
 | Actions | [Cross-language Actions]({{< ref "docs/development/create-agent/actions#cross-language-actions" >}}) |
 | Function Tools | [YAML cross-language example]({{< ref "docs/development/create-agent/yaml#cross-language-agents" >}}) and [Tool Use]({{< ref "docs/development/calling-llms/tool_use" >}}) |
 | Chat models, embedding models, and vector stores | [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}) |
+| Decision models | [Decision Models]({{< ref "docs/development/decision_models" >}}) and [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}) |
 
 For YAML examples, see
 [Cross-language agents]({{< ref "docs/development/create-agent/yaml#cross-language-agents" >}}).

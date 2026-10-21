@@ -809,7 +809,7 @@ in a Java Flink job and use each component's `type:` to select its implementatio
 Application payloads must use the supported
 [Java and Python data types]({{< ref "docs/development/create-agent/choose-apis-and-languages#data-passed-between-java-and-python" >}}).
 
-Not every resource type is cross-language. Currently `actions`, `tools`, `chat_model_connections`, `chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, and `vector_stores` support `type:` on the opposite language; others (e.g. `mcp_servers` and external `subagents`) do not.
+Not every resource type is cross-language. Currently `actions`, `tools`, `chat_model_connections`, `chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, and `vector_stores` support `type:` on the opposite language, and `decision_model_connections` and `decision_model_setups` support `type: python` on the Java loader; others (e.g. `mcp_servers` and external `subagents`) do not.
 
 ## YAML API Specification
 

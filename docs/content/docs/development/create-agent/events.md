@@ -276,3 +276,4 @@ Event that your Actions can handle to continue the workflow:
 | Call a chat model | `ChatRequestEvent`, `ChatResponseEvent` | [Chat with Models]({{< ref "docs/development/calling-llms/chat#chat-events" >}}) |
 | Call tools | `ToolRequestEvent`, `ToolResponseEvent` | [Tool Use]({{< ref "docs/development/calling-llms/tool_use#built-in-events-and-actions" >}}) |
 | Retrieve context | `ContextRetrievalRequestEvent`, `ContextRetrievalResponseEvent` | [Vector Stores]({{< ref "docs/development/vector-search/vector_stores#built-in-events-and-actions" >}}) |
+| Call a decision model | `DecisionRequestEvent`, `DecisionResponseEvent` | [Decision Models]({{< ref "docs/development/decision_models#event-driven-calls" >}}) |
