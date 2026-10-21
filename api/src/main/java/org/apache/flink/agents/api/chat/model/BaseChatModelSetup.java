@@ -75,6 +75,9 @@ public abstract class BaseChatModelSetup extends Resource {
         this.descriptor = descriptor;
         this.connectionName = descriptor.getArgument("connection");
         this.model = descriptor.getArgument("model");
+        if (this.model != null && this.model.isBlank()) {
+            throw new IllegalArgumentException("Chat model setup model must not be blank.");
+        }
         this.prompt = descriptor.getArgument("prompt");
         this.toolNames = descriptor.getArgument("tools");
         List<String> declaredSubagents = descriptor.getArgument("subagents");

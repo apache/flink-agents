@@ -49,7 +49,7 @@ public class VLLMChatModelSetup extends OpenAICompletionsSetup {
     public VLLMChatModelSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
         String model = descriptor.getArgument("model");
-        if (model == null || model.isBlank()) {
+        if (model == null) {
             throw new IllegalArgumentException(
                     "model is required for vLLM: it must match the model name served by the vLLM"
                             + " server (see `vllm serve <model>` or GET /v1/models).");

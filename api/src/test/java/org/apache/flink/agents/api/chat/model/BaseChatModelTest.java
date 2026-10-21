@@ -39,6 +39,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import javax.annotation.Nullable;
 
@@ -904,6 +905,31 @@ class BaseChatModelTest {
                         Map.of("structured_output_strategy", "bogus"));
 
         assertThrows(IllegalArgumentException.class, () -> new TestChatModel(descriptor, null));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "   "})
+    @DisplayName("A blank model is rejected when the setup is created")
+    void testBlankModelRejected(String model) {
+        ResourceDescriptor descriptor =
+                new ResourceDescriptor(TestChatModel.class.getName(), Map.of("model", model));
+
+        IllegalArgumentException error =
+                assertThrows(
+                        IllegalArgumentException.class, () -> new TestChatModel(descriptor, null));
+        assertEquals("Chat model setup model must not be blank.", error.getMessage());
+    }
+
+    @Test
+    @DisplayName("An omitted model is left unset rather than rejected")
+    void testOmittedModelLeftUnset() {
+        TestChatModel setup =
+                new TestChatModel(
+                        new ResourceDescriptor(
+                                TestChatModel.class.getName(), Collections.emptyMap()),
+                        null);
+
+        assertNull(setup.getModel());
     }
 
     @Test

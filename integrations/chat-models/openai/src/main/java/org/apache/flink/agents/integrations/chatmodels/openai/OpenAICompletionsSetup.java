@@ -118,7 +118,7 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
                         .orElseGet(HashMap::new);
         this.additionalArguments = additional;
 
-        if (this.model == null || this.model.isBlank()) {
+        if (this.model == null) {
             this.model = DEFAULT_MODEL;
         }
     }

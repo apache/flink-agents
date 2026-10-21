@@ -80,7 +80,7 @@ for provider-specific settings and defaults.
 | Setting | Required | Meaning |
 |---|---|---|
 | `connection` | Required | Registered name of a compatible `CHAT_MODEL_CONNECTION` Resource. |
-| `model` | Required unless the implementation provides a default | Provider model or deployment identifier, such as `qwen3:8b`. Set it explicitly when selecting a model. |
+| `model` | Required unless the implementation provides a default | Provider model or deployment identifier, such as `qwen3:8b`. Set it explicitly when selecting a model. An empty or whitespace-only value is rejected when the setup is created. |
 | `prompt` | Optional | `PROMPT` Resource name or `Prompt` object. A string is a Resource reference, not literal prompt text. Omitted by default. See [Prompts]({{< ref "docs/development/calling-llms/prompts" >}}). |
 | `tools` | Optional | Registered `TOOL` Resource names the model may call. Defaults to an empty list; registering a tool alone does not expose it to the model. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use" >}}). |
 | `skills` | Optional | Skill names from the `name` field in each loaded `SKILL.md`, not the registered names of the skill sources. Omitted by default. See [Skills]({{< ref "docs/development/calling-llms/skills" >}}). |

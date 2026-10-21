@@ -21,6 +21,8 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Map;
 
@@ -46,6 +48,21 @@ class WatsonxChatModelSetupTest {
         assertThat(params.get("model")).isEqualTo(WatsonxChatModelSetup.DEFAULT_MODEL);
         assertThat(params.get("temperature")).isEqualTo(WatsonxChatModelSetup.DEFAULT_TEMPERATURE);
         assertThat(params).doesNotContainKey("max_tokens");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "   "})
+    @DisplayName("A blank model is rejected instead of defaulting")
+    void testBlankModelRejected(String model) {
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(WatsonxChatModelSetup.class.getName())
+                        .addInitialArgument("connection", "watsonx")
+                        .addInitialArgument("model", model)
+                        .build();
+
+        assertThatThrownBy(() -> new WatsonxChatModelSetup(desc, NOOP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Chat model setup model must not be blank.");
     }
 
     @Test

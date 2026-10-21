@@ -23,10 +23,13 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Tests for {@link BedrockChatModelSetup}. */
 class BedrockChatModelSetupTest {
@@ -71,5 +74,20 @@ class BedrockChatModelSetupTest {
                         .addInitialArgument("model", "m")
                         .build();
         assertThat(new BedrockChatModelSetup(desc, NOOP)).isInstanceOf(BaseChatModelSetup.class);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "   "})
+    @DisplayName("Constructor rejects a blank model instead of leaving it to the connection")
+    void testBlankModelRejected(String model) {
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(BedrockChatModelSetup.class.getName())
+                        .addInitialArgument("connection", "conn")
+                        .addInitialArgument("model", model)
+                        .build();
+
+        assertThatThrownBy(() -> new BedrockChatModelSetup(desc, NOOP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Chat model setup model must not be blank.");
     }
 }

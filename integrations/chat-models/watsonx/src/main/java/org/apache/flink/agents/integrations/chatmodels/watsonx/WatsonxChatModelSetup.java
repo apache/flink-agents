@@ -37,7 +37,7 @@ public class WatsonxChatModelSetup extends BaseChatModelSetup {
 
     public WatsonxChatModelSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
-        if (this.model == null || this.model.isEmpty()) {
+        if (this.model == null) {
             this.model = DEFAULT_MODEL;
         }
         Number temperature = descriptor.getArgument("temperature");

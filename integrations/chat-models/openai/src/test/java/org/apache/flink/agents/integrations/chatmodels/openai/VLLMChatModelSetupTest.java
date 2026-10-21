@@ -21,6 +21,8 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Map;
 
@@ -46,17 +48,18 @@ class VLLMChatModelSetupTest {
                 .hasMessageContaining("model is required for vLLM");
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(strings = {"", "   "})
     @DisplayName("Constructor throws when model is blank")
-    void testConstructorBlankModel() {
+    void testConstructorBlankModel(String model) {
         ResourceDescriptor desc =
                 descriptorBuilder()
                         .addInitialArgument("connection", "vllm")
-                        .addInitialArgument("model", " ")
+                        .addInitialArgument("model", model)
                         .build();
         assertThatThrownBy(() -> new VLLMChatModelSetup(desc, NOOP))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("model is required for vLLM");
+                .hasMessage("Chat model setup model must not be blank.");
     }
 
     @Test

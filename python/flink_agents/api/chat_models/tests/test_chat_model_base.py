@@ -120,6 +120,13 @@ def test_missing_model_raises_validation_error() -> None:
         _MinimalChatModelSetup(connection="c")
 
 
+@pytest.mark.parametrize("model", ["", "   "])
+def test_blank_model_raises_value_error(model: str) -> None:
+    """A blank `model` is rejected when the setup is created."""
+    with pytest.raises(ValueError, match="Chat model setup model must not be blank."):
+        _MinimalChatModelSetup(connection="c", model=model)
+
+
 def test_chat_fills_template_from_prompt_args_parameter() -> None:
     """chat() fills the prompt template from the `prompt_args` parameter."""
     prompt = Prompt.from_text(text="Task: {key}")

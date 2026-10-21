@@ -21,8 +21,11 @@ package org.apache.flink.agents.integrations.chatmodels.ollama;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Tests for {@link OllamaChatModelSetup}. */
 class OllamaChatModelSetupTest {
@@ -51,5 +54,19 @@ class OllamaChatModelSetupTest {
         OllamaChatModelSetup setup = new OllamaChatModelSetup(desc, NOOP);
 
         assertThat(setup.getParameters()).containsEntry("model", "qwen3:4b");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "   "})
+    void constructor_rejectsBlankModel(String model) {
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+                        .addInitialArgument("connection", "dummy-connection")
+                        .addInitialArgument("model", model)
+                        .build();
+
+        assertThatThrownBy(() -> new OllamaChatModelSetup(desc, NOOP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Chat model setup model must not be blank.");
     }
 }

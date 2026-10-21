@@ -447,6 +447,15 @@ class BaseChatModelSetup(Resource):
         ),
     )
 
+    @field_validator("model")
+    @classmethod
+    def _reject_blank_model(cls, value: str) -> str:
+        """Reject a model name that is empty or whitespace only."""
+        if not value.strip():
+            msg = "Chat model setup model must not be blank."
+            raise ValueError(msg)
+        return value
+
     @field_validator("structured_output_strategy", mode="before")
     @classmethod
     def _normalize_null_strategy(cls, value: Any) -> Any:

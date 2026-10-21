@@ -23,6 +23,8 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Map;
 
@@ -88,6 +90,17 @@ class GeminiChatModelSetupTest {
                                         NOOP))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("max_output_tokens");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "   "})
+    @DisplayName("Constructor rejects a blank model instead of defaulting it")
+    void testBlankModelRejected(String model) {
+        ResourceDescriptor desc = base().addInitialArgument("model", model).build();
+
+        assertThatThrownBy(() -> new GeminiChatModelSetup(desc, NOOP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Chat model setup model must not be blank.");
     }
 
     @Test

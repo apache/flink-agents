@@ -164,6 +164,19 @@ def _java_chat_model_setup(
     return setup, j_resource, adapter
 
 
+def test_java_chat_model_setup_builds_without_a_model() -> None:
+    """A Java setup declared from Python may omit the model and let the Java
+    setup apply its default, so the wrapper must not reject the omission.
+    """
+    setup = JavaChatModelSetup(
+        j_resource=Mock(),
+        j_resource_adapter=Mock(),
+        connection="connection",
+    )
+
+    assert setup.connection == "connection"
+
+
 @pytest.mark.parametrize("strategy", [None, "auto", "PROMPT"])
 def test_java_chat_model_setup_never_applies_native_structured_output(
     strategy: str | None,

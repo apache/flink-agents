@@ -120,7 +120,7 @@ public class AnthropicChatModelSetup extends BaseChatModelSetup {
                         .map(HashMap::new)
                         .orElseGet(HashMap::new);
 
-        if (this.model == null || this.model.isBlank()) {
+        if (this.model == null) {
             this.model = DEFAULT_MODEL;
         }
     }

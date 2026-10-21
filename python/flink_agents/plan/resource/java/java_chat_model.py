@@ -17,7 +17,7 @@
 #################################################################################
 from typing import Any, Dict, List, Mapping, Sequence
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, field_validator
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema
@@ -129,6 +129,13 @@ class JavaChatModelSetup(BaseChatModelSetup):
 
     _j_resource: Any
     _j_resource_adapter: JavaResourceAdapter
+
+    @field_validator("model")
+    @classmethod
+    def _reject_blank_model(cls, value: str) -> str:
+        # Overrides the base check by name: an omitted model arrives here as "" and
+        # the Java setup applies its default; a blank one was already rejected in Java.
+        return value
 
     def __init__(
         self, j_resource: Any, j_resource_adapter: JavaResourceAdapter, **kwargs: Any
