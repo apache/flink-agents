@@ -48,8 +48,6 @@ import static org.apache.flink.util.Preconditions.checkState;
  * class, and initialization arguments.
  */
 public class PythonResourceProvider extends ResourceProvider {
-    private static final String MCP_MODULE = "flink_agents.integrations.mcp.mcp";
-    private static final String MCP_CLASS = "MCPServer";
     private final ResourceDescriptor descriptor;
 
     private static final Map<ResourceType, Class<?>> RESOURCE_TYPE_TO_CLASS =
@@ -95,11 +93,6 @@ public class PythonResourceProvider extends ResourceProvider {
         HashMap<String, Object> kwargs = new HashMap<>(descriptor.getInitialArguments());
         String pyModule = descriptor.getModule();
         String pyClazz = descriptor.getClazz();
-
-        if (getType() == ResourceType.MCP_SERVER) {
-            pyModule = MCP_MODULE;
-            pyClazz = MCP_CLASS;
-        }
 
         PyObject pyResource = pythonResourceAdapter.initPythonResource(pyModule, pyClazz, kwargs);
         try {

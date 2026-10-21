@@ -70,6 +70,28 @@ class PythonResourceProviderTest {
     }
 
     @Test
+    void mcpServerUsesImplementationFromDescriptor() throws Exception {
+        PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
+        PyObject pythonResource = mock(PyObject.class);
+        ResourceDescriptor descriptor =
+                new PythonResourceDescriptor(
+                        "custom.mcp", "CustomMCPServer", Map.of("endpoint", "http://mcp"));
+        PythonResourceProvider provider =
+                new PythonResourceProvider("server", ResourceType.MCP_SERVER, descriptor);
+        provider.setPythonResourceAdapter(adapter);
+        when(adapter.initPythonResource(
+                        "custom.mcp", "CustomMCPServer", Map.of("endpoint", "http://mcp")))
+                .thenReturn(pythonResource);
+
+        Resource resource = provider.provide(mock(ResourceContext.class));
+
+        verify(adapter)
+                .initPythonResource(
+                        "custom.mcp", "CustomMCPServer", Map.of("endpoint", "http://mcp"));
+        resource.close();
+    }
+
+    @Test
     void closesPythonHandleWhenWrapperConstructionFails() throws Exception {
         PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
         PyObject pythonResource = mock(PyObject.class);
