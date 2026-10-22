@@ -33,6 +33,7 @@ import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.YamlParserUtils;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.Table;
@@ -220,6 +221,7 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
         }
 
         @Override
+        @SuppressWarnings("unchecked")
         public DataStream<Object> toDataStream() {
             if (agentPlan == null) {
                 throw new IllegalStateException("Must apply agent before calling toDataStream");
@@ -229,6 +231,13 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
                 if (keySelector != null) {
                     outputDataStream =
                             CompileUtils.connectToAgent(inputDataStream, keySelector, agentPlan);
+                } else if (inputDataStream instanceof KeyedStream) {
+                    // An already-keyed input carries its business key; connect through the
+                    // keyed-stream path to preserve that key, instead of replacing it with a
+                    // pass-through selector that would split a session across its messages.
+                    outputDataStream =
+                            CompileUtils.connectToAgent(
+                                    (KeyedStream<T, ?>) inputDataStream, agentPlan);
                 } else {
                     // If no key selector provided, use a simple pass-through key selector
                     outputDataStream =

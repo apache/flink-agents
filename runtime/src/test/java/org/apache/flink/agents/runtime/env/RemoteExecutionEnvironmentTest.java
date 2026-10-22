@@ -18,15 +18,28 @@
 package org.apache.flink.agents.runtime.env;
 
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
+import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.annotation.Action;
+import org.apache.flink.agents.api.context.MemoryObject;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.api.common.JobExecutionResult;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 import static org.apache.flink.agents.runtime.env.RemoteExecutionEnvironment.FLINK_CONF_FILENAME;
@@ -94,5 +107,48 @@ public class RemoteExecutionEnvironmentTest {
         agentsEnv.execute(customJobName);
 
         verify(flinkEnv).execute(customJobName);
+    }
+
+    @Test
+    void fromDataStreamPreservesExistingKeyedStreamKeyWhenNoSelectorGiven() throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+
+        KeyedStream<String, String> keyedBySession =
+                env.fromData("same:first", "same:second", "same:first again", "other:first")
+                        .keyBy(value -> value.split(":")[0]);
+
+        DataStream<Object> output =
+                agentsEnv.fromDataStream(keyedBySession).apply(new CountingAgent()).toDataStream();
+
+        List<Object> results = new ArrayList<>();
+        try (CloseableIterator<Object> iterator = output.executeAndCollect()) {
+            iterator.forEachRemaining(results::add);
+        }
+
+        // Messages of the "same" session share short-term memory and count 1, 2, 3 in their
+        // arrival order, while the independent "other" session starts from 1. A pass-through
+        // selector that replaces the session key with the whole message would count every
+        // "same" message as 1.
+        assertThat(results).containsExactlyInAnyOrder("same:1", "same:2", "same:3", "other:1");
+    }
+
+    /** Model-free agent counting inputs per business key in short-term memory. */
+    public static class CountingAgent extends Agent {
+
+        @Action(EventType.InputEvent)
+        public static void countInputs(Event event, RunnerContext context) throws Exception {
+            String input = (String) InputEvent.fromEvent(event).getInput();
+            String session = input.split(":")[0];
+            MemoryObject memory = context.getShortTermMemory();
+            int count = 1;
+            if (memory.isExist("count")) {
+                count = ((Number) memory.get("count").getValue()).intValue() + 1;
+            }
+            memory.set("count", count);
+            context.sendEvent(new OutputEvent(session + ":" + count));
+        }
     }
 }
