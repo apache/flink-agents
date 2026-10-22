@@ -56,7 +56,7 @@ This section walks through:
 
 1. Declaring a single agent in one YAML file.
 2. Declaring multiple agents in one YAML file.
-3. Declaring shared Resources and Actions that any agent in the file (or any later-loaded file) can reuse.
+3. Declaring shared Resources and Actions that agents can reuse.
 4. Declaring sub-agents and referencing them from a parent Agent.
 
 ### Declaring a single agent
@@ -376,7 +376,9 @@ agents:
 
 ### Declaring and reusing shared Resources and Actions
 
-Any resource section (`prompts`, `tools`, `chat_model_connections`, ...) or `actions:` declared as a **top-level sibling** of `agents:` is **shared**: it is registered on the `AgentsExecutionEnvironment` itself, and any agent in the file — or in any file later loaded into the same environment — can reference it by name.
+Any resource section (`prompts`, `tools`, `chat_model_connections`, ...) declared as a **top-level sibling** of `agents:` is **shared**: it is registered on the `AgentsExecutionEnvironment` itself, and any agent in the file — or in any file later loaded into the same environment — can reference it by name.
+
+A top-level `actions:` list is shared only within its file: agents in the same file can reference these actions by name, but agents in other files cannot.
 
 **Shared resources** are referenced inside an agent simply by name:
 
@@ -437,7 +439,7 @@ actions:
 ```
 
 {{< hint info >}}
-Composing one agent across multiple YAML files is **not** supported. If two files loaded into the same environment declare the same agent name, or the same shared resource/action name, the second `load_yaml` call raises an error.
+Composing one agent across multiple YAML files is **not** supported. If two files loaded into the same environment declare the same agent name, or the same shared resource name, the second `load_yaml` call raises an error.
 {{< /hint >}}
 
 ### Declaring sub-agents

@@ -151,6 +151,13 @@ where supported and install its dependencies.
 | [Mem0]({{< ref "docs/development/vector-search/vector_stores/providers#mem0" >}}) | ✅ | ❌ |
 | [Milvus]({{< ref "docs/development/vector-search/vector_stores/providers#milvus" >}}) | ❌ | ✅ |
 
+**Decision Models**
+
+| Provider | Python | Java |
+|---|---|---|
+| [OpenAI]({{< ref "docs/development/decision_models" >}}) | ✅ | ❌ |
+| [TypeSafe]({{< ref "docs/development/decision_models" >}}) | ✅ | ❌ |
+
 **MCP Server**
 
 | Provider | Python | Java |
