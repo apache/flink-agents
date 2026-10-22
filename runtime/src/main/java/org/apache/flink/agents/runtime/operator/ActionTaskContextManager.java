@@ -181,7 +181,7 @@ class ActionTaskContextManager implements AutoCloseable {
         requireContexts(actionTask).lifecycleActive = active;
     }
 
-    private boolean hasContexts(ActionTask actionTask) {
+    boolean hasContexts(ActionTask actionTask) {
         return actionTaskContexts.containsKey(actionTask);
     }
 

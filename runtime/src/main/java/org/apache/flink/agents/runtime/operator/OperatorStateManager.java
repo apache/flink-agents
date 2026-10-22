@@ -287,18 +287,6 @@ class OperatorStateManager {
         return removeFromListState(currentProcessingKeysOpState, key);
     }
 
-    boolean isProcessingKey(Object key) throws Exception {
-        Iterable<Object> processingKeys = currentProcessingKeysOpState.get();
-        if (processingKeys != null) {
-            for (Object processingKey : processingKeys) {
-                if (processingKey.equals(key)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
     boolean hasProcessingKeys() throws Exception {
         return listStateNotEmpty(currentProcessingKeysOpState);
     }

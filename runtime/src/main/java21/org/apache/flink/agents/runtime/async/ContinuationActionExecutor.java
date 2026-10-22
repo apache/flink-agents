@@ -32,11 +32,15 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.PriorityBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
@@ -46,6 +50,9 @@ import org.slf4j.LoggerFactory;
  * Executor for Java actions that supports asynchronous execution using JDK 21+ Continuation API.
  *
  * <p>This version uses {@code jdk.internal.vm.Continuation} to implement true async execution.
+ * Queued async work runs in ascending (recordIndex, taskIndex) order of its {@link
+ * ContinuationContext}, then in submission order, so the follow-up calls of earlier input records
+ * don't wait behind the first calls of later ones.
  */
 public class ContinuationActionExecutor {
 
@@ -53,8 +60,9 @@ public class ContinuationActionExecutor {
 
     private static final ContinuationScope SCOPE = new ContinuationScope("FlinkAgentsAction");
 
-    private final ExecutorService asyncExecutor;
+    private final ThreadPoolExecutor asyncExecutor;
     private final AsyncExecutorThreadFactory asyncThreadFactory;
+    private final AtomicLong submissionSequence = new AtomicLong();
 
     public ContinuationActionExecutor(int numAsyncThreads) {
         this(numAsyncThreads, () -> {}, null, null);
@@ -73,7 +81,13 @@ public class ContinuationActionExecutor {
         LOG.info("Initialize fixed thread pool for async task with {} threads", numAsyncThreads);
         this.asyncThreadFactory = new AsyncExecutorThreadFactory(threadCleanup);
         this.asyncExecutor =
-                Executors.newFixedThreadPool(numAsyncThreads, asyncThreadFactory);
+                new ThreadPoolExecutor(
+                        numAsyncThreads,
+                        numAsyncThreads,
+                        0L,
+                        TimeUnit.MILLISECONDS,
+                        new PriorityBlockingQueue<>(),
+                        asyncThreadFactory);
     }
 
     /**
@@ -149,8 +163,8 @@ public class ContinuationActionExecutor {
         context.clearAsyncState();
 
         // Submit task to thread pool and store the Future
-        Future<?> future =
-                asyncExecutor.submit(
+        FutureTask<?> future =
+                new FutureTask<>(
                         () -> {
                             try {
                                 T result = supplier.get();
@@ -158,7 +172,9 @@ public class ContinuationActionExecutor {
                             } catch (Throwable t) {
                                 context.getAsyncExceptionRef().set(t);
                             }
-                        });
+                        },
+                        null);
+        prioritizedExecutor(context).execute(future);
 
         // Store the future reference before yielding (volatile write ensures visibility)
         context.setPendingFuture(future);
@@ -215,6 +231,7 @@ public class ContinuationActionExecutor {
         int parallelismLimit = Math.min(Math.max(maxParallelism, 1), batchSize);
 
         long deadlineNanos = getDeadlineNanos(timeout);
+        Executor executor = prioritizedExecutor(context);
 
         while (completed < batchSize) {
             if (System.nanoTime() >= deadlineNanos) {
@@ -240,7 +257,7 @@ public class ContinuationActionExecutor {
                                     } catch (Exception e) {
                                         return Outcome.failure(e);
                                     }
-                                }, asyncExecutor);
+                                }, executor);
             }
 
             List<CompletableFuture<?>> inFlight = new ArrayList<>(parallelismLimit);
@@ -273,6 +290,49 @@ public class ContinuationActionExecutor {
 
         context.setPendingBatchFuture(null);
         return collectBatchOutcomes(Arrays.asList(slots), started);
+    }
+
+    /** Returns an executor that queues work at the priority of {@code context}. */
+    private Executor prioritizedExecutor(ContinuationContext context) {
+        long recordIndex = context.getRecordIndex();
+        long taskIndex = context.getTaskIndex();
+        return command ->
+                asyncExecutor.execute(
+                        new PrioritizedTask(
+                                command,
+                                recordIndex,
+                                taskIndex,
+                                submissionSequence.getAndIncrement()));
+    }
+
+    /** Async work ordered by (recordIndex, taskIndex), then by submission. */
+    private static final class PrioritizedTask implements Runnable, Comparable<PrioritizedTask> {
+        private final Runnable command;
+        private final long recordIndex;
+        private final long taskIndex;
+        private final long sequence;
+
+        private PrioritizedTask(Runnable command, long recordIndex, long taskIndex, long sequence) {
+            this.command = command;
+            this.recordIndex = recordIndex;
+            this.taskIndex = taskIndex;
+            this.sequence = sequence;
+        }
+
+        @Override
+        public void run() {
+            command.run();
+        }
+
+        @Override
+        public int compareTo(PrioritizedTask other) {
+            int byRecord = Long.compare(recordIndex, other.recordIndex);
+            if (byRecord != 0) {
+                return byRecord;
+            }
+            int byTask = Long.compare(taskIndex, other.taskIndex);
+            return byTask != 0 ? byTask : Long.compare(sequence, other.sequence);
+        }
     }
 
     private static <T> int countInFlight(

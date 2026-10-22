@@ -70,6 +70,7 @@ import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
 import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
+import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
@@ -138,6 +139,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -710,7 +712,7 @@ public class ActionExecutionOperatorTest {
 
     @Test
     @Timeout(10)
-    void nonParallelEnginesRetireInputWithoutTriggeredActionsAtInFlightLimit() throws Exception {
+    void nonParallelEnginesRetireInputsWithoutTriggeredActions() throws Exception {
         AgentConfiguration config = new AgentConfiguration();
         config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
         config.set(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS, 1);
@@ -725,9 +727,16 @@ public class ActionExecutionOperatorTest {
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
-            // The second record waits at the limit until the first one retires.
+            // Continuation execution waits at the limit; serial execution admits both inputs.
             testHarness.processElement(new StreamRecord<>(1L));
             testHarness.processElement(new StreamRecord<>(2L));
+            if (ContinuationActionExecutor.isContinuationSupported()) {
+                assertThat(operator.getOperatorStateManager().getProcessingKeys())
+                        .containsExactly(2L);
+            } else {
+                assertThat(operator.getOperatorStateManager().getProcessingKeys())
+                        .containsExactly(1L, 2L);
+            }
             operator.waitInFlightEventsFinished();
 
             assertThat(operator.getOperatorStateManager().getProcessingKeys()).isEmpty();
@@ -737,7 +746,9 @@ public class ActionExecutionOperatorTest {
 
     @Test
     @Timeout(10)
-    void nonParallelEnginesProcessRecordAdmittedAtInFlightLimitUnderItsOwnKey() throws Exception {
+    void continuationExecutionProcessesRecordAdmittedAtInFlightLimitUnderItsOwnKey()
+            throws Exception {
+        assumeTrue(ContinuationActionExecutor.isContinuationSupported());
         AgentConfiguration config = new AgentConfiguration();
         config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
         config.set(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS, 1);
@@ -766,6 +777,76 @@ public class ActionExecutionOperatorTest {
             operator.waitInFlightEventsFinished();
 
             assertThat(recordStartKeys).containsExactly(1L, 2L);
+        }
+    }
+
+    @Test
+    @Timeout(10)
+    void nonParallelEnginesKeepKeyBusyUntilNoActionInputRetires() throws Exception {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
+        config.set(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS, 2);
+        AgentPlan agentPlan = new AgentPlan(new HashMap<>(), new HashMap<>(), config);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> 0L,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // The second input queues behind the first, which triggers no Actions.
+            testHarness.processElement(new StreamRecord<>(1L));
+            testHarness.processElement(new StreamRecord<>(2L));
+            assertThat(operator.getOperatorStateManager().getProcessingKeys()).containsExactly(0L);
+
+            operator.waitInFlightEventsFinished();
+            assertThat(operator.getOperatorStateManager().getProcessingKeys()).isEmpty();
+        }
+    }
+
+    @Test
+    @Timeout(10)
+    void nonParallelEnginesAssignPrioritiesByRecordStartThenFirstDispatch() throws Exception {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(
+                                TestAgent.getAgentPlanWithConfig(config), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+            List<String> priorities = new CopyOnWriteArrayList<>();
+            operator.addTaskLifecycleListener(
+                    new TaskLifecycleListener() {
+                        @Override
+                        public void onActionPrepared(ActionTask task) {
+                            ContinuationContext context =
+                                    ((JavaRunnerContextImpl) task.getRunnerContext())
+                                            .getContinuationContext();
+                            priorities.add(
+                                    task.action.getName()
+                                            + " "
+                                            + context.getRecordIndex()
+                                            + "/"
+                                            + context.getTaskIndex());
+                        }
+                    });
+
+            // action1 handles the input and sends the event that triggers action2.
+            testHarness.processElement(new StreamRecord<>(1L));
+            testHarness.processElement(new StreamRecord<>(2L));
+            operator.waitInFlightEventsFinished();
+
+            assertThat(priorities)
+                    .containsExactlyInAnyOrder(
+                            "action1 0/0", "action2 0/1", "action1 1/0", "action2 1/1");
         }
     }
 

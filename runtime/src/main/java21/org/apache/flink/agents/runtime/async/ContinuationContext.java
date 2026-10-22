@@ -22,10 +22,16 @@ import jdk.internal.vm.Continuation;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Continuation context with JDK 21 continuation state. */
+/**
+ * Continuation context with JDK 21 continuation state and the (recordIndex, taskIndex) priority
+ * that {@link ContinuationActionExecutor} uses to order the async work submitted for this context.
+ */
 public class ContinuationContext {
 
     private Continuation currentContinuation;
+    // Unprioritized contexts never overtake prioritized work.
+    private long recordIndex = Long.MAX_VALUE;
+    private long taskIndex = Long.MAX_VALUE;
     private volatile Future<?> pendingFuture;
     private volatile Future<?> pendingBatchFuture;
     /** {@link Long#MAX_VALUE} means the pending batch has no deadline. */
@@ -40,6 +46,19 @@ public class ContinuationContext {
 
     public void setCurrentContinuation(Continuation currentContinuation) {
         this.currentContinuation = currentContinuation;
+    }
+
+    public void setPriority(long recordIndex, long taskIndex) {
+        this.recordIndex = recordIndex;
+        this.taskIndex = taskIndex;
+    }
+
+    public long getRecordIndex() {
+        return recordIndex;
+    }
+
+    public long getTaskIndex() {
+        return taskIndex;
     }
 
     public Future<?> getPendingFuture() {

@@ -785,6 +785,9 @@ worker and batch limits. Concurrency between Actions has additional requirements
 - **JDK 21+:** add `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to the JVM
   options, including `env.java.opts.all` on a cluster, to enable continuation-based execution.
   Plans with Python Actions need it too, not only plans whose Actions are all Java.
+  Queued Java async calls are then prioritized by the order their input records started
+  processing, then by the order their Actions were first dispatched, so a record's follow-up
+  calls can run before later records' first calls. Running calls are not preempted.
 - **Java on JDK 11–20:** the experimental parallel execution engine is enabled by default
   for plans whose Actions are all Java. Setting `parallel-execution.enabled` to `false`,
   or including Python Actions, disables it. A Java single-call await then runs synchronously;
