@@ -76,9 +76,7 @@ class TypedOutputTerminalTest {
         DataStream<String> inputStream = env.fromData(List.of("a", "b", "c"));
         // The key is irrelevant to what these tests exercise; an explicit selector keeps the
         // builder valid now that an unkeyed input without a selector is rejected.
-        return agentsEnv
-                .fromDataStream(inputStream, value -> value)
-                .apply(new EchoAgent());
+        return agentsEnv.fromDataStream(inputStream, value -> value).apply(new EchoAgent());
     }
 
     @Test

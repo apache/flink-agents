@@ -193,7 +193,7 @@ public class FlinkIntegrationTest {
 
         DataStream<FlinkIntegrationAgent.TypedOutput> outputStream =
                 agentsEnv
-                        .fromDataStream(inputStream)
+                        .fromDataStream(inputStream, value -> value)
                         .apply(new FlinkIntegrationAgent.TypedOutputAgent())
                         .toDataStream(TypeInformation.of(FlinkIntegrationAgent.TypedOutput.class));
 
@@ -228,7 +228,7 @@ public class FlinkIntegrationTest {
 
         Table outputTable =
                 agentsEnv
-                        .fromDataStream(inputStream)
+                        .fromDataStream(inputStream, value -> value)
                         .apply(new FlinkIntegrationAgent.TypedOutputAgent())
                         .toTable(TypeInformation.of(FlinkIntegrationAgent.TypedOutput.class));
 
@@ -260,7 +260,7 @@ public class FlinkIntegrationTest {
 
         Table outputTable =
                 agentsEnv
-                        .fromDataStream(inputStream)
+                        .fromDataStream(inputStream, value -> value)
                         .apply(new FlinkIntegrationAgent.TypedOutputAgent())
                         .toTable(outputSchema);
 
