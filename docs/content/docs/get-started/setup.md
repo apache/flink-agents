@@ -183,8 +183,14 @@ pip install flink-agents apache-flink==${FLINK_VERSION}
 
 ```shell
 echo "setuptools<82" > /tmp/constraint.txt
-PIP_CONSTRAINT=/tmp/constraint.txt pip install flink-agents apache-flink==${FLINK_VERSION}
+PIP_CONSTRAINT=/tmp/constraint.txt \
+PIP_BUILD_CONSTRAINT=/tmp/constraint.txt \
+  pip install flink-agents apache-flink==${FLINK_VERSION}
 ```
+
+Set both variables for compatibility with older pip versions. Since pip 26.2,
+`PIP_CONSTRAINT` no longer affects isolated builds, which require
+[`PIP_BUILD_CONSTRAINT`](https://pip.pypa.io/en/stable/user_guide/#build-constraints).
 {{< /hint >}}
 
 #### From Source
@@ -206,7 +212,6 @@ pip install apache-flink==${FLINK_VERSION}
 # Build Flink Agents
 cd flink-agents
 ./tools/build.sh
-cd ..
 ```
 
 On Apple Silicon, that `pip install` can fail while building `apache-beam`. See

@@ -218,10 +218,37 @@ def test_to_row_passes_through_row():
     assert to_row(existing, shape) is existing
 
 
-def test_to_row_passes_through_non_dict():
-    # A non-mapping value is left untouched for its own coder.
+@pytest.mark.parametrize("value", [42, -7, 3.5, True, False, "hello", "", None])
+def test_to_row_wraps_scalar_in_single_column(value):
+    # Exercise the same JSON boundary as an agent's OutputEvent.
+    event = OutputEvent(output=value)
+    degraded = Event.from_json(event.model_dump_json()).attributes["output"]
+    shape = row_shape(RowTypeInfo([Types.STRING()], ["result"]))
+    assert to_row(degraded, shape) == Row(value)
+
+
+def test_to_row_does_not_wrap_scalar_for_multiple_columns():
     shape = row_shape(infer_row_type_info(ModelOutput))
     assert to_row(42, shape) == 42
+
+
+@pytest.mark.parametrize("nested", [None, {"value": None}, {"value": 42}])
+def test_to_row_preserves_nested_row_and_collection_fields(nested):
+    shape = row_shape(
+        RowTypeInfo(
+            [
+                RowTypeInfo([Types.INT()], ["value"]),
+                Types.MAP(Types.STRING(), Types.INT()),
+                Types.LIST(Types.INT()),
+            ],
+            ["nested", "mapping", "items"],
+        )
+    )
+    mapping, items = {"a": 1}, [1, 2]
+    converted = to_row({"nested": nested, "mapping": mapping, "items": items}, shape)
+    assert converted[0] == (None if nested is None else Row(nested["value"]))
+    assert converted[1] is mapping
+    assert converted[2] is items
 
 
 def test_to_row_named_tuple_through_output_event_boundary():

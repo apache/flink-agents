@@ -157,6 +157,11 @@ AgentsExecutionEnvironment agentsEnv =
 
 Integrate the agent with input `Table`, and return the output `Table` can be consumed by downstream.
 
+The input `Table` must be **insert-only**: it may append rows, but must not update or
+delete earlier rows. Both `from_table()` and `fromTable()` reject Tables that produce
+updates or deletes, such as a continuous `GROUP BY` aggregation whose results change
+as new records arrive.
+
 {{< tabs "From/To Table" >}}
 
 {{< tab "Python" >}}

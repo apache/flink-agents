@@ -18,8 +18,10 @@
 import json
 import os
 import sysconfig
+from collections import Counter
 from pathlib import Path
 
+import pytest
 from pyflink.common import Configuration, Encoder, WatermarkStrategy
 from pyflink.common.typeinfo import BasicTypeInfo, ExternalTypeInfo, RowTypeInfo, Types
 from pyflink.datastream import (
@@ -32,6 +34,7 @@ from pyflink.datastream.connectors.file_system import (
     StreamingFileSink,
 )
 from pyflink.table import DataTypes, Schema, StreamTableEnvironment, TableDescriptor
+from pyflink.table.types import DataType
 
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.e2e_tests.e2e_tests_integration.flink_integration_agent import (
@@ -39,6 +42,7 @@ from flink_agents.e2e_tests.e2e_tests_integration.flink_integration_agent import
     DataStreamToTableAgent,
     ItemData,
     MyKeySelector,
+    ScalarOutputAgent,
     TableAgent,
 )
 from flink_agents.e2e_tests.test_utils import check_result
@@ -46,6 +50,39 @@ from flink_agents.e2e_tests.test_utils import check_result
 current_dir = Path(__file__).parent
 
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
+
+
+@pytest.mark.parametrize("table_input", [False, True], ids=["datastream", "table"])
+@pytest.mark.parametrize(
+    ("values", "data_type"),
+    [
+        ([42, -7, 0, None], DataTypes.INT()),
+        ([3.5, 0.0, None], DataTypes.DOUBLE()),
+        ([True, False, None], DataTypes.BOOLEAN()),
+        (["hello", "", None], DataTypes.STRING()),
+    ],
+    ids=["int", "float", "bool", "string"],
+)
+def test_scalar_output_to_single_column_table(
+    values: list, data_type: DataType, table_input: bool
+) -> None:
+    config = Configuration()
+    config.set_string("restart-strategy.type", "disable")
+    env = StreamExecutionEnvironment.get_execution_environment(config)
+    env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
+    env.set_parallelism(1)
+    t_env = StreamTableEnvironment.create(env)
+    agents_env = AgentsExecutionEnvironment.get_execution_environment(env, t_env)
+    if table_input:
+        source = t_env.from_elements([(value,) for value in values], ["value"])
+        builder = agents_env.from_table(source, key_selector=lambda _: "key")
+    else:
+        source = env.from_collection([{"value": value} for value in values])
+        builder = agents_env.from_datastream(source, key_selector=lambda _: "key")
+    schema = Schema.new_builder().column("result", data_type).build()
+    table = builder.apply(ScalarOutputAgent()).to_table(schema=schema)
+    with table.execute().collect() as results:
+        assert Counter(row[0] for row in results) == Counter(values)
 
 
 def test_from_datastream_to_datastream(tmp_path: Path) -> None:

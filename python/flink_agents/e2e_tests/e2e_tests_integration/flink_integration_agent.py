@@ -171,6 +171,15 @@ class TableAgent(Agent):
         ctx.send_event(OutputEvent(output=content))
 
 
+class ScalarOutputAgent(Agent):
+    """Emit a scalar unchanged through the real action/output serialization path."""
+
+    @action(EventType.InputEvent)
+    @staticmethod
+    def emit(event: Event, ctx: RunnerContext) -> None:
+        ctx.send_event(OutputEvent(output=InputEvent.from_event(event).input["value"]))
+
+
 class DataStreamToTableAgent(Agent):
     """Agent used for explaining integrating agents from table to datastream.
 

@@ -263,20 +263,31 @@ def row_shape(row_type_info: RowTypeInfo) -> tuple:
 def to_row(value: Any, shape: tuple) -> Any:
     """Adapt an emitted value to a physical ``Row`` using a :func:`row_shape`.
 
+    A scalar output supplies the only column of a single-column row. This
+    wrapping applies only to the outer output row, so a null nested row remains
+    null rather than becoming a row containing null.
+
     The raw agent output crosses a JSON boundary, so a structured value arrives
     as a dict (a Pydantic model / dataclass degraded to its fields) or, for a
     ``NamedTuple``, as a positional array; a value the agent emitted as a ``Row``
     is reconstructed as one. Only fields the shape marks as nested rows are
-    converted recursively; every other value -- scalar, map, or list -- is left
-    untouched for its own coder, so no column kind is silently reshaped. This is
-    the payload of the Table/Row conversion operator.
+    converted recursively; their scalar, map, and list fields are left untouched
+    for their own coders. This is the payload of the Table/Row conversion operator.
     """
+    names, _ = shape
+    if len(names) == 1 and not isinstance(value, Row | dict | list | tuple):
+        return Row(value)
+    return _to_row(value, shape)
+
+
+def _to_row(value: Any, shape: tuple) -> Any:
+    """Convert structured row values without wrapping scalar or null fields."""
     if isinstance(value, Row):
         return value
     names, children = shape
     if isinstance(value, dict):
         fields = [
-            to_row(value.get(name), child) if child is not None else value.get(name)
+            _to_row(value.get(name), child) if child is not None else value.get(name)
             for name, child in zip(names, children, strict=False)
         ]
         return Row(*fields)
@@ -286,7 +297,7 @@ def to_row(value: Any, shape: tuple) -> Any:
         # order. A length mismatch means the sequence is one column's own value
         # (for example an ARRAY), which is left untouched for its coder.
         fields = [
-            to_row(item, child) if child is not None else item
+            _to_row(item, child) if child is not None else item
             for item, child in zip(value, children, strict=False)
         ]
         return Row(*fields)

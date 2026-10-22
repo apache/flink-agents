@@ -376,5 +376,5 @@ $FLINK_HOME/bin/flink run -c org.apache.flink.agents.examples.YamlWorkflowAgentE
 {{< /tabs >}}
 
 The job appears in the Flink web UI at [localhost:8081](http://localhost:8081). After a few
-minutes, one JSON record per input review appears in the TaskManager output log under
+minutes, one analysis result per input review appears in the TaskManager output log under
 `$FLINK_HOME/log`.

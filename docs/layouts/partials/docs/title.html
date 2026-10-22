@@ -30,13 +30,5 @@ under the License.
   {{ $title = .File.BaseFileName | humanize | title }}
 {{ end }}
 
-{{ if .Params.icon }}
-  {{ $title = printf "%s&nbsp;&nbsp;%s" .Params.icon $title }}
-{{ end }}
-
-{{ if .Params.bold }}
-  {{ $title = printf `<div style="font-weight:450;margin-bottom:0.5em">%s</div>` $title }}
-{{ end }}
-
-{{ return ($title | safeHTML) }}
+{{ return $title }}
 

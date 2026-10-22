@@ -55,6 +55,7 @@ caps how many chat requests run at once.
 ```python
 # Set up the Flink streaming environment and the Agents execution environment.
 env = StreamExecutionEnvironment.get_execution_environment()
+env.set_parallelism(1)
 agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
 # limit async request to avoid overwhelming ollama server

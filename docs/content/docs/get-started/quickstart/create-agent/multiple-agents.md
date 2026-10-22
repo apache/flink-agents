@@ -542,3 +542,6 @@ $FLINK_HOME/bin/flink run -c org.apache.flink.agents.examples.WorkflowMultipleAg
 The job appears in the Flink web UI at [localhost:8081](http://localhost:8081). Suggestions
 appear in the TaskManager output log under `$FLINK_HOME/log` once a window closes, which takes
 up to a minute after the first review is analyzed.
+
+This example reads a finite file, so the job may finish before a processing-time window
+fires. Some or all suggestions may therefore not be produced.

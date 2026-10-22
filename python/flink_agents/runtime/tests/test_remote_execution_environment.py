@@ -562,6 +562,32 @@ def test_to_table_schema_only_builds_row_stream():
     assert t_env.from_data_stream.call_args.args[1] is schema
 
 
+@pytest.mark.parametrize("use_schema", [False, True])
+def test_scalar_table_view_preserves_scalar_datastream_views(use_schema):
+    schema = (
+        Schema.new_builder()
+        .column("result", DataTypes.INT())
+        .column_by_expression("doubled", "result * 2")
+        .build()
+    )
+    with _applied_builder() as (builder, raw_mock, _, _):
+        builder.to_datastream()
+        builder.to_datastream(Types.INT())
+        if use_schema:
+            builder.to_table(schema=schema)
+        else:
+            builder.to_table(output_type=Types.ROW_NAMED(["result"], [Types.INT()]))
+    payload = cloudpickle.dumps(42)
+    raw_view, scalar_view, row_view = raw_mock.map.call_args_list
+    assert raw_view.args[0](payload) == 42
+    assert scalar_view.args[0](payload) == 42
+    assert row_view.args[0](payload) == Row(42)
+    assert isinstance(row_view.kwargs["output_type"], ExternalTypeInfo)
+    # The worker closure remains picklable; only physical columns consume values.
+    restored = cloudpickle.loads(cloudpickle.dumps(row_view.args[0]))
+    assert restored(payload) == Row(42)
+
+
 def test_to_table_output_type_derives_schema():
     with _applied_builder() as (builder, _, t_env, _):
         builder.to_table(output_type=ModelOutput)
