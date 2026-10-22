@@ -140,6 +140,10 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
 
         private AgentPlan agentPlan;
         private DataStream<Object> outputDataStream;
+        // Only a table-derived input may fall back to identity keying: fromTable(input)
+        // documents a "without keying" mode, while a DataStream input must carry a business
+        // key through either a KeyedStream or an explicit selector.
+        private final boolean allowIdentityKeyFallback;
 
         // Constructor for DataStream input
         public RemoteAgentBuilder(
@@ -157,6 +161,7 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
             this.config = config;
             this.resources = resources;
             this.agents = agents;
+            this.allowIdentityKeyFallback = false;
         }
 
         // Constructor for Table input
@@ -176,6 +181,7 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
             this.config = config;
             this.resources = resources;
             this.agents = agents;
+            this.allowIdentityKeyFallback = true;
         }
 
         private StreamTableEnvironment getTableEnvironment() {
@@ -238,10 +244,18 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
                     outputDataStream =
                             CompileUtils.connectToAgent(
                                     (KeyedStream<T, ?>) inputDataStream, agentPlan);
-                } else {
-                    // If no key selector provided, use a simple pass-through key selector
+                } else if (allowIdentityKeyFallback) {
+                    // Table input documents a "without keying" mode; key by the whole record.
                     outputDataStream =
                             CompileUtils.connectToAgent(inputDataStream, x -> x, agentPlan);
+                } else {
+                    // Without a key selector there is no business key to key the agent by;
+                    // keying by the whole record would silently split sessions, so require
+                    // the caller to pass a keyed stream or a selector, as documented.
+                    throw new IllegalArgumentException(
+                            "A key selector must be provided when the input DataStream is not"
+                                    + " keyed; pass a KeyedStream or a key selector to"
+                                    + " fromDataStream.");
                 }
             }
 

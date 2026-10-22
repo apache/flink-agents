@@ -135,6 +135,75 @@ public class RemoteExecutionEnvironmentTest {
         assertThat(results).containsExactlyInAnyOrder("same:1", "same:2", "same:3", "other:1");
     }
 
+    @Test
+    void fromDataStreamUsesExplicitSelectorEvenOnKeyedInput() throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+
+        // The stream is keyed by the whole record; the explicit selector keys by session, and
+        // the selector must win: the "same" messages share short-term memory either way only
+        // if the session key is applied rather than the stream's own whole-record key.
+        KeyedStream<String, String> keyedByWholeRecord =
+                env.fromData("same:first", "same:second", "other:first").keyBy(value -> value);
+
+        DataStream<Object> output =
+                agentsEnv
+                        .fromDataStream(keyedByWholeRecord, value -> value.split(":")[0])
+                        .apply(new CountingAgent())
+                        .toDataStream();
+
+        List<Object> results = new ArrayList<>();
+        try (CloseableIterator<Object> iterator = output.executeAndCollect()) {
+            iterator.forEachRemaining(results::add);
+        }
+
+        assertThat(results).containsExactlyInAnyOrder("same:1", "same:2", "other:1");
+    }
+
+    @Test
+    void fromDataStreamKeysUnkeyedInputBySelector() throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+
+        DataStream<String> unkeyed = env.fromData("same:first", "same:second", "other:first");
+
+        DataStream<Object> output =
+                agentsEnv
+                        .fromDataStream(unkeyed, value -> value.split(":")[0])
+                        .apply(new CountingAgent())
+                        .toDataStream();
+
+        List<Object> results = new ArrayList<>();
+        try (CloseableIterator<Object> iterator = output.executeAndCollect()) {
+            iterator.forEachRemaining(results::add);
+        }
+
+        assertThat(results).containsExactlyInAnyOrder("same:1", "same:2", "other:1");
+    }
+
+    @Test
+    void fromDataStreamRejectsUnkeyedInputWithoutSelector() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+
+        DataStream<String> unkeyed = env.fromData("same:first");
+
+        assertThatThrownBy(
+                        () ->
+                                agentsEnv
+                                        .fromDataStream(unkeyed)
+                                        .apply(new CountingAgent())
+                                        .toDataStream())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("key selector must be provided");
+    }
+
     /** Model-free agent counting inputs per business key in short-term memory. */
     public static class CountingAgent extends Agent {
 

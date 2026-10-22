@@ -96,7 +96,7 @@ public class ModelRoutingJudgeExample {
 
         DataStream<Object> resultStream =
                 agentsEnv
-                        .fromDataStream(requestStream)
+                        .fromDataStream(requestStream, value -> value)
                         .apply(new ModelRoutingAgent())
                         .toDataStream();
 

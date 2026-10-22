@@ -80,7 +80,7 @@ public class WorkflowSingleAgentExample {
         // Use the ReviewAnalysisAgent to analyze each product review.
         DataStream<Object> reviewAnalysisResStream =
                 agentsEnv
-                        .fromDataStream(productReviewStream)
+                        .fromDataStream(productReviewStream, value -> value)
                         .apply(new ReviewAnalysisAgent())
                         .toDataStream();
 

@@ -360,14 +360,17 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
     def __process_input_datastream(
         input: DataStream, key_selector: KeySelector | Callable | None = None
     ) -> KeyedStream:
+        if key_selector is not None:
+            # An explicit selector always wins, even when the input is already keyed,
+            # so callers can re-key a keyed input without re-building the pipeline.
+            return input.key_by(key_selector)
         if isinstance(input, KeyedStream):
             return input
-        else:
-            if key_selector is None:
-                msg = "KeySelector must be provided."
-                raise RuntimeError(msg)
-            input = input.key_by(key_selector)
-            return input
+        msg = (
+            "A key selector must be provided when the input DataStream is not keyed; "
+            "pass a KeyedStream or a key selector."
+        )
+        raise RuntimeError(msg)
 
     def from_datastream(
         self, input: DataStream, key_selector: KeySelector | Callable | None = None
@@ -379,8 +382,10 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         input : DataStream
             Receive a DataStream as input.
         key_selector : KeySelector
-            Extract key from each input record, must not be None when input is
-            not KeyedStream.
+            Extract key from each input record. An explicit selector always takes
+            precedence, even over the key of an already-keyed input; otherwise a
+            KeyedStream input keeps its key, and a non-keyed input without a
+            selector is rejected.
         """
         input = self.__process_input_datastream(input, key_selector)
 

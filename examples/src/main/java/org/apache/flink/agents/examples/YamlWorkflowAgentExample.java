@@ -80,7 +80,7 @@ public class YamlWorkflowAgentExample {
         // Agent instance or the name of an agent registered on the environment.
         DataStream<Object> reviewAnalysisResStream =
                 agentsEnv
-                        .fromDataStream(productReviewStream)
+                        .fromDataStream(productReviewStream, value -> value)
                         .apply("review_analysis_agent")
                         .toDataStream();
 

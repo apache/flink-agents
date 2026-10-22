@@ -136,8 +136,10 @@ public abstract class AgentsExecutionEnvironment {
      * streaming data with optional keying for stateful operations.
      *
      * @param input DataStream to be processed by agents.
-     * @param keySelector Optional KeySelector for extracting keys from input records. If null, the
-     *     stream will be processed without keying.
+     * @param keySelector Optional KeySelector for extracting keys from input records. An explicit
+     *     selector is always used, even when the input is already keyed; if null, the input must be
+     *     a KeyedStream, whose key is kept, otherwise building the pipeline fails with a clear
+     *     error rather than silently keying by the whole record.
      * @param <T> Type of elements in the input DataStream.
      * @param <K> Type of the key extracted by the KeySelector.
      * @return AgentBuilder for configuring the agent pipeline.
@@ -146,7 +148,10 @@ public abstract class AgentsExecutionEnvironment {
             DataStream<T> input, KeySelector<T, K> keySelector);
 
     /**
-     * Set input for agents from a DataStream without keying.
+     * Set input for agents from a DataStream, keeping the stream's own key.
+     *
+     * <p>The input must be a KeyedStream; its existing key is preserved. A non-keyed input is
+     * rejected with a clear error asking for a keyed stream or a key selector.
      *
      * @param input DataStream to be processed by agents.
      * @param <T> Type of elements in the input DataStream.

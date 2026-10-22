@@ -189,7 +189,7 @@ public class WorkflowMultipleAgentExample {
         // suggestions based on the aggregated analysis results.
         DataStream<Object> productSuggestionResStream =
                 agentsEnv
-                        .fromDataStream(aggregatedAnalysisResStream)
+                        .fromDataStream(aggregatedAnalysisResStream, value -> value)
                         .apply(new ProductSuggestionAgent())
                         .toDataStream();
 

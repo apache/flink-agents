@@ -60,7 +60,10 @@ public class SkillsAgentExample {
 
         // Use the MathAgent to answer each question with the math-calculator skill.
         DataStream<Object> answerStream =
-                agentsEnv.fromDataStream(questionStream).apply(new MathAgent()).toDataStream();
+                agentsEnv
+                        .fromDataStream(questionStream, value -> value)
+                        .apply(new MathAgent())
+                        .toDataStream();
 
         // Print the answers to stdout.
         answerStream.print();

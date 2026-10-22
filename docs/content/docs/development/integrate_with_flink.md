@@ -119,7 +119,14 @@ outputStream.print();
 
 {{< /tabs >}}
 
-The input `DataStream` must be `KeyedStream`, or user should provide `KeySelector` to tell how to convert the input `DataStream` to `KeyedStream`.
+The input `DataStream` must be keyed. Key selection follows the same rules in the Java and
+Python APIs:
+
+- If an explicit `KeySelector` is provided, it is always used, even when the input is
+  already keyed.
+- Otherwise, a `KeyedStream` input keeps its existing key.
+- If neither is available, the call fails with a clear error instead of silently keying
+  by the whole record.
 
 For complete, runnable examples, see {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/WorkflowSingleAgentExample.java" name="`WorkflowSingleAgentExample.java`" >}} (Java) and {{< gh_link file="python/flink_agents/examples/quickstart/workflow_single_agent_example.py" name="`workflow_single_agent_example.py`" >}} (Python).
 

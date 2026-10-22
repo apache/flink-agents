@@ -134,7 +134,7 @@ public class ReActAgentExample {
         // record shipping question.
         DataStream<Object> reviewAnalysisResStream =
                 agentsEnv
-                        .fromDataStream(productReviewStream)
+                        .fromDataStream(productReviewStream, value -> value)
                         .apply(reviewAnalysisReactAgent)
                         .toDataStream();
 
