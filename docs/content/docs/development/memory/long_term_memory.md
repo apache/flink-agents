@@ -121,7 +121,7 @@ agentsConfig.set(
 {{< /tabs >}}
 
 {{< hint info >}}
-If `JOB_IDENTIFIER` is not configured, the current Flink JobID is used as the job identifier and stored in operator state. If that operator state is restored, its stored identifier is reused.
+If `JOB_IDENTIFIER` is not configured, the Flink JobID is used. Restoring the agent's state from a checkpoint or savepoint retains the previous identifier, preserving access to the same long-term memories.
 {{< /hint >}}
 
 ## Data Model

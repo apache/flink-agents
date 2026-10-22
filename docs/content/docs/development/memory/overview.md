@@ -80,4 +80,4 @@ For more details, see [Long-Term Memory]({{< ref "docs/development/memory/long_t
 | **Storage**           | Flink State                                | Flink State                                   | External Vector Store                         |
 | **Access Pattern**    | Key-Value / Nested Objects                 | Key-Value / Nested Objects                    | Semantic Search                               |
 | **Use Case**          | Temporary execution states of an agent run | Exact information shared across multiple runs | Large, compactable and searchable information |
-| **Types of Contents** | Flink-serializable Java values; Python checkpoint-stable built-ins | Flink-serializable Java values; Python checkpoint-stable built-ins | String                                       |
+| **Types of Contents** | Java: Flink-serializable values; Python: [supported built-in values]({{< ref "docs/development/memory/sensory_and_short_term_memory#supported-value-types" >}}) | Java: Flink-serializable values; Python: [supported built-in values]({{< ref "docs/development/memory/sensory_and_short_term_memory#supported-value-types" >}}) | String |
