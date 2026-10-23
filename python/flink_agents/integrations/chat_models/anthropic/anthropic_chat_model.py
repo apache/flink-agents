@@ -145,9 +145,10 @@ def _to_media_block(block: MediaBlock) -> Dict[str, Any]:
 def convert_to_anthropic_message(message: ChatMessage) -> MessageParam:
     """Convert ChatMessage to Anthropic MessageParam format.
 
-    Only user messages can carry media: images (JPEG, PNG, GIF or WebP) and PDF
-    documents by Base64 data or URL, and plain-text documents by Base64 data.
-    Any other media, or media in an assistant message or a tool result, raises
+    Only user messages and tool results can carry media: images (JPEG, PNG, GIF
+    or WebP) and PDF documents by Base64 data or URL, and plain-text documents by
+    Base64 data. A tool result's media goes into its tool_result content. Any
+    other media, or media in an assistant message, raises
     UnsupportedContentBlockError.
     """
     blocks = (
@@ -158,9 +159,9 @@ def convert_to_anthropic_message(message: ChatMessage) -> MessageParam:
         if isinstance(block, TextBlock):
             content.append({"type": "text", "text": block.text})
         elif isinstance(block, MediaBlock):
-            if message.role != MessageRole.USER:
+            if message.role not in (MessageRole.USER, MessageRole.TOOL):
                 reason = (
-                    "only user messages can carry media, "
+                    "only user messages and tool results can carry media, "
                     f"not {message.role.value} messages"
                 )
                 raise _unsupported(block, reason)

@@ -61,12 +61,20 @@ model, deployment, and server must also support the requested input and tool cal
 All listed integrations can send tool definitions and return tool calls when the
 selected model supports them. Register the tools and reference them from the setup;
 see [Tool Use]({{< ref "docs/development/calling-llms/tool_use" >}}) for declaration
-and execution behavior. Media support above applies to user messages, not to tool
-results or other roles. Media that the integration does not support raises
-`UnsupportedContentBlockException` in Java or `UnsupportedContentBlockError` in
-Python before the request is sent. Media accepted by the integration can still
-be rejected by the model service if the selected model or deployment does not
-support it.
+and execution behavior. Media support above applies to user messages; tool results
+are covered below, and other roles carry text only. Media that the integration does
+not support raises `UnsupportedContentBlockException` in Java or
+`UnsupportedContentBlockError` in Python before the request is sent. Media accepted
+by the integration can still be rejected by the model service if the selected model
+or deployment does not support it.
+
+**Media in tool results.** Media returned by a tool reaches the model only through
+the Anthropic integration:
+
+| Integration | Media in tool results |
+|---|---|
+| [Anthropic](#anthropic) | The media accepted in user messages, sent in the `tool_result` content in block order. |
+| [Alibaba Cloud Model Studio (DashScope)](#alibaba-cloud-model-studio-dashscope), [OpenAI Chat Completions](#multimodal-input), [Azure OpenAI](#azure-openai), [vLLM](#vllm), [OpenAI Responses](#responses-api), [Ollama](#ollama), [Gemini](#gemini), [Amazon Bedrock](#amazon-bedrock), [IBM watsonx.ai](#watsonx-ibm-watsonxai) | Not supported: raises `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the request is sent. |
 
 The implementation language does not limit the Agent API you can use: see
 [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}})
@@ -364,7 +372,7 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
-**Multimodal input.** The media blocks of a user message are sent as Anthropic content blocks, in block order, next to its text blocks:
+**Multimodal input.** The media blocks of a user message are sent as Anthropic content blocks, in block order, next to its text blocks. The media blocks of a tool result are sent the same way, with its text blocks, inside its `tool_result` content:
 
 | Block | Sent as |
 |---|---|
@@ -373,7 +381,7 @@ public class MyAgent extends Agent {
 | `DocumentBlock` | a `document` block titled by the block's `name`: `application/pdf` by URL or Base64 data, or `text/plain` Base64 data sent as decoded UTF-8 text |
 | `AudioBlock`, `VideoBlock` | not supported |
 
-Other image or document types, plain text given by URL, audio, video, and media in assistant messages or tool results raise `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the request is sent.
+Other image or document types, plain text given by URL, audio, video, and media in assistant messages raise `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the request is sent.
 
 #### Available Models
 
