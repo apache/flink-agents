@@ -162,7 +162,7 @@ The Java table declares only the `id` and `review` columns.
 A Table row reaches the Action as a `pyflink.common.Row` in Python and an
 `org.apache.flink.types.Row` in Java. In Python, access fields with `row["id"]` or call
 `row.as_dict()` when dictionary methods such as `.get()` are needed. Build Your First Agent
-gave its Agent a `ProductReview` object in Python and a JSON string in Java, so this example
+gave its Agent a `ProductReview` object in both languages, so this example
 defines a second Agent class, `TableReviewAnalysisAgent`, for the row input. It redeclares the
 prompt, tool, and chat model setup that `ReviewAnalysisAgent` declares, and `ReviewAnalysisAgent`
 itself is unchanged. The key selector that reads `id` out of a row travels with this Agent, and
@@ -275,8 +275,8 @@ See [Integrate with Flink]({{< ref "docs/development/integrate_with_flink#fromto
 One review is too little to suggest an improvement, so the job groups the per-review analyses by
 product id in a one-minute tumbling window and reduces each group to a `ProductReviewSummary`. That
 type is declared in the shared types file and carries the product id, the score distribution, and
-the collected unsatisfied reasons. Python returns the summary object, and Java emits it as JSON
-text, because the next stage reads it back with Jackson. Scores outside 1–5 are excluded from
+the collected unsatisfied reasons. Both Python and Java pass the summary object directly to
+the next Agent, keyed by product id. Scores outside 1–5 are excluded from
 the distribution; if none are valid, all five percentages are `0.0%`. The reasons are still retained.
 
 {{< tabs "Aggregate in a Window" >}}
@@ -325,15 +325,14 @@ aggregated_analysis_res_stream = (
 {{< tab "Java" >}}
 ```java
 static class AggregateScoreDistributionAndDislikeReasons
-        extends ProcessWindowFunction<ProductReviewAnalysisRes, String, String, TimeWindow> {
+        extends ProcessWindowFunction<ProductReviewAnalysisRes, ProductReviewSummary, String, TimeWindow> {
 
     @Override
     public void process(
             String key,
             Context context,
             Iterable<ProductReviewAnalysisRes> elements,
-            Collector<String> out)
-            throws JsonProcessingException {
+            Collector<ProductReviewSummary> out) {
 
         // Initialize rating counts for scores 1-5
         int[] ratingCounts = new int[5];
@@ -371,11 +370,11 @@ static class AggregateScoreDistributionAndDislikeReasons
         // Create and emit the aggregated result
         ProductReviewSummary summary =
                 new ProductReviewSummary(key, formattedPercentages, reasonList);
-        out.collect(MAPPER.writeValueAsString(summary));
+        out.collect(summary);
     }
 }
 
-DataStream<String> aggregatedAnalysisResStream =
+DataStream<ProductReviewSummary> aggregatedAnalysisResStream =
         reviewAnalysisResStream
                 .keyBy(ProductReviewAnalysisRes::getId)
                 .window(TumblingProcessingTimeWindows.of(Duration.ofMinutes(1)))
@@ -454,10 +453,8 @@ public class ProductSuggestionAgent extends Agent {
     /** Process input event. */
     @Action(EventType.InputEvent)
     public static void processInput(Event event, RunnerContext ctx) throws Exception {
-        // The window stage emitted JSON text, so this Agent reads it back first.
         InputEvent inputEvent = (InputEvent) event;
-        String input = (String) inputEvent.getInput();
-        ProductReviewSummary summary = MAPPER.readValue(input, ProductReviewSummary.class);
+        ProductReviewSummary summary = (ProductReviewSummary) inputEvent.getInput();
         // Rest of the body keeps the id and score histogram in short-term memory and
         // sends ChatRequestEvent for generateSuggestionModel.
         ...
@@ -495,7 +492,7 @@ agents_env.execute("Workflow Multiple Agent Example Job")
 ```java
 DataStream<Object> productSuggestionResStream =
         agentsEnv
-                .fromDataStream(aggregatedAnalysisResStream)
+                .fromDataStream(aggregatedAnalysisResStream, ProductReviewSummary::getId)
                 .apply(new ProductSuggestionAgent())
                 .toDataStream();
 

@@ -318,22 +318,28 @@ agents_env.execute("YAML Agent Example Job")
 File yamlFile = copyResource("yaml/yaml_review_analysis_agent.yaml");
 agentsEnv.loadYaml(yamlFile.toPath());
 
+// Configure this mapper once on the enclosing example class:
+// private static final ObjectMapper MAPPER = new ObjectMapper()
+//         .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+// ProductReview is CustomTypesAndResources.ProductReview.
 // Read product reviews from input_data.txt file as a streaming source.
 File inputDataFile = copyResource("input_data.txt");
-DataStream<String> productReviewStream =
+DataStream<ProductReview> productReviewStream =
         env.fromSource(
-                FileSource.forRecordStreamFormat(
-                                new TextLineInputFormat(),
-                                new Path(inputDataFile.getAbsolutePath()))
-                        .build(),
-                WatermarkStrategy.noWatermarks(),
-                "yaml-review-analysis-example");
+                        FileSource.forRecordStreamFormat(
+                                        new TextLineInputFormat(),
+                                        new Path(inputDataFile.getAbsolutePath()))
+                                .build(),
+                        WatermarkStrategy.noWatermarks(),
+                        "yaml-review-analysis-example")
+                .map(json -> MAPPER.readValue(json, ProductReview.class))
+                .returns(ProductReview.class);
 
 // Apply the YAML-declared agent BY NAME — `apply` accepts either an
 // Agent instance or the name of an agent registered on the environment.
 DataStream<Object> reviewAnalysisResStream =
         agentsEnv
-                .fromDataStream(productReviewStream)
+                .fromDataStream(productReviewStream, ProductReview::getId)
                 .apply("review_analysis_agent")
                 .toDataStream();
 

@@ -255,7 +255,7 @@ DataStream<Row> productReviewStream =
 // record shipping question.
 DataStream<Object> reviewAnalysisResStream =
         agentsEnv
-                .fromDataStream(productReviewStream)
+                .fromDataStream(productReviewStream, row -> (String) row.getField("id"))
                 .apply(reviewAnalysisReactAgent)
                 .toDataStream();
 

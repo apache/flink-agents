@@ -17,7 +17,6 @@
  */
 package org.apache.flink.agents.examples.agents;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
@@ -91,17 +90,12 @@ public class ReviewAnalysisAgent extends Agent {
     @Action(EventType.InputEvent)
     public static void processInput(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = (InputEvent) event;
-        String input = (String) inputEvent.getInput();
-        MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         CustomTypesAndResources.ProductReview inputObj =
-                MAPPER.readValue(input, CustomTypesAndResources.ProductReview.class);
+                (CustomTypesAndResources.ProductReview) inputEvent.getInput();
 
         ctx.getShortTermMemory().set("id", inputObj.getId());
 
-        String content =
-                String.format(
-                        "{\n" + "\"id\": %s,\n" + "\"review\": \"%s\"\n" + "}",
-                        inputObj.getId(), inputObj.getReview());
+        String content = MAPPER.writeValueAsString(inputObj);
         ChatMessage msg = new ChatMessage(MessageRole.USER, "");
 
         ctx.sendEvent(

@@ -263,17 +263,12 @@ public static void notifyShippingManager(
 @Action(EventType.InputEvent)
 public static void processInput(Event event, RunnerContext ctx) throws Exception {
     InputEvent inputEvent = (InputEvent) event;
-    String input = (String) inputEvent.getInput();
-    MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     CustomTypesAndResources.ProductReview inputObj =
-            MAPPER.readValue(input, CustomTypesAndResources.ProductReview.class);
+            (CustomTypesAndResources.ProductReview) inputEvent.getInput();
 
     ctx.getShortTermMemory().set("id", inputObj.getId());
 
-    String content =
-            String.format(
-                    "{\n" + "\"id\": %s,\n" + "\"review\": \"%s\"\n" + "}",
-                    inputObj.getId(), inputObj.getReview());
+    String content = MAPPER.writeValueAsString(inputObj);
     ChatMessage msg = new ChatMessage(MessageRole.USER, "");
 
     ctx.sendEvent(
@@ -363,22 +358,28 @@ agents_env.execute("Workflow Agent Example Job")
 
 {{< tab "Java" >}}
 ```java
+// Configure this mapper once on the enclosing example class:
+// private static final ObjectMapper MAPPER = new ObjectMapper()
+//         .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+// ProductReview is CustomTypesAndResources.ProductReview.
 // Read product reviews from input_data.txt file as a streaming source.
 // Each element represents a ProductReview.
 File inputDataFile = copyResource("input_data.txt");
-DataStream<String> productReviewStream =
+DataStream<ProductReview> productReviewStream =
         env.fromSource(
-                FileSource.forRecordStreamFormat(
-                                new TextLineInputFormat(),
-                                new Path(inputDataFile.getAbsolutePath()))
-                        .build(),
-                WatermarkStrategy.noWatermarks(),
-                "streaming-agent-example");
+                        FileSource.forRecordStreamFormat(
+                                        new TextLineInputFormat(),
+                                        new Path(inputDataFile.getAbsolutePath()))
+                                .build(),
+                        WatermarkStrategy.noWatermarks(),
+                        "streaming-agent-example")
+                .map(json -> MAPPER.readValue(json, ProductReview.class))
+                .returns(ProductReview.class);
 
 // Use the ReviewAnalysisAgent to analyze each product review.
 DataStream<Object> reviewAnalysisResStream =
         agentsEnv
-                .fromDataStream(productReviewStream)
+                .fromDataStream(productReviewStream, ProductReview::getId)
                 .apply(new ReviewAnalysisAgent())
                 .toDataStream();
 

@@ -18,8 +18,6 @@
 
 package org.apache.flink.agents.examples;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -65,8 +63,6 @@ import static org.apache.flink.agents.examples.agents.CustomTypesAndResources.Pr
  */
 public class WorkflowMultipleAgentExample {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
     /**
      * ProcessWindowFunction to aggregate score distribution and dislike reasons.
      *
@@ -74,15 +70,15 @@ public class WorkflowMultipleAgentExample {
      * calculating score distribution percentages and collecting all unsatisfied reasons.
      */
     static class AggregateScoreDistributionAndDislikeReasons
-            extends ProcessWindowFunction<ProductReviewAnalysisRes, String, String, TimeWindow> {
+            extends ProcessWindowFunction<
+                    ProductReviewAnalysisRes, ProductReviewSummary, String, TimeWindow> {
 
         @Override
         public void process(
                 String key,
                 Context context,
                 Iterable<ProductReviewAnalysisRes> elements,
-                Collector<String> out)
-                throws JsonProcessingException {
+                Collector<ProductReviewSummary> out) {
 
             // Initialize rating counts for scores 1-5
             int[] ratingCounts = new int[5];
@@ -120,7 +116,7 @@ public class WorkflowMultipleAgentExample {
             // Create and emit the aggregated result
             ProductReviewSummary summary =
                     new ProductReviewSummary(key, formattedPercentages, reasonList);
-            out.collect(MAPPER.writeValueAsString(summary));
+            out.collect(summary);
         }
     }
 
@@ -179,7 +175,7 @@ public class WorkflowMultipleAgentExample {
         // Aggregate the analysis results in 1-minute tumbling windows.
         // This produces a score distribution and collects all unsatisfied reasons for
         // each product.
-        DataStream<String> aggregatedAnalysisResStream =
+        DataStream<ProductReviewSummary> aggregatedAnalysisResStream =
                 reviewAnalysisResStream
                         .keyBy(ProductReviewAnalysisRes::getId)
                         .window(TumblingProcessingTimeWindows.of(Duration.ofMinutes(1)))
@@ -189,7 +185,7 @@ public class WorkflowMultipleAgentExample {
         // suggestions based on the aggregated analysis results.
         DataStream<Object> productSuggestionResStream =
                 agentsEnv
-                        .fromDataStream(aggregatedAnalysisResStream, value -> value)
+                        .fromDataStream(aggregatedAnalysisResStream, ProductReviewSummary::getId)
                         .apply(new ProductSuggestionAgent())
                         .toDataStream();
 

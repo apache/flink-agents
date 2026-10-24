@@ -76,17 +76,17 @@ public class ProductSuggestionAgent extends Agent {
     @Action(EventType.InputEvent)
     public static void processInput(Event event, RunnerContext ctx) throws Exception {
         InputEvent inputEvent = (InputEvent) event;
-        String input = (String) inputEvent.getInput();
-
-        ProductReviewSummary summary = MAPPER.readValue(input, ProductReviewSummary.class);
+        ProductReviewSummary summary = (ProductReviewSummary) inputEvent.getInput();
 
         ctx.getShortTermMemory().set(ID, summary.getId());
         ctx.getShortTermMemory().set(SCORE_HIST, summary.getScoreHist());
 
         String content =
-                String.format(
-                        "{\n\"id\": %s,\n\"score_histogram\": %s,\n\"unsatisfied_reasons\": %s\n}",
-                        summary.getId(), summary.getScoreHist(), summary.getUnsatisfiedReasons());
+                MAPPER.writeValueAsString(
+                        Map.of(
+                                "id", summary.getId(),
+                                "score_histogram", summary.getScoreHist(),
+                                "unsatisfied_reasons", summary.getUnsatisfiedReasons()));
 
         ChatMessage msg = new ChatMessage(MessageRole.USER, "");
 

@@ -17,8 +17,11 @@
  */
 package org.apache.flink.agents.examples;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.examples.agents.CustomTypesAndResources.ProductReview;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.connector.file.src.FileSource;
 import org.apache.flink.connector.file.src.reader.TextLineInputFormat;
@@ -47,6 +50,9 @@ import static org.apache.flink.agents.examples.WorkflowSingleAgentExample.copyRe
  */
 public class YamlWorkflowAgentExample {
 
+    private static final ObjectMapper MAPPER =
+            new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
     /** Runs the example pipeline. */
     public static void main(String[] args) throws Exception {
         // Set up the Flink streaming environment and the Agents execution environment.
@@ -67,20 +73,22 @@ public class YamlWorkflowAgentExample {
         // Read product reviews from input_data.txt file as a streaming source.
         // Each element represents a ProductReview.
         File inputDataFile = copyResource("input_data.txt");
-        DataStream<String> productReviewStream =
+        DataStream<ProductReview> productReviewStream =
                 env.fromSource(
-                        FileSource.forRecordStreamFormat(
-                                        new TextLineInputFormat(),
-                                        new Path(inputDataFile.getAbsolutePath()))
-                                .build(),
-                        WatermarkStrategy.noWatermarks(),
-                        "yaml-review-analysis-example");
+                                FileSource.forRecordStreamFormat(
+                                                new TextLineInputFormat(),
+                                                new Path(inputDataFile.getAbsolutePath()))
+                                        .build(),
+                                WatermarkStrategy.noWatermarks(),
+                                "yaml-review-analysis-example")
+                        .map(json -> MAPPER.readValue(json, ProductReview.class))
+                        .returns(ProductReview.class);
 
         // Apply the YAML-declared agent BY NAME — ``apply`` accepts either an
         // Agent instance or the name of an agent registered on the environment.
         DataStream<Object> reviewAnalysisResStream =
                 agentsEnv
-                        .fromDataStream(productReviewStream, value -> value)
+                        .fromDataStream(productReviewStream, ProductReview::getId)
                         .apply("review_analysis_agent")
                         .toDataStream();
 

@@ -54,7 +54,7 @@ import static org.apache.flink.agents.examples.agents.CustomTypesAndResources.RE
  * score and reasons for dissatisfaction.
  *
  * <p>The main difference from {@link ReviewAnalysisAgent} is that this agent handles {@link Row}
- * input instead of JSON strings.
+ * input instead of {@link CustomTypesAndResources.ProductReview} objects.
  */
 public class TableReviewAnalysisAgent extends Agent {
 
