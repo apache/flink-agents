@@ -133,7 +133,7 @@ public abstract class AgentsExecutionEnvironment {
      * Set input for agents from a DataStream. Used for remote execution.
      *
      * <p>This method integrates agents with Flink DataStream API, allowing agents to process
-     * streaming data with optional keying for stateful operations.
+     * streaming data keyed for stateful operations.
      *
      * @param input DataStream to be processed by agents.
      * @param keySelector Optional KeySelector for extracting keys from input records. An explicit
@@ -168,17 +168,23 @@ public abstract class AgentsExecutionEnvironment {
      * and processing it through agents.
      *
      * @param input Table to be processed by agents.
-     * @param keySelector Optional KeySelector for extracting keys from table rows.
+     * @param keySelector Required KeySelector for extracting the business key from table rows. Rows
+     *     with the same key share the agent's short-term memory.
      * @param <K> Type of the key extracted by the KeySelector.
      * @return AgentBuilder for configuring the agent pipeline.
+     * @throws IllegalArgumentException in remote execution if keySelector is null.
      */
     public abstract <K> AgentBuilder fromTable(Table input, KeySelector<Object, K> keySelector);
 
     /**
-     * Set input for agents from a Table without keying.
+     * Table input requires an explicit key selector.
+     *
+     * <p>Remote execution rejects this overload. Use {@link #fromTable(Table, KeySelector)} to
+     * choose the key used for the agent's short-term memory.
      *
      * @param input Table to be processed by agents.
      * @return AgentBuilder for configuring the agent pipeline.
+     * @throws IllegalArgumentException in remote execution because a key selector is required.
      */
     public AgentBuilder fromTable(Table input) {
         return fromTable(input, null);

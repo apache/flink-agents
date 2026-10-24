@@ -169,6 +169,10 @@ delete earlier rows. Both `from_table()` and `fromTable()` reject Tables that pr
 updates or deletes, such as a continuous `GROUP BY` aggregation whose results change
 as new records arrive.
 
+Both Java and Python require an explicit key selector for Table input. The selector
+extracts a business key from each row; rows with the same key share the Agent's
+short-term memory.
+
 {{< tabs "From/To Table" >}}
 
 {{< tab "Python" >}}

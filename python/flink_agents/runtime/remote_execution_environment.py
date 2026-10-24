@@ -409,8 +409,16 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         input : Table
             Receive a Table as input.
         key_selector : KeySelector
-            Extract key from each input record.
+            Required selector extracting the business key from each table row.
+            Rows with the same key share the agent's short-term memory.
         """
+        if key_selector is None:
+            msg = (
+                "A key selector must be provided for Table input; "
+                "pass a key selector to from_table."
+            )
+            raise RuntimeError(msg)
+
         input = self.t_env.to_data_stream(table=input)
 
         input = input.map(lambda x: x, output_type=PickledBytesTypeInfo())

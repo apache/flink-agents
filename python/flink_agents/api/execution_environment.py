@@ -222,10 +222,9 @@ class AgentsExecutionEnvironment(ABC):
         ----------
         input : Table
             Receive a Table as input.
-        t_env: StreamTableEnvironment
-            table environment supports convert Table to/from DataStream.
         key_selector : KeySelector
-            Extract key from each input record.
+            Required selector extracting the business key from each table row.
+            Rows with the same key share the agent's short-term memory.
 
         Returns:
         -------

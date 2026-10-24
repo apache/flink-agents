@@ -695,3 +695,21 @@ def test_key_selection_combinations() -> None:
     # An unkeyed input without a selector is rejected with a clear error.
     with pytest.raises(RuntimeError, match="key selector"):
         process(unkeyed, None)
+
+
+@pytest.mark.parametrize("provide_selector", [False, True])
+def test_table_requires_explicit_key_selector(provide_selector: bool) -> None:
+    """Table input must be keyed explicitly, including when None is passed."""
+    env = StreamExecutionEnvironment.get_execution_environment()
+    t_env = StreamTableEnvironment.create(env)
+    remote_env = RemoteExecutionEnvironment(env=env, t_env=t_env)
+    table = t_env.from_elements([("same", "first"), ("same", "second")], ["id", "text"])
+
+    if provide_selector:
+        builder = remote_env.from_table(table, key_selector=lambda row: row[0])
+        assert isinstance(builder._RemoteAgentBuilder__input, KeyedStream)
+    else:
+        with pytest.raises(RuntimeError, match="key selector.*Table input"):
+            remote_env.from_table(table)
+        with pytest.raises(RuntimeError, match="key selector.*Table input"):
+            remote_env.from_table(table, key_selector=None)

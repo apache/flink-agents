@@ -31,6 +31,10 @@ import org.apache.flink.api.common.JobExecutionResult;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.table.api.DataTypes;
+import org.apache.flink.table.api.Table;
+import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.types.Row;
 import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -204,12 +208,54 @@ public class RemoteExecutionEnvironmentTest {
                 .hasMessageContaining("key selector must be provided");
     }
 
+    @Test
+    void fromTableRejectsMissingSelector() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env, tableEnv);
+        Table input = tableEnv.fromValues(DataTypes.STRING(), "same:first");
+
+        assertThatThrownBy(() -> agentsEnv.fromTable(input))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("key selector")
+                .hasMessageContaining("Table input");
+        assertThatThrownBy(() -> agentsEnv.fromTable(input, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("key selector")
+                .hasMessageContaining("Table input");
+    }
+
+    @Test
+    void fromTableUsesExplicitBusinessKey() throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env, tableEnv);
+        Table input =
+                tableEnv.fromValues(DataTypes.STRING(), "same:first", "same:second", "other:first");
+
+        DataStream<Object> output =
+                agentsEnv
+                        .fromTable(input, row -> ((String) ((Row) row).getField(0)).split(":")[0])
+                        .apply(new CountingAgent())
+                        .toDataStream();
+
+        List<Object> results = new ArrayList<>();
+        try (CloseableIterator<Object> iterator = output.executeAndCollect()) {
+            iterator.forEachRemaining(results::add);
+        }
+        assertThat(results).containsExactlyInAnyOrder("same:1", "same:2", "other:1");
+    }
+
     /** Model-free agent counting inputs per business key in short-term memory. */
     public static class CountingAgent extends Agent {
 
         @Action(EventType.InputEvent)
         public static void countInputs(Event event, RunnerContext context) throws Exception {
-            String input = (String) InputEvent.fromEvent(event).getInput();
+            Object value = InputEvent.fromEvent(event).getInput();
+            String input = (String) (value instanceof Row ? ((Row) value).getField(0) : value);
             String session = input.split(":")[0];
             MemoryObject memory = context.getShortTermMemory();
             int count = 1;
