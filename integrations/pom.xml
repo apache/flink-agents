@@ -38,6 +38,7 @@ under the License.
         <anthropic.version>2.12.0</anthropic.version>
         <aws.sdk.version>2.41.22</aws.sdk.version>
         <google.genai.version>1.56.0</google.genai.version>
+        <opentelemetry.version>1.51.0</opentelemetry.version>
     </properties>
 
     <modules>
@@ -45,6 +46,7 @@ under the License.
         <module>embedding-models</module>
         <module>vector-stores</module>
         <module>mcp</module>
+        <module>observability</module>
     </modules>
 
 </project>

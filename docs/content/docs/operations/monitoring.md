@@ -507,3 +507,60 @@ The JSON result exposes the same graph:
 | `nodes[id].upstreamEdges` | Distinct recorded upstream Event and Action references. Consult `warnings` for missing or invalid relationships. |
 | `nodes[id].actions` | Actions linked from this Event; each has a `name` and a `children` list of output Event IDs. |
 | `warnings` | Problems encountered while reading records or reconstructing relationships, such as malformed records, conflicting Event identities, missing upstream Events, edges without an Action name, and cycles. Cycle edges are removed before rendering. |
+
+### Exporting to OpenTelemetry
+
+The `flink-agents-integrations-observability-otel` module converts Trace Log records into [OpenTelemetry](https://opentelemetry.io) traces that follow the [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), so agent runs can be viewed in any OTLP-compatible backend, such as Jaeger or Grafana Tempo.
+
+The exporter runs **out of band**: it reads Trace Log files and sends spans over OTLP, so it has no effect on the running job and also works on logs from finished runs. It needs execution records, which the default `EVENT_ONLY` target does not write: use `scope: ALL` as in [Recording Targets](#recording-targets), or add a target per type, such as `scope: {action: "*"}` and `scope: {llm: "*"}`, for `action`, `llm`, `tool`, `parser`, and `subagent`.
+
+#### Mapping
+
+| Trace Log | OpenTelemetry |
+|---|---|
+| Input run (`inputRunId`) | Trace, with a synthesized `invoke_agent` root span |
+| Execution (`executionId` / `parentExecutionId`) | Span / parent span. A child whose parent has no records, for example when targets keep Tools but not Actions, is attached to the root span and keeps the parent id in `flink_agents.parent_execution_id` |
+| `llm` execution | `chat {model}` span, kind CLIENT: `gen_ai.operation.name=chat`, `gen_ai.request.model` from `entityMetadata.model` (span name `chat` when absent), and `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` from the success record's `entityMetadata.usage`. `gen_ai.provider.name` is not set: the record does not carry the provider |
+| `tool` execution | `execute_tool {tool}` span, kind INTERNAL: `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name`, `gen_ai.tool.call.id` from `entityMetadata.toolCallId`, `gen_ai.tool.type` (`function` for function tools, `extension` for remote-function and MCP tools; the raw value is always in `flink_agents.tool.type`), and `gen_ai.agent.name` |
+| `subagent` execution | `invoke_agent {name}` span, kind INTERNAL: `gen_ai.operation.name=invoke_agent`, `gen_ai.agent.name` from the sub-agent name, and `gen_ai.tool.call.id` from `entityMetadata.toolCallId` |
+| `action` execution | `action {name}` span, kind INTERNAL |
+| `parser` execution | `parse {name}` span, kind INTERNAL, `gen_ai.operation.name=parse` (a custom low-cardinality value) |
+| `businessKey` | `flink_agents.business_key`. It is the keyed-stream key, which is a conversation only in chat-style pipelines, so it is reported as `gen_ai.conversation.id` only when enabled (`--business-key-as-conversation-id`, or `setBusinessKeyAsConversationId(true)`) |
+| Failed execution | Span status `ERROR` with `attributes.errorMessage`; `error.type` from `attributes.errorType`, else `problemCategory` |
+
+Event records are read but do not become spans. Trace and span ids are derived deterministically from `inputRunId` and `executionId`, so exporting the same log twice is idempotent for deduplicating backends; delivery itself is at-least-once. The framework ids are always attached as `flink_agents.*` attributes for correlation with the raw Trace Log. The GenAI semantic conventions are still in development, so the exported attribute set is pinned per Flink Agents release.
+
+**Input.** File arguments are read as streams of JSON records with `schemaVersion: 1`, whatever their names; the `level` field and the SLF4J `jobId`, `taskName`, and `subtaskId` fields are ignored. SLF4J output must come from an appender that writes plain JSON, such as the automatic `{log.file}.trace-log.log`. A directory argument is expanded to the `traces-*.log` and `*.trace-log.log` files it contains, as in the Trace Tree reader. Reading every subtask's file is the caller's responsibility; the summary reports what was read.
+
+**Incomplete executions.** An execution with a start record but no terminal record is still exported, as a zero-duration span with status `UNSET` and the `flink_agents.execution.incomplete` attribute, and the summary reports an `INCOMPLETE_EXECUTION` diagnostic (`MISSING_START` for the reverse case). A crash, a dropped best-effort write, and recovery cannot be told apart afterwards. A `reused` execution is a single record by design and becomes a zero-duration span with `flink_agents.execution.status=reused`. When a record is repeated, the earliest one of each kind is kept. Undecodable records and records with an unparseable timestamp are skipped with a `MALFORMED_RECORD` diagnostic.
+
+**Delivery.** Spans are sent in OTLP requests of at most 512 spans (`--batch-size`, or `setMaxExportBatchSize`), since each request must fit the receiver's size limit (4 MiB by default for gRPC), and each request may take up to 30 seconds. If a request fails or times out, the export stops with an `ExportFailedException` reporting how many spans the earlier requests delivered; running it again is safe because the span ids are deterministic.
+
+#### Usage
+
+Command line:
+
+```bash
+java -cp <otel module jar, its runtime dependencies, and slf4j-api> \
+  org.apache.flink.agents.integrations.observability.otel.TraceLogOTelExporter \
+  --endpoint http://localhost:4317 --protocol grpc --service-name my-agent-job \
+  [--batch-size 512] [--business-key-as-conversation-id] \
+  /tmp/flink-agent-logs
+```
+
+The module declares `slf4j-api` as `provided`, since Flink supplies it inside a job, so it is not on Maven's runtime classpath; without it the command fails with `NoClassDefFoundError: org/slf4j/LoggerFactory`. Add `slf4j-api`, and an SLF4J binding if you want the exporter's log output.
+
+Programmatic:
+
+```java
+try (TraceLogOTelExporter exporter =
+        TraceLogOTelExporter.builder()
+                .setEndpoint("http://localhost:4317")
+                .setProtocol("grpc")
+                .setServiceName("my-agent-job")
+                .build()) {
+    exporter.exportFiles(List.of(Path.of("/tmp/flink-agent-logs")));
+}
+```
+
+The exporter currently produces spans only; capturing prompt and response content is follow-up work.
