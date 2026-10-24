@@ -294,8 +294,8 @@ for tool results.
 Representable content does not imply support by the selected provider integration
 or model. Check [Provider Capabilities]({{< ref "docs/development/calling-llms/chat-models/providers#provider-capabilities" >}})
 before using media. In particular, OpenAI Chat Completions and OpenAI Responses
-have different support in Flink Agents: the Responses integration currently
-rejects media blocks. Media that the integration does not support raises
+have different support in Flink Agents: only Chat Completions sends audio, and only
+Responses accepts documents by URL. Media that the integration does not support raises
 `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python)
 before the request is sent. Even when the integration accepts the media, the
 model service may reject it if the selected model or deployment does not support it.

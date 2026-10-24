@@ -26,18 +26,26 @@ import com.openai.models.responses.EasyInputMessage;
 import com.openai.models.responses.FunctionTool;
 import com.openai.models.responses.Response;
 import com.openai.models.responses.ResponseFunctionToolCall;
+import com.openai.models.responses.ResponseInputFile;
+import com.openai.models.responses.ResponseInputImage;
 import com.openai.models.responses.ResponseInputItem;
 import com.openai.models.responses.ResponseOutputItem;
 import com.openai.models.responses.ResponseOutputMessage;
 import com.openai.models.responses.ResponseReasoningItem;
 import com.openai.models.responses.Tool;
+import org.apache.flink.agents.api.chat.messages.Base64Source;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ContentBlock;
+import org.apache.flink.agents.api.chat.messages.DocumentBlock;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.MediaBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
+import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 
 import java.util.ArrayList;
@@ -65,19 +73,22 @@ final class OpenAIResponsesUtils {
         return items;
     }
 
+    /**
+     * Converts a message to Responses input items. Only user messages can carry media: images
+     * become {@code input_image} and documents {@code input_file}, by URL or Base64 data. Audio and
+     * video, and media in an assistant message or a tool result, throw {@link
+     * UnsupportedContentBlockException}.
+     */
     static List<ResponseInputItem> convertSingleMessage(ChatMessage message) {
         List<ResponseInputItem> items = new ArrayList<>();
-        List<? extends ContentBlock> contentBlocks =
-                message.getRole() == MessageRole.TOOL
-                        ? ((ToolResultBlock) message.getBlocks().get(0)).getBlocks()
-                        : message.getBlocks();
-        for (ContentBlock block : contentBlocks) {
-            if (block instanceof org.apache.flink.agents.api.chat.messages.MediaBlock) {
-                throw new IllegalArgumentException(
-                        "OpenAI Responses does not support " + block.getType() + " content yet");
-            }
-        }
         MessageRole role = message.getRole();
+        if (role != MessageRole.USER) {
+            requireTextOnly(
+                    message,
+                    role == MessageRole.TOOL
+                            ? ((ToolResultBlock) message.getBlocks().get(0)).getBlocks()
+                            : message.getBlocks());
+        }
         String content = message.getText();
 
         switch (role) {
@@ -91,12 +102,7 @@ final class OpenAIResponsesUtils {
                 break;
 
             case USER:
-                items.add(
-                        ResponseInputItem.ofMessage(
-                                ResponseInputItem.Message.builder()
-                                        .role(ResponseInputItem.Message.Role.USER)
-                                        .addInputTextContent(content)
-                                        .build()));
+                items.add(ResponseInputItem.ofMessage(convertUserMessage(message, content)));
                 break;
 
             case ASSISTANT:
@@ -123,6 +129,71 @@ final class OpenAIResponsesUtils {
                 throw new IllegalArgumentException("Unsupported role: " + role);
         }
         return items;
+    }
+
+    private static ResponseInputItem.Message convertUserMessage(ChatMessage message, String text) {
+        ResponseInputItem.Message.Builder builder =
+                ResponseInputItem.Message.builder().role(ResponseInputItem.Message.Role.USER);
+        if (message.getBlocks().stream().noneMatch(block -> block instanceof MediaBlock)) {
+            // Unchanged for text-only messages: one input_text with the text projection.
+            return builder.addInputTextContent(text).build();
+        }
+        for (ContentBlock block : message.getBlocks()) {
+            if (block instanceof TextBlock) {
+                builder.addInputTextContent(((TextBlock) block).getText());
+            } else if (block instanceof ImageBlock) {
+                builder.addContent(
+                        ResponseInputImage.builder()
+                                .imageUrl(urlOrDataUri((MediaBlock) block))
+                                .detail(ResponseInputImage.Detail.AUTO)
+                                .build());
+            } else if (block instanceof DocumentBlock) {
+                builder.addContent(toInputFile((DocumentBlock) block));
+            } else {
+                throw unsupported(block, "the Responses API takes images and documents only");
+            }
+        }
+        return builder.build();
+    }
+
+    private static ResponseInputFile toInputFile(DocumentBlock document) {
+        ResponseInputFile.Builder file = ResponseInputFile.builder();
+        if (document.getSource() instanceof UrlSource) {
+            file.fileUrl(((UrlSource) document.getSource()).getUrl());
+            if (document.getName() != null) {
+                file.filename(document.getName());
+            }
+        } else {
+            file.fileData(urlOrDataUri(document))
+                    .filename(document.getName() != null ? document.getName() : "document");
+        }
+        return file.build();
+    }
+
+    private static String urlOrDataUri(MediaBlock block) {
+        if (block.getSource() instanceof UrlSource) {
+            return ((UrlSource) block.getSource()).getUrl();
+        }
+        return "data:"
+                + block.getMediaType()
+                + ";base64,"
+                + ((Base64Source) block.getSource()).getData();
+    }
+
+    private static void requireTextOnly(ChatMessage message, List<? extends ContentBlock> blocks) {
+        for (ContentBlock block : blocks) {
+            if (block instanceof MediaBlock) {
+                throw unsupported(
+                        block,
+                        "only user messages can carry media, not "
+                                + message.getRole().getValue()
+                                + " messages");
+            }
+        }
+    }
+
+    private static UnsupportedContentBlockException unsupported(ContentBlock block, String reason) {
+        return UnsupportedContentBlockException.forBlock("OpenAI Responses", block, reason);
     }
 
     private static List<ResponseInputItem> convertAssistantMessage(ChatMessage message) {

@@ -28,7 +28,6 @@ import com.openai.models.responses.ResponseInputItem;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.TokenUsage;
-import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -121,8 +120,6 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> modelParams) {
-        // Media blocks are not sent yet; fail rather than drop them (#1059).
-        UnsupportedContentBlockException.rejectMedia("OpenAI Responses", messages);
         ResponseCreateParams params = buildRequest(messages, tools, modelParams);
         Response response = client.responses().create(params);
         ChatMessage result = OpenAIResponsesUtils.convertResponse(response);

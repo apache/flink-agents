@@ -50,7 +50,7 @@ model, deployment, and server must also support the requested input and tool cal
 | Integration | Implementation language | Media input accepted by the integration |
 |---|---|---|
 | [OpenAI Chat Completions](#multimodal-input), [Azure OpenAI](#azure-openai), [vLLM](#vllm) | Java, Python | User messages: images by URL or Base64; WAV/MP3 audio and documents by Base64. See the conversion and model restrictions below. |
-| [OpenAI Responses](#responses-api) | Java | No media input; media blocks are rejected. |
+| [OpenAI Responses](#responses-api) | Java | User messages: images by URL or Base64; documents by URL or Base64. No audio or video. |
 | [Anthropic](#anthropic) | Java, Python | User messages: JPEG/PNG/GIF/WebP images and PDF documents by URL or Base64; plain-text documents by Base64. |
 | [Ollama](#ollama) | Java, Python | User messages: Base64 images, sent separately from text; requires a vision model. |
 | [Amazon Bedrock](#amazon-bedrock), [Gemini](#gemini) | Java | No media input; media blocks are rejected. |
@@ -959,6 +959,17 @@ public class MyAgent extends Agent {
 {{< /tab >}}
 
 {{< /tabs >}}
+
+**Multimodal input.** The media blocks of a user message are sent as Responses input content, in block order, next to its text blocks:
+
+| Block | Sent as |
+|---|---|
+| `TextBlock` | an `input_text` part |
+| `ImageBlock` | an `input_image` part: the URL, or a `data:` URI for Base64 data, with `detail: auto` |
+| `DocumentBlock` | an `input_file` part: Base64 data as `file_data` (a `data:` URI) with the block's `name` as `filename` (`document` when unset), or a URL as `file_url` |
+| `AudioBlock`, `VideoBlock` | not supported |
+
+A user message with only text blocks is sent as before. Audio, video, and media in assistant messages or tool results raise `UnsupportedContentBlockException` before the request is sent. Which image and file types a model accepts is up to OpenAI.
 
 #### Available Models
 
