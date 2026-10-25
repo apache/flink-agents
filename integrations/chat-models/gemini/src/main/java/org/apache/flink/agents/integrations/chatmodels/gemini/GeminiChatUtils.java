@@ -27,13 +27,17 @@ import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentResponse;
 import com.google.genai.types.Part;
 import com.google.genai.types.Tool;
+import org.apache.flink.agents.api.chat.messages.Base64Source;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ContentBlock;
+import org.apache.flink.agents.api.chat.messages.MediaBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
+import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 
 import java.util.ArrayList;
@@ -160,6 +164,12 @@ final class GeminiChatUtils {
         return Tool.builder().functionDeclarations(declarations).build();
     }
 
+    /**
+     * Converts a message to a Gemini turn. Only user messages can carry media: image, audio, video
+     * and document blocks become inline data (Base64) or file data (URL) parts with the block's
+     * media type. Media in an assistant message or a tool result throws {@link
+     * UnsupportedContentBlockException}.
+     */
     // Package-visible for unit testing of the message conversion.
     static Content convertToContent(ChatMessage message, Map<String, String> toolCallIdToName) {
         if (message.getRole() == MessageRole.TOOL) {
@@ -168,6 +178,9 @@ final class GeminiChatUtils {
                     result.getBlocks().stream()
                             .map(
                                     block -> {
+                                        if (block instanceof MediaBlock) {
+                                            throw mediaOutsideUserMessage(message, block);
+                                        }
                                         if (!(block instanceof TextBlock)) {
                                             throw new IllegalArgumentException(
                                                     "Gemini cannot send tool result block "
@@ -199,6 +212,11 @@ final class GeminiChatUtils {
                     part.thoughtSignature(Base64.getDecoder().decode(signature.toString()));
                     parts.add(part.build());
                 }
+            } else if (block instanceof MediaBlock) {
+                if (message.getRole() != MessageRole.USER) {
+                    throw mediaOutsideUserMessage(message, block);
+                }
+                parts.add(convertMediaToPart((MediaBlock) block));
             } else {
                 throw new IllegalArgumentException("Gemini cannot send block " + block.getType());
             }
@@ -210,6 +228,25 @@ final class GeminiChatUtils {
                 .role(message.getRole() == MessageRole.ASSISTANT ? "model" : "user")
                 .parts(parts)
                 .build();
+    }
+
+    private static Part convertMediaToPart(MediaBlock block) {
+        if (block.getSource() instanceof UrlSource) {
+            return Part.fromUri(((UrlSource) block.getSource()).getUrl(), block.getMediaType());
+        }
+        return Part.fromBytes(
+                Base64.getDecoder().decode(((Base64Source) block.getSource()).getData()),
+                block.getMediaType());
+    }
+
+    private static UnsupportedContentBlockException mediaOutsideUserMessage(
+            ChatMessage message, ContentBlock block) {
+        return UnsupportedContentBlockException.forBlock(
+                "Gemini",
+                block,
+                "only user messages can carry media, not "
+                        + message.getRole().getValue()
+                        + " messages");
     }
 
     private static String resolveToolFunctionName(ChatMessage message, Map<String, String> names) {

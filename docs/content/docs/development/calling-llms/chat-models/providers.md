@@ -53,7 +53,8 @@ model, deployment, and server must also support the requested input and tool cal
 | [OpenAI Responses](#responses-api) | Java | No media input; media blocks are rejected. |
 | [Anthropic](#anthropic) | Java, Python | User messages: JPEG/PNG/GIF/WebP images and PDF documents by URL or Base64; plain-text documents by Base64. |
 | [Ollama](#ollama) | Java, Python | User messages: Base64 images, sent separately from text; requires a vision model. |
-| [Amazon Bedrock](#amazon-bedrock), [Gemini](#gemini) | Java | No media input; media blocks are rejected. |
+| [Gemini](#gemini) | Java | User messages: images, audio, video and documents by URL or Base64. |
+| [Amazon Bedrock](#amazon-bedrock) | Java | No media input; media blocks are rejected. |
 | [DashScope (Alibaba Cloud Model Studio)](#alibaba-cloud-model-studio-dashscope) | Python | No media input; media blocks are rejected. |
 | [IBM watsonx.ai](#watsonx-ibm-watsonxai) | Java, Python | No media input; media blocks are rejected. |
 
@@ -471,7 +472,7 @@ Model availability depends on your Azure region and subscription. Always check t
 
 ### Gemini
 
-Google Gemini provides cloud-based chat models through the Gemini Developer API and Vertex AI. The Flink Agents Gemini integration uses the official Google Gen AI SDK and supports text conversations, system instructions, and tool calling.
+Google Gemini provides cloud-based chat models through the Gemini Developer API and Vertex AI. The Flink Agents Gemini integration uses the official Google Gen AI SDK and supports text conversations, system instructions, tool calling, and media in user messages.
 
 {{< hint warning >}}
 Vertex AI support is experimental. The connection path has been smoke-tested during construction but has not yet been verified end to end.
@@ -553,6 +554,15 @@ public class MyAgent extends Agent {
 {{< /tab >}}
 
 {{< /tabs >}}
+
+**Multimodal input.** The media blocks of a user message are sent as Gemini parts, in block order, next to its text parts:
+
+| Block | Sent as |
+|---|---|
+| `TextBlock` | a `text` part |
+| `ImageBlock`, `AudioBlock`, `VideoBlock`, `DocumentBlock` | Base64 data as an `inlineData` part, or a URL as a `fileData` part with `fileUri`; both carry the block's media type as `mimeType` |
+
+The integration does not restrict media types or URLs: the model must accept the media type, and the endpoint must be able to fetch the URL, which differs between the Gemini Developer API and Vertex AI. Media in assistant messages or tool results raises `UnsupportedContentBlockException` before the request is sent.
 
 #### Available Models
 
