@@ -57,4 +57,18 @@ public final class CancellationUtils {
         }
         return false;
     }
+
+    /**
+     * Rethrows {@code failure} when it is a cancellation signal (or the current thread is already
+     * interrupted), restoring the interrupt status for a wrapped interruption; returns normally for
+     * an ordinary failure so the caller can convert it into a retryable or failed outcome.
+     */
+    public static void rethrowIfCancellation(Exception failure) throws Exception {
+        if (Thread.currentThread().isInterrupted() || isCancellation(failure)) {
+            if (isInterruption(failure)) {
+                Thread.currentThread().interrupt();
+            }
+            throw failure;
+        }
+    }
 }

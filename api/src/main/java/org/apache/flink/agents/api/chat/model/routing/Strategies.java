@@ -91,6 +91,43 @@ public final class Strategies {
     }
 
     /**
+     * Decision-model routing (framework-managed): a decision model — registered like any other
+     * {@code DECISION_MODEL} resource — answers one choice question whose options are the candidate
+     * names and whose criteria are the candidates' {@code describe(...)} descriptions. The engine
+     * executes the decision call on its durable, metered, observable path. The returned choice
+     * becomes the selected model and its reported probability the routing score. A refusal answer,
+     * or a choice whose probability is below {@link RoutingStrategy#withMinProbability(double)},
+     * abstains to the router's default model; a decision call that exhausts its retries fails the
+     * request.
+     *
+     * <p>Every candidate must carry a description: the descriptions are all the decision model sees
+     * of the candidates. The decision model receives the conversation text (tool calls and results
+     * included, media and reasoning excluded); use {@link RoutingStrategy#withMaxContextChars(int)}
+     * to cap the context for cost.
+     */
+    public static RoutingStrategy decision(String decisionModel) {
+        Map<String, Object> args = new HashMap<>();
+        args.put(RoutingStrategy.ARG_DECISION_MODEL, decisionModel);
+        return new RoutingStrategy(RoutingStrategyType.DECISION_MODEL, args, null);
+    }
+
+    /**
+     * Like {@link #decision(String)}, with custom instructions for the choice question in place of
+     * the built-in instruction.
+     */
+    public static RoutingStrategy decision(String decisionModel, String instructions) {
+        Map<String, Object> args = new HashMap<>();
+        args.put(RoutingStrategy.ARG_DECISION_MODEL, decisionModel);
+        if (instructions == null) {
+            throw new IllegalArgumentException(
+                    "Strategies.decision instructions must be non-null; use decision(decisionModel)"
+                            + " for the built-in instructions.");
+        }
+        args.put(RoutingStrategy.ARG_INSTRUCTIONS, instructions);
+        return new RoutingStrategy(RoutingStrategyType.DECISION_MODEL, args, null);
+    }
+
+    /**
      * A custom executor referenced by class. The class must implement {@link CustomRoutingExecutor}
      * with either a {@code (Map<String,Object>)} constructor or a no-arg constructor. This is the
      * deployable shape for custom routing.

@@ -829,6 +829,11 @@ public class AgentPlan implements Serializable {
      * RoutingStrategy} constructor invoked below (the single declaration-validation path, so
      * diagnostics match the builder's); this arm additionally checks that every rule key names a
      * declared candidate.
+     *
+     * <p>{@code DECISION_MODEL}: the decision-model setup must be registered (as for the judge, a
+     * typo'd name would otherwise fail every request), and every candidate must carry a description
+     * — the descriptions are the choice question's criteria, so a candidate without one is
+     * invisible to the decision model.
      */
     private void validateRoutingStrategies() {
         if (resourceProviders == null) {
@@ -840,6 +845,11 @@ public class AgentPlan implements Serializable {
         }
         Map<String, ResourceProvider> chatModels =
                 resourceProviders.getOrDefault(ResourceType.CHAT_MODEL, Collections.emptyMap());
+        Map<String, ResourceProvider> decisionModels =
+                resourceProviders.getOrDefault(ResourceType.DECISION_MODEL, Collections.emptyMap());
+        Map<String, ResourceProvider> decisionConnections =
+                resourceProviders.getOrDefault(
+                        ResourceType.DECISION_MODEL_CONNECTION, Collections.emptyMap());
         for (ResourceProvider provider : routers.values()) {
             // Java- and Python-provided declarations carry the same keys; a router without an
             // introspectable descriptor is left to its constructor.
@@ -883,13 +893,32 @@ public class AgentPlan implements Serializable {
             // shape guard applies to all of them — not only where the rule keys are checked.
             Object candidates = descriptor.getArgument(ModelRouter.CANDIDATES_KEY);
             validateCandidatesShape(provider.getName(), candidates);
+            Object candidateDescriptions =
+                    descriptor.getArgument(ModelRouter.CANDIDATE_DESCRIPTIONS_KEY);
+            if (candidateDescriptions != null && !(candidateDescriptions instanceof Map)) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Model router '%s' declares '%s' as %s; expected a map of"
+                                        + " candidate name to description.",
+                                provider.getName(),
+                                ModelRouter.CANDIDATE_DESCRIPTIONS_KEY,
+                                candidateDescriptions.getClass().getSimpleName()));
+            }
             // The constructor's own candidate rules (non-empty, no duplicates, default model is a
-            // candidate), applied here so a descriptor that skipped the builder fails at plan
-            // construction rather than per routed request on the TaskManager.
+            // candidate, String descriptions), applied here so a descriptor that skipped the
+            // builder fails at plan construction rather than per routed request on the TaskManager.
             RoutingCandidateValidator.validate(
                     String.format("Model router '%s'", provider.getName()),
                     (List<?>) candidates,
                     descriptor.getArgument(ModelRouter.DEFAULT_MODEL_KEY));
+            if (candidateDescriptions != null) {
+                @SuppressWarnings("unchecked")
+                List<String> candidateNames = (List<String>) candidates;
+                RoutingCandidateValidator.requireStringDescriptions(
+                        String.format("Model router '%s'", provider.getName()),
+                        candidateNames,
+                        (Map<?, ?>) candidateDescriptions);
+            }
             switch (strategy.getType()) {
                 case LLM_JUDGE:
                     validateJudge(provider.getName(), strategy, chatModels);
@@ -900,10 +929,95 @@ public class AgentPlan implements Serializable {
                 case RULE_BASED:
                     validateRuleKeys(provider.getName(), strategy, candidates);
                     break;
+                case DECISION_MODEL:
+                    validateDecisionModel(
+                            provider.getName(),
+                            strategy,
+                            decisionModels,
+                            decisionConnections,
+                            candidates,
+                            descriptor);
+                    break;
                 default:
                     break;
             }
         }
+    }
+
+    private static void validateDecisionModel(
+            String routerName,
+            RoutingStrategy strategy,
+            Map<String, ResourceProvider> decisionModels,
+            Map<String, ResourceProvider> decisionConnections,
+            Object candidates,
+            ResourceDescriptor descriptor) {
+        String decisionModel =
+                (String) strategy.getArguments().get(RoutingStrategy.ARG_DECISION_MODEL);
+        ResourceProvider setupProvider = decisionModels.get(decisionModel);
+        if (setupProvider == null) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Model router '%s' uses Strategies.decision with decision model '%s',"
+                                    + " but no DECISION_MODEL resource with that name is"
+                                    + " registered.",
+                            routerName, decisionModel));
+        }
+        // The setup opens its named connection on first use; a typo there would fail every
+        // routed request on the TaskManager, so an explicitly declared connection name is checked
+        // here. A setup that declares none may resolve it from provider defaults (Python-backed
+        // setups do), so absence is not an error.
+        ResourceDescriptor setupDescriptor = descriptorOf(setupProvider);
+        Object connection =
+                setupDescriptor == null || setupDescriptor.getInitialArguments() == null
+                        ? null
+                        : setupDescriptor.getArgument("connection");
+        if (connection != null && !(connection instanceof String)) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Decision model '%s' (router '%s') declares '%s' as its connection;"
+                                    + " expected a connection name.",
+                            decisionModel, routerName, connection));
+        }
+        if (connection instanceof String) {
+            if (((String) connection).isBlank()) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Decision model '%s' (router '%s') declares a blank 'connection'.",
+                                decisionModel, routerName));
+            }
+            if (!decisionConnections.containsKey(connection)) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Decision model '%s' (router '%s') names connection '%s', but no"
+                                        + " DECISION_MODEL_CONNECTION resource with that name is"
+                                        + " registered.",
+                                decisionModel, routerName, connection));
+            }
+        }
+        Object model =
+                setupDescriptor == null || setupDescriptor.getInitialArguments() == null
+                        ? null
+                        : setupDescriptor.getArgument("model");
+        if (model != null && (!(model instanceof String) || ((String) model).isBlank())) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Decision model '%s' (router '%s') declares a blank or non-String"
+                                    + " 'model'.",
+                            decisionModel, routerName));
+        }
+        // Same rule and message as the router constructor, applied here so a descriptor that
+        // skipped the builder fails at plan construction rather than at resource construction on
+        // the TaskManager.
+        Object descriptions = descriptor.getArgument(ModelRouter.CANDIDATE_DESCRIPTIONS_KEY);
+        List<String> names = new ArrayList<>();
+        for (Object candidate : (List<?>) candidates) {
+            names.add(String.valueOf(candidate));
+        }
+        RoutingCandidateValidator.requireDescriptionsForDecisionStrategy(
+                String.format("Model router '%s'", routerName),
+                strategy,
+                names,
+                descriptions == null ? Collections.emptyMap() : (Map<?, ?>) descriptions);
     }
 
     /**

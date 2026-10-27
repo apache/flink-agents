@@ -65,6 +65,9 @@ public class ModelRouter extends Resource {
     /** Descriptor argument naming the candidate the router lands on when the strategy abstains. */
     public static final String DEFAULT_MODEL_KEY = "default_model";
 
+    /** Descriptor argument mapping candidate names to their {@code describe(...)} descriptions. */
+    public static final String CANDIDATE_DESCRIPTIONS_KEY = "candidate_descriptions";
+
     private final List<RoutingCandidate> candidates;
     private final String defaultModel;
     private final boolean fallbackEnabled;
@@ -78,16 +81,6 @@ public class ModelRouter extends Resource {
         // with the candidate message instead of failing the cast here.
         Object defaultModel = descriptor.getArgument(DEFAULT_MODEL_KEY);
         RoutingCandidateValidator.validate("ModelRouter", names, defaultModel);
-        Map<String, String> descriptions =
-                descriptor.getArgument("candidate_descriptions", Collections.emptyMap());
-        List<RoutingCandidate> parsed = new ArrayList<>();
-        for (String name : names) {
-            parsed.add(new RoutingCandidate(name, descriptions.get(name)));
-        }
-        this.candidates = Collections.unmodifiableList(parsed);
-        this.defaultModel = (String) defaultModel;
-        this.fallbackEnabled =
-                Boolean.TRUE.equals(descriptor.getArgument("fallback", Boolean.FALSE));
         String typeTag = descriptor.getArgument(STRATEGY_TYPE_KEY);
         if (typeTag == null || typeTag.isEmpty()) {
             throw new IllegalArgumentException("ModelRouter requires a routing strategy.");
@@ -100,6 +93,30 @@ public class ModelRouter extends Resource {
         this.strategy =
                 new RoutingStrategy(
                         RoutingStrategyType.fromTag(typeTag), strategyArgs, executorClass);
+        Object rawDescriptions = descriptor.getArgument(CANDIDATE_DESCRIPTIONS_KEY);
+        if (rawDescriptions != null && !(rawDescriptions instanceof Map)) {
+            // A hand-built or deserialized descriptor may carry any JSON type here; diagnose it
+            // instead of surfacing a raw ClassCastException per routed request.
+            throw new IllegalArgumentException(
+                    String.format(
+                            "ModelRouter declares '%s' as %s; expected a map of candidate name to"
+                                    + " description.",
+                            CANDIDATE_DESCRIPTIONS_KEY,
+                            rawDescriptions.getClass().getSimpleName()));
+        }
+        Map<?, ?> descriptions =
+                rawDescriptions == null ? Collections.emptyMap() : (Map<?, ?>) rawDescriptions;
+        RoutingCandidateValidator.requireStringDescriptions("ModelRouter", names, descriptions);
+        List<RoutingCandidate> parsed = new ArrayList<>();
+        for (String name : names) {
+            parsed.add(new RoutingCandidate(name, (String) descriptions.get(name)));
+        }
+        RoutingCandidateValidator.requireDescriptionsForDecisionStrategy(
+                "ModelRouter", this.strategy, names, descriptions);
+        this.candidates = Collections.unmodifiableList(parsed);
+        this.defaultModel = (String) defaultModel;
+        this.fallbackEnabled =
+                Boolean.TRUE.equals(descriptor.getArgument("fallback", Boolean.FALSE));
     }
 
     /** The configured strategy declaration (type + arguments). */
@@ -234,10 +251,12 @@ public class ModelRouter extends Resource {
                     }
                 }
             }
+            RoutingCandidateValidator.requireDescriptionsForDecisionStrategy(
+                    "ModelRouter", strategy, candidates, descriptions);
             Map<String, Object> args = new HashMap<>();
             args.put(CANDIDATES_KEY, new ArrayList<>(candidates));
             if (!descriptions.isEmpty()) {
-                args.put("candidate_descriptions", new HashMap<>(descriptions));
+                args.put(CANDIDATE_DESCRIPTIONS_KEY, new HashMap<>(descriptions));
             }
             if (defaultModel != null) {
                 args.put(DEFAULT_MODEL_KEY, defaultModel);

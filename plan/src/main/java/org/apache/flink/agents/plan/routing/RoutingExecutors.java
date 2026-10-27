@@ -36,6 +36,7 @@ final class RoutingExecutors {
     static {
         EXECUTORS.put(RoutingStrategyType.RULE_BASED, new RuleBasedRoutingExecutor());
         EXECUTORS.put(RoutingStrategyType.LLM_JUDGE, new LlmJudgeRoutingExecutor());
+        EXECUTORS.put(RoutingStrategyType.DECISION_MODEL, new DecisionModelRoutingExecutor());
         EXECUTORS.put(RoutingStrategyType.CUSTOM, new CustomRoutingExecutorAdapter());
     }
 

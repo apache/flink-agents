@@ -49,9 +49,25 @@ public final class RoutingStrategy implements Serializable {
 
     /**
      * Argument key: optional cap (in characters) on the conversation context included in the judge
-     * input ({@code LLM_JUDGE}). Unset means the judge sees the complete message list.
+     * or decision-model input ({@code LLM_JUDGE}, {@code DECISION_MODEL}). Unset means the model
+     * sees the complete message list.
      */
     public static final String ARG_MAX_CONTEXT_CHARS = "max_context_chars";
+
+    /** Argument key: the decision-model setup name ({@code DECISION_MODEL}). */
+    public static final String ARG_DECISION_MODEL = "decision_model";
+
+    /**
+     * Argument key: optional instructions for the decision model's choice question ({@code
+     * DECISION_MODEL}). Unset means the built-in instruction is used.
+     */
+    public static final String ARG_INSTRUCTIONS = "instructions";
+
+    /**
+     * Argument key: optional minimum probability of the chosen candidate ({@code DECISION_MODEL}).
+     * A choice whose probability is below it abstains to the router's default model.
+     */
+    public static final String ARG_MIN_PROBABILITY = "min_probability";
 
     /** Argument key: the candidate-to-regex rule map ({@code RULE_BASED}). */
     public static final String ARG_RULES = "rules";
@@ -101,20 +117,33 @@ public final class RoutingStrategy implements Serializable {
                                     + ARG_PROMPT_TEMPLATE
                                     + "' must be a non-empty String when provided.");
                 }
-                Object cap = arguments.get(ARG_MAX_CONTEXT_CHARS);
-                // Compare as long: intValue() would wrap an out-of-range Long into a tiny (or
-                // negative) cap, and saturate a large Double to Integer.MAX_VALUE ("no cap").
-                if (cap != null
-                        && (!(cap instanceof Number)
-                                || ((Number) cap).longValue() <= 0
-                                || ((Number) cap).longValue() > Integer.MAX_VALUE)) {
+                validateMaxContextChars(arguments.get(ARG_MAX_CONTEXT_CHARS));
+                break;
+            case DECISION_MODEL:
+                Object decisionModel = arguments.get(ARG_DECISION_MODEL);
+                if (!(decisionModel instanceof String) || ((String) decisionModel).isEmpty()) {
+                    throw new IllegalArgumentException(
+                            "Strategies.decision requires a non-empty '"
+                                    + ARG_DECISION_MODEL
+                                    + "'.");
+                }
+                Object instructions = arguments.get(ARG_INSTRUCTIONS);
+                if (instructions != null
+                        && (!(instructions instanceof String)
+                                || ((String) instructions).isBlank())) {
+                    throw new IllegalArgumentException(
+                            "'" + ARG_INSTRUCTIONS + "' must be a non-empty String when provided.");
+                }
+                Object minProbability = arguments.get(ARG_MIN_PROBABILITY);
+                if (minProbability != null
+                        && (!(minProbability instanceof Number)
+                                || !isProbability(((Number) minProbability).doubleValue()))) {
                     throw new IllegalArgumentException(
                             "'"
-                                    + ARG_MAX_CONTEXT_CHARS
-                                    + "' must be a positive integer (at most "
-                                    + Integer.MAX_VALUE
-                                    + ") when provided.");
+                                    + ARG_MIN_PROBABILITY
+                                    + "' must be a number between 0 and 1 when provided.");
                 }
+                validateMaxContextChars(arguments.get(ARG_MAX_CONTEXT_CHARS));
                 break;
             case CUSTOM:
                 if (executorClass == null || executorClass.isEmpty()) {
@@ -141,21 +170,60 @@ public final class RoutingStrategy implements Serializable {
         }
     }
 
+    private static void validateMaxContextChars(@Nullable Object cap) {
+        // Compare as long: intValue() would wrap an out-of-range Long into a tiny (or
+        // negative) cap, and saturate a large Double to Integer.MAX_VALUE ("no cap").
+        if (cap != null
+                && (!(cap instanceof Number)
+                        || ((Number) cap).longValue() <= 0
+                        || ((Number) cap).longValue() > Integer.MAX_VALUE)) {
+            throw new IllegalArgumentException(
+                    "'"
+                            + ARG_MAX_CONTEXT_CHARS
+                            + "' must be a positive integer (at most "
+                            + Integer.MAX_VALUE
+                            + ") when provided.");
+        }
+    }
+
+    private static boolean isProbability(double value) {
+        return !Double.isNaN(value) && value >= 0.0 && value <= 1.0;
+    }
+
     /**
-     * Returns a copy of this {@code LLM_JUDGE} declaration with a cap (in characters) on the
-     * conversation context included in the judge input. Purely opt-in: without it the judge
-     * receives the complete message list. When set, the rendered request and the SYSTEM message are
-     * always kept, remaining messages fill newest-first within the budget, and any truncation is
-     * flagged in the decision metadata ({@code judge_context_truncated}).
+     * Returns a copy of this {@code LLM_JUDGE} or {@code DECISION_MODEL} declaration with a cap (in
+     * characters) on the conversation context included in the judge or decision-model input. Purely
+     * opt-in: without it the model receives the complete message list. When set, the rendered
+     * request and the SYSTEM message are always kept, remaining messages fill newest-first within
+     * the budget, and any truncation is flagged in the decision metadata ({@code
+     * judge_context_truncated} or {@code decision_context_truncated}).
      */
     public RoutingStrategy withMaxContextChars(int maxContextChars) {
-        if (type != RoutingStrategyType.LLM_JUDGE) {
+        if (type != RoutingStrategyType.LLM_JUDGE && type != RoutingStrategyType.DECISION_MODEL) {
             throw new IllegalStateException(
-                    "withMaxContextChars applies to Strategies.llm(...) declarations only.");
+                    "withMaxContextChars applies to Strategies.llm(...) and"
+                            + " Strategies.decision(...) declarations only.");
         }
         Map<String, Object> withCap = new LinkedHashMap<>(arguments);
         withCap.put(ARG_MAX_CONTEXT_CHARS, maxContextChars);
         return new RoutingStrategy(type, withCap, null);
+    }
+
+    /**
+     * Returns a copy of this {@code DECISION_MODEL} declaration with a minimum probability for the
+     * chosen candidate. When the decision model's probability for its choice is below this value,
+     * the strategy abstains and the router's default model answers; the choice and the full
+     * probability map stay in the decision metadata. The probability is the provider's reported
+     * value for the chosen candidate; the framework does not normalize the distribution.
+     */
+    public RoutingStrategy withMinProbability(double minProbability) {
+        if (type != RoutingStrategyType.DECISION_MODEL) {
+            throw new IllegalStateException(
+                    "withMinProbability applies to Strategies.decision(...) declarations only.");
+        }
+        Map<String, Object> withMin = new LinkedHashMap<>(arguments);
+        withMin.put(ARG_MIN_PROBABILITY, minProbability);
+        return new RoutingStrategy(type, withMin, null);
     }
 
     /**

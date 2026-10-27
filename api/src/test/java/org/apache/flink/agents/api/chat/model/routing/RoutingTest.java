@@ -528,4 +528,141 @@ class RoutingTest {
                         new ModelRouter(
                                 new ResourceDescriptor(ModelRouter.class.getName(), args), null));
     }
+
+    @Test
+    void strategiesDecisionRequiresDecisionModelAndNonEmptyInstructions() {
+        assertThrows(IllegalArgumentException.class, () -> Strategies.decision(""));
+        assertThrows(IllegalArgumentException.class, () -> Strategies.decision("dm", ""));
+        assertThrows(IllegalArgumentException.class, () -> Strategies.decision("dm", null));
+        RoutingStrategy strategy = Strategies.decision("dm", "Which model should answer?");
+        assertEquals(RoutingStrategyType.DECISION_MODEL, strategy.getType());
+        assertEquals("dm", strategy.getArguments().get(RoutingStrategy.ARG_DECISION_MODEL));
+        assertEquals(
+                "Which model should answer?",
+                strategy.getArguments().get(RoutingStrategy.ARG_INSTRUCTIONS));
+        assertNull(strategy.getExecutorClass());
+    }
+
+    @Test
+    void withMinProbabilityRequiresProbabilityAndDecisionType() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Strategies.decision("dm").withMinProbability(1.5));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Strategies.decision("dm").withMinProbability(-0.1));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Strategies.decision("dm").withMinProbability(Double.NaN));
+        assertThrows(
+                IllegalStateException.class, () -> Strategies.llm("judge").withMinProbability(0.5));
+        assertEquals(
+                0.6,
+                Strategies.decision("dm")
+                        .withMinProbability(0.6)
+                        .getArguments()
+                        .get(RoutingStrategy.ARG_MIN_PROBABILITY));
+        // the bounds are inclusive
+        Strategies.decision("dm").withMinProbability(0.0);
+        Strategies.decision("dm").withMinProbability(1.0);
+        // a deserialized non-numeric value is rejected
+        Map<String, Object> args = new HashMap<>();
+        args.put(RoutingStrategy.ARG_DECISION_MODEL, "dm");
+        args.put(RoutingStrategy.ARG_MIN_PROBABILITY, "high");
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new RoutingStrategy(RoutingStrategyType.DECISION_MODEL, args, null));
+    }
+
+    @Test
+    void withMaxContextCharsAppliesToDecisionDeclarations() {
+        assertEquals(
+                4096,
+                Strategies.decision("dm")
+                        .withMaxContextChars(4096)
+                        .getArguments()
+                        .get(RoutingStrategy.ARG_MAX_CONTEXT_CHARS));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Strategies.decision("dm").withMaxContextChars(0));
+    }
+
+    @Test
+    void decisionStrategyTypeTagRoundTrips() {
+        assertEquals("decision_model", RoutingStrategyType.DECISION_MODEL.tag());
+        assertEquals(
+                RoutingStrategyType.DECISION_MODEL, RoutingStrategyType.fromTag("decision_model"));
+    }
+
+    /** The descriptions are all the decision model sees of the candidates, so each needs one. */
+    @Test
+    void decisionStrategyRequiresEveryCandidateDescribed() throws Exception {
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        ModelRouter.of("small", "big")
+                                .describe("big", "code and sql")
+                                .strategy(Strategies.decision("dm"))
+                                .build());
+        ResourceDescriptor descriptor =
+                ModelRouter.of("small", "big")
+                        .describe("small", "chit-chat")
+                        .describe("big", "code and sql")
+                        .strategy(Strategies.decision("dm").withMinProbability(0.6))
+                        .defaultModel("small")
+                        .build();
+        ModelRouter router = new ModelRouter(descriptor, null);
+        assertEquals(RoutingStrategyType.DECISION_MODEL, router.getStrategy().getType());
+        assertEquals(
+                0.6, router.getStrategy().getArguments().get(RoutingStrategy.ARG_MIN_PROBABILITY));
+        assertEquals("code and sql", router.getCandidates().get(1).getDescription());
+        // a descriptor that skipped the builder is held to the same rule
+        Map<String, Object> args = new HashMap<>(descriptor.getInitialArguments());
+        args.put(ModelRouter.CANDIDATE_DESCRIPTIONS_KEY, Map.of("big", "code and sql"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new ModelRouter(
+                                new ResourceDescriptor(ModelRouter.class.getName(), args), null));
+        // other strategies keep descriptions optional
+        new ModelRouter(
+                ModelRouter.of("small", "big").strategy(Strategies.llm("judge")).build(), null);
+        // a blank description is as good as none
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        ModelRouter.of("small", "big")
+                                .describe("small", "chit-chat")
+                                .describe("big", "  ")
+                                .strategy(Strategies.decision("dm"))
+                                .build());
+        // a choice question needs at least two options
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        ModelRouter.of("only")
+                                .describe("only", "everything")
+                                .strategy(Strategies.decision("dm"))
+                                .build());
+        // a non-String description is diagnosed by candidate name and type, for every strategy
+        Map<String, Object> typed = new HashMap<>(descriptor.getInitialArguments());
+        typed.put(ModelRouter.CANDIDATE_DESCRIPTIONS_KEY, Map.of("small", "chit-chat", "big", 42));
+        IllegalArgumentException typeError =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                new ModelRouter(
+                                        new ResourceDescriptor(ModelRouter.class.getName(), typed),
+                                        null));
+        assertTrue(typeError.getMessage().contains("'big' has a Integer description"));
+        // and a descriptions value that is not a map at all
+        Map<String, Object> notAMap = new HashMap<>(descriptor.getInitialArguments());
+        notAMap.put(ModelRouter.CANDIDATE_DESCRIPTIONS_KEY, List.of("small", "big"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new ModelRouter(
+                                new ResourceDescriptor(ModelRouter.class.getName(), notAMap),
+                                null));
+    }
 }

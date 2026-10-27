@@ -97,9 +97,9 @@ candidate or judge, or as a chat model connection.
 
 ## Routing Strategies
 
-Choose rules for text matching, an LLM judge for semantic selection, or a custom
-executor for application-specific logic. All strategies use the same
-[selection and failure rules](#default-model-and-fallback).
+Choose rules for text matching, an LLM judge or a decision model for semantic
+selection, or a custom executor for application-specific logic. All strategies
+use the same [selection and failure rules](#default-model-and-fallback).
 
 ### Rules
 
@@ -184,6 +184,60 @@ Two optional settings customize the judge:
 For example, `.strategy(Strategies.llm("judge").withMaxContextChars(8000))` sets a
 text budget. This is not a token limit or a hard cap on total input.
 
+### Decision Model
+
+`Strategies.decision(decisionModel)` asks a registered
+[decision model]({{< ref "docs/development/decision_models" >}}) one choice
+question: the options are the candidate names and the criteria are their
+descriptions. The answer carries a probability for every candidate, so the
+router gets a confidence for its decision and can decline to route on a weak
+one. Register the decision model setup and its connection first; every candidate
+must have a description.
+
+```java
+ModelRouter.of("small", "big")
+        .describe("small", "short factual questions and everyday requests")
+        .describe("big", "code, SQL, math, and multi-step reasoning")
+        .strategy(Strategies.decision("dm").withMinProbability(0.6))
+        .defaultModel("small")
+        .fallback(true)
+        .build();
+```
+
+The decision model receives the conversation as text, including tool calls and
+results, rendered as for the LLM judge. Media and reasoning blocks are left out,
+and the number of media blocks dropped is recorded in the decision metadata.
+When the request carries no text at all, for example a media-only message, the
+prompt arguments are appended to the input as the request, so this fallback can
+apply where the judge, which also accepts media, sends the message itself. With
+no prompt arguments either, the strategy abstains to the default model without
+calling the decision model. The chosen candidate becomes the selected
+model, and its reported probability becomes the routing `score`. The probability
+is the provider's value for the chosen candidate; the framework does not
+normalize the distribution.
+
+The strategy abstains, and the default model answers, when the answer is a
+refusal, when it is not a choice, when the result carries no answer for the
+question, or when the chosen candidate's probability is below
+`withMinProbability`. For a choice below the minimum, the choice and the
+full probability map stay in the metadata. A router using this strategy needs at
+least two candidates. A decision call that fails after the configured retries is a request
+failure, like a failed judge call; it does not select the default or try
+candidate fallback.
+
+| Setting | Description |
+|---------|-------------|
+| `Strategies.decision(decisionModel, instructions)` | Replace the built-in instruction for the choice question. |
+| `withMinProbability(double)` | Abstain to the default model when the chosen candidate's probability is below this value, between 0 and 1 inclusive. |
+| `withMaxContextChars(int)` | Limit the conversation text with the same rules as for the LLM judge. |
+
+The decision model's `provider_confidence`, when the provider reports one, is
+recorded in the metadata but is not used for the threshold, since not every
+provider returns it. Built-in decision providers are Python, so a Java job that
+uses one needs the Python environment on the TaskManagers, as for any Java
+decision call. Like the other strategies, decision-model routing is available
+from the Java Programmatic API only.
+
 ### Custom Executor
 
 `Strategies.custom(...)` runs your own selection logic. Implement `CustomRoutingExecutor` as a public class with a public `(Map<String, Object>)` constructor that receives the declaration's arguments, or a public no-arg constructor. The class must be on the classpath of the client and the TaskManagers.
@@ -229,7 +283,7 @@ ModelRouter.of("small", "big")
 
 `RoutingContext` is a read-only view of the request: the messages, prompt arguments, last and first user message, the candidates with their descriptions, the default model, the router name, and the request ID. Put tenant or workload attributes in the prompt arguments when an executor should route on them. `RoutingDecision.of(name)` selects a candidate, `RoutingDecision.builder(name)` adds a reason, score, and metadata that appear on the routing event and the response, and `RoutingDecision.abstain()` defers to the default. An exception thrown by `route()` fails the request; the strategy itself is not retried.
 
-Custom executors must only select. The context exposes no chat API; when the decision should come from a model, use `Strategies.llm(...)` so the call gets the framework's retries, metrics, and events. Keep constructors free of side effects: an executor may be constructed more than once, for example after recovery.
+Custom executors must only select. The context exposes no chat API; when the decision should come from a model, use `Strategies.llm(...)` or `Strategies.decision(...)` so the call gets the framework's retries, metrics, and events. Keep constructors free of side effects: an executor may be constructed more than once, for example after recovery.
 
 ## Call a Router
 
@@ -274,7 +328,8 @@ behaviors:
 | Strategy selects a candidate | Call that candidate. |
 | Strategy abstains, or returns a name outside the candidates | Call `defaultModel`, or the first candidate if no default is configured. |
 | Declaration has an invalid pattern, non-candidate rule target or default, or duplicate/empty candidates | Reject the configuration before processing requests. |
-| Custom strategy throws, or the judge call exhausts retries | Fail the request; do not treat it as abstention or try candidate fallback. |
+| Custom strategy throws, or the judge or decision call exhausts retries | Fail the request; do not treat it as abstention or try candidate fallback. |
+| Decision model refuses, answers something other than a choice, or its chosen candidate is below `withMinProbability` | Call `defaultModel`, or the first candidate if no default is configured. |
 | Candidate call fails with fallback disabled | Fail the request after applicable retries. |
 | Candidate call fails with fallback enabled | Try the remaining candidates in declaration order, stopping at the first successful response. |
 | All attempted candidates fail | Fail the request with the last candidate's error; earlier errors remain in diagnostics. |
@@ -312,15 +367,16 @@ In Trace Log, these Events have `entityType: event` and
 |-------------|-------------|
 | `request_id`, `router`, `candidates` | Request identity, router resource name, and candidate names. |
 | `selected_model` | Selected chat model resource name. On a fallback event, the candidate that successfully answered. |
-| `decision_source` | `strategy` for rules/custom selection, `llm_judge` for a judge selection, `default` for abstention, or `fallback`. |
+| `decision_source` | `strategy` for rules/custom selection, `llm_judge` for a judge selection, `decision_model` for a decision model selection, `default` for abstention, or `fallback`. |
 | `fallback_enabled` | Whether fallback is configured, not whether it happened. |
-| `reason`, `score`, `metadata` | Strategy diagnostics. Judge metadata can include `judge_model`, token counts, and `judge_context_truncated`. |
-| `decision_ms` | Decision latency, including judge calls and retries. Absent on the fallback event. |
+| `reason`, `score`, `metadata` | Strategy diagnostics. Judge metadata can include `judge_model`, token counts, and `judge_context_truncated`. Decision model metadata includes `decision_model`, and can include `decision_probabilities` and `provider_confidence` when the answer was a choice, token counts, `decision_context_truncated`, `decision_media_dropped`, and, when the strategy abstained on a choice, `decision_choice`. For a decision model selection, `score` is the chosen candidate's probability. |
+| `decision_ms` | Decision latency, including judge or decision model calls and retries. Absent on the fallback event. |
 
 When a custom or replayed decision selects a non-candidate, normalization records
 `rejected_model` and, if present, `rejected_reason` in metadata and drops the score.
 An unrecognized fresh judge verdict instead reports the reason
-`judge verdict was not a candidate name`.
+`judge verdict was not a candidate name`. A decision model abstention reports
+the refusal, the non-choice answer, or the probability below the minimum.
 
 A **successful** final `ChatResponseEvent` for a routed request carries a `model_routing` attribute
 with `selected_model`, `final_model`, `fallback_attempted`, and
@@ -362,5 +418,6 @@ for the persistence and replay guarantees.
 - {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/ModelRoutingExample.java" name="`ModelRoutingExample`" >}}: rule-based routing between two Ollama models.
 - {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/ModelRoutingJudgeExample.java" name="`ModelRoutingJudgeExample`" >}}: the same two models with an LLM judge and candidate descriptions.
 - {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/openai/OpenAiModelRoutingExample.java" name="`OpenAiModelRoutingExample`" >}}: rule-based routing between `gpt-4o-mini` and `gpt-4o` over one OpenAI connection.
+- {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/openai/OpenAiDecisionRoutingExample.java" name="`OpenAiDecisionRoutingExample`" >}}: the same two OpenAI models routed by a decision model, with a native Java connection to the OpenAI Decisions API and an agent that reports the selected model, decision source and score.
 
-All three register their resources on the execution environment and use the {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/agents/ModelRoutingAgent.java" name="`ModelRoutingAgent`" >}} to send requests and handle responses.
+All of them register their resources on the execution environment. The first three use the {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/agents/ModelRoutingAgent.java" name="`ModelRoutingAgent`" >}} to send requests and handle responses.
