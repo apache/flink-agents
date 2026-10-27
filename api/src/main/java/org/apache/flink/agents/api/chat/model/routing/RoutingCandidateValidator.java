@@ -22,8 +22,10 @@ import org.apache.flink.annotation.Internal;
 
 import javax.annotation.Nullable;
 
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -76,6 +78,66 @@ public final class RoutingCandidateValidator {
                     String.format(
                             "%s default model '%s' is not one of the candidates %s.",
                             subject, defaultModel, candidates));
+        }
+    }
+
+    /**
+     * A decision-model strategy asks one choice question over the candidates, so it needs at least
+     * two of them, and it routes on their descriptions alone — they are the question's criteria —
+     * so a candidate without one is invisible to the decision model. Applied by the router
+     * constructor, by {@code ModelRouter.Builder#build()} and by plan validation, so every
+     * declaration path fails with the same diagnostic; {@code subject} names the router.
+     */
+    /**
+     * Every description declared for a candidate must be a String. Applied by the router
+     * constructor and by plan validation, so a descriptor that skipped the builder fails with the
+     * same diagnostic at plan construction rather than with a ClassCastException per routed
+     * request; {@code subject} names the router. Entries for names that are not candidates are
+     * ignored, as the constructor ignores them.
+     */
+    public static void requireStringDescriptions(
+            String subject, List<String> candidates, Map<?, ?> descriptions) {
+        for (String name : candidates) {
+            Object description = descriptions.get(name);
+            if (description != null && !(description instanceof String)) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "%s candidate '%s' has a %s description; expected a String.",
+                                subject, name, description.getClass().getSimpleName()));
+            }
+        }
+    }
+
+    public static void requireDescriptionsForDecisionStrategy(
+            String subject,
+            RoutingStrategy strategy,
+            List<String> candidates,
+            Map<?, ?> descriptions) {
+        if (strategy.getType() != RoutingStrategyType.DECISION_MODEL) {
+            return;
+        }
+        // A choice question needs something to choose between: decision providers reject a
+        // single option, so a one-candidate router would fail every request on the TaskManager.
+        if (candidates.size() < 2) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "%s uses Strategies.decision, which requires at least two candidates"
+                                    + " (got %s).",
+                            subject, candidates));
+        }
+        List<String> missing = new ArrayList<>();
+        for (String candidate : candidates) {
+            Object description = descriptions == null ? null : descriptions.get(candidate);
+            if (!(description instanceof String) || ((String) description).isBlank()) {
+                missing.add(candidate);
+            }
+        }
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "%s uses Strategies.decision, which requires a description for every"
+                                    + " candidate (describe(name, description)); missing for %s.",
+                            subject, missing));
         }
     }
 }

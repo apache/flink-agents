@@ -1,0 +1,88 @@
+{
+  "agent_name" : null,
+  "actions" : { },
+  "resource_providers" : {
+    "model_router" : {
+      "router" : {
+        "name" : "router",
+        "type" : "model_router",
+        "descriptor" : {
+          "language" : "java",
+          "target_module" : "",
+          "target_clazz" : "org.apache.flink.agents.api.chat.model.routing.ModelRouter",
+          "arguments" : {
+            "candidates" : [ "small", "big" ],
+            "candidate_descriptions" : {
+              "small" : "short factual questions",
+              "big" : "code and sql"
+            },
+            "strategy_type" : "decision_model",
+            "default_model" : "small",
+            "fallback" : true,
+            "strategy_args" : {
+              "decision_model" : "dm",
+              "min_probability" : 0.6
+            }
+          }
+        },
+        "__resource_provider_type__" : "JavaResourceProvider"
+      }
+    },
+    "chat_model" : {
+      "small" : {
+        "name" : "small",
+        "type" : "chat_model",
+        "descriptor" : {
+          "language" : "java",
+          "target_module" : "",
+          "target_clazz" : "some.Clazz",
+          "arguments" : { }
+        },
+        "__resource_provider_type__" : "JavaResourceProvider"
+      },
+      "big" : {
+        "name" : "big",
+        "type" : "chat_model",
+        "descriptor" : {
+          "language" : "java",
+          "target_module" : "",
+          "target_clazz" : "some.Clazz",
+          "arguments" : { }
+        },
+        "__resource_provider_type__" : "JavaResourceProvider"
+      }
+    },
+    "decision_model" : {
+      "dm" : {
+        "name" : "dm",
+        "type" : "decision_model",
+        "descriptor" : {
+          "language" : "java",
+          "target_module" : "",
+          "target_clazz" : "some.Setup",
+          "arguments" : {
+            "model" : "m",
+            "connection" : "conn"
+          }
+        },
+        "__resource_provider_type__" : "JavaResourceProvider"
+      }
+    },
+    "decision_model_connection" : {
+      "conn" : {
+        "name" : "conn",
+        "type" : "decision_model_connection",
+        "descriptor" : {
+          "language" : "java",
+          "target_module" : "",
+          "target_clazz" : "some.Clazz",
+          "arguments" : { }
+        },
+        "__resource_provider_type__" : "JavaResourceProvider"
+      }
+    }
+  },
+  "config" : {
+    "conf_data" : { }
+  }
+}

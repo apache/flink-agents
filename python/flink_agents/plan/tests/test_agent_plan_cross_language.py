@@ -497,6 +497,31 @@ def test_python_can_deserialize_java_plan_with_judge_router() -> None:
     assert "strategy_clazz" not in args  # identity is the tag, not a Java class
 
 
+def test_python_can_deserialize_java_plan_with_decision_router() -> None:
+    """A Java-produced plan carrying the decision-model router strategy must deserialize
+    on the Python side: the strategy travels as the language-neutral tag
+    ``decision_model`` with its arguments, and the decision model itself is an ordinary
+    DECISION_MODEL resource provider.
+    """
+    snapshot = _SNAPSHOT_DIR / "java" / "agent_plan_with_decision_router.json"
+    assert snapshot.exists(), (
+        f"Java decision-router plan snapshot missing from {snapshot}; regenerate on the"
+        " Java side with -Dregenerate.snapshots=true and commit it."
+    )
+    restored = AgentPlan.model_validate_json(snapshot.read_text())
+    assert ResourceType.MODEL_ROUTER in restored.resource_providers
+    assert "dm" in restored.resource_providers[ResourceType.DECISION_MODEL]
+    assert "conn" in restored.resource_providers[ResourceType.DECISION_MODEL_CONNECTION]
+    args = restored.resource_providers[ResourceType.MODEL_ROUTER][
+        "router"
+    ].descriptor.arguments
+    assert args["strategy_type"] == "decision_model"
+    assert args["strategy_args"]["decision_model"] == "dm"
+    assert args["strategy_args"]["min_probability"] == 0.6
+    assert args["candidate_descriptions"]["big"] == "code and sql"
+    assert "strategy_clazz" not in args
+
+
 def test_python_can_deserialize_plan_with_java_model_router() -> None:
     """A Java agent may declare a MODEL_ROUTER resource (Java-side in-chat routing).
 
