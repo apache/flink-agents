@@ -246,6 +246,51 @@ under the License.
     </build>
 
     <profiles>
+        <!--
+          Writes the reference snapshots of migration tests for one release. Run it on the
+          release branch of that version:
+          mvn clean package -Pgenerate-migration-test-data -Dgenerate.version=0.4 -DskipTests -pl runtime -am
+        -->
+        <profile>
+            <id>generate-migration-test-data</id>
+            <properties>
+                <generate.classes>org.apache.flink.agents.runtime.operator.ActionExecutionOperatorMigrationTest</generate.classes>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>generate-migration-test-data</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <java classname="org.apache.flink.agents.runtime.migration.MigrationTestsSnapshotGenerator"
+                                              fork="true" failonerror="true" dir="${project.basedir}">
+                                            <classpath refid="maven.test.classpath"/>
+                                            <!-- Same flags as the surefire argLine in the root pom. -->
+                                            <jvmarg value="--add-opens=java.base/java.util=ALL-UNNAMED"/>
+                                            <jvmarg value="--add-opens=java.base/java.nio=ALL-UNNAMED"/>
+                                            <jvmarg value="--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED"/>
+                                            <arg value="--version"/>
+                                            <arg value="${generate.version}"/>
+                                            <arg value="--classes"/>
+                                            <arg value="${generate.classes}"/>
+                                        </java>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
         <!-- Profile for building JDK 21 specific classes when running on JDK 21+ -->
         <profile>
             <id>java-21</id>
