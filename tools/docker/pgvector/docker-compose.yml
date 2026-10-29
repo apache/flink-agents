@@ -19,7 +19,7 @@
 
 services:
   pgvector:
-    image: pgvector/pgvector:0.8.6-pg16
+    image: pgvector/pgvector:0.8.6-pg17
     container_name: flink-agents-pgvector
     environment:
       POSTGRES_USER: postgres

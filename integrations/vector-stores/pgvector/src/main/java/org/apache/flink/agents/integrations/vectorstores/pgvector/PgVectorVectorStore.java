@@ -256,6 +256,9 @@ public class PgVectorVectorStore extends BaseVectorStore
     private final String contentField;
     private final String metadataField;
     private final String vectorField;
+    /** See {@link #distanceAlias(String, String, String)}. */
+    private final String distanceAlias;
+
     private final int dims;
     private final MetricType metricType;
     private final IndexType indexType;
@@ -325,6 +328,7 @@ public class PgVectorVectorStore extends BaseVectorStore
                 indexedColumn(
                         "vector_field",
                         identifierArg(descriptor, "vector_field", DEFAULT_VECTOR_FIELD));
+        this.distanceAlias = distanceAlias(this.idField, this.contentField, this.metadataField);
         this.dims = positive("dims", intArg(descriptor, "dims", DEFAULT_DIMENSION));
         this.metricType =
                 enumArg(
@@ -830,25 +834,7 @@ public class PgVectorVectorStore extends BaseVectorStore
         IterativeScan scan =
                 enumFromMap(IterativeScan.class, args, "iterative_scan", this.iterativeScan);
         String filterJson = filtersToJson(filters);
-        String distance = quote(this.vectorField) + " " + metric.getOperator() + " ?::vector";
-        // The distance column is referenced by position: any alias could clash with a user
-        // column. A relaxed iterative scan may emit hits slightly out of order, so the LIMIT runs
-        // in a materialized CTE and the outer query re-sorts the few rows it kept.
-        String sql =
-                "WITH hits AS MATERIALIZED (SELECT "
-                        + quote(this.idField)
-                        + ", "
-                        + quote(this.contentField)
-                        + ", "
-                        + quote(this.metadataField)
-                        + ", "
-                        + distance
-                        + " FROM "
-                        + qualified(table)
-                        + (filterJson == null
-                                ? ""
-                                : " WHERE " + quote(this.metadataField) + " @> ?::jsonb")
-                        + " ORDER BY 4 LIMIT ?) SELECT * FROM hits ORDER BY 4";
+        String sql = searchSql(table, metric, filterJson != null);
         String vector = vectorLiteral(embedding);
         int rows = positive("limit", limit);
         Connection connection = null;
@@ -1423,6 +1409,55 @@ public class PgVectorVectorStore extends BaseVectorStore
     /** Quotes an already validated identifier. */
     private static String quote(String identifier) {
         return "\"" + identifier + "\"";
+    }
+
+    /**
+     * The similarity-search statement: id, content, metadata and the distance of the configured
+     * metric, nearest first, with one {@code ?} for the query vector, one for the filter when
+     * {@code filtered}, and one for the limit.
+     *
+     * <p>A relaxed iterative scan may emit hits slightly out of order, so the LIMIT runs in a
+     * materialized CTE and the outer query re-sorts the few rows it kept. The outer ORDER BY uses
+     * {@code <distance> + 0}, the form the pgvector README gives under "Iterative Index Scans"
+     * (https://github.com/pgvector/pgvector#iterative-index-scans): PostgreSQL 17+ drops a bare
+     * {@code ORDER BY <distance>} as redundant with the CTE's ordering, and the rows then come back
+     * in scan order. The distance column carries {@link #distanceAlias} so it can be named there;
+     * the distance is still read by position.
+     */
+    String searchSql(String table, MetricType metric, boolean filtered) {
+        String alias = quote(this.distanceAlias);
+        return "WITH hits AS MATERIALIZED (SELECT "
+                + quote(this.idField)
+                + ", "
+                + quote(this.contentField)
+                + ", "
+                + quote(this.metadataField)
+                + ", "
+                + quote(this.vectorField)
+                + " "
+                + metric.getOperator()
+                + " ?::vector AS "
+                + alias
+                + " FROM "
+                + qualified(table)
+                + (filtered ? " WHERE " + quote(this.metadataField) + " @> ?::jsonb" : "")
+                + " ORDER BY "
+                + alias
+                + " LIMIT ?) SELECT * FROM hits ORDER BY "
+                + alias
+                + " + 0";
+    }
+
+    /**
+     * A name for the search's distance column that differs from the document columns selected next
+     * to it. The vector column is not selected into the CTE, so it cannot clash and is not checked.
+     */
+    private static String distanceAlias(String idField, String contentField, String metadataField) {
+        String alias = "distance";
+        while (alias.equals(idField) || alias.equals(contentField) || alias.equals(metadataField)) {
+            alias = alias + "_";
+        }
+        return alias;
     }
 
     /** Renders validated index storage parameters as a {@code WITH (...)} clause. */

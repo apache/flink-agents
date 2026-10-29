@@ -332,6 +332,58 @@ public class PgVectorVectorStoreTest {
         assertThat(PgVectorVectorStore.MetricType.L2.getOperatorClass()).isEqualTo("vector_l2_ops");
     }
 
+    /**
+     * The search statement re-sorts the materialized CTE by {@code <distance> + 0}: on PostgreSQL
+     * 17+ a bare {@code ORDER BY <distance>} is dropped as redundant with the CTE's ordering (the
+     * plan has no Sort node), and a relaxed iterative scan then returns rows out of order.
+     */
+    @Test
+    void testSearchSqlReSortsTheMaterializedCteWithPlusZero() {
+        PgVectorVectorStore store =
+                new PgVectorVectorStore(
+                        ResourceDescriptor.Builder.newBuilder(PgVectorVectorStore.class.getName())
+                                .addInitialArgument("embedding_model", "embeddingModel")
+                                .addInitialArgument("collection", "docs")
+                                .build(),
+                        NOOP);
+        assertThat(store.searchSql("docs", PgVectorVectorStore.MetricType.COSINE, true))
+                .isEqualTo(
+                        "WITH hits AS MATERIALIZED (SELECT \"id\", \"content\", \"metadata\","
+                                + " \"embedding\" <=> ?::vector AS \"distance\" FROM"
+                                + " \"public\".\"docs\" WHERE \"metadata\" @> ?::jsonb ORDER BY"
+                                + " \"distance\" LIMIT ?) SELECT * FROM hits ORDER BY \"distance\""
+                                + " + 0");
+        assertThat(store.searchSql("docs", PgVectorVectorStore.MetricType.L2, false))
+                .doesNotContain("WHERE")
+                .contains("<->")
+                .endsWith("ORDER BY \"distance\" + 0");
+        // The alias never collides with a configured column.
+        PgVectorVectorStore clashing =
+                new PgVectorVectorStore(
+                        ResourceDescriptor.Builder.newBuilder(PgVectorVectorStore.class.getName())
+                                .addInitialArgument("embedding_model", "embeddingModel")
+                                .addInitialArgument("collection", "docs")
+                                .addInitialArgument("content_field", "distance")
+                                .build(),
+                        NOOP);
+        assertThat(clashing.searchSql("docs", PgVectorVectorStore.MetricType.COSINE, false))
+                .contains("AS \"distance_\"")
+                .endsWith("ORDER BY \"distance_\" + 0");
+        // ... and keeps stepping while the candidate is taken, so no two CTE columns share a name.
+        PgVectorVectorStore twice =
+                new PgVectorVectorStore(
+                        ResourceDescriptor.Builder.newBuilder(PgVectorVectorStore.class.getName())
+                                .addInitialArgument("embedding_model", "embeddingModel")
+                                .addInitialArgument("collection", "docs")
+                                .addInitialArgument("id_field", "distance")
+                                .addInitialArgument("content_field", "distance_")
+                                .build(),
+                        NOOP);
+        assertThat(twice.searchSql("docs", PgVectorVectorStore.MetricType.COSINE, false))
+                .contains("AS \"distance__\"")
+                .endsWith("ORDER BY \"distance__\" + 0");
+    }
+
     @Test
     @EnabledIfEnvironmentVariable(named = LIVE, matches = ".+")
     void testCollectionManagement() throws Exception {
@@ -620,11 +672,15 @@ public class PgVectorVectorStoreTest {
             store.add(List.of(original), collection, Collections.emptyMap());
             // Adding again with an existing id replaces the row instead of failing, so a replayed
             // batch is idempotent; the new document in the same batch is stored as well.
+            // Explicit embedding on its own axis: the mock maps this text to the second axis,
+            // the same as the rewritten doc1 below, and a limit-1 query for that axis could then
+            // legitimately return either row.
             Document fresh =
                     new Document(
                             "Apache Flink Agents is an AI framework",
                             Map.of("category", "ai"),
-                            "fresh");
+                            "fresh",
+                            new float[] {0.0f, 0.0f, 1.0f, 0.0f, 0.0f});
             Document replayed =
                     new Document(
                             "pgvector is a PostgreSQL extension",
@@ -687,7 +743,8 @@ public class PgVectorVectorStoreTest {
             Assertions.assertEquals(1, after.size());
             Assertions.assertEquals("pgvector stores dense vectors", after.get(0).getContent());
             Assertions.assertEquals("updated", after.get(0).getMetadata().get("category"));
-            // The embedding was replaced too: the rewritten text maps to the second axis.
+            // The embedding was replaced too: the rewritten text maps to the second axis, and no
+            // other row shares it, so doc1 is the unique nearest match.
             List<Document> hits =
                     store.queryEmbedding(
                             new float[] {0.0f, 1.0f, 0.0f, 0.0f, 0.0f},
@@ -792,6 +849,85 @@ public class PgVectorVectorStoreTest {
         }
     }
 
+    /**
+     * The outer re-sort of the materialized CTE must survive the planner: PostgreSQL 17+ may drop a
+     * plain {@code ORDER BY distance} because it inherits the CTE's ordering, and a relaxed
+     * iterative scan emits its hits slightly out of order. The query orders by {@code distance +
+     * 0}, so the rows come back nearest first on every supported server.
+     */
+    @Test
+    @EnabledIfEnvironmentVariable(named = LIVE, matches = ".+")
+    void testRelaxedIterativeScanReturnsRowsInDistanceOrder() throws Exception {
+        String collection = collectionName("relaxedorder");
+        PgVectorVectorStore store = openStore(collection);
+        try {
+            store.createCollectionIfNotExists(collection, Map.of());
+            assertThat(store.supportsIterativeScan()).isTrue();
+            List<Document> documents = new ArrayList<>();
+            for (int i = 0; i < 400; i++) {
+                float[] vector =
+                        new float[] {
+                            (float) Math.sin(i),
+                            (float) Math.cos(0.7 * i),
+                            (i % 13) / 13f,
+                            (i % 7) / 7f,
+                            1f
+                        };
+                documents.add(new Document("row " + i, Map.of("k", "row"), "o" + i, vector));
+            }
+            store.addEmbedding(documents, collection, Collections.emptyMap());
+            float[] query = new float[] {0, 0, 0, 0, 1};
+            // Force the HNSW path (see testFilteredSearchOnIndexedTableUsesIterativeScan).
+            PgVectorVectorStore forced = openForcedIndexStore(collection);
+            try {
+                // The plan of the statement the store runs, on the forced connection: the CTE
+                // must be fed by the index (otherwise a sequential scan is already in order and
+                // the test proves nothing) and the outer re-sort must survive the planner, which
+                // is the PostgreSQL 17 regression the "+ 0" guards against.
+                String plan;
+                try (Connection connection = connection(forcedIndexUri());
+                        PreparedStatement explain =
+                                connection.prepareStatement(
+                                        "EXPLAIN "
+                                                + forced.searchSql(
+                                                        collection,
+                                                        PgVectorVectorStore.MetricType.COSINE,
+                                                        false))) {
+                    explain.setString(1, PgVectorVectorStore.vectorLiteral(query));
+                    explain.setInt(2, 120);
+                    StringBuilder text = new StringBuilder();
+                    try (ResultSet rows = explain.executeQuery()) {
+                        while (rows.next()) {
+                            text.append(rows.getString(1)).append('\n');
+                        }
+                    }
+                    plan = text.toString();
+                }
+                assertThat(plan).contains("Index Scan using").contains("CTE Scan on hits");
+                assertThat(plan.lines().map(String::strip).filter(l -> l.startsWith("Sort")))
+                        .as("outer re-sort of the CTE kept by the planner:\n%s", plan)
+                        .isNotEmpty();
+                for (String mode : List.of("relaxed_order", "strict_order")) {
+                    List<Document> hits =
+                            forced.queryEmbedding(
+                                    query, 120, collection, null, Map.of("iterative_scan", mode));
+                    assertThat(hits).as(mode).hasSize(120);
+                    for (int i = 1; i < hits.size(); i++) {
+                        // Cosine similarity: higher is nearer, so scores never increase.
+                        assertThat(hits.get(i).getScore())
+                                .as("%s: hit %d after %s", mode, i, hits.get(i - 1).getId())
+                                .isLessThanOrEqualTo(hits.get(i - 1).getScore());
+                    }
+                }
+            } finally {
+                forced.close();
+            }
+        } finally {
+            dropCollectionQuietly(store, collection);
+            store.close();
+        }
+    }
+
     @Test
     @EnabledIfEnvironmentVariable(named = LIVE, matches = ".+")
     void testFilteredSearchOnIndexedTableUsesIterativeScan() throws Exception {
@@ -821,23 +957,7 @@ public class PgVectorVectorStoreTest {
             // On a table this small the planner would scan sequentially, so force the HNSW index
             // path through pgjdbc's "options" startup parameter: this is the post-filtering case
             // iterative scans exist for.
-            String forcedUri =
-                    System.getenv(LIVE)
-                            + (System.getenv(LIVE).contains("?") ? "&" : "?")
-                            + "options=-c%20enable_seqscan%3Doff%20-c%20enable_bitmapscan%3Doff";
-            PgVectorVectorStore forced =
-                    new PgVectorVectorStore(
-                            ResourceDescriptor.Builder.newBuilder(
-                                            PgVectorVectorStore.class.getName())
-                                    .addInitialArgument("uri", forcedUri)
-                                    .addInitialArgument(
-                                            "username", envOr("PGVECTOR_USERNAME", "postgres"))
-                                    .addInitialArgument(
-                                            "password", envOr("PGVECTOR_PASSWORD", "postgres"))
-                                    .addInitialArgument("collection", collection)
-                                    .addInitialArgument("dims", 5)
-                                    .build(),
-                            NOOP);
+            PgVectorVectorStore forced = openForcedIndexStore(collection);
             try {
                 // Plain HNSW scan: only the ef_search nearest candidates are filtered, and the
                 // rare rows are far away, so the search comes up short.
@@ -1001,14 +1121,37 @@ public class PgVectorVectorStoreTest {
     }
 
     private static ResourceDescriptor descriptor(String collection) {
+        return descriptor(collection, System.getenv(LIVE));
+    }
+
+    /** The live store descriptor over {@code collection} (5 dimensions) on {@code uri}. */
+    private static ResourceDescriptor descriptor(String collection, String uri) {
         return ResourceDescriptor.Builder.newBuilder(PgVectorVectorStore.class.getName())
                 .addInitialArgument("embedding_model", "embeddingModel")
-                .addInitialArgument("uri", System.getenv(LIVE))
+                .addInitialArgument("uri", uri)
                 .addInitialArgument("username", envOr("PGVECTOR_USERNAME", "postgres"))
                 .addInitialArgument("password", envOr("PGVECTOR_PASSWORD", "postgres"))
                 .addInitialArgument("collection", collection)
                 .addInitialArgument("dims", 5)
                 .build();
+    }
+
+    /**
+     * The live URI with pgjdbc's {@code options} startup parameter turning off sequential and
+     * bitmap scans, so that a table too small for the planner to pick an index is read through its
+     * HNSW index anyway: the post-filtering case iterative scans exist for.
+     */
+    private static String forcedIndexUri() {
+        return System.getenv(LIVE)
+                + (System.getenv(LIVE).contains("?") ? "&" : "?")
+                + "options=-c%20enable_seqscan%3Doff%20-c%20enable_bitmapscan%3Doff";
+    }
+
+    /** A store on {@link #forcedIndexUri()} over {@code collection}. */
+    private static PgVectorVectorStore openForcedIndexStore(String collection) throws Exception {
+        return new PgVectorVectorStore(
+                descriptor(collection, forcedIndexUri()),
+                ResourceContext.fromGetResource(PgVectorVectorStoreTest::getResource));
     }
 
     private static PgVectorVectorStore openStore(String collection) throws Exception {
@@ -1045,8 +1188,12 @@ public class PgVectorVectorStoreTest {
     }
 
     private static Connection adminConnection() throws Exception {
+        return connection(System.getenv(LIVE));
+    }
+
+    private static Connection connection(String uri) throws Exception {
         return DriverManager.getConnection(
-                System.getenv(LIVE),
+                uri,
                 envOr("PGVECTOR_USERNAME", "postgres"),
                 envOr("PGVECTOR_PASSWORD", "postgres"));
     }
