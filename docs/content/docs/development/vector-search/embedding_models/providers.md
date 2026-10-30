@@ -32,6 +32,74 @@ for registration methods and scopes, see
 [Resources]({{< ref "docs/development/create-agent/resources#registering-resources" >}}).
 This page describes the built-in implementations and their provider options.
 
+### Alibaba Cloud Model Studio (DashScope) {#alibaba-cloud-model-studio-dashscope}
+
+This integration connects to Alibaba Cloud Model Studio (Bailian) through the DashScope SDK to access embedding models.
+
+{{< hint info >}}
+The DashScope integration currently has a Python implementation only. To use it from Java agents, see [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}).
+{{< /hint >}}
+
+#### Prerequisites
+
+1. Get an API key from [Alibaba Cloud Model Studio](https://dashscope.console.aliyun.com/)
+
+#### Usage Example
+
+```python
+class MyAgent(Agent):
+
+    @embedding_model_connection
+    @staticmethod
+    def dashscope_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.EmbeddingModel.DASHSCOPE_CONNECTION,
+            api_key="your-api-key-here",  # Or set DASHSCOPE_API_KEY env var
+            request_timeout=30.0
+        )
+
+    @embedding_model_setup
+    @staticmethod
+    def dashscope_embedding() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.EmbeddingModel.DASHSCOPE_SETUP,
+            connection="dashscope_connection",
+            model="text-embedding-v4",
+            text_type="query"
+        )
+```
+
+#### DashScopeEmbeddingModelConnection Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | str | `$DASHSCOPE_API_KEY` | DashScope API key for authentication |
+| `request_timeout` | float | `30.0` | HTTP request timeout in seconds |
+
+#### DashScopeEmbeddingModelSetup Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | str | Required | Registered connection Resource name |
+| `model` | str | `"text-embedding-v4"` | Embedding model name |
+| `text_type` | str | None | Input type: `"query"` or `"document"` |
+| `dimension` | int | None | Output vector dimensions (model-dependent) |
+| `additional_kwargs` | dict | `{}` | Additional DashScope API parameters |
+
+#### Available Models
+
+Visit the [Alibaba Cloud Model Studio embedding models documentation](https://help.aliyun.com/zh/dashscope/developer-reference/text-embedding-api-details) for the complete and up-to-date list of available embedding models.
+
+Some popular options include:
+- **text-embedding-v4** (default, recommended)
+- **text-embedding-v3**
+- **text-embedding-v2**
+- **text-embedding-v1**
+
+{{< hint warning >}}
+Model availability and specifications may change. Always check the official Alibaba Cloud Model Studio documentation for the latest information before implementing in production.
+{{< /hint >}}
+
 ### Amazon Bedrock
 
 Amazon Bedrock provides embedding capabilities through the Amazon Titan Text Embeddings V2 model via the [InvokeModel API](https://docs.aws.amazon.com/bedrock/latest/userguide/titan-embedding-models.html). The integration supports configurable output dimensions (256, 512, or 1024) and parallelizes batch embedding via a configurable thread pool, since the Titan V2 model processes one text per API call. Authentication is handled via SigV4 using the AWS default credentials chain.
@@ -407,72 +475,4 @@ Current popular models include:
 
 {{< hint warning >}}
 Model availability and specifications may change. Always check the official OpenAI documentation for the latest information before implementing in production.
-{{< /hint >}}
-
-### DashScope (Alibaba Cloud Model Studio) {#alibaba-cloud-model-studio-dashscope}
-
-This integration connects to Alibaba Cloud Model Studio (Bailian) through the DashScope SDK to access embedding models.
-
-{{< hint info >}}
-The DashScope integration currently has a Python implementation only. To use it from Java agents, see [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}).
-{{< /hint >}}
-
-#### Prerequisites
-
-1. Get an API key from [Alibaba Cloud Model Studio](https://dashscope.console.aliyun.com/)
-
-#### Usage Example
-
-```python
-class MyAgent(Agent):
-
-    @embedding_model_connection
-    @staticmethod
-    def dashscope_connection() -> ResourceDescriptor:
-        return ResourceDescriptor(
-            clazz=ResourceName.EmbeddingModel.DASHSCOPE_CONNECTION,
-            api_key="your-api-key-here",  # Or set DASHSCOPE_API_KEY env var
-            request_timeout=30.0
-        )
-
-    @embedding_model_setup
-    @staticmethod
-    def dashscope_embedding() -> ResourceDescriptor:
-        return ResourceDescriptor(
-            clazz=ResourceName.EmbeddingModel.DASHSCOPE_SETUP,
-            connection="dashscope_connection",
-            model="text-embedding-v4",
-            text_type="query"
-        )
-```
-
-#### DashScopeEmbeddingModelConnection Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `api_key` | str | `$DASHSCOPE_API_KEY` | DashScope API key for authentication |
-| `request_timeout` | float | `30.0` | HTTP request timeout in seconds |
-
-#### DashScopeEmbeddingModelSetup Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `connection` | str | Required | Registered connection Resource name |
-| `model` | str | `"text-embedding-v4"` | Embedding model name |
-| `text_type` | str | None | Input type: `"query"` or `"document"` |
-| `dimension` | int | None | Output vector dimensions (model-dependent) |
-| `additional_kwargs` | dict | `{}` | Additional DashScope API parameters |
-
-#### Available Models
-
-Visit the [Alibaba Cloud Model Studio embedding models documentation](https://help.aliyun.com/zh/dashscope/developer-reference/text-embedding-api-details) for the complete and up-to-date list of available embedding models.
-
-Some popular options include:
-- **text-embedding-v4** (default, recommended)
-- **text-embedding-v3**
-- **text-embedding-v2**
-- **text-embedding-v1**
-
-{{< hint warning >}}
-Model availability and specifications may change. Always check the official Alibaba Cloud Model Studio documentation for the latest information before implementing in production.
 {{< /hint >}}

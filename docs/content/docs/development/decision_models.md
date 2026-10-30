@@ -113,7 +113,8 @@ finally:
     connection.close()
 ```
 
-For a standard Bailian workspace endpoint, reuse the TypeSafe implementation:
+For a standard Alibaba Cloud Model Studio workspace endpoint, reuse
+the TypeSafe implementation:
 
 ```python
 import os
@@ -134,7 +135,8 @@ finally:
 ```
 
 The SDK appends `/v1/systemone` to the TypeSafe API root. Choose a model and
-regional endpoint available to your account. The Bailian example follows its
+regional endpoint available to your account. The Alibaba Cloud Model Studio
+example follows its
 [standard Decision API documentation](https://help.aliyun.com/zh/model-studio/decision-model-api);
 other gateway or fine-tuned deployment authentication must be checked separately.
 
@@ -429,8 +431,9 @@ accepts the same descriptors for programmatic registration.
 For Python connections, the Python package and the selected provider SDK must be
 installed in the job's Python environment. Configure authentication there, as for
 a Python Action. Use the OpenAI implementation classes for OpenAI; use the
-TypeSafe classes with the Bailian endpoint for Bailian. The same typed question definitions are
-converted by the selected adapter. No Java provider SDK is required.
+TypeSafe classes with the workspace endpoint for Alibaba Cloud Model Studio.
+The same typed question definitions are converted by the selected adapter.
+No Java provider SDK is required.
 
 Java questions have concrete `DecisionRequest.PredicateQuestion`,
 `ChoiceQuestion`, and `ScoreQuestion` types. The `Question.predicate`,

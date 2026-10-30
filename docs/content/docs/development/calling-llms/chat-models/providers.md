@@ -49,12 +49,12 @@ model, deployment, and server must also support the requested input and tool cal
 
 | Integration | Implementation language | Media input accepted by the integration |
 |---|---|---|
+| [Alibaba Cloud Model Studio (DashScope)](#alibaba-cloud-model-studio-dashscope) | Python | No media input; media blocks are rejected. |
 | [OpenAI Chat Completions](#multimodal-input), [Azure OpenAI](#azure-openai), [vLLM](#vllm) | Java, Python | User messages: images by URL or Base64; WAV/MP3 audio and documents by Base64. See the conversion and model restrictions below. |
 | [OpenAI Responses](#responses-api) | Java | No media input; media blocks are rejected. |
 | [Anthropic](#anthropic) | Java, Python | User messages: JPEG/PNG/GIF/WebP images and PDF documents by URL or Base64; plain-text documents by Base64. |
 | [Ollama](#ollama) | Java, Python | User messages: Base64 images, sent separately from text; requires a vision model. |
 | [Amazon Bedrock](#amazon-bedrock), [Gemini](#gemini) | Java | No media input; media blocks are rejected. |
-| [DashScope (Alibaba Cloud Model Studio)](#alibaba-cloud-model-studio-dashscope) | Python | No media input; media blocks are rejected. |
 | [IBM watsonx.ai](#watsonx-ibm-watsonxai) | Java, Python | No media input; media blocks are rejected. |
 
 All listed integrations can send tool definitions and return tool calls when the
@@ -70,6 +70,76 @@ support it.
 The implementation language does not limit the Agent API you can use: see
 [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}})
 for dependencies and execution requirements.
+
+### Alibaba Cloud Model Studio (DashScope) {#alibaba-cloud-model-studio-dashscope}
+
+This integration connects to Alibaba Cloud Model Studio (Bailian) through the DashScope SDK to access chat models.
+
+{{< hint info >}}
+The DashScope integration currently has a Python implementation only. To use it from Java agents, see [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}).
+{{< /hint >}}
+
+#### Prerequisites
+
+1. Get an API key from [Alibaba Cloud Model Studio](https://dashscope.aliyun.com/)
+
+#### DashScopeChatModelConnection Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | str | `$DASHSCOPE_API_KEY` | DashScope API key for authentication |
+| `request_timeout` | float | `60.0` | HTTP request timeout in seconds |
+
+#### DashScopeChatModelSetup Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model` | str | `"qwen-plus"` | Name of the chat model to use (an `output_schema` is enforced natively only on `qwen3.7-max`, `qwen3.7-max-preview`, `qwen3.7-max-2026-05-17` and `qwen3.7-max-2026-05-20`, the schema-capable models DashScope serves on the text-generation interface this connection calls; every other model, the `qwen-plus` default included, falls back to prompting) |
+| `temperature` | float | `0.7` | Sampling temperature (0.0 to 2.0) |
+| `extract_reasoning` | bool | `False` | Extract reasoning content from response |
+| `additional_kwargs` | dict | `{}` | Additional DashScope API parameters. A `response_format` supplied here is rejected only when it would be overwritten, that is when an `output_schema` carrying a Pydantic model is set on a model that applies it natively; otherwise it is passed through unchanged |
+
+#### Usage Example
+
+```python
+class MyAgent(Agent):
+
+    @chat_model_connection
+    @staticmethod
+    def dashscope_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.DASHSCOPE_CONNECTION,
+            api_key="your-api-key-here",  # Or set DASHSCOPE_API_KEY env var
+            request_timeout=60.0
+        )
+
+    @chat_model_setup
+    @staticmethod
+    def dashscope_chat_model() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.DASHSCOPE_SETUP,
+            connection="dashscope_connection",
+            model="qwen-plus",
+            temperature=0.7,
+            extract_reasoning=True
+        )
+
+    ...
+```
+
+#### Available Models
+
+Visit the [Alibaba Cloud Model Studio models documentation](https://help.aliyun.com/zh/dashscope/developer-reference/model-introduction) for the complete and up-to-date list of available chat models.
+
+Some popular options include:
+- **qwen-plus**
+- **qwen-max**
+- **qwen-turbo**
+- **qwen-long**
+
+{{< hint warning >}}
+Model availability and specifications may change. Always check the official Alibaba Cloud Model Studio documentation for the latest information before implementing in production.
+{{< /hint >}}
 
 ### Amazon Bedrock
 
@@ -971,76 +1041,6 @@ Some popular options include:
 
 {{< hint warning >}}
 Model availability and specifications may change. Always check the official OpenAI documentation for the latest information before implementing in production.
-{{< /hint >}}
-
-### DashScope (Alibaba Cloud Model Studio) {#alibaba-cloud-model-studio-dashscope}
-
-This integration connects to Alibaba Cloud Model Studio (Bailian) through the DashScope SDK to access chat models.
-
-{{< hint info >}}
-The DashScope integration currently has a Python implementation only. To use it from Java agents, see [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}).
-{{< /hint >}}
-
-#### Prerequisites
-
-1. Get an API key from [Alibaba Cloud Model Studio](https://dashscope.aliyun.com/)
-
-#### DashScopeChatModelConnection Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `api_key` | str | `$DASHSCOPE_API_KEY` | DashScope API key for authentication |
-| `request_timeout` | float | `60.0` | HTTP request timeout in seconds |
-
-#### DashScopeChatModelSetup Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `model` | str | `"qwen-plus"` | Name of the chat model to use (an `output_schema` is enforced natively only on `qwen3.7-max`, `qwen3.7-max-preview`, `qwen3.7-max-2026-05-17` and `qwen3.7-max-2026-05-20`, the schema-capable models DashScope serves on the text-generation interface this connection calls; every other model, the `qwen-plus` default included, falls back to prompting) |
-| `temperature` | float | `0.7` | Sampling temperature (0.0 to 2.0) |
-| `extract_reasoning` | bool | `False` | Extract reasoning content from response |
-| `additional_kwargs` | dict | `{}` | Additional DashScope API parameters. A `response_format` supplied here is rejected only when it would be overwritten, that is when an `output_schema` carrying a Pydantic model is set on a model that applies it natively; otherwise it is passed through unchanged |
-
-#### Usage Example
-
-```python
-class MyAgent(Agent):
-
-    @chat_model_connection
-    @staticmethod
-    def dashscope_connection() -> ResourceDescriptor:
-        return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.DASHSCOPE_CONNECTION,
-            api_key="your-api-key-here",  # Or set DASHSCOPE_API_KEY env var
-            request_timeout=60.0
-        )
-
-    @chat_model_setup
-    @staticmethod
-    def dashscope_chat_model() -> ResourceDescriptor:
-        return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.DASHSCOPE_SETUP,
-            connection="dashscope_connection",
-            model="qwen-plus",
-            temperature=0.7,
-            extract_reasoning=True
-        )
-
-    ...
-```
-
-#### Available Models
-
-Visit the [Alibaba Cloud Model Studio models documentation](https://help.aliyun.com/zh/dashscope/developer-reference/model-introduction) for the complete and up-to-date list of available chat models.
-
-Some popular options include:
-- **qwen-plus**
-- **qwen-max**
-- **qwen-turbo**
-- **qwen-long**
-
-{{< hint warning >}}
-Model availability and specifications may change. Always check the official Alibaba Cloud Model Studio documentation for the latest information before implementing in production.
 {{< /hint >}}
 
 ### vLLM
