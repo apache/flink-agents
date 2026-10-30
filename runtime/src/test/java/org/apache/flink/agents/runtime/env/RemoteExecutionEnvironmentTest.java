@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentConfiguration;
@@ -47,8 +48,10 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.apache.flink.agents.runtime.env.RemoteExecutionEnvironment.FLINK_CONF_FILENAME;
+import static org.apache.flink.agents.runtime.env.RemoteExecutionEnvironment.LEGACY_FLINK_CONF_FILENAME;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -82,6 +85,104 @@ public class RemoteExecutionEnvironmentTest {
         assert conf.getConfData().get("key5").equals("v3");
         assert conf.getConfData().get("key6").equals(1.5);
         assert conf.getConfData().get("key7").equals(true);
+    }
+
+    @Test
+    void testLoadAgentConfigurationFromLegacyFile() throws FileNotFoundException {
+        try (final PrintWriter pw = new PrintWriter(new File(tmpDir, LEGACY_FLINK_CONF_FILENAME))) {
+            pw.println("taskmanager.numberOfTaskSlots: 2");
+            pw.println("agent.key1.key2: v1");
+            pw.println("agent.key4: 1");
+        }
+
+        AgentConfiguration conf =
+                RemoteExecutionEnvironment.loadAgentConfiguration(tmpDir.getAbsolutePath());
+
+        assertThat(conf.getConfData())
+                .hasSize(2)
+                .containsEntry("key1.key2", "v1")
+                .containsEntry("key4", 1);
+    }
+
+    @Test
+    void testLoadAgentConfigurationWithFlattenedKeys() throws FileNotFoundException {
+        try (final PrintWriter pw = new PrintWriter(new File(tmpDir, FLINK_CONF_FILENAME))) {
+            pw.println("agent:");
+            pw.println("    key1: v1");
+            pw.println("agent.key2: v2");
+        }
+
+        AgentConfiguration conf =
+                RemoteExecutionEnvironment.loadAgentConfiguration(tmpDir.getAbsolutePath());
+
+        assertThat(conf.getConfData())
+                .hasSize(2)
+                .containsEntry("key1", "v1")
+                .containsEntry("key2", "v2");
+    }
+
+    @Test
+    void testLoadAgentConfigurationPrefersConfigYamlOverLegacyFile() throws FileNotFoundException {
+        try (final PrintWriter pw = new PrintWriter(new File(tmpDir, FLINK_CONF_FILENAME))) {
+            pw.println("agent:");
+            pw.println("    key1: fromConfigYaml");
+        }
+        try (final PrintWriter pw = new PrintWriter(new File(tmpDir, LEGACY_FLINK_CONF_FILENAME))) {
+            pw.println("agent.key1: fromLegacy");
+        }
+
+        AgentConfiguration conf =
+                RemoteExecutionEnvironment.loadAgentConfiguration(tmpDir.getAbsolutePath());
+
+        assertThat(conf.getConfData()).containsOnly(entry("key1", "fromConfigYaml"));
+    }
+
+    @Test
+    void testLoadAgentConfigurationFromLegacyFileWithoutAgentOptions()
+            throws FileNotFoundException {
+        try (final PrintWriter pw = new PrintWriter(new File(tmpDir, LEGACY_FLINK_CONF_FILENAME))) {
+            pw.println("# Flink configuration as shipped by a distribution");
+            pw.println("jobmanager.rpc.address: localhost");
+            pw.println("taskmanager.memory.process.size: 1728m");
+            pw.println("taskmanager.numberOfTaskSlots: 1");
+            pw.println("env.java.opts.all: -XX:+UseG1GC -Dfoo=bar");
+            pw.println(
+                    "metrics.reporter.prom.factory.class: org.example.PrometheusReporterFactory");
+        }
+
+        AgentConfiguration conf =
+                RemoteExecutionEnvironment.loadAgentConfiguration(tmpDir.getAbsolutePath());
+
+        assertThat(conf.getConfData()).isEmpty();
+    }
+
+    @Test
+    void testLoadAgentConfigurationFromLegacyFileReadsTypedOptions() throws FileNotFoundException {
+        try (final PrintWriter pw = new PrintWriter(new File(tmpDir, LEGACY_FLINK_CONF_FILENAME))) {
+            pw.println("agent.trace-log.base-dir: /tmp/agent-traces");
+            pw.println("agent.trace-log.pretty-print: true");
+        }
+
+        AgentConfiguration conf =
+                RemoteExecutionEnvironment.loadAgentConfiguration(tmpDir.getAbsolutePath());
+
+        assertThat(conf.get(AgentConfigOptions.TRACE_LOG_OUTPUT_BASE_DIR))
+                .isEqualTo("/tmp/agent-traces");
+        assertThat(conf.get(AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT)).isTrue();
+    }
+
+    @Test
+    void testLoadAgentConfigurationFailIfLegacyFileUnparseable() throws FileNotFoundException {
+        try (final PrintWriter pw = new PrintWriter(new File(tmpDir, LEGACY_FLINK_CONF_FILENAME))) {
+            pw.println("agent.key1: [unclosed");
+        }
+
+        assertThatThrownBy(
+                        () ->
+                                RemoteExecutionEnvironment.loadAgentConfiguration(
+                                        tmpDir.getAbsolutePath()))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining(tmpDir.getAbsolutePath());
     }
 
     @Test

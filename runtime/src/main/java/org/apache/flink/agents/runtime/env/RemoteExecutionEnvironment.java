@@ -39,6 +39,8 @@ import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.types.Row;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
@@ -60,7 +62,13 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
 
     private final AgentConfiguration config;
 
+    private static final Logger LOG = LoggerFactory.getLogger(RemoteExecutionEnvironment.class);
+
     public static final String FLINK_CONF_FILENAME = "config.yaml";
+
+    public static final String LEGACY_FLINK_CONF_FILENAME = "flink-conf.yaml";
+
+    private static final String AGENT_CONFIG_PREFIX = "agent";
 
     public RemoteExecutionEnvironment(
             StreamExecutionEnvironment env, @Nullable StreamTableEnvironment tEnv) {
@@ -119,10 +127,34 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
             if (configDir == null) {
                 return new AgentConfiguration();
             }
-            final Map<String, Object> configData =
-                    (Map<String, Object>)
-                            YamlParserUtils.loadYamlFile(new File(configDir, FLINK_CONF_FILENAME))
-                                    .getOrDefault("agent", new HashMap<>());
+            File configFile = new File(configDir, FLINK_CONF_FILENAME);
+            if (!configFile.exists()) {
+                File legacyConfigFile = new File(configDir, LEGACY_FLINK_CONF_FILENAME);
+                if (legacyConfigFile.exists()) {
+                    LOG.warn(
+                            "{} not found in {}, using legacy config file {}",
+                            FLINK_CONF_FILENAME,
+                            configDir,
+                            LEGACY_FLINK_CONF_FILENAME);
+                    configFile = legacyConfigFile;
+                }
+            }
+
+            final Map<String, Object> yaml = YamlParserUtils.loadYamlFile(configFile);
+            final Map<String, Object> configData = new HashMap<>();
+            Object nested = yaml.get(AGENT_CONFIG_PREFIX);
+            if (nested instanceof Map) {
+                configData.putAll((Map<String, Object>) nested);
+            }
+            // The legacy format, and flattened keys in config.yaml, carry agent options as
+            // top-level "agent.<key>" entries rather than a nested "agent" map.
+            String flatPrefix = AGENT_CONFIG_PREFIX + ".";
+            yaml.forEach(
+                    (key, value) -> {
+                        if (key.startsWith(flatPrefix)) {
+                            configData.put(key.substring(flatPrefix.length()), value);
+                        }
+                    });
 
             return new AgentConfiguration(configData);
         } catch (Exception e) {
