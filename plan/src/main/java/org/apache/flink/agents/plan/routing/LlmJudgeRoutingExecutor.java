@@ -195,9 +195,10 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
      * The rendering anchor is the router's default candidate (or the first candidate) — where
      * abstains resolve, and in practice the workload-level prompt shared by the candidates. If the
      * anchor can't be resolved or binds no prompt, the raw message list is used unchanged.
+     * Cancellation and interruption are not failures of the anchor: they propagate.
      */
-    private static List<ChatMessage> effectiveJudgeMessages(
-            RoutingContext context, RunnerContext ctx) {
+    static List<ChatMessage> effectiveJudgeMessages(RoutingContext context, RunnerContext ctx)
+            throws Exception {
         List<ChatMessage> messages = context.getMessages();
         String anchor =
                 context.getDefaultModel().orElseGet(() -> context.getCandidates().get(0).getName());
@@ -210,6 +211,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
             // candidate, where abstains resolve) is a documented approximation.
             return setup.prepareRequestMessages(messages, context.getPromptArgs());
         } catch (Exception unresolvable) {
+            CancellationUtils.rethrowIfCancellation(unresolvable);
             // An unresolvable candidate surfaces on the real chat path with its normal policy.
             return messages;
         }
@@ -221,7 +223,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
      * identified by object identity, since {@code prepareRequestMessages} appends the original
      * message instances unchanged. They carry the task definition, so the context cap pins them.
      */
-    private static Set<Integer> pinnedRenderedIndices(
+    static Set<Integer> pinnedRenderedIndices(
             List<ChatMessage> original, List<ChatMessage> effective) {
         if (effective == original) {
             return Set.of();
@@ -246,7 +248,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
         return (String) strategy.getArguments().get(RoutingStrategy.ARG_PROMPT_TEMPLATE);
     }
 
-    private static int maxContextChars(RoutingStrategy strategy) {
+    static int maxContextChars(RoutingStrategy strategy) {
         Object cap = strategy.getArguments().get(RoutingStrategy.ARG_MAX_CONTEXT_CHARS);
         return cap instanceof Number ? ((Number) cap).intValue() : Integer.MAX_VALUE;
     }
@@ -338,7 +340,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
      * remaining messages fill newest-first, and dropped messages set {@code truncatedOut[0]}.
      * Without a cap this returns the input unchanged.
      */
-    private static List<ChatMessage> selectWithinBudget(
+    static List<ChatMessage> selectWithinBudget(
             List<ChatMessage> messages,
             int maxChars,
             Set<Integer> pinnedIndices,
@@ -421,7 +423,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
      * executable calls to the judge. Reasoning and provider continuation metadata are not
      * forwarded.
      */
-    private static List<DataContentBlock> judgeContent(ChatMessage message) {
+    static List<DataContentBlock> judgeContent(ChatMessage message) {
         List<DataContentBlock> content = new ArrayList<>();
         for (ContentBlock block : message.getBlocks()) {
             if (block instanceof TextBlock) {

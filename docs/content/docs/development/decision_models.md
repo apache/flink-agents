@@ -37,7 +37,9 @@ registered connection by name and a model.
 
 Call a model directly when the same Action will use its answers. Use
 [event-driven calls](#event-driven-calls) when you want the built-in Action to
-manage durable execution, retries, and execution reports.
+manage durable execution, retries, and execution reports. A decision model can also
+select the chat model for a routed request; see
+[Model Routing]({{< ref "docs/development/calling-llms/model_routing#decision-model" >}}).
 
 ## Direct Python call
 

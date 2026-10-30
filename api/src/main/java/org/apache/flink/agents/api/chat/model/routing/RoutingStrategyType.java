@@ -34,6 +34,13 @@ public enum RoutingStrategyType {
      */
     LLM_JUDGE,
 
+    /**
+     * Framework-managed decision-model routing: the engine asks a {@code DECISION_MODEL} resource
+     * one choice question over the candidates and routes on the returned choice and its
+     * probability.
+     */
+    DECISION_MODEL,
+
     /** A user-provided {@link CustomRoutingExecutor} referenced by class name. */
     CUSTOM;
 
