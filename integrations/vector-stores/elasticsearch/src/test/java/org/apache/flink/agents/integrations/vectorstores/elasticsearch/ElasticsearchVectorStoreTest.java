@@ -20,9 +20,9 @@ package org.apache.flink.agents.integrations.vectorstores.elasticsearch;
 
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.Resource;
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
@@ -77,7 +77,8 @@ public class ElasticsearchVectorStoreTest {
         store =
                 new ElasticsearchVectorStore(
                         builder.build(),
-                        ResourceContext.fromGetResource(ElasticsearchVectorStoreTest::getResource));
+                        TestResourceContexts.fromGetResource(
+                                ElasticsearchVectorStoreTest::getResource));
         store.open();
     }
 
@@ -330,7 +331,8 @@ public class ElasticsearchVectorStoreTest {
         BaseVectorStore kStore =
                 new ElasticsearchVectorStore(
                         descriptor,
-                        ResourceContext.fromGetResource(ElasticsearchVectorStoreTest::getResource));
+                        TestResourceContexts.fromGetResource(
+                                ElasticsearchVectorStoreTest::getResource));
         kStore.open();
         return kStore;
     }

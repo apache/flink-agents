@@ -22,7 +22,6 @@ import org.apache.flink.agents.api.skills.SkillSourceSpec;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.function.BiFunction;
 
 /**
  * Capabilities available to a {@link Resource} during execution.
@@ -61,33 +60,5 @@ public interface ResourceContext {
     default List<String> resolveSkillNamesForSources(List<SkillSourceSpec> sources)
             throws Exception {
         return Collections.emptyList();
-    }
-
-    /**
-     * Create a {@link ResourceContext} backed by the given resource lookup function. The skill
-     * methods return empty defaults — convenient for tests or for runtimes without skills support.
-     */
-    static ResourceContext fromGetResource(BiFunction<String, ResourceType, Resource> getResource) {
-        return new ResourceContext() {
-            @Override
-            public Resource getResource(String name, ResourceType type) {
-                return getResource.apply(name, type);
-            }
-
-            @Override
-            public String generateAvailableSkillsPrompt(List<String> skillNames) {
-                return "";
-            }
-
-            @Override
-            public List<String> getSkillDirs(List<String> skillNames) {
-                return Collections.emptyList();
-            }
-
-            @Override
-            public List<String> resolveSkillNamesForSources(List<SkillSourceSpec> sources) {
-                return Collections.emptyList();
-            }
-        };
     }
 }

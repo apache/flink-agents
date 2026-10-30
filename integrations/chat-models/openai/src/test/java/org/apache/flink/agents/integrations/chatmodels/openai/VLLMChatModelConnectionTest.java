@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -38,7 +39,8 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  */
 class VLLMChatModelConnectionTest {
 
-    private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
+    private static final ResourceContext NOOP =
+            TestResourceContexts.fromGetResource((a, b) -> null);
 
     private static ResourceDescriptor.Builder connectionDescriptor() {
         return ResourceDescriptor.Builder.newBuilder(VLLMChatModelConnection.class.getName());

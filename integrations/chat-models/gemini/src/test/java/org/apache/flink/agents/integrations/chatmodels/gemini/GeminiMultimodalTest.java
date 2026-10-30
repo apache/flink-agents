@@ -30,8 +30,8 @@ import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.messages.VideoBlock;
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -167,7 +167,7 @@ class GeminiMultimodalTest {
                         .build();
         GeminiChatModelConnection connection =
                 new GeminiChatModelConnection(
-                        descriptor, ResourceContext.fromGetResource((a, b) -> null));
+                        descriptor, TestResourceContexts.fromGetResource((a, b) -> null));
         ChatMessage assistant =
                 ChatMessage.assistant(
                         List.of(TextBlock.of("hi"), AudioBlock.fromBase64("audio/wav", BASE64)));

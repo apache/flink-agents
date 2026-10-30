@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
@@ -326,8 +327,6 @@ class AgentPlanDeclareSkillsTest {
                 plan.getResourceProviders().get(ResourceType.SKILLS).get(Skills.SKILLS_CONFIG);
         return (Skills)
                 ((JavaSerializableResourceProvider) configProvider)
-                        .provide(
-                                org.apache.flink.agents.api.resource.ResourceContext
-                                        .fromGetResource((n, t) -> null));
+                        .provide(TestResourceContexts.fromGetResource((n, t) -> null));
     }
 }

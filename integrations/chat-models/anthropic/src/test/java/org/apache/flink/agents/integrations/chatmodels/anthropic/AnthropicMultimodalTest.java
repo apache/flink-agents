@@ -32,8 +32,8 @@ import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.messages.VideoBlock;
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -67,7 +67,7 @@ class AnthropicMultimodalTest {
                         .addInitialArgument("model", "claude-sonnet-4-20250514")
                         .build();
         return new AnthropicChatModelConnection(
-                descriptor, ResourceContext.fromGetResource((a, b) -> null));
+                descriptor, TestResourceContexts.fromGetResource((a, b) -> null));
     }
 
     private static Map<String, Object> params() {

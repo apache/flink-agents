@@ -29,8 +29,8 @@ import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.Resource;
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
@@ -123,7 +123,7 @@ class AgentPlanDeclareToolMethodTest {
                 .get(type)
                 .get(name)
                 .provide(
-                        ResourceContext.fromGetResource(
+                        TestResourceContexts.fromGetResource(
                                 (n, t) -> {
                                     throw new UnsupportedOperationException(
                                             "No dependencies expected");
@@ -148,7 +148,7 @@ class AgentPlanDeclareToolMethodTest {
                                 .get(ResourceType.TOOL)
                                 .get("calculate")
                                 .provide(
-                                        ResourceContext.fromGetResource(
+                                        TestResourceContexts.fromGetResource(
                                                 (n, t) -> {
                                                     throw new UnsupportedOperationException(
                                                             "No dependencies expected");
@@ -170,7 +170,7 @@ class AgentPlanDeclareToolMethodTest {
                                 .get(ResourceType.TOOL)
                                 .get("getWeather")
                                 .provide(
-                                        ResourceContext.fromGetResource(
+                                        TestResourceContexts.fromGetResource(
                                                 (n, t) -> {
                                                     throw new UnsupportedOperationException(
                                                             "No dependencies expected");
@@ -252,7 +252,7 @@ class AgentPlanDeclareToolMethodTest {
                                 .get(ResourceType.TOOL)
                                 .get("getWeather")
                                 .provide(
-                                        ResourceContext.fromGetResource(
+                                        TestResourceContexts.fromGetResource(
                                                 (n, t) -> {
                                                     throw new UnsupportedOperationException(
                                                             "No dependencies expected");
@@ -283,7 +283,7 @@ class AgentPlanDeclareToolMethodTest {
                                 .get(ResourceType.TOOL)
                                 .get("queryOrder")
                                 .provide(
-                                        ResourceContext.fromGetResource(
+                                        TestResourceContexts.fromGetResource(
                                                 (n, t) -> {
                                                     throw new UnsupportedOperationException(
                                                             "No dependencies expected");
@@ -318,7 +318,7 @@ class AgentPlanDeclareToolMethodTest {
                                 .get(ResourceType.TOOL)
                                 .get("queryOrder")
                                 .provide(
-                                        ResourceContext.fromGetResource(
+                                        TestResourceContexts.fromGetResource(
                                                 (n, t) -> {
                                                     throw new UnsupportedOperationException(
                                                             "No dependencies expected");
@@ -378,7 +378,7 @@ class AgentPlanDeclareToolMethodTest {
                                 .get(ResourceType.TOOL)
                                 .get("getWeather")
                                 .provide(
-                                        ResourceContext.fromGetResource(
+                                        TestResourceContexts.fromGetResource(
                                                 (n, t) -> {
                                                     throw new UnsupportedOperationException(
                                                             "No dependencies expected");
@@ -473,7 +473,7 @@ class AgentPlanDeclareToolMethodTest {
                                 .get(ResourceType.TOOL)
                                 .get("calculate")
                                 .provide(
-                                        ResourceContext.fromGetResource(
+                                        TestResourceContexts.fromGetResource(
                                                 (n, t) -> {
                                                     throw new UnsupportedOperationException(
                                                             "No dependencies expected");

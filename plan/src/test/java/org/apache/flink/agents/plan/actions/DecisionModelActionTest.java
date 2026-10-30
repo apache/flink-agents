@@ -30,9 +30,9 @@ import org.apache.flink.agents.api.decision.DecisionResult;
 import org.apache.flink.agents.api.event.DecisionRequestEvent;
 import org.apache.flink.agents.api.event.DecisionResponseEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.plan.resource.python.PythonDecisionModelConnection;
 import org.apache.flink.agents.plan.resource.python.PythonDecisionModelSetup;
@@ -475,7 +475,7 @@ class DecisionModelActionTest {
             model =
                     new BaseDecisionModelSetup(
                             descriptor,
-                            ResourceContext.fromGetResource((name, type) -> connection));
+                            TestResourceContexts.fromGetResource((name, type) -> connection));
         } else {
             model = new PythonDecisionModelSetup(adapter, pythonResource, descriptor, null);
         }

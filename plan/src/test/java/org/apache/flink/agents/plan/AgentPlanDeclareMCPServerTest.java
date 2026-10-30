@@ -26,10 +26,10 @@ import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.integrations.mcp.MCPPrompt;
@@ -193,7 +193,7 @@ class AgentPlanDeclareMCPServerTest {
                 .get(type)
                 .get(name)
                 .provide(
-                        ResourceContext.fromGetResource(
+                        TestResourceContexts.fromGetResource(
                                 (n, t) -> {
                                     throw new UnsupportedOperationException(
                                             "No dependencies expected");

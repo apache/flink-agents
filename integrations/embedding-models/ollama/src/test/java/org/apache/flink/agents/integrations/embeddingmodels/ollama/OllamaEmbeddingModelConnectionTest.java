@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -39,7 +40,8 @@ class OllamaEmbeddingModelConnectionTest {
                 .build();
     }
 
-    private static ResourceContext dummyResource = ResourceContext.fromGetResource((a, b) -> null);
+    private static ResourceContext dummyResource =
+            TestResourceContexts.fromGetResource((a, b) -> null);
 
     @Test
     @DisplayName("Create OllamaEmbeddingModelConnection and check embed method")

@@ -19,7 +19,7 @@
 package org.apache.flink.agents.integration.test;
 
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
-import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.integrations.vectorstores.pgvector.PgVectorVectorStore;
 import org.apache.flink.api.java.functions.KeySelector;
@@ -129,7 +129,7 @@ public class VectorStoreIntegrationTest {
             store =
                     new PgVectorVectorStore(
                             VectorStoreIntegrationAgent.vectorStore(),
-                            ResourceContext.fromGetResource((name, type) -> null));
+                            TestResourceContexts.fromGetResource((name, type) -> null));
             store.createCollectionIfNotExists(table, Map.of());
             store.addEmbedding(
                     pgVectorSeed(Integer.parseInt(envOr("PGVECTOR_DIMS", "768"))), table, Map.of());

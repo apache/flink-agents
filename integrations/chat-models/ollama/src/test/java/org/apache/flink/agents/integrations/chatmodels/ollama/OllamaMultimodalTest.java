@@ -34,8 +34,8 @@ import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.messages.VideoBlock;
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -61,7 +61,7 @@ class OllamaMultimodalTest {
                         .addInitialArgument("endpoint", "http://localhost:11434")
                         .build();
         return new OllamaChatModelConnection(
-                        descriptor, ResourceContext.fromGetResource((a, b) -> null))
+                        descriptor, TestResourceContexts.fromGetResource((a, b) -> null))
                 .buildRequest(List.of(message), List.of(), Map.of("model", "llava"), null);
     }
 
@@ -180,7 +180,7 @@ class OllamaMultimodalTest {
                         .addInitialArgument("endpoint", "http://localhost:11434")
                         .build();
         return new OllamaChatModelConnection(
-                        descriptor, ResourceContext.fromGetResource((a, b) -> null))
+                        descriptor, TestResourceContexts.fromGetResource((a, b) -> null))
                 .chat(List.of(message), List.of(), Map.of("model", "llava"));
     }
 }

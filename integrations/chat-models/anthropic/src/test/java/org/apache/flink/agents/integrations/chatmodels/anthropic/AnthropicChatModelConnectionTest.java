@@ -42,6 +42,7 @@ import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
@@ -78,7 +79,8 @@ import static org.assertj.core.api.InstanceOfAssertFactories.STRING;
  */
 class AnthropicChatModelConnectionTest {
 
-    private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
+    private static final ResourceContext NOOP =
+            TestResourceContexts.fromGetResource((a, b) -> null);
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 

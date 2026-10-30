@@ -33,6 +33,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
@@ -52,7 +53,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** Tests for {@link MilvusVectorStore}. */
 public class MilvusVectorStoreTest {
 
-    private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
+    private static final ResourceContext NOOP =
+            TestResourceContexts.fromGetResource((a, b) -> null);
 
     @Test
     void testConstructorAndStoreKwargs() {
@@ -141,7 +143,8 @@ public class MilvusVectorStoreTest {
                         .build();
         MilvusVectorStore store =
                 new MilvusVectorStore(
-                        desc, ResourceContext.fromGetResource(MilvusVectorStoreTest::getResource));
+                        desc,
+                        TestResourceContexts.fromGetResource(MilvusVectorStoreTest::getResource));
         store.open();
         MilvusClientV2 client =
                 new MilvusClientV2(
@@ -571,7 +574,7 @@ public class MilvusVectorStoreTest {
         MilvusVectorStore store =
                 new MilvusVectorStore(
                         descriptor(collection),
-                        ResourceContext.fromGetResource(MilvusVectorStoreTest::getResource));
+                        TestResourceContexts.fromGetResource(MilvusVectorStoreTest::getResource));
         store.open();
         return store;
     }

@@ -18,8 +18,8 @@
 
 package org.apache.flink.agents.plan.tools.bash;
 
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.junit.jupiter.api.Test;
@@ -41,7 +41,7 @@ class BashToolTest {
     private static BashTool tool() {
         return new BashTool(
                 new ResourceDescriptor(BashTool.class.getName(), Map.of()),
-                ResourceContext.fromGetResource((n, t) -> null));
+                TestResourceContexts.fromGetResource((n, t) -> null));
     }
 
     private static ToolParameters args(

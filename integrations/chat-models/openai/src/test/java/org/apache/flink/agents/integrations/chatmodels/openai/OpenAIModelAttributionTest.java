@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -77,7 +78,7 @@ class OpenAIModelAttributionTest {
                             .addInitialArgument("api_base_url", endpoint.baseUrl())
                             .addInitialArgument("model", DEFAULT_MODEL)
                             .build();
-            ResourceContext context = ResourceContext.fromGetResource((a, b) -> null);
+            ResourceContext context = TestResourceContexts.fromGetResource((a, b) -> null);
             OpenAICompletionsConnection connection =
                     vllm
                             ? new VLLMChatModelConnection(descriptor, context)

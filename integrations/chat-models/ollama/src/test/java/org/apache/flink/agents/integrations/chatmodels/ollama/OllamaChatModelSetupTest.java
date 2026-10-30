@@ -20,6 +20,7 @@ package org.apache.flink.agents.integrations.chatmodels.ollama;
 
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -30,7 +31,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** Tests for {@link OllamaChatModelSetup}. */
 class OllamaChatModelSetupTest {
 
-    private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
+    private static final ResourceContext NOOP =
+            TestResourceContexts.fromGetResource((a, b) -> null);
 
     @Test
     void getModel_returnsValueFromDescriptor() {

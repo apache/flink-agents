@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
@@ -55,7 +56,8 @@ import static org.assertj.core.api.Assertions.within;
  */
 public class PgVectorVectorStoreTest {
 
-    private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
+    private static final ResourceContext NOOP =
+            TestResourceContexts.fromGetResource((a, b) -> null);
     private static final String LIVE = "PGVECTOR_URI";
 
     @Test
@@ -1151,14 +1153,14 @@ public class PgVectorVectorStoreTest {
     private static PgVectorVectorStore openForcedIndexStore(String collection) throws Exception {
         return new PgVectorVectorStore(
                 descriptor(collection, forcedIndexUri()),
-                ResourceContext.fromGetResource(PgVectorVectorStoreTest::getResource));
+                TestResourceContexts.fromGetResource(PgVectorVectorStoreTest::getResource));
     }
 
     private static PgVectorVectorStore openStore(String collection) throws Exception {
         PgVectorVectorStore store =
                 new PgVectorVectorStore(
                         descriptor(collection),
-                        ResourceContext.fromGetResource(PgVectorVectorStoreTest::getResource));
+                        TestResourceContexts.fromGetResource(PgVectorVectorStoreTest::getResource));
         store.open();
         return store;
     }

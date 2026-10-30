@@ -25,8 +25,8 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.context.RunnerContext;
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.plan.AgentPlan;
@@ -195,7 +195,8 @@ public class AgentPlanJsonDeserializerTest {
         ResourceProvider provider =
                 agentPlan.getResourceProviders().get(ResourceType.TOOL).get("query_order");
         FunctionTool deserializedTool =
-                (FunctionTool) provider.provide(ResourceContext.fromGetResource((n, t) -> null));
+                (FunctionTool)
+                        provider.provide(TestResourceContexts.fromGetResource((n, t) -> null));
         assertEquals(
                 Map.of("tenant_id", ToolParameterInjection.fromSensoryMemory("request.tenant_id")),
                 deserializedTool.getInjectedArgs());

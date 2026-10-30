@@ -31,6 +31,7 @@ import org.apache.flink.agents.api.decision.DecisionResult.PredicateAnswer;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -105,7 +106,7 @@ public class AgentPlanDeclareDecisionModelTest {
                                 .get("connection")
                                 .provide(null);
         ResourceContext context =
-                ResourceContext.fromGetResource(
+                TestResourceContexts.fromGetResource(
                         (name, type) -> {
                             assertThat(name).isEqualTo("connection");
                             assertThat(type).isEqualTo(ResourceType.DECISION_MODEL_CONNECTION);

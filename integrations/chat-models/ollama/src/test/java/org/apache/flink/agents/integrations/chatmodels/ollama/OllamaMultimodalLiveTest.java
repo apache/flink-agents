@@ -22,8 +22,8 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -73,7 +73,7 @@ class OllamaMultimodalLiveTest {
                         .build();
         OllamaChatModelConnection connection =
                 new OllamaChatModelConnection(
-                        descriptor, ResourceContext.fromGetResource((name, type) -> null));
+                        descriptor, TestResourceContexts.fromGetResource((name, type) -> null));
         Map<String, Object> params = new HashMap<>();
         params.put("model", MODEL);
         // Not every vision model supports thinking (qwen2.5vl does not).

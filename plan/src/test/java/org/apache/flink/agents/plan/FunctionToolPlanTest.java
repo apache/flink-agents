@@ -26,8 +26,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameters;
@@ -105,7 +105,7 @@ class FunctionToolPlanTest {
                                 .get(ResourceType.TOOL)
                                 .get("javaTool")
                                 .provide(
-                                        ResourceContext.fromGetResource(
+                                        TestResourceContexts.fromGetResource(
                                                 (n, t) -> {
                                                     throw new UnsupportedOperationException(
                                                             "No dependencies expected");
@@ -127,7 +127,7 @@ class FunctionToolPlanTest {
                                 .get(ResourceType.TOOL)
                                 .get("pyTool")
                                 .provide(
-                                        ResourceContext.fromGetResource(
+                                        TestResourceContexts.fromGetResource(
                                                 (n, t) -> {
                                                     throw new UnsupportedOperationException(
                                                             "No dependencies expected");

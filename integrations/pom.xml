@@ -42,6 +42,17 @@ under the License.
         <opentelemetry.version>1.51.0</opentelemetry.version>
     </properties>
 
+    <dependencies>
+        <!-- Shared fixtures from the API module are available only to integration tests. -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-api</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
     <modules>
         <module>chat-models</module>
         <module>embedding-models</module>

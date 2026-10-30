@@ -18,8 +18,8 @@
 
 package org.apache.flink.agents.integrations.vectorstores.elasticsearch;
 
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -45,7 +45,7 @@ class ElasticsearchVectorStoreKNumCandidatesTest {
                         .addInitialArgument("num_candidates", numCandidates)
                         .build();
         return new ElasticsearchVectorStore(
-                descriptor, ResourceContext.fromGetResource((name, type) -> null));
+                descriptor, TestResourceContexts.fromGetResource((name, type) -> null));
     }
 
     @Test
