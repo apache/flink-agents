@@ -240,6 +240,12 @@ jobs:
         run: bash tools/build.sh
       - name: Install ollama
         run: bash tools/start_ollama_server.sh
+      - name: Apply PyArrow shutdown workaround for Flink 1.20
+        if: matrix.flink-version == '1.20'
+        run: |
+          # ut.sh reuses these dependencies; patch the shared wheel for pytest and workers.
+          uv pip install --python python/.venv/bin/python 'apache-flink~=${{ matrix.flink-version }}.0'
+          python/.venv/bin/python tools/ci/patch_pyarrow11.py
       - name: Run Python IT
         env:
           ACTION_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
