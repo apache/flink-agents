@@ -47,6 +47,7 @@ import org.apache.fluss.types.DataTypes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -246,6 +247,17 @@ public class FlussActionStateStore implements ActionStateStore {
     public ActionState get(Object key, long seqNum, Action action, Event event) throws Exception {
         String stateKey = keyEncoder.generateKey(key, seqNum, action, event);
         return actionStates.lookup(stateKey, event, ignored -> {});
+    }
+
+    @Override
+    public String generateBusinessKeyIdentity(Object key) {
+        return keyEncoder.generateBusinessKeyIdentity(key);
+    }
+
+    @Override
+    public String generateActionExecutionId(Object key, long seqNum, Action action, Event event)
+            throws IOException {
+        return keyEncoder.generateKey(key, seqNum, action, event);
     }
 
     /**

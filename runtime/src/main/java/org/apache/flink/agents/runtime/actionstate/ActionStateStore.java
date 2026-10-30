@@ -70,6 +70,30 @@ public interface ActionStateStore extends AutoCloseable {
     ActionState get(Object key, long seqNum, Action action, Event event) throws Exception;
 
     /**
+     * Returns the business-key identity segment this store's key encoder would embed in a composite
+     * action-state key for {@code key}. Used by the runtime to derive a replay-stable occurrence
+     * identity for root events (FLINK-AGENTS-1084); unrelated to storing or retrieving state.
+     *
+     * @param key the key associated with the message
+     */
+    String generateBusinessKeyIdentity(Object key);
+
+    /**
+     * Returns the full composite action-state key this store's key encoder would use for {@code
+     * (key, seqNum, action, event)} — the deterministic identity of one action execution. Used by
+     * the runtime to derive occurrence identities for that execution's output events
+     * (FLINK-AGENTS-1084); unrelated to storing or retrieving state.
+     *
+     * @param key the key associated with the message
+     * @param seqNum the sequence number of the key
+     * @param action the action the agent is taking
+     * @param event the event that triggered the action
+     * @throws IOException when key generation failed
+     */
+    String generateActionExecutionId(Object key, long seqNum, Action action, Event event)
+            throws IOException;
+
+    /**
      * Rebuild the in-memory state from the backend storage using the provided recovery markers.
      *
      * @param recoveryMarkers a list of markers representing the recovery points

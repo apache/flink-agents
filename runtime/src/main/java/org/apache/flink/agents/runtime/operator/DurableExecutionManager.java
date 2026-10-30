@@ -225,6 +225,30 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
         }
     }
 
+    /**
+     * Returns the business-key identity segment the durable store's key encoder would embed for
+     * {@code key}, or {@code null} when durable execution is disabled. Used to derive a
+     * replay-stable occurrence identity for root events (FLINK-AGENTS-1084).
+     */
+    @Nullable
+    String generateBusinessKeyIdentity(Object key) {
+        return actionStateStore == null ? null : actionStateStore.generateBusinessKeyIdentity(key);
+    }
+
+    /**
+     * Returns the full composite action-state key the durable store's key encoder would use for
+     * {@code (key, seqNum, action, event)} — the deterministic identity of one action execution —
+     * or {@code null} when durable execution is disabled. Used to derive occurrence identities for
+     * that execution's output events (FLINK-AGENTS-1084).
+     */
+    @Nullable
+    String generateActionExecutionId(Object key, long seqNum, Action action, Event event)
+            throws Exception {
+        return actionStateStore == null
+                ? null
+                : actionStateStore.generateActionExecutionId(key, seqNum, action, event);
+    }
+
     @Nullable
     ActionState maybeGetActionState(Object key, long sequenceNum, Action action, Event event)
             throws Exception {

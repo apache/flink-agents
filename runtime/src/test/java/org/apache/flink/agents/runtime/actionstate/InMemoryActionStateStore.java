@@ -71,6 +71,17 @@ public class InMemoryActionStateStore implements ActionStateStore {
     }
 
     @Override
+    public String generateBusinessKeyIdentity(Object key) {
+        return keyEncoder.generateBusinessKeyIdentity(key);
+    }
+
+    @Override
+    public String generateActionExecutionId(Object key, long seqNum, Action action, Event event)
+            throws IOException {
+        return keyEncoder.generateKey(key, seqNum, action, event);
+    }
+
+    @Override
     public void rebuildState(List<Object> recoveryMarker) {
         // No-op for in-memory store as it does not persist state;
     }

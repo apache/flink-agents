@@ -342,8 +342,62 @@ public final class ActionStateUtil {
     }
 
     private static String generateUUIDForEvent(Event event) throws IOException {
-        return String.valueOf(
-                UUID.nameUUIDFromBytes(MAPPER.writeValueAsBytes(event.getAttributes())));
+        byte[] attributesBytes = MAPPER.writeValueAsBytes(event.getAttributes());
+        String occurrenceId = event.getOccurrenceId();
+        if (occurrenceId == null) {
+            // Legacy fallback for events the runtime has not assigned an occurrence identity to
+            // (for example, state written before this fix by an older version). Distinct
+            // occurrences with identical attributes still collide here; this path exists only for
+            // mixed-version recovery continuity, not as the steady-state behavior.
+            return String.valueOf(UUID.nameUUIDFromBytes(attributesBytes));
+        }
+        // Folds the lineage-based occurrence identity (FLINK-AGENTS-1084) together with the
+        // existing attributes hash, rather than replacing it: attributes must stay in the key so
+        // the content-based replay-divergence protection this already provides (a later restore
+        // with a changed input must not reuse a cached result from the other input's history) is
+        // unchanged, while the occurrence identity additionally distinguishes sibling occurrences
+        // that carry identical attributes, which attributes alone cannot. Folded through
+        // nameUUIDFromBytes so the composite key's fixed five-segment, 36-char-UUID format is
+        // unchanged; no key-format migration is needed.
+        byte[] occurrenceBytes = occurrenceId.getBytes(StandardCharsets.UTF_8);
+        byte[] combined = new byte[occurrenceBytes.length + 1 + attributesBytes.length];
+        System.arraycopy(occurrenceBytes, 0, combined, 0, occurrenceBytes.length);
+        combined[occurrenceBytes.length] = '#';
+        System.arraycopy(
+                attributesBytes, 0, combined, occurrenceBytes.length + 1, attributesBytes.length);
+        return String.valueOf(UUID.nameUUIDFromBytes(combined));
+    }
+
+    /**
+     * Derives the replay-stable occurrence identity of a root (input) event from its business-key
+     * identity and sequence number. Stable across replay of the same logical input: a replayed
+     * {@code InputEvent} gets a fresh random {@link Event#getId()} but the same business key and
+     * sequence number, so it derives the same occurrence identity.
+     */
+    public static String deriveRootEventOccurrenceId(String businessKeyIdentity, long seqNum) {
+        Preconditions.checkNotNull(businessKeyIdentity, "businessKeyIdentity cannot be null.");
+        return sha256Base64(
+                (businessKeyIdentity + KEY_SEPARATOR + seqNum).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Derives the occurrence identity of one of an action execution's output events from that
+     * execution's own action-execution identity (its composite action-state key, which already
+     * folds in its own triggering event's occurrence identity and the action's identity) and the
+     * event's 0-based position among that execution's emitted outputs. Two sibling output events
+     * with identical attributes get distinct identities because their ordinals differ; the same
+     * event re-derived during a deterministic replay gets the same identity because the producing
+     * execution's identity and the emission order are themselves replay-stable.
+     */
+    public static String deriveOutputEventOccurrenceId(
+            String producerActionExecutionId, int outputOrdinal) {
+        Preconditions.checkNotNull(
+                producerActionExecutionId, "producerActionExecutionId cannot be null.");
+        Preconditions.checkArgument(
+                outputOrdinal >= 0, "outputOrdinal must be nonnegative but was %s.", outputOrdinal);
+        return sha256Base64(
+                (producerActionExecutionId + KEY_SEPARATOR + outputOrdinal)
+                        .getBytes(StandardCharsets.UTF_8));
     }
 
     private static String generateUUIDForAction(Action action) throws IOException {

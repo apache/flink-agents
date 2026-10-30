@@ -165,6 +165,14 @@ public class KafkaActionStateStoreRecoveryTest {
             harness.getOutput().clear();
 
             InputEvent inputEvent = new InputEvent(7L);
+            // The real pipeline assigns a root occurrence identity (businessKeyIdentity#seqNum)
+            // to every InputEvent before it reaches the durable store (FLINK-AGENTS-1084); this
+            // fixture fabricates pending state directly, bypassing that assignment, so it must
+            // assign the same identity itself or the key this computes below would not match the
+            // key the operator computes for its own InputEvent(7L) on the same (key=1L, seqNum=1).
+            inputEvent.setOccurrenceId(
+                    ActionStateUtil.deriveRootEventOccurrenceId(
+                            createKeyEncoder(MAX_PARALLELISM).generateBusinessKeyIdentity(1L), 1L));
             ActionState pendingState = new ActionState(inputEvent);
             pendingState.addCallResult(
                     new CallResult("multiply", OBJECT_MAPPER.writeValueAsBytes(callExternal(7L))));
