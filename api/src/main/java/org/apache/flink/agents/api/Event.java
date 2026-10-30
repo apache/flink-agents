@@ -60,6 +60,17 @@ public class Event {
      */
     private Long sourceTimestamp;
 
+    /**
+     * Runtime-internal lineage identity for this specific event occurrence. Not part of the
+     * cross-language event contract and not {@link #id}: {@link #id} is a fresh random value on
+     * every construction (including on replay of the same logical input), while this field is
+     * assigned deterministically by the runtime from the occurrence's position in the causal tree
+     * (business key and sequence number for a root event; producing action execution plus output
+     * ordinal for an action's output event). It lets durable action-state keys distinguish sibling
+     * event occurrences that carry identical attributes. See FLINK-AGENTS issue #1084.
+     */
+    private String occurrenceId;
+
     /** Unified event with user-defined type and attributes. */
     public Event(String type, Map<String, Object> attributes) {
         this(UUID.randomUUID(), type, attributes, new HashMap<>());
@@ -156,6 +167,22 @@ public class Event {
         this.sourceTimestamp = timestamp;
     }
 
+    /** Returns this occurrence's runtime-assigned lineage identity, or {@code null} if unset. */
+    @JsonIgnore
+    public String getOccurrenceId() {
+        return occurrenceId;
+    }
+
+    /**
+     * Assigns this occurrence's runtime-internal lineage identity. Called by the runtime once, at
+     * the point the occurrence is created (root event ingestion or action-output emission); not a
+     * user-facing API.
+     */
+    @JsonIgnore
+    public void setOccurrenceId(String occurrenceId) {
+        this.occurrenceId = occurrenceId;
+    }
+
     /**
      * Creates a base Event from another Event, copying its identity, data, attachments, and
      * framework metadata. Subclasses override this to reconstruct typed event objects with proper
@@ -188,6 +215,7 @@ public class Event {
         reconstructedEvent.attachments.clear();
         reconstructedEvent.attachments.putAll(source.attachments);
         reconstructedEvent.sourceTimestamp = source.sourceTimestamp;
+        reconstructedEvent.occurrenceId = source.occurrenceId;
         return reconstructed;
     }
 

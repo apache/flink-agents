@@ -37,6 +37,7 @@ import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
+import org.apache.flink.agents.runtime.actionstate.ActionStateUtil;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -616,6 +617,44 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
     }
 
+    /**
+     * Assigns a root (input) event's replay-stable occurrence identity, derived from its business
+     * key and sequence number. No-op when durable execution is disabled, since nothing keys action
+     * state on it in that case. See FLINK-AGENTS-1084.
+     */
+    private void assignRootOccurrenceId(Object key, Event event) throws Exception {
+        String businessKeyIdentity = durableExecManager.generateBusinessKeyIdentity(key);
+        if (businessKeyIdentity != null) {
+            event.setOccurrenceId(
+                    ActionStateUtil.deriveRootEventOccurrenceId(
+                            businessKeyIdentity, stateManager.getSequenceNumber()));
+        }
+    }
+
+    /**
+     * Assigns each of an action execution's output events its lineage-based occurrence identity
+     * before dispatch, so that distinct event occurrences with identical attributes never collide
+     * in the durable action-state key. No-op when durable execution is disabled. See
+     * FLINK-AGENTS-1084.
+     */
+    private void assignOutputOccurrenceIds(
+            Object key, long sequenceNumber, ActionTask actionTask, List<Event> outputEvents)
+            throws Exception {
+        String producerExecutionId =
+                durableExecManager.generateActionExecutionId(
+                        key, sequenceNumber, actionTask.action, actionTask.event);
+        if (producerExecutionId == null) {
+            return;
+        }
+        for (int ordinal = 0; ordinal < outputEvents.size(); ordinal++) {
+            outputEvents
+                    .get(ordinal)
+                    .setOccurrenceId(
+                            ActionStateUtil.deriveOutputEventOccurrenceId(
+                                    producerExecutionId, ordinal));
+        }
+    }
+
     /** Processes an Action's output Event with its producer and upstream references populated. */
     private void processActionOutputEvent(
             Object key, String contextKey, Event outputEvent, ActionTask actionTask)
@@ -686,6 +725,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 stateManager.addProcessingKey(key);
                 recordPriorities.put(key, new RecordPriority(nextRecordIndex++));
                 stateManager.initOrIncSequenceNumber();
+                assignRootOccurrenceId(key, event);
                 if (freshRecordRound) {
                     // Announced once the record's own bookkeeping is in place and before anything
                     // it triggers, so a listener never sees this record's action callbacks outside
@@ -1037,6 +1077,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             }
         }
 
+        assignOutputOccurrenceIds(key, sequenceNumber, actionTask, outputEvents);
         for (Event actionOutputEvent : outputEvents) {
             processActionOutputEvent(key, contextKey, actionOutputEvent, actionTask);
         }
@@ -2108,6 +2149,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     // callback belongs to, which would otherwise get none.
                     notifyActionReused(actionTask);
                 }
+                assignOutputOccurrenceIds(
+                        key, sequenceNumber, actionTask, result.getOutputEvents());
             } catch (Throwable t) {
                 if (lifecyclePrepared && actionTask != null) {
                     notifyActionFailed(actionTask, t);

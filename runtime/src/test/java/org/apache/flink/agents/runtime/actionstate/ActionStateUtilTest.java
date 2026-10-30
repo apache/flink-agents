@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
@@ -27,6 +28,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -59,6 +61,108 @@ public class ActionStateUtilTest {
 
         // Keys should be the same for the same input
         assertEquals(key1, key2);
+    }
+
+    /**
+     * Reproduces the collision reported in FLINK-AGENTS-1084: without an assigned occurrence
+     * identity (the legacy fallback, e.g. state written before this fix), two distinct event
+     * occurrences with identical attributes reaching the same action under the same business key
+     * and sequence number produce the same durable action-state key.
+     */
+    @Test
+    public void testDistinctEventOccurrencesWithoutOccurrenceIdCollideLegacy() throws Exception {
+        Object businessKey = "key";
+        Action action = new NoOpAction("work-action");
+        Event first = new Event("WorkItem", Map.of("value", "same"));
+        Event second = new Event("WorkItem", Map.of("value", "same"));
+
+        assertNotEquals(first.getId(), second.getId());
+
+        String firstKey = generateKey(businessKey, 1L, action, first, MAX_PARALLELISM);
+        String secondKey = generateKey(businessKey, 1L, action, second, MAX_PARALLELISM);
+
+        assertEquals(firstKey, secondKey);
+    }
+
+    /**
+     * The fix for FLINK-AGENTS-1084: once the runtime assigns each output event its lineage-based
+     * occurrence identity (as {@code ActionExecutionOperator} does via {@link
+     * #deriveOutputEventOccurrenceId}), two sibling occurrences with identical attributes no longer
+     * collide, because their output ordinals differ.
+     */
+    @Test
+    public void testDistinctEventOccurrencesWithOccurrenceIdDoNotCollide() throws Exception {
+        Object businessKey = "key";
+        Action action = new NoOpAction("work-action");
+        Event first = new Event("WorkItem", Map.of("value", "same"));
+        Event second = new Event("WorkItem", Map.of("value", "same"));
+
+        String producerExecutionId = generateKey(businessKey, 1L, action, first, MAX_PARALLELISM);
+        first.setOccurrenceId(
+                ActionStateUtil.deriveOutputEventOccurrenceId(producerExecutionId, 0));
+        second.setOccurrenceId(
+                ActionStateUtil.deriveOutputEventOccurrenceId(producerExecutionId, 1));
+
+        String firstKey = generateKey(businessKey, 1L, action, first, MAX_PARALLELISM);
+        String secondKey = generateKey(businessKey, 1L, action, second, MAX_PARALLELISM);
+
+        assertNotEquals(firstKey, secondKey);
+    }
+
+    /**
+     * Content-based replay-divergence protection must survive the occurrence-identity fix: a
+     * changed attribute still changes the key even when both occurrences share the same lineage
+     * position (same producer execution and ordinal), as it would on a genuine replay divergence.
+     */
+    @Test
+    public void testOccurrenceIdDoesNotSuppressContentDivergence() throws Exception {
+        Object businessKey = "key";
+        Action action = new NoOpAction("work-action");
+        Event original = new Event("WorkItem", Map.of("value", "A"));
+        Event diverged = new Event("WorkItem", Map.of("value", "B"));
+        String sameLineage = "producer-exec-id#0";
+        original.setOccurrenceId(sameLineage);
+        diverged.setOccurrenceId(sameLineage);
+
+        String originalKey = generateKey(businessKey, 1L, action, original, MAX_PARALLELISM);
+        String divergedKey = generateKey(businessKey, 1L, action, diverged, MAX_PARALLELISM);
+
+        assertNotEquals(originalKey, divergedKey);
+    }
+
+    @Test
+    public void testDeriveRootEventOccurrenceIdIsReplayStableAndKeySensitive() {
+        String a = ActionStateUtil.deriveRootEventOccurrenceId("business-key-identity", 1L);
+        String b = ActionStateUtil.deriveRootEventOccurrenceId("business-key-identity", 1L);
+        String differentSeqNum =
+                ActionStateUtil.deriveRootEventOccurrenceId("business-key-identity", 2L);
+        String differentKey = ActionStateUtil.deriveRootEventOccurrenceId("other-identity", 1L);
+
+        // Replay of the same logical input (same business key, same sequence number) is stable,
+        // independent of the fresh random Event#getId() each replay constructs.
+        assertEquals(a, b);
+        assertNotEquals(a, differentSeqNum);
+        assertNotEquals(a, differentKey);
+    }
+
+    @Test
+    public void testDeriveOutputEventOccurrenceIdIsOrdinalAndProducerSensitive() {
+        String producer = "producer-execution-id";
+        String ordinal0 = ActionStateUtil.deriveOutputEventOccurrenceId(producer, 0);
+        String ordinal0Again = ActionStateUtil.deriveOutputEventOccurrenceId(producer, 0);
+        String ordinal1 = ActionStateUtil.deriveOutputEventOccurrenceId(producer, 1);
+        String otherProducer = ActionStateUtil.deriveOutputEventOccurrenceId("other-producer", 0);
+
+        assertEquals(ordinal0, ordinal0Again);
+        assertNotEquals(ordinal0, ordinal1);
+        assertNotEquals(ordinal0, otherProducer);
+    }
+
+    @Test
+    public void testDeriveOutputEventOccurrenceIdRejectsNegativeOrdinal() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ActionStateUtil.deriveOutputEventOccurrenceId("producer", -1));
     }
 
     @ParameterizedTest
