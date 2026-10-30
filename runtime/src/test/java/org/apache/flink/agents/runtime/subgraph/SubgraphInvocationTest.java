@@ -20,19 +20,26 @@ package org.apache.flink.agents.runtime.subgraph;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.operator.parallel.ActionTaskLifecycleException;
-import org.apache.flink.agents.runtime.operator.parallel.UncapturableException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Tests graph lifecycle independently of chat, agents, continuations and the operator scheduler.
@@ -224,6 +231,53 @@ class SubgraphInvocationTest {
         calls.clear();
         assertThat(other.isDone()).isTrue();
         assertThatThrownBy(() -> calls.get("other")).hasMessageContaining("Missing");
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void waitingFailureIsNotConfusedWithAChildFailure(boolean childAlsoFailed) throws Exception {
+        SubgraphInvocation<List<Event>> call = call("call", "key");
+        call.dispatch(new Event("start"));
+        SubgraphCallManager calls = new SubgraphCallManager();
+        calls.register(call);
+        RunnerContextImpl context = mock(RunnerContextImpl.class);
+        when(context.getSubgraphCalls()).thenReturn(calls);
+        IOException waitingFailure = new IOException("waiting machinery failed");
+        when(context.resolveAsync(any()))
+                .thenAnswer(
+                        ignored -> {
+                            if (childAlsoFailed) {
+                                call.dispatch(
+                                        new SubgraphFailureEvent(
+                                                new IllegalArgumentException("child failed")));
+                                call.completeAction();
+                            }
+                            throw waitingFailure;
+                        });
+        assertThatThrownBy(() -> SubgraphExecution.await(context, "call")).isSameAs(waitingFailure);
+    }
+
+    @Test
+    void recordedChildFailureCanStillBeReadAfterWaiting() throws Exception {
+        SubgraphInvocation<List<Event>> call = call("call", "key");
+        call.dispatch(new Event("start"));
+        SubgraphCallManager calls = new SubgraphCallManager();
+        calls.register(call);
+        RunnerContextImpl context = mock(RunnerContextImpl.class);
+        when(context.getSubgraphCalls()).thenReturn(calls);
+        when(context.resolveAsync(any()))
+                .thenAnswer(
+                        invocation -> {
+                            call.dispatch(
+                                    new SubgraphFailureEvent(
+                                            new IllegalArgumentException("child failed")));
+                            call.completeAction();
+                            return ((Callable<?>) invocation.getArgument(0)).call();
+                        });
+        SubgraphExecution.await(context, "call");
+        assertThatThrownBy(call::awaitResult)
+                .hasRootCauseMessage(
+                        "Subgraph action failed (java.lang.IllegalArgumentException): child failed");
     }
 
     private SubgraphInvocation<List<Event>> call(String id, String key) {

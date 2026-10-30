@@ -50,7 +50,9 @@ from flink_agents.api.subagent import (
     SubagentResult,
 )
 from flink_agents.plan.agent_plan import AgentPlan
+from flink_agents.plan.exceptions import UncapturableException, raise_if_uncapturable
 from flink_agents.runtime.base_subagent import BaseSubagentSetup
+from flink_agents.runtime.durable_exception import is_java_interruption
 from flink_agents.runtime.subagent_handles import (
     PendingSubagentCallRegistry,
     SubagentFutureGroup,
@@ -86,6 +88,16 @@ class InternalSubagentCallFactory(Protocol):
         belongs to the call itself and must reach the caller.
         """
         ...
+
+
+def _raise_call_fault(error: Exception) -> None:
+    raise_if_uncapturable(error)
+    if isinstance(error, CancelledError | InterruptedError) or is_java_interruption(
+        error
+    ):
+        raise error
+    message = "Internal sub-agent call failed"
+    raise UncapturableException(message) from error
 
 
 class InternalSubagentFuture(SubagentFuture):
@@ -141,9 +153,12 @@ class InternalSubagentFuture(SubagentFuture):
             msg = f"Sub-agent call cancelled: {self.identity}"
             raise CancelledError(msg)
         if not self._issued:
-            self._ctx.bootstrap_internal_subagent_call(
-                self._scope, self._session_id, self._call_id, self._prompt
-            )
+            try:
+                self._ctx.bootstrap_internal_subagent_call(
+                    self._scope, self._session_id, self._call_id, self._prompt
+                )
+            except Exception as error:
+                _raise_call_fault(error)
             self._issued = True
 
     def execute(self) -> Any:
@@ -155,9 +170,12 @@ class InternalSubagentFuture(SubagentFuture):
         """
         self.prepare()
         while True:
-            result = self._ctx.try_complete_internal_subagent_call(
-                self._session_id, self._call_id
-            )
+            try:
+                result = self._ctx.try_complete_internal_subagent_call(
+                    self._session_id, self._call_id
+                )
+            except Exception as error:
+                _raise_call_fault(error)
             if result is not None:
                 self._resolve(result)
                 return

@@ -29,6 +29,7 @@ import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.async.BatchExecutionResult;
@@ -39,6 +40,7 @@ import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -866,6 +868,33 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals(1, chargeCalls.get());
         assertEquals(2, ordinaryCalls.get());
         assertEquals(2, context.getDurableExecutionContext().getCurrentCallIndex());
+    }
+
+    @Test
+    void frameworkFaultInDurableBatchLeavesItsSlotPending() throws Exception {
+        ActionState state = new ActionState(null);
+        JavaRunnerContextImpl context = createContext(state, null);
+        UncapturableException fault =
+                UncapturableException.wrap(new IOException("framework unavailable"));
+        TestDurableCallable<String> failed =
+                new TestDurableCallable<>(
+                        "failed",
+                        String.class,
+                        () -> {
+                            throw fault;
+                        });
+        List<DurableCallable<String>> calls =
+                List.of(
+                        new TestDurableCallable<>("before", String.class, () -> "before"),
+                        failed,
+                        new TestDurableCallable<>("after", String.class, () -> "after"));
+
+        assertSame(fault, assertThrows(UncapturableException.class, () -> gather(context, calls)));
+
+        assertEquals(0, context.getCurrentCallIndex());
+        assertEquals(3, state.getCallResultCount());
+        assertTrue(state.getCallResults().get(0).isSuccess());
+        assertTrue(state.getCallResults().subList(1, 3).stream().allMatch(CallResult::isPending));
     }
 
     @Test

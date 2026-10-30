@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
@@ -280,6 +281,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             }
             // Cancellation leaves this and later slots pending for recovery.
             rethrowCancellation(outcome.getError());
+            UncapturableException.rethrowIfPresent(outcome.getError());
             try {
                 finalizeCallAt(
                         base + callIndex,
@@ -288,6 +290,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
                         serializeDurableException(outcome.getError()));
             } catch (Exception e) {
                 rethrowCancellation(e);
+                UncapturableException.rethrowIfPresent(e);
                 outcome = Outcome.failure(e);
             }
             plan.outcomes.set(callIndex, outcome);

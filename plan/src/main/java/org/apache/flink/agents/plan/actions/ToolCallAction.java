@@ -44,6 +44,7 @@ import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.plan.utils.ToolResultUtils;
@@ -137,7 +138,7 @@ public class ToolCallAction {
                     tool = (Tool) ctx.getResource(name, ResourceType.TOOL);
                 }
             } catch (Exception e) {
-                rethrowCancellation(e);
+                rethrowFrameworkFaultOrCancellation(e);
                 preparationError = e;
             }
 
@@ -147,7 +148,7 @@ public class ToolCallAction {
                 try {
                     mergedArguments.putAll(resolveInjectedArguments(tool, ctx));
                 } catch (Exception e) {
-                    rethrowCancellation(e);
+                    rethrowFrameworkFaultOrCancellation(e);
                     preparationError = e;
                 }
             }
@@ -274,7 +275,7 @@ public class ToolCallAction {
                 recordOutcome(toolExecutions.get(i), outcomes.get(i), success, error, responses);
             }
         } catch (Exception e) {
-            rethrowCancellation(e);
+            rethrowFrameworkFaultOrCancellation(e);
             if (resultObservedAt == null) {
                 resultObservedAt = Instant.now();
             }
@@ -328,7 +329,7 @@ public class ToolCallAction {
                 outcome = Outcome.success(response);
                 recordToolResponse(execution.id, response, success, error, responses);
             } catch (Exception e) {
-                rethrowCancellation(e);
+                rethrowFrameworkFaultOrCancellation(e);
                 if (resultObservedAt == null) {
                     resultObservedAt = Instant.now();
                 }
@@ -346,13 +347,14 @@ public class ToolCallAction {
         }
     }
 
-    private static void rethrowCancellation(Exception failure) throws Exception {
+    private static void rethrowFrameworkFaultOrCancellation(Exception failure) throws Exception {
         if (CancellationUtils.isCancellation(failure)) {
             if (CancellationUtils.isInterruption(failure)) {
                 Thread.currentThread().interrupt();
             }
             throw failure;
         }
+        UncapturableException.rethrowIfPresent(failure);
     }
 
     private static void recordOutcome(
@@ -363,7 +365,7 @@ public class ToolCallAction {
             Map<String, ToolResponse> responses)
             throws Exception {
         if (outcome.isFailure()) {
-            rethrowCancellation(outcome.getError());
+            rethrowFrameworkFaultOrCancellation(outcome.getError());
             recordExecutionException(execution, outcome.getError(), success, error, responses);
         } else {
             recordToolResponse(execution.id, outcome.getValue(), success, error, responses);
@@ -460,7 +462,7 @@ public class ToolCallAction {
             SubagentResult result = execution.agent.submit(ctx, execution.agentArguments).await();
             recordAgentResult(execution, result, ctx, success, error, responses);
         } catch (Exception e) {
-            rethrowCancellation(e);
+            rethrowFrameworkFaultOrCancellation(e);
             recordAgentFailure(execution, e, ctx, success, error, responses);
         } catch (StackOverflowError e) {
             // Normalizing a result nested deeper than the stack allows overflows it; the cycle
@@ -663,6 +665,7 @@ public class ToolCallAction {
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses) {
+        UncapturableException.rethrowIfPresent(exception);
         success.put(execution.id, false);
         responses.put(
                 execution.id,
@@ -789,6 +792,7 @@ public class ToolCallAction {
             try {
                 extra = ((ToolExecutionMetadataProvider) tool).getToolExecutionMetadata(parameters);
             } catch (RuntimeException e) {
+                UncapturableException.rethrowIfPresent(e);
                 LOG.debug("Failed to collect execution metadata for tool {}.", toolName, e);
                 extra = Map.of();
             }

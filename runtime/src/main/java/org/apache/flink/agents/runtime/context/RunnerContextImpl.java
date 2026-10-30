@@ -42,6 +42,7 @@ import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.api.trace.TraceRecords;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.plan.utils.JsonUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
@@ -58,7 +59,6 @@ import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.memory.MemoryValueObservation;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
-import org.apache.flink.agents.runtime.operator.parallel.UncapturableException;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentInvocation;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
 import org.apache.flink.agents.runtime.subgraph.SubgraphCallManager;
@@ -311,8 +311,15 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     @Nullable
     public String tryCompleteInternalSubagentCall(String sessionId, String callId)
             throws Exception {
-        SubagentResult result = InternalSubagentInvocation.tryComplete(this, sessionId, callId);
-        return result == null ? null : OBJECT_MAPPER.writeValueAsString(result);
+        try {
+            SubagentResult result = InternalSubagentInvocation.tryComplete(this, sessionId, callId);
+            return result == null ? null : OBJECT_MAPPER.writeValueAsString(result);
+        } catch (Exception failure) {
+            if (CancellationUtils.isCancellation(failure)) {
+                throw failure;
+            }
+            throw UncapturableException.wrap(failure);
+        }
     }
 
     /**

@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.subagent;
 
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledForJreRange;
 import org.junit.jupiter.api.condition.JRE;
@@ -43,8 +44,9 @@ public class InternalSubagentGuardTest {
                 new InternalSubagentSetup(descriptor(new AgentPlan(new Agent())), null);
 
         assertThatThrownBy(() -> setup.submit(null, "prompt", "session", "call").await())
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("stackful suspension");
+                .isInstanceOf(UncapturableException.class)
+                .hasRootCauseInstanceOf(UnsupportedOperationException.class)
+                .hasStackTraceContaining("stackful suspension");
     }
 
     private static org.apache.flink.agents.api.resource.ResourceDescriptor descriptor(

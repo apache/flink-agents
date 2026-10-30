@@ -19,11 +19,11 @@ package org.apache.flink.agents.runtime.subgraph;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.MemoryScope;
-import org.apache.flink.agents.runtime.operator.parallel.UncapturableException;
 
 import javax.annotation.Nullable;
 
@@ -172,6 +172,24 @@ public class SubgraphInvocation<R> {
             }
         }
         return capturesActionFailures();
+    }
+
+    /** Whether a wait threw this invocation's recorded child failure, through any wrappers. */
+    final boolean isRecordedActionFailure(Throwable thrown) {
+        if (failure == null) {
+            return false;
+        }
+        for (int depth = 0; thrown != null && depth < 64; depth++) {
+            if (thrown == failure) {
+                return true;
+            }
+            Throwable cause = thrown.getCause();
+            if (cause == thrown) {
+                break;
+            }
+            thrown = cause;
+        }
+        return false;
     }
 
     /**
