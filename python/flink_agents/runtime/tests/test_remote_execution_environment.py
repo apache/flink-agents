@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import json
+import logging
 import os
 import tempfile
 from collections.abc import Iterator
@@ -84,7 +85,8 @@ def _remote_builder() -> RemoteAgentBuilder:
     )
 
 
-def test_remote_execution_environment_load_config_file() -> None:
+@pytest.mark.parametrize("is_flink_2", [False, True])
+def test_remote_execution_environment_load_config_file(is_flink_2) -> None:
     """Test RemoteExecutionEnvironment loads config from config.yaml."""
     # Create a temporary directory with config.yaml
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -101,8 +103,14 @@ def test_remote_execution_environment_load_config_file() -> None:
             mock_stream_env = MagicMock()
 
             # Create RemoteExecutionEnvironment instance
-            with patch(
-                "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+            with (
+                patch(
+                    "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+                ),
+                patch(
+                    "flink_agents.runtime.agent_config_loader.is_flink_2_or_later",
+                    return_value=is_flink_2,
+                ),
             ):
                 remote_env = RemoteExecutionEnvironment(env=mock_stream_env)
 
@@ -117,41 +125,47 @@ def test_remote_execution_environment_load_config_file() -> None:
                 os.environ["FLINK_CONF_DIR"] = original_env
 
 
-def test_remote_execution_environment_load_legacy_config_file() -> None:
-    """Test RemoteExecutionEnvironment loads legacy flink-conf.yaml."""
-    # Create a temporary directory with flink-conf.yaml (legacy name)
+def test_remote_execution_environment_load_legacy_config_file(caplog) -> None:
+    """Test RemoteExecutionEnvironment loads legacy flink-conf.yaml on Flink 1.x."""
+    caplog.set_level(logging.INFO, logger="flink_agents.runtime.agent_config_loader")
+    # Create a temporary directory with flink-conf.yaml (legacy name). Flink 1.x
+    # reads it line by line, so agent settings must use flattened agent.<key> keys.
     with tempfile.TemporaryDirectory() as temp_dir:
         legacy_config_file = Path(temp_dir) / "flink-conf.yaml"
-        with legacy_config_file.open("w") as f:
-            yaml.dump(test_data, f)
+        legacy_config_file.write_text(
+            "agent.database.host: localhost\n"
+            "agent.database.port: 5432\n"
+            "agent.api.endpoint: /api/v1\n"
+            "agent.api.timeout: 30.0\n"
+            "agent.debug: true\n",
+            encoding="utf-8",
+        )
 
         # Set FLINK_CONF_DIR environment variable
         original_env = os.environ.get("FLINK_CONF_DIR")
         try:
             os.environ["FLINK_CONF_DIR"] = temp_dir
 
-            # Mock StreamExecutionEnvironment and capture logging
+            # Mock StreamExecutionEnvironment
             mock_stream_env = MagicMock()
 
-            # Capture warning log about using legacy config file
-            with patch(
-                "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+            with (
+                patch(
+                    "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+                ),
+                patch(
+                    "flink_agents.runtime.agent_config_loader.is_flink_2_or_later",
+                    return_value=False,
+                ),
             ):
-                with patch(
-                    "flink_agents.runtime.remote_execution_environment.logging"
-                ) as mock_logging:
-                    # Create RemoteExecutionEnvironment instance
-                    remote_env = RemoteExecutionEnvironment(env=mock_stream_env)
+                # Create RemoteExecutionEnvironment instance
+                remote_env = RemoteExecutionEnvironment(env=mock_stream_env)
 
-                    # Verify that a warning was logged about using legacy config
-                    assert mock_logging.warning.called
-                    warning_call_args = mock_logging.warning.call_args[0][0]
-                    assert "legacy config file" in warning_call_args.lower()
-                    assert "flink-conf.yaml" in warning_call_args
+            # Verify that the legacy parser was used
+            assert "Using legacy parser" in caplog.text
 
-                # Verify that configuration was loaded correctly
-                config = remote_env.get_config()
-                _verify_config(config)
+            # Verify that configuration was loaded correctly
+            _verify_config(remote_env.get_config())
 
         finally:
             # Restore original environment variable
@@ -162,7 +176,7 @@ def test_remote_execution_environment_load_legacy_config_file() -> None:
 
 
 def test_remote_execution_environment_prioritizes_legacy_config() -> None:
-    """Test RemoteExecutionEnvironment prioritizes flink-conf.yaml over config.yaml."""
+    """Test flink-conf.yaml wins over config.yaml on Flink 1.x."""
     # Create a temporary directory with both config files
     with tempfile.TemporaryDirectory() as temp_dir:
         # Create config.yaml with one set of values
@@ -180,16 +194,10 @@ def test_remote_execution_environment_prioritizes_legacy_config() -> None:
 
         # Create flink-conf.yaml with different values
         legacy_config_file = Path(temp_dir) / "flink-conf.yaml"
-        legacy_data = {
-            "agent": {
-                "database": {
-                    "host": "legacy-host",
-                    "port": 1234,
-                },
-            }
-        }
-        with legacy_config_file.open("w") as f:
-            yaml.dump(legacy_data, f)
+        legacy_config_file.write_text(
+            "agent.database.host: legacy-host\nagent.database.port: 1234\n",
+            encoding="utf-8",
+        )
 
         # Set FLINK_CONF_DIR environment variable
         original_env = os.environ.get("FLINK_CONF_DIR")
@@ -200,18 +208,66 @@ def test_remote_execution_environment_prioritizes_legacy_config() -> None:
             mock_stream_env = MagicMock()
 
             # Create RemoteExecutionEnvironment instance
-            with patch(
-                "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+            with (
+                patch(
+                    "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+                ),
+                patch(
+                    "flink_agents.runtime.agent_config_loader.is_flink_2_or_later",
+                    return_value=False,
+                ),
             ):
                 remote_env = RemoteExecutionEnvironment(env=mock_stream_env)
 
-                # Verify that configuration was loaded from flink-conf.yaml (legacy)
-                config = remote_env.get_config()
-                assert config.get_str("database.host") == "legacy-host"
-                assert config.get_int("database.port") == 1234
+            # Verify that configuration was loaded from flink-conf.yaml (legacy)
+            config = remote_env.get_config()
+            assert config.get_str("database.host") == "legacy-host"
+            assert config.get_int("database.port") == 1234
 
         finally:
             # Restore original environment variable
+            if original_env is None:
+                os.environ.pop("FLINK_CONF_DIR", None)
+            else:
+                os.environ["FLINK_CONF_DIR"] = original_env
+
+
+def test_remote_execution_environment_flink_2_ignores_legacy_config() -> None:
+    """On Flink 2.x only config.yaml is read, even when flink-conf.yaml exists."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_file = Path(temp_dir) / "config.yaml"
+        config_data = {"agent": {"database": {"host": "config-host", "port": 9999}}}
+        with config_file.open("w") as f:
+            yaml.dump(config_data, f)
+
+        legacy_config_file = Path(temp_dir) / "flink-conf.yaml"
+        legacy_config_file.write_text(
+            "agent.database.host: legacy-host\nagent.database.port: 1234\n",
+            encoding="utf-8",
+        )
+
+        original_env = os.environ.get("FLINK_CONF_DIR")
+        try:
+            os.environ["FLINK_CONF_DIR"] = temp_dir
+
+            mock_stream_env = MagicMock()
+
+            with (
+                patch(
+                    "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+                ),
+                patch(
+                    "flink_agents.runtime.agent_config_loader.is_flink_2_or_later",
+                    return_value=True,
+                ),
+            ):
+                remote_env = RemoteExecutionEnvironment(env=mock_stream_env)
+
+            config = remote_env.get_config()
+            assert config.get_str("database.host") == "config-host"
+            assert config.get_int("database.port") == 9999
+
+        finally:
             if original_env is None:
                 os.environ.pop("FLINK_CONF_DIR", None)
             else:
