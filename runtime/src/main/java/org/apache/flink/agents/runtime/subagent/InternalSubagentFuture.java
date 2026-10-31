@@ -22,6 +22,8 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentFutures;
 import org.apache.flink.agents.api.subagent.SubagentResult;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.subgraph.SubgraphExecution;
 
@@ -71,11 +73,17 @@ final class InternalSubagentFuture extends SubagentFuture implements PhasedSubag
             throw new CancellationException("Sub-agent call cancelled: " + identity());
         }
         if (id == null) {
-            RunnerContextImpl runner = (RunnerContextImpl) ctx;
-            SubgraphExecution.requireReleasableOperator(runner);
-            id =
-                    SubgraphExecution.prepare(
-                            runner, setup.invocation(runner, getSessionId(), getCallId()), prompt);
+            try {
+                RunnerContextImpl runner = (RunnerContextImpl) ctx;
+                SubgraphExecution.requireReleasableOperator(runner);
+                id =
+                        SubgraphExecution.prepare(
+                                runner,
+                                setup.invocation(runner, getSessionId(), getCallId()),
+                                prompt);
+            } catch (Exception failure) {
+                throw frameworkFault(failure);
+            }
         }
     }
 
@@ -86,9 +94,21 @@ final class InternalSubagentFuture extends SubagentFuture implements PhasedSubag
     @Override
     public void execute() throws Exception {
         prepare();
-        RunnerContextImpl runner = (RunnerContextImpl) ctx;
-        SubgraphExecution.await(runner, id);
-        complete(SubgraphExecution.finish(runner, id));
+        try {
+            RunnerContextImpl runner = (RunnerContextImpl) ctx;
+            SubgraphExecution.await(runner, id);
+            complete(SubgraphExecution.finish(runner, id));
+        } catch (Exception failure) {
+            // Ordinary child failures have already become SubagentResults. What escapes here
+            // belongs to the call protocol, whose failure must reach the runtime.
+            throw frameworkFault(failure);
+        }
+    }
+
+    private static Exception frameworkFault(Exception failure) {
+        return CancellationUtils.isCancellation(failure)
+                ? failure
+                : UncapturableException.wrap(failure);
     }
 
     @Override

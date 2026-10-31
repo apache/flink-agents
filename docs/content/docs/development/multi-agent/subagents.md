@@ -1233,21 +1233,21 @@ the tool observation, and one it cannot normalize fails the delegation.
 
 ### How failures surface
 
-An expected failure is a value, and an unexpected one is an exception. Return
-`SubagentResult.error(...)` for anything the caller or the model should react to. An
-exception escaping the durable call is a system-level failure. It fails the action and
-triggers recovery.
+Return `SubagentResult.error(...)` for a task failure the caller or model should
+handle.
 
 - A failed result reaches a caller as `success == false` with the reason in
   `error_message`.
-- A failed result reaches a model as a tool observation that names the sub-agent and
-  the reason, so the model can decide what to do next. An exception while submitting
-  or awaiting is reported the same way.
-- Ordinary exceptions from a child action are returned as a failed result.
+- A failed result reaches a model as a tool observation naming the sub-agent and
+  the reason. Application-level exceptions while submitting or awaiting are
+  reported the same way.
+- Ordinary exceptions from an internal child action are returned as a failed result.
   Cancellation and fatal errors still propagate. The text in `error_message` is
   not a contract, so test for the failure rather than for the message.
-- For model-driven calls, a result that cannot be converted to JSON is reported
-  as a failed delegation.
+- Framework faults, such as a failure to save an internal call's result, propagate
+  to the runtime with their original cause and fail the action. They do not become
+  tool observations or recorded child failures. This applies to nested calls and
+  Java/Python execution.
 
 ## Durability and failover
 

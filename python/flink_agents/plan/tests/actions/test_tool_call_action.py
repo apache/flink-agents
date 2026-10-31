@@ -46,6 +46,7 @@ from flink_agents.api.trace import (
 from flink_agents.plan.actions import tool_call_action
 from flink_agents.plan.actions.tool_call_action import process_tool_request
 from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.plan.exceptions import UncapturableException
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
 from flink_agents.runtime.durable_execution import durable_identity_for_call
@@ -1340,6 +1341,30 @@ def test_missing_tool_reports_creation_and_failure_without_start() -> None:
         created_metadata,
     )
     ctx.report_execution_started_at.assert_not_called()
+
+
+@pytest.mark.parametrize("framework", [False, True])
+def test_metadata_only_propagates_framework_faults(framework):
+    failure = (
+        UncapturableException("metadata state failed")
+        if framework
+        else RuntimeError("optional metadata unavailable")
+    )
+    tool = MagicMock(spec=ToolExecutionMetadataProvider)
+    tool.tool_type = MagicMock(return_value=ToolType.FUNCTION)
+    tool.get_tool_execution_metadata.side_effect = failure
+    tool.call = MagicMock(return_value="ok")
+    ctx, sent_events = trace_context(tool)
+    request = _request(model="model-a", tool_calls=[trace_tool_call()])
+    if framework:
+        with pytest.raises(UncapturableException) as caught:
+            asyncio.run(process_tool_request(request, ctx))
+        assert caught.value is failure
+        assert not sent_events
+        tool.call.assert_not_called()
+    else:
+        asyncio.run(process_tool_request(request, ctx))
+        assert ToolResponseEvent.from_event(sent_events[0]).success["call-1"]
 
 
 def test_tool_call_includes_provider_metadata() -> None:

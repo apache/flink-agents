@@ -35,6 +35,7 @@ import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.plan.Function;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resource.python.PythonToolResultConverter;
 import org.apache.flink.agents.plan.tools.serializer.FunctionToolJsonDeserializer;
@@ -159,6 +160,7 @@ public class FunctionTool extends Tool {
                 cancelled.initCause(error);
                 throw cancelled;
             }
+            UncapturableException.rethrowIfPresent(error);
             return ToolResponse.error(error);
         }
     }

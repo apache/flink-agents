@@ -51,6 +51,7 @@ from flink_agents.api.runner_context import (
 )
 from flink_agents.api.subagent import SubagentResult
 from flink_agents.api.trace import ExecutionReporter
+from flink_agents.plan.exceptions import raise_if_uncapturable
 from flink_agents.runtime.chat_future import _ChatFuture
 from flink_agents.runtime.close_utils import failure_of, first_or_logged
 from flink_agents.runtime.durable_exception import (
@@ -1217,6 +1218,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         exception : BaseException | None
             The exception raised by the function (None if successful).
         """
+        raise_if_uncapturable(exception)
         if is_java_interruption(exception):
             # The attempt was cancelled: record nothing, so recovery executes the
             # call again instead of replaying the interruption.
@@ -1296,6 +1298,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         result: Any,
         exception: BaseException | None,
     ) -> None:
+        raise_if_uncapturable(exception)
         if is_java_interruption(exception):
             # The attempt was cancelled: leave the slot pending, so recovery
             # executes or reconciles the call instead of replaying the interruption.
@@ -1585,6 +1588,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             if not started[i]:
                 outcomes[call_index] = outcome
                 continue
+            raise_if_uncapturable(outcome.error)
             if is_java_interruption(outcome.error):
                 # The attempt was cancelled: leave this slot and the ones after it
                 # pending and propagate, as the Java batch does. Slots finalized
@@ -1602,6 +1606,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
                     exception_payload,
                 )
             except Exception as e:
+                raise_if_uncapturable(e)
                 outcome = Outcome.failure(e)
             outcomes[call_index] = outcome
         if advance_call_index:
