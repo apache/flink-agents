@@ -22,6 +22,10 @@ from typing import TYPE_CHECKING, Dict, List, Mapping
 from flink_agents.api.skills import Skills, SkillSourceSpec, redact_skill_url
 from flink_agents.runtime.close_utils import failure_of, first_or_logged
 from flink_agents.runtime.skill.agent_skill import AgentSkill, SkillOrigin
+from flink_agents.runtime.skill.repository._materialize import (
+    DEFAULT_LIMITS,
+    MaterializerLimits,
+)
 from flink_agents.runtime.skill.repository.classpath_repository import (
     ClasspathSkillRepository,
 )
@@ -53,8 +57,19 @@ class SkillManager:
     - Execution: Load resources/scripts only when needed
     """
 
-    def __init__(self, skills_config: Skills, java_bridge: object = None) -> None:
-        """Initialize the SkillManager from a Skills configuration."""
+    def __init__(
+        self,
+        skills_config: Skills,
+        java_bridge: object = None,
+        limits: MaterializerLimits = DEFAULT_LIMITS,
+    ) -> None:
+        """Initialize the SkillManager from a Skills configuration.
+
+        ``limits`` bounds the download and extraction done by ``url`` and
+        ``local`` (zip) sources. The runtime passes the limits built from the
+        agent configuration with ``limits_from_config``.
+        """
+        self._limits = limits
         self._skills: Dict[str, AgentSkill] = {}
         self._repos: Dict[str, SkillRepository] = {}
         # Reverse index: for every SkillSourceSpec that was loaded, the skill names
@@ -74,7 +89,9 @@ class SkillManager:
         """Create instance factories bound to the operator's Java bridge."""
         return {
             "local": SkillSourceHandler(
-                lambda p: FileSystemSkillRepository(_require(p, "local", "path")),
+                lambda p: FileSystemSkillRepository(
+                    _require(p, "local", "path"), limits=self._limits
+                ),
                 lambda p: p.get("path", ""),
             ),
             "url": SkillSourceHandler(
@@ -83,6 +100,7 @@ class SkillManager:
                     sha256=p.get("sha256"),
                     allow_insecure_http=p.get("allow_insecure_http", "false").lower()
                     == "true",
+                    limits=self._limits,
                 ),
                 lambda p: redact_skill_url(p.get("url", "")),
             ),

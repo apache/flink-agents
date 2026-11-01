@@ -32,18 +32,27 @@ import java.nio.file.Path;
 public final class FileSystemSkillRepository extends AbstractMaterializedSkillRepository {
 
     public FileSystemSkillRepository(Path path) {
-        super(materialize(path));
+        this(path, SkillMaterializer.Limits.DEFAULT);
+    }
+
+    public FileSystemSkillRepository(Path path, SkillMaterializer.Limits limits) {
+        super(materialize(path, limits));
     }
 
     public FileSystemSkillRepository(String path) {
         this(Path.of(path));
     }
 
+    public FileSystemSkillRepository(String path, SkillMaterializer.Limits limits) {
+        this(Path.of(path), limits);
+    }
+
     public Path getBaseDir() {
         return materialization.getDir();
     }
 
-    private static SkillMaterializer.Materialized materialize(Path path) {
+    private static SkillMaterializer.Materialized materialize(
+            Path path, SkillMaterializer.Limits limits) {
         if (path == null) {
             throw new IllegalArgumentException("Path cannot be null");
         }
@@ -56,7 +65,7 @@ public final class FileSystemSkillRepository extends AbstractMaterializedSkillRe
         }
         if (Files.isRegularFile(resolved) && resolved.toString().toLowerCase().endsWith(".zip")) {
             try {
-                return SkillMaterializer.extractZipSafely(resolved);
+                return SkillMaterializer.extractZipSafely(resolved, limits);
             } catch (IOException e) {
                 throw new IllegalArgumentException("Failed to extract zip: " + resolved, e);
             }

@@ -248,6 +248,22 @@ the built-in [parallel tool-call batches]({{< ref "docs/development/calling-llms
 | `num-async-threads` | os cpu count * 2 | int | Controls the thread capacity for asynchronous execution per Agent operator subtask. Must be positive. Increasing this value may improve throughput for concurrent external calls, at the cost of higher resource usage and load on external services. Use `max-in-flight-input-records` to limit unfinished inputs and `async.batch.parallelism` to limit concurrent calls within a batch. |
 | `parallel-execution.enabled` | true | boolean | **Experimental.** Enable the parallel engine for eligible plans with only Java Actions when continuation-based execution is unavailable. `false` selects serial execution. Ignored by the continuation engine and plans containing Python Actions. On JDK 11–20, Java `ctx.chat` and internal sub-agent calls need this engine, and an internal child with a non-Java Action fails the job when the operator opens. See [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}}) for JDK and Python Resource requirements. |
 
+### URL skill sources
+
+These limits bound the archives fetched by URL skill sources (`Skills.from_url` /
+`Skills.fromUrl` and their variants). The extraction limits also apply to local
+`.zip` sources (`Skills.from_local_dir` / `Skills.fromLocalDir`). All values must be
+positive; there is no unlimited setting. Limits are checked when Skills are
+initialized, and an archive that exceeds one fails loading. See
+[Skill Sources]({{< ref "docs/development/calling-llms/skills#skill-sources" >}}).
+
+| Key | Default | Type | Description |
+| --- | --- | --- | --- |
+| `skill.source.url.max-download-bytes` | 67108864 (64 MiB) | long | Maximum bytes downloaded for one skill archive over HTTP(S). |
+| `skill.source.url.max-extract-entries` | 1000 | int | Maximum number of entries in one skill archive. |
+| `skill.source.url.max-extract-entry-bytes` | 67108864 (64 MiB) | long | Maximum uncompressed size of a single archive entry. |
+| `skill.source.url.max-extract-total-bytes` | 268435456 (256 MiB) | long | Maximum combined uncompressed size of all entries in one archive. |
+
 ### Memory
 
 #### Memory events {#memory-event-options}

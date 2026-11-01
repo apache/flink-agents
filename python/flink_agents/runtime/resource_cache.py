@@ -66,6 +66,16 @@ class ResourceCache:
         """Return this operator's Java bridge, or None in a standalone Python runner."""
         return self._j_resource_adapter
 
+    def get_config(self) -> AgentConfiguration | None:
+        """Return the agent configuration supplying the skill download limits.
+
+        A scope without its own config uses its parent's, so one job uses one
+        set of ``skill.source.url.max-*`` limits.
+        """
+        if self._config is None and self._parent is not None:
+            return self._parent.get_config()
+        return self._config
+
     def get_resource_context(self) -> ResourceContextImpl:
         """Return the long-lived ResourceContext owned by this cache."""
         return self._resource_context

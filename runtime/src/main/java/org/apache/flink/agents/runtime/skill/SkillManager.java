@@ -25,6 +25,7 @@ import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.agents.runtime.skill.repository.ClasspathSkillRepository;
 import org.apache.flink.agents.runtime.skill.repository.FileSystemSkillRepository;
 import org.apache.flink.agents.runtime.skill.repository.PackageSkillRepository;
+import org.apache.flink.agents.runtime.skill.repository.SkillMaterializer;
 import org.apache.flink.agents.runtime.skill.repository.URLSkillRepository;
 import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
@@ -61,6 +62,7 @@ public class SkillManager implements AutoCloseable {
 
     private final Skills config;
     private final ClassLoader classLoader;
+    private final SkillMaterializer.Limits limits;
     private final Map<String, SkillSourceHandler> handlers = new HashMap<>();
     private final Map<String, AgentSkill> skills = new LinkedHashMap<>();
     private final Map<String, SkillRepository> repos = new HashMap<>();
@@ -95,8 +97,22 @@ public class SkillManager implements AutoCloseable {
             Skills config,
             ClassLoader classLoader,
             @Nullable PythonInterpreterManager interpreterManager) {
+        this(config, classLoader, interpreterManager, SkillMaterializer.Limits.DEFAULT);
+    }
+
+    /**
+     * Construct with the download/extraction {@link SkillMaterializer.Limits} that {@code url} and
+     * {@code local} (zip) sources enforce. Production code passes {@link
+     * SkillMaterializer.Limits#fromConfig} built from the agent configuration.
+     */
+    public SkillManager(
+            Skills config,
+            ClassLoader classLoader,
+            @Nullable PythonInterpreterManager interpreterManager,
+            SkillMaterializer.Limits limits) {
         this.config = config;
         this.classLoader = classLoader;
+        this.limits = limits;
         initializeHandlers(interpreterManager);
         loadAll();
     }
@@ -115,6 +131,7 @@ public class SkillManager implements AutoCloseable {
     SkillManager(Skills config, Map<String, SkillSourceHandler> handlers) {
         this.config = config;
         this.classLoader = Thread.currentThread().getContextClassLoader();
+        this.limits = SkillMaterializer.Limits.DEFAULT;
         this.handlers.putAll(handlers);
         loadAll();
     }
@@ -122,7 +139,8 @@ public class SkillManager implements AutoCloseable {
     private void initializeHandlers(@Nullable PythonInterpreterManager interpreterManager) {
         registerHandler(
                 "local",
-                (params, cl) -> new FileSystemSkillRepository(require(params, "local", "path")),
+                (params, cl) ->
+                        new FileSystemSkillRepository(require(params, "local", "path"), limits),
                 params -> params.getOrDefault("path", ""));
         registerHandler(
                 "url",
@@ -131,7 +149,8 @@ public class SkillManager implements AutoCloseable {
                                 require(params, "url", "url"),
                                 params.get("sha256"),
                                 Boolean.parseBoolean(
-                                        params.getOrDefault("allow_insecure_http", "false"))),
+                                        params.getOrDefault("allow_insecure_http", "false")),
+                                limits),
                 params -> SkillUrlUtils.redact(params.get("url")));
         registerHandler(
                 "classpath",

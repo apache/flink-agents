@@ -242,6 +242,41 @@ class AgentConfigOptions:
         default=5,
     )
 
+    # The maximum number of bytes accepted from a single skill archive download
+    # over HTTP(S). Must be strictly positive; there is no unlimited setting.
+    # Defaults to 64 MiB.
+    SKILL_SOURCE_URL_MAX_DOWNLOAD_BYTES = ConfigOption(
+        key="skill.source.url.max-download-bytes",
+        config_type=int,
+        default=64 * 1024 * 1024,
+    )
+
+    # The maximum uncompressed size in bytes of a single entry when a skill
+    # archive is extracted. Must be strictly positive; there is no unlimited
+    # setting. Defaults to 64 MiB.
+    SKILL_SOURCE_URL_MAX_EXTRACT_ENTRY_BYTES = ConfigOption(
+        key="skill.source.url.max-extract-entry-bytes",
+        config_type=int,
+        default=64 * 1024 * 1024,
+    )
+
+    # The maximum cumulative uncompressed size in bytes across all entries of one
+    # skill archive extraction. Must be strictly positive; there is no unlimited
+    # setting. Defaults to 256 MiB.
+    SKILL_SOURCE_URL_MAX_EXTRACT_TOTAL_BYTES = ConfigOption(
+        key="skill.source.url.max-extract-total-bytes",
+        config_type=int,
+        default=256 * 1024 * 1024,
+    )
+
+    # The maximum number of entries permitted in one skill archive. Must be
+    # strictly positive; there is no unlimited setting. Defaults to 1000.
+    SKILL_SOURCE_URL_MAX_EXTRACT_ENTRIES = ConfigOption(
+        key="skill.source.url.max-extract-entries",
+        config_type=int,
+        default=1_000,
+    )
+
     EVENT_LISTENERS = ConfigOption(
         key="event-listeners",
         config_type=list,

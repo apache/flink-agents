@@ -365,9 +365,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 new ResourceCache(
                         agentPlan.getResourceProviders(),
                         getRuntimeContext().getUserCodeClassLoader(),
-                        pythonBridge::getPythonInterpreterManager);
-        JavaMCPResourceDiscovery.discoverJavaMCPResources(
-                agentPlan.getResourceProviders(), resourceCache);
+                        pythonBridge::getPythonInterpreterManager,
+                        agentPlan.getConfig());
 
         metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
         builtInMetrics =
