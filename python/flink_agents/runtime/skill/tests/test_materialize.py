@@ -735,7 +735,6 @@ class TestBoundedCopy:
                 max_total_bytes=1000,
                 chunk_size=7,
             )
-        # Checked before writing: nothing past the last full chunk under the limit.
         assert len(dst.getvalue()) <= 100
 
     def test_rejects_cumulative_total_from_earlier_entries(self) -> None:
@@ -766,9 +765,6 @@ class TestBoundedCopy:
     def test_extraction_uses_running_total_not_declared_sizes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # rob-9: a valid zip where each file fits but the total exceeds the cap.
-        # Disable the declared-size pre-check so only the streaming counter can
-        # reject it, and assert the counter's specific message.
         import flink_agents.runtime.skill.repository._materialize as materialize
 
         monkeypatch.setattr(
@@ -887,8 +883,6 @@ class TestLimitsFromConfig:
     def test_rejects_values_too_large_for_java_type(
         self, key: str, too_large: int
     ) -> None:
-        # Java's Long.parseLong / Integer.parseInt reject these, so they must
-        # not load in Python only.
         for value in (too_large, str(too_large)):
             with pytest.raises(
                 ValueError, match=f"Invalid value for {key}: {too_large}"
@@ -915,7 +909,6 @@ class TestLimitsFromConfig:
     def test_java_type_minimum_parses_then_fails_positivity(
         self, key: str, attr: str, java_min: int
     ) -> None:
-        # Java parses its type's minimum and then rejects it as not positive.
         with pytest.raises(ValueError, match=f"{attr} must be a strictly positive"):
             limits_from_config(AgentConfiguration({key: java_min}))
 
