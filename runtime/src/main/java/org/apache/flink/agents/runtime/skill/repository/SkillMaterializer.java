@@ -18,9 +18,14 @@
 
 package org.apache.flink.agents.runtime.skill.repository;
 
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.skills.SkillUrlUtils;
+import org.apache.flink.annotation.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
 
 import java.io.File;
 import java.io.IOException;
@@ -65,8 +70,7 @@ public final class SkillMaterializer {
 
     /**
      * All four resource limits for a single materializer operation, grouped so tests can inject
-     * small thresholds without touching production defaults and so future config wiring has a
-     * single object to populate from {@code SkillMaterializerOptions}.
+     * small thresholds without touching production defaults.
      *
      * <p>Production callers use {@link #DEFAULT}; tests construct a small instance and pass it to
      * the overloads of {@link SkillMaterializer#downloadToTempFile} and {@link
@@ -92,14 +96,9 @@ public final class SkillMaterializer {
         public final int maxExtractEntries;
 
         /**
-         * Conservative production defaults. These are intentionally lower than the original issue
-         * #1072 values to limit disk consumption per materialization, especially when multiple
-         * skills are materialized concurrently. Deployments that need larger archives should raise
-         * them explicitly via a {@code Limits} instance.
-         *
-         * <p>TODO: wire these through {@code AgentConfigOptions} / {@code SkillMaterializerOptions}
-         * so deployments can override them from the YAML config without code changes (follow-up
-         * PR).
+         * Conservative production defaults, identical to Python's {@code DEFAULT_LIMITS}. They
+         * bound disk use per materialization, especially when several skills are materialized
+         * concurrently; deployments that need larger archives can raise them explicitly.
          */
         public static final Limits DEFAULT =
                 new Limits(
@@ -129,35 +128,25 @@ public final class SkillMaterializer {
             this.maxExtractTotalBytes = maxExtractTotalBytes;
             this.maxExtractEntries = maxExtractEntries;
         }
+
+        /**
+         * Build a {@code Limits} from the four {@code skill.source.url.max-*} agent config options.
+         * Any key that is absent falls back to its default, and a {@code null} config yields {@link
+         * #DEFAULT}.
+         *
+         * @throws IllegalArgumentException if a configured value is not strictly positive.
+         */
+        public static Limits fromConfig(@Nullable ReadableConfiguration config) {
+            if (config == null) {
+                return DEFAULT;
+            }
+            return new Limits(
+                    config.get(AgentConfigOptions.SKILL_SOURCE_URL_MAX_DOWNLOAD_BYTES),
+                    config.get(AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_ENTRY_BYTES),
+                    config.get(AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_TOTAL_BYTES),
+                    config.get(AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_ENTRIES));
+        }
     }
-
-    /**
-     * Backward-compatible alias for {@link Limits#DEFAULT#maxDownloadBytes}.
-     *
-     * @deprecated Use {@link Limits#DEFAULT} or inject a {@link Limits} instance.
-     */
-    public static final long MAX_DOWNLOAD_BYTES = Limits.DEFAULT.maxDownloadBytes;
-
-    /**
-     * Backward-compatible alias for {@link Limits#DEFAULT#maxExtractEntryBytes}.
-     *
-     * @deprecated Use {@link Limits#DEFAULT} or inject a {@link Limits} instance.
-     */
-    public static final long MAX_EXTRACT_ENTRY_BYTES = Limits.DEFAULT.maxExtractEntryBytes;
-
-    /**
-     * Backward-compatible alias for {@link Limits#DEFAULT#maxExtractTotalBytes}.
-     *
-     * @deprecated Use {@link Limits#DEFAULT} or inject a {@link Limits} instance.
-     */
-    public static final long MAX_EXTRACT_TOTAL_BYTES = Limits.DEFAULT.maxExtractTotalBytes;
-
-    /**
-     * Backward-compatible alias for {@link Limits#DEFAULT#maxExtractEntries}.
-     *
-     * @deprecated Use {@link Limits#DEFAULT} or inject a {@link Limits} instance.
-     */
-    public static final int MAX_EXTRACT_ENTRIES = Limits.DEFAULT.maxExtractEntries;
 
     private SkillMaterializer() {}
 
@@ -168,10 +157,10 @@ public final class SkillMaterializer {
      */
     public static final class Materialized implements AutoCloseable {
         private final Path dir;
-        @javax.annotation.Nullable private final Thread hook;
+        @Nullable private final Thread hook;
         private final AtomicBoolean closed = new AtomicBoolean(false);
 
-        private Materialized(Path dir, @javax.annotation.Nullable Thread hook) {
+        private Materialized(Path dir, @Nullable Thread hook) {
             this.dir = dir;
             this.hook = hook;
         }
@@ -246,9 +235,9 @@ public final class SkillMaterializer {
      *
      * <ul>
      *   <li>Validates every entry against zip-slip before any extraction begins.
-     *   <li>Rejects archives with more than {@link #MAX_EXTRACT_ENTRIES} entries.
-     *   <li>Enforces {@link #MAX_EXTRACT_ENTRY_BYTES} per entry and {@link
-     *       #MAX_EXTRACT_TOTAL_BYTES} cumulatively, measured against actual decompressed bytes
+     *   <li>Rejects archives with more than {@link Limits#maxExtractEntries} entries.
+     *   <li>Enforces {@link Limits#maxExtractEntryBytes} per entry and {@link
+     *       Limits#maxExtractTotalBytes} cumulatively, measured against actual decompressed bytes
      *       written — not against the declared sizes in the zip central directory, which are
      *       attacker-controlled.
      *   <li>Eagerly deletes the extraction directory on any failure, in addition to the JVM
@@ -356,7 +345,6 @@ public final class SkillMaterializer {
             // Pass 4: bounded extraction — count actual decompressed bytes written.
             // This is the real enforcement; declared sizes are not trusted.
             long totalWritten = 0;
-            byte[] buf = new byte[65536];
 
             for (ZipEntry entry : entries) {
                 Path target = extractDir.resolve(entry.getName()).normalize();
@@ -368,39 +356,68 @@ public final class SkillMaterializer {
 
                 Files.createDirectories(target.getParent());
 
-                long perEntryWritten = 0;
-
                 // CREATE_NEW preserves the original behavior: duplicate entry names throw
                 // FileAlreadyExistsException rather than silently overwriting.
                 try (InputStream in = zf.getInputStream(entry);
                         OutputStream out =
                                 Files.newOutputStream(target, StandardOpenOption.CREATE_NEW)) {
-
-                    int n;
-                    while ((n = in.read(buf)) != -1) {
-                        if (perEntryWritten + n > limits.maxExtractEntryBytes) {
-                            throw new IOException(
-                                    "Skill archive entry '"
-                                            + entry.getName()
-                                            + "' exceeds the per-entry limit of "
-                                            + limits.maxExtractEntryBytes
-                                            + " bytes");
-                        }
-
-                        if (totalWritten + n > limits.maxExtractTotalBytes) {
-                            throw new IOException(
-                                    "Skill archive total extracted size exceeds the limit of "
-                                            + limits.maxExtractTotalBytes
-                                            + " bytes");
-                        }
-
-                        out.write(buf, 0, n);
-                        perEntryWritten += n;
-                        totalWritten += n;
-                    }
+                    totalWritten +=
+                            copyBounded(
+                                    in,
+                                    out,
+                                    entry.getName(),
+                                    limits.maxExtractEntryBytes,
+                                    totalWritten,
+                                    limits.maxExtractTotalBytes);
                 }
             }
         }
+    }
+
+    /**
+     * Stream {@code in} to {@code out}, enforcing a per-entry and a cumulative byte limit.
+     *
+     * <p>The actual streamed byte count is authoritative: each chunk is checked before it is
+     * written, so the limits hold even when an archive's declared sizes are wrong.
+     *
+     * @param name entry name, used in error messages
+     * @param maxEntryBytes maximum bytes this single entry may produce
+     * @param totalAlreadyWritten bytes already written by earlier entries
+     * @param maxTotalBytes maximum cumulative bytes across all entries
+     * @return the number of bytes written for this entry
+     * @throws IOException if either limit would be exceeded, or on I/O failure
+     */
+    @VisibleForTesting
+    public static long copyBounded(
+            InputStream in,
+            OutputStream out,
+            String name,
+            long maxEntryBytes,
+            long totalAlreadyWritten,
+            long maxTotalBytes)
+            throws IOException {
+        byte[] buf = new byte[65536];
+        long written = 0;
+        int n;
+        while ((n = in.read(buf)) != -1) {
+            if (written + n > maxEntryBytes) {
+                throw new IOException(
+                        "Skill archive entry '"
+                                + name
+                                + "' exceeds the per-entry limit of "
+                                + maxEntryBytes
+                                + " bytes");
+            }
+            if (totalAlreadyWritten + written + n > maxTotalBytes) {
+                throw new IOException(
+                        "Skill archive total extracted size exceeds the limit of "
+                                + maxTotalBytes
+                                + " bytes");
+            }
+            out.write(buf, 0, n);
+            written += n;
+        }
+        return written;
     }
 
     /**
@@ -533,11 +550,11 @@ public final class SkillMaterializer {
      * <p>Security properties:
      *
      * <ul>
-     *   <li>Rejects a declared {@code Content-Length} that exceeds {@link #MAX_DOWNLOAD_BYTES}
+     *   <li>Rejects a declared {@code Content-Length} that exceeds {@link Limits#maxDownloadBytes}
      *       before reading any body bytes.
      *   <li>Independently counts bytes as they arrive and rejects the download when the counter
-     *       exceeds {@link #MAX_DOWNLOAD_BYTES}, so a missing or understated {@code Content-Length}
-     *       cannot bypass the limit.
+     *       exceeds {@link Limits#maxDownloadBytes}, so a missing or understated {@code
+     *       Content-Length} cannot bypass the limit.
      *   <li>Deletes the temp file on any failure.
      * </ul>
      *

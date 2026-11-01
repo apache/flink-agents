@@ -19,6 +19,7 @@
 package org.apache.flink.agents.runtime.skill;
 
 import com.sun.net.httpserver.HttpServer;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.runtime.skill.repository.SkillMaterializer;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.LogEvent;
@@ -30,6 +31,8 @@ import org.apache.logging.log4j.core.layout.PatternLayout;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -51,6 +54,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -184,8 +188,6 @@ class SkillMaterializerTest {
                         () ->
                                 SkillMaterializer.downloadToTempFile(
                                         "https://[fe80::1%25lo0]/skills.zip", 5_000));
-        System.out.println("Exception message: " + ex.getMessage());
-        System.out.println("Cause: " + ex.getCause());
         assertTrue(ex.getMessage().contains("must not include an IPv6 zone identifier"));
         assertTrue(ex.getCause() == null);
     }
@@ -643,13 +645,14 @@ class SkillMaterializerTest {
     }
 
     /**
-     * Server declares a small Content-Length but actually streams more bytes. The byte counter must
-     * catch the overage even though the pre-flight check passed.
+     * Server sends a small {@code Content-Length} header but frames the body as chunked ({@code
+     * sendResponseHeaders(200, 0)}), so the client reads past the declared length. The declared
+     * size passes the pre-flight check; only the streaming byte counter can reject it.
      *
-     * <p>Uses a 1 KiB injectable cap so the test streams only 1,025 bytes instead of 512 MiB + 1.
+     * <p>Uses a 1 KiB injectable cap so the test streams only 1,025 bytes.
      */
     @Test
-    void rejectsUnderstatedContentLengthViaByteCounter() throws IOException {
+    void rejectsChunkedBodyOverCapDespiteSmallDeclaredContentLength() throws IOException {
         long cap = 1024L;
         SkillMaterializer.Limits limits =
                 new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
@@ -704,7 +707,7 @@ class SkillMaterializerTest {
      * Server streams past the cap with no Content-Length header at all. The byte counter must catch
      * it.
      *
-     * <p>Uses a 1 KiB injectable cap so the test streams only 1,025 bytes instead of 512 MiB + 1.
+     * <p>Uses a 1 KiB injectable cap so the test streams only 1,025 bytes.
      */
     @Test
     void rejectsStreamWithNoContentLengthAndBodyOverCap() throws IOException {
@@ -757,7 +760,7 @@ class SkillMaterializerTest {
 
     /**
      * A body of exactly {@code cap} bytes must succeed (boundary is inclusive). Uses a 1 KiB
-     * injectable cap so the test does not allocate 512 MiB.
+     * injectable cap so the test streams only 1,024 bytes.
      */
     @Test
     void acceptsBodyExactlyAtDownloadCap() throws IOException {
@@ -788,8 +791,8 @@ class SkillMaterializerTest {
      * #acceptsBodyExactlyAtDownloadCap()} to prove the boundary is enforced at exactly the right
      * byte.
      *
-     * <p>The server intentionally omits {@code Content-Length} so the pre-f;ight check cannot fire;
-     * only the streaming counter can reject the download. this isolates the counter under test.
+     * <p>The server intentionally omits {@code Content-Length} so the pre-flight check cannot fire;
+     * only the streaming counter can reject the download. This isolates the counter under test.
      */
     @Test
     void rejectsBodyOneByteOverDownloadCap() throws IOException {
@@ -797,9 +800,6 @@ class SkillMaterializerTest {
         SkillMaterializer.Limits limits =
                 new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
 
-        // byte[] body = new byte[(int) cap + 1];
-        // Arrays.fill(body, (byte) 'z');
-        // HttpServer server = startServer(200, body);
         long actualBytes = cap + 1;
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext(
@@ -1140,6 +1140,76 @@ class SkillMaterializerTest {
                 "byte counter must reject cumulative total, got: " + ex.getMessage());
     }
 
+    // ---- copyBounded: the streaming byte counters, tested directly (independent of zip metadata).
+
+    @Test
+    void copyBoundedCopiesAllBytesUnderLimits() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        long written =
+                SkillMaterializer.copyBounded(
+                        new ByteArrayInputStream(filled(100)), out, "e", 100L, 0L, 100L);
+        assertEquals(100L, written);
+        assertEquals(100, out.size());
+    }
+
+    @Test
+    void copyBoundedRejectsOneByteOverEntryLimit() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        IOException ex =
+                assertThrows(
+                        IOException.class,
+                        () ->
+                                SkillMaterializer.copyBounded(
+                                        new ByteArrayInputStream(filled(101)),
+                                        out,
+                                        "e",
+                                        100L,
+                                        0L,
+                                        1_000L));
+        assertTrue(
+                ex.getMessage().contains("'e' exceeds the per-entry limit of 100"),
+                "got: " + ex.getMessage());
+        assertEquals(0, out.size(), "nothing may be written once a chunk would exceed the limit");
+    }
+
+    @Test
+    void copyBoundedRejectsCumulativeTotalFromEarlierEntries() {
+        // Each entry fits on its own; together they exceed the total cap.
+        IOException ex =
+                assertThrows(
+                        IOException.class,
+                        () ->
+                                SkillMaterializer.copyBounded(
+                                        new ByteArrayInputStream(filled(600)),
+                                        new ByteArrayOutputStream(),
+                                        "second",
+                                        1_024L,
+                                        600L,
+                                        1_024L));
+        assertTrue(
+                ex.getMessage().contains("total extracted size exceeds the limit of 1024"),
+                "got: " + ex.getMessage());
+    }
+
+    @Test
+    void copyBoundedAcceptsCumulativeTotalExactlyAtLimit() throws IOException {
+        long written =
+                SkillMaterializer.copyBounded(
+                        new ByteArrayInputStream(filled(424)),
+                        new ByteArrayOutputStream(),
+                        "second",
+                        1_024L,
+                        600L,
+                        1_024L);
+        assertEquals(424L, written);
+    }
+
+    private static byte[] filled(int size) {
+        byte[] bytes = new byte[size];
+        Arrays.fill(bytes, (byte) 'x');
+        return bytes;
+    }
+
     /**
      * After an extraction size rejection, the extraction directory must not exist. Proves eager
      * cleanup on failure.
@@ -1147,9 +1217,10 @@ class SkillMaterializerTest {
     @Test
     void cleanupOnExtractionFailure(@TempDir Path tempDir) throws IOException {
         // Write an archive with too many entries to trigger failure cheaply.
+        SkillMaterializer.Limits limits = new SkillMaterializer.Limits(1024L, 1024L, 10_000L, 2);
         Path zip = tempDir.resolve("many.zip");
         try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zip))) {
-            for (int i = 0; i <= SkillMaterializer.MAX_EXTRACT_ENTRIES; i++) {
+            for (int i = 0; i <= limits.maxExtractEntries; i++) {
                 zos.putNextEntry(new ZipEntry("e" + i + ".txt"));
                 zos.write(new byte[0]);
                 zos.closeEntry();
@@ -1169,7 +1240,7 @@ class SkillMaterializerTest {
                             .count();
         }
 
-        assertThrows(IOException.class, () -> SkillMaterializer.extractZipSafely(zip));
+        assertThrows(IOException.class, () -> SkillMaterializer.extractZipSafely(zip, limits));
 
         long after;
         try (Stream<Path> ls = Files.list(tmpDir)) {
@@ -1242,5 +1313,139 @@ class SkillMaterializerTest {
             assertTrue(Files.isRegularFile(m.getDir().resolve("skill-a/SKILL.md")));
             assertTrue(Files.isRegularFile(m.getDir().resolve("skill-b/SKILL.md")));
         }
+    }
+
+    // --- Limits.fromConfig: the four skill.source.url.max-* agent config options ---
+
+    @Test
+    void limitsFromConfigNullReturnsDefault() {
+        assertSame(SkillMaterializer.Limits.DEFAULT, SkillMaterializer.Limits.fromConfig(null));
+    }
+
+    @Test
+    void limitsFromConfigWithNoKeysReturnsDefaultValues() {
+        SkillMaterializer.Limits limits =
+                SkillMaterializer.Limits.fromConfig(new AgentConfiguration());
+
+        assertEquals(64L * 1024 * 1024, limits.maxDownloadBytes);
+        assertEquals(64L * 1024 * 1024, limits.maxExtractEntryBytes);
+        assertEquals(256L * 1024 * 1024, limits.maxExtractTotalBytes);
+        assertEquals(1_000, limits.maxExtractEntries);
+    }
+
+    @Test
+    void limitsFromConfigReadsAllFourKeys() {
+        AgentConfiguration config = new AgentConfiguration();
+        config.setLong("skill.source.url.max-download-bytes", 11L);
+        config.setLong("skill.source.url.max-extract-entry-bytes", 22L);
+        config.setLong("skill.source.url.max-extract-total-bytes", 33L);
+        config.setInt("skill.source.url.max-extract-entries", 44);
+
+        SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
+
+        assertEquals(11L, limits.maxDownloadBytes);
+        assertEquals(22L, limits.maxExtractEntryBytes);
+        assertEquals(33L, limits.maxExtractTotalBytes);
+        assertEquals(44, limits.maxExtractEntries);
+    }
+
+    @Test
+    void limitsFromConfigSetsOneKeyAndDefaultsTheRest() {
+        AgentConfiguration config = new AgentConfiguration();
+        config.setInt("skill.source.url.max-extract-entries", 7);
+
+        SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
+
+        assertEquals(7, limits.maxExtractEntries);
+        assertEquals(SkillMaterializer.Limits.DEFAULT.maxDownloadBytes, limits.maxDownloadBytes);
+        assertEquals(
+                SkillMaterializer.Limits.DEFAULT.maxExtractEntryBytes, limits.maxExtractEntryBytes);
+        assertEquals(
+                SkillMaterializer.Limits.DEFAULT.maxExtractTotalBytes, limits.maxExtractTotalBytes);
+    }
+
+    @Test
+    void limitsFromConfigRejectsZeroAndNegativeForEveryKey() {
+        String[] longKeys = {
+            "skill.source.url.max-download-bytes",
+            "skill.source.url.max-extract-entry-bytes",
+            "skill.source.url.max-extract-total-bytes"
+        };
+        for (String key : longKeys) {
+            for (long bad : new long[] {0L, -1L}) {
+                AgentConfiguration config = new AgentConfiguration();
+                config.setLong(key, bad);
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> SkillMaterializer.Limits.fromConfig(config),
+                        key + "=" + bad + " must be rejected");
+            }
+        }
+        for (int bad : new int[] {0, -1}) {
+            AgentConfiguration config = new AgentConfiguration();
+            config.setInt("skill.source.url.max-extract-entries", bad);
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> SkillMaterializer.Limits.fromConfig(config),
+                    "max-extract-entries=" + bad + " must be rejected");
+        }
+    }
+
+    @Test
+    void limitsFromConfigParsesStringValues() {
+        AgentConfiguration config = new AgentConfiguration();
+        config.setStr("skill.source.url.max-download-bytes", "11");
+        config.setStr("skill.source.url.max-extract-entry-bytes", "22");
+        config.setStr("skill.source.url.max-extract-total-bytes", "33");
+        config.setStr("skill.source.url.max-extract-entries", "44");
+
+        SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
+
+        assertEquals(11L, limits.maxDownloadBytes);
+        assertEquals(22L, limits.maxExtractEntryBytes);
+        assertEquals(33L, limits.maxExtractTotalBytes);
+        assertEquals(44, limits.maxExtractEntries);
+    }
+
+    @Test
+    void limitsFromConfigAcceptsMinimumOfOne() {
+        AgentConfiguration config = new AgentConfiguration();
+        config.setLong("skill.source.url.max-download-bytes", 1L);
+        config.setLong("skill.source.url.max-extract-entry-bytes", 1L);
+        config.setLong("skill.source.url.max-extract-total-bytes", 1L);
+        config.setInt("skill.source.url.max-extract-entries", 1);
+
+        SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
+
+        assertEquals(1L, limits.maxDownloadBytes);
+        assertEquals(1, limits.maxExtractEntries);
+    }
+
+    @Test
+    void limitsFromConfigAcceptsJavaTypeMaximum() {
+        AgentConfiguration config = new AgentConfiguration();
+        config.setStr("skill.source.url.max-download-bytes", String.valueOf(Long.MAX_VALUE));
+        config.setStr("skill.source.url.max-extract-entries", String.valueOf(Integer.MAX_VALUE));
+
+        SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
+
+        assertEquals(Long.MAX_VALUE, limits.maxDownloadBytes);
+        assertEquals(Integer.MAX_VALUE, limits.maxExtractEntries);
+    }
+
+    /**
+     * Pins the Java side of the range check that Python's {@code limits_from_config} mirrors: a
+     * value too large for the option's type does not load.
+     */
+    @Test
+    void limitsFromConfigRejectsValuesTooLargeForType() {
+        AgentConfiguration entries = new AgentConfiguration();
+        entries.setStr("skill.source.url.max-extract-entries", "3000000000");
+        assertThrows(
+                NumberFormatException.class, () -> SkillMaterializer.Limits.fromConfig(entries));
+
+        AgentConfiguration bytes = new AgentConfiguration();
+        bytes.setStr("skill.source.url.max-download-bytes", "9223372036854775808");
+        assertThrows(NumberFormatException.class, () -> SkillMaterializer.Limits.fromConfig(bytes));
     }
 }

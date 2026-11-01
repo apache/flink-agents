@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, List, cast
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.plan.agent_plan import SKILLS_CONFIG
+from flink_agents.runtime.skill.repository._materialize import limits_from_config
 from flink_agents.runtime.skill.skill_manager import SkillManager
 
 if TYPE_CHECKING:
@@ -106,5 +107,7 @@ class ResourceContextImpl(ResourceContext):
         except KeyError:
             return None
         return SkillManager(
-            skills_config, self._resource_cache.get_java_resource_adapter()
+            skills_config,
+            self._resource_cache.get_java_resource_adapter(),
+            limits_from_config(self._resource_cache.get_config()),
         )

@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime;
 
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
@@ -60,6 +61,13 @@ public class ResourceCache implements AutoCloseable {
     private volatile PythonActionExecutor pythonActionExecutor;
     private final ResourceContextImpl resourceContext;
     private final ResourceCache parent;
+
+    /**
+     * Agent configuration that supplies the skill download/extraction limits, or {@code null} for
+     * the defaults. A sub-agent scope without its own config inherits its parent's, so one job uses
+     * one set of limits.
+     */
+    @Nullable private final ReadableConfiguration config;
 
     /**
      * Child plan JSON identifying the sub-agent scope this cache serves, or {@code null} for the
@@ -127,7 +135,41 @@ public class ResourceCache implements AutoCloseable {
             ResourceCache parent,
             @Nullable String scopePlanJson,
             Supplier<PythonInterpreterManager> interpreterManagerSupplier) {
+        this(
+                resourceProviders,
+                classLoader,
+                parent,
+                scopePlanJson,
+                interpreterManagerSupplier,
+                null);
+    }
+
+    /**
+     * Root cache that also takes the agent configuration supplying the {@code
+     * skill.source.url.max-*} limits. Production code passes {@code agentPlan.getConfig()} from
+     * {@code ActionExecutionOperator}.
+     */
+    public ResourceCache(
+            Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
+            ClassLoader classLoader,
+            Supplier<PythonInterpreterManager> interpreterManagerSupplier,
+            @Nullable ReadableConfiguration config) {
+        this(resourceProviders, classLoader, null, null, interpreterManagerSupplier, config);
+    }
+
+    /**
+     * Most general constructor. When {@code config} is {@code null} and a {@code parent} exists,
+     * the parent's config is used.
+     */
+    public ResourceCache(
+            Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
+            ClassLoader classLoader,
+            ResourceCache parent,
+            @Nullable String scopePlanJson,
+            Supplier<PythonInterpreterManager> interpreterManagerSupplier,
+            @Nullable ReadableConfiguration config) {
         this.parent = parent;
+        this.config = config != null ? config : (parent != null ? parent.config : null);
         this.scopePlanJson = scopePlanJson;
         // Defensive copy: the cache must not be affected by later mutations to the source map.
         this.resourceProviders = new HashMap<>();
@@ -146,7 +188,8 @@ public class ResourceCache implements AutoCloseable {
                             }
                         },
                         classLoader,
-                        interpreterManagerSupplier);
+                        interpreterManagerSupplier,
+                        this.config);
     }
 
     /** Convenience overload that uses the current thread's context class loader. */

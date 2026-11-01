@@ -27,6 +27,10 @@ from urllib.error import HTTPError
 
 import pytest
 
+from flink_agents.runtime.skill.repository._materialize import (
+    DEFAULT_LIMITS,
+    MaterializerLimits,
+)
 from flink_agents.runtime.skill.repository.url_repository import URLSkillRepository
 
 
@@ -208,3 +212,34 @@ class TestURLSkillRepository:
         with pytest.raises(HTTPError) as exc_info:
             URLSkillRepository(f"{url}?token=top-secret", allow_insecure_http=True)
         assert "top-secret" not in str(exc_info.value)
+
+
+class TestURLSkillRepositoryLimits:
+    def test_download_uses_given_limits(
+        self, zip_server: "tuple[str, type[_ZipHandler]]"
+    ) -> None:
+        url, handler = zip_server
+        size = len(handler.zip_bytes)
+        limits = MaterializerLimits(
+            max_download_bytes=size - 1,
+            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
+            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
+            max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
+        )
+        with pytest.raises(ValueError, match=f"limit of {size - 1} bytes"):
+            URLSkillRepository(url, allow_insecure_http=True, limits=limits)
+        # Control: the same archive loads with the default limits.
+        assert URLSkillRepository(url, allow_insecure_http=True).get_skills()
+
+    def test_extraction_uses_given_limits(
+        self, zip_server: "tuple[str, type[_ZipHandler]]"
+    ) -> None:
+        url, _handler = zip_server
+        limits = MaterializerLimits(
+            max_download_bytes=DEFAULT_LIMITS.max_download_bytes,
+            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
+            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
+            max_extract_entries=1,
+        )
+        with pytest.raises(ValueError, match="exceeding the limit of 1"):
+            URLSkillRepository(url, allow_insecure_http=True, limits=limits)
