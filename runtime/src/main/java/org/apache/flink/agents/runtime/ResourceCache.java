@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.subagent.SubagentConstants;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
@@ -204,6 +205,11 @@ public class ResourceCache implements AutoCloseable {
      * @return true if such a resource has a registered provider or is already cached
      */
     public boolean hasResource(String name, ResourceType type) {
+        if (type == ResourceType.TOOL && name.startsWith(SubagentConstants.TOOL_NAME_PREFIX)) {
+            return hasResource(
+                    name.substring(SubagentConstants.TOOL_NAME_PREFIX.length()),
+                    ResourceType.AGENT);
+        }
         Map<String, Resource> cached = cache.get(type);
         if (cached != null && cached.containsKey(name)) {
             return true;
@@ -230,6 +236,11 @@ public class ResourceCache implements AutoCloseable {
      * @throws Exception if the resource cannot be found or created
      */
     public synchronized Resource getResource(String name, ResourceType type) throws Exception {
+        // The reserved callable namespace is a view of AGENT resources in the current scope.
+        if (type == ResourceType.TOOL && name.startsWith(SubagentConstants.TOOL_NAME_PREFIX)) {
+            return resourceContext.getSubagentTool(
+                    name.substring(SubagentConstants.TOOL_NAME_PREFIX.length()));
+        }
         Map<String, Resource> typed = cache.get(type);
         if (typed != null) {
             Resource cached = typed.get(name);

@@ -19,6 +19,8 @@ package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.configuration.ConfigOption;
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.Outcome;
@@ -64,6 +66,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -149,7 +152,7 @@ class ToolCallActionReportTest {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
         List<Event> sentEvents = new ArrayList<>();
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         when(tool.call(any())).thenReturn(ToolResponse.error("tool rejected request"));
         when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig());
@@ -193,7 +196,7 @@ class ToolCallActionReportTest {
     void sequentialToolErrorReportsFailureAndRethrows() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         AssertionError failure = new AssertionError("tool died");
         when(tool.call(any())).thenThrow(failure);
         when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
@@ -226,7 +229,7 @@ class ToolCallActionReportTest {
     @ValueSource(booleans = {false, true})
     void parallelToolErrorReportsUnresolvedCallsAndRethrows(boolean wrappedByFuture)
             throws Exception {
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         AssertionError failure = new AssertionError("tool died");
         when(tool.call(any())).thenThrow(failure);
         RunnerContext ctx = parallelContext(tool);
@@ -307,7 +310,7 @@ class ToolCallActionReportTest {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
         List<Event> sentEvents = new ArrayList<>();
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         when(tool.call(any()))
                 .thenAnswer(
                         invocation -> {
@@ -381,7 +384,7 @@ class ToolCallActionReportTest {
         Instant firstFinishedAt = base.plusMillis(20);
         Instant secondFinishedAt = base.plusMillis(150);
         AtomicReference<Instant> now = new AtomicReference<>(base);
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         when(tool.call(any()))
                 .thenAnswer(
                         invocation -> {
@@ -437,7 +440,7 @@ class ToolCallActionReportTest {
 
     @Test
     void responseProcessingFailureDoesNotRepeatCompletedOccurrences() throws Exception {
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         when(tool.call(any()))
                 .thenAnswer(
                         invocation ->
@@ -465,7 +468,7 @@ class ToolCallActionReportTest {
     @ValueSource(booleans = {false, true})
     void durableFailureIsReportedAsToolFailure(boolean async) throws Exception {
         IllegalStateException failure = new IllegalStateException("persist failed");
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         when(tool.call(any())).thenReturn(ToolResponse.text("ok"));
         RunnerContext ctx = parallelContext(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig(async, 1));
@@ -505,7 +508,7 @@ class ToolCallActionReportTest {
     @Test
     void parallelDurableFailureIsReportedForItsToolCall() throws Exception {
         IllegalStateException failure = new IllegalStateException("persist failed");
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         when(tool.call(any())).thenReturn(ToolResponse.text("ok"));
         RunnerContext ctx = parallelContext(tool);
         stubParallelExecution(
@@ -542,7 +545,7 @@ class ToolCallActionReportTest {
 
     @Test
     void parallelBatchFailureBeforeInvocationRetainsCreatedExecutions() throws Exception {
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         RunnerContext ctx = parallelContext(tool);
         stubParallelExecution(
                 ctx,
@@ -588,7 +591,7 @@ class ToolCallActionReportTest {
         ExecutorService worker = Executors.newSingleThreadExecutor();
         AtomicReference<Future<ToolResponse>> pending = new AtomicReference<>();
         AtomicReference<Instant> reportingStartedAt = new AtomicReference<>();
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         when(tool.call(any()))
                 .thenAnswer(
                         invocation -> {
@@ -659,7 +662,7 @@ class ToolCallActionReportTest {
                             responseProcessingStartedAt.compareAndSet(null, Instant.now());
                             return true;
                         });
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         when(tool.call(any()))
                 .thenAnswer(
                         invocation -> {
@@ -736,7 +739,7 @@ class ToolCallActionReportTest {
         Instant delayedStart = startsAfterObservation ? observedAt.plusSeconds(1) : observedAt;
         AtomicReference<Instant> now = new AtomicReference<>(base);
         List<DurableCallable<ToolResponse>> delayed = new ArrayList<>();
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         when(tool.call(any())).thenReturn(ToolResponse.text("ok"));
         RunnerContext ctx = parallelContext(tool);
         stubParallelExecution(
@@ -976,7 +979,7 @@ class ToolCallActionReportTest {
     void durableCacheHitDoesNotRecordToolCallLatency() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig());
         when(ctx.<ToolResponse>durableExecute(any())).thenReturn(ToolResponse.text("cached"));
@@ -1008,7 +1011,7 @@ class ToolCallActionReportTest {
     void interruptionBeforeToolInvocationReportsCreatedWithoutTerminal() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig());
         when(ctx.<ToolResponse>durableExecute(any()))
@@ -1041,7 +1044,7 @@ class ToolCallActionReportTest {
     void parallelInterruptionReportsStartedToolsWithoutTerminal() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
-        Tool tool = mock(Tool.class);
+        Tool tool = mock(Tool.class, CALLS_REAL_METHODS);
         when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig(true, 2));
         when(tool.call(any())).thenReturn(ToolResponse.text("ok"));
@@ -1103,17 +1106,15 @@ class ToolCallActionReportTest {
         assertThat(responseEvent.getResponses().get("call-1").getText()).isEqualTo("flink");
     }
 
-    private static org.apache.flink.agents.api.configuration.ReadableConfiguration
-            toolCallConfig() {
+    private static ReadableConfiguration toolCallConfig() {
         return toolCallConfig(false, 1);
     }
 
-    private static org.apache.flink.agents.api.configuration.ReadableConfiguration toolCallConfig(
-            boolean async, int parallelism) {
-        return new org.apache.flink.agents.api.configuration.ReadableConfiguration() {
+    private static ReadableConfiguration toolCallConfig(boolean async, int parallelism) {
+        return new ReadableConfiguration() {
             @Override
             @SuppressWarnings("unchecked")
-            public <T> T get(org.apache.flink.agents.api.configuration.ConfigOption<T> option) {
+            public <T> T get(ConfigOption<T> option) {
                 if (option == AgentExecutionOptions.TOOL_CALL_ASYNC) {
                     return (T) Boolean.valueOf(async);
                 }

@@ -75,7 +75,8 @@ class InternalSubagentDescriptorTest {
         assertThat(child.getResourceContext()).isSameAs(context);
         assertThat(child.getDescription()).isEqualTo("Answers questions");
         assertThat(child.getInputSchema()).isEqualTo(SCHEMA);
-        when(context.getResource("child", ResourceType.AGENT)).thenReturn(child);
+        when(context.getSubagentTool("child"))
+                .thenReturn(new SubagentTool("child", child, context));
         ChatSetup chat = new ChatSetup(context);
         chat.open();
         assertThat(chat.getTools()).hasSize(1);
