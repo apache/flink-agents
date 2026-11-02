@@ -18,9 +18,12 @@
 
 package org.apache.flink.agents.runtime.subagent;
 
+import org.apache.flink.agents.api.context.Outcome;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentFutures;
 import org.apache.flink.agents.api.subagent.SubagentResult;
+import org.apache.flink.agents.runtime.context.SchedulableFuture;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -58,63 +61,35 @@ final class SubagentFutureGroup extends SubagentFutures {
 
     @Override
     public List<SubagentResult> awaitAll() throws Exception {
-        checkNotMixedInternalAndDeferred();
+        RunnerContext context = null;
         for (SubagentFuture future : futures) {
-            if (future instanceof PhasedSubagentFuture && !future.isDone()) {
-                ((PhasedSubagentFuture) future).prepare();
-            }
-        }
-        // TODO(#926): execute the prepared calls as one batch once durable execution supports
-        // batched submission; until then the prepared calls are executed one by one.
-        for (SubagentFuture future : futures) {
-            if (future instanceof PhasedSubagentFuture && !future.isDone()) {
-                ((PhasedSubagentFuture) future).execute();
-            }
-        }
-        List<SubagentResult> outcomes = new ArrayList<>(futures.size());
-        for (SubagentFuture future : futures) {
-            outcomes.add(future.await());
-        }
-        return outcomes;
-    }
-
-    /**
-     * Refuses a group mixing internal and deferred handles: the two consult this action's durable
-     * journal in different phases, so mixing them currently breaks durable recovery.
-     */
-    private void checkNotMixedInternalAndDeferred() {
-        SubagentFuture internal = null;
-        SubagentFuture deferred = null;
-        for (SubagentFuture future : futures) {
-            // A resolved member is skipped by both loops above, so it consults no journal.
-            if (future instanceof InternalSubagentFuture) {
-                if (internal == null && !future.isDone()) {
-                    internal = future;
+            if (future instanceof SchedulableFuture) {
+                RunnerContext owner = ((SchedulableFuture<?>) future).getOwnerContext();
+                if (owner == null) {
+                    continue;
                 }
-            } else if (future instanceof DeferredSubagentFuture) {
-                if (deferred == null && !future.isDone()) {
-                    deferred = future;
+                if (context != null && owner != context) {
+                    throw new IllegalArgumentException("Foreign subagent handle");
                 }
+                context = owner;
             }
         }
-        if (internal != null && deferred != null) {
-            throw new IllegalStateException(
-                    String.format(
-                            "A combined sub-agent group cannot mix the internal call %s with the"
-                                    + " deferred call %s: the two consult this action's durable"
-                                    + " journal in different phases, so recovery cannot replay the"
-                                    + " reads in the written order. Resolve the two calls"
-                                    + " separately.",
-                            describe(internal), describe(deferred)));
+        if (context == null) {
+            List<SubagentResult> results = new ArrayList<>();
+            for (SubagentFuture future : futures) {
+                results.add(future.await());
+            }
+            return results;
         }
-    }
-
-    private static String describe(SubagentFuture future) {
-        return future.getClass().getSimpleName()
-                + " "
-                + future.getSessionId()
-                + "#"
-                + future.getCallId();
+        List<Outcome<SubagentResult>> outcomes = context.gather(futures).await();
+        List<SubagentResult> results = new ArrayList<>();
+        for (Outcome<SubagentResult> outcome : outcomes) {
+            if (outcome.isFailure()) {
+                throw outcome.getError();
+            }
+            results.add(outcome.getValue());
+        }
+        return results;
     }
 
     @Override

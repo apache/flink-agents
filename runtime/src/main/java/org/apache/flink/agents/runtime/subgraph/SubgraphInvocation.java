@@ -226,6 +226,11 @@ public class SubgraphInvocation<R> {
         replayed = true;
     }
 
+    /** Completion signal for the common runtime batch scheduler. */
+    public final CompletableFuture<R> completionFuture() {
+        return response;
+    }
+
     public final R awaitResult() throws InterruptedException, ExecutionException {
         return response.get();
     }

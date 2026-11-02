@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.async.ContinuationNativeCallable;
 import org.apache.flink.agents.plan.exceptions.UncapturableException;
+import org.apache.flink.util.function.FunctionWithException;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -148,6 +149,23 @@ public abstract class AsyncFutureImpl<T> implements AsyncFuture<T> {
             rethrowFatal(result.getError());
         }
         return result;
+    }
+
+    /**
+     * Maps a call result without adding a durable boundary, preserving runtime batch scheduling.
+     */
+    public static <S, T> AsyncFuture<T> map(
+            RunnerContext owner,
+            AsyncFuture<S> future,
+            FunctionWithException<S, T, Exception> mapper)
+            throws Exception {
+        if (!(owner instanceof RunnerContextImpl)) {
+            // Other context implementations manage their own waiting and gather behavior.
+            return () -> mapper.apply(future.await());
+        }
+        RunnerContextImpl runtime = (RunnerContextImpl) owner;
+        SchedulableFuture<S> source = requireSchedulable(future, runtime);
+        return new MappedAsyncFuture<>(runtime, source, mapper);
     }
 
     public static <T> SchedulableFuture<T> requireSchedulable(
@@ -298,6 +316,93 @@ final class SingleDurableFuture<T> extends SingleAsyncFuture<T> implements Durab
     @Override
     DurableCallable<T> getDurableCallable() {
         return callable;
+    }
+}
+
+/** A presentation view; its source alone owns execution and durable recording. */
+final class MappedAsyncFuture<S, T> extends AsyncFutureImpl<T> implements SchedulableFuture<T> {
+    private final SchedulableFuture<S> source;
+    private final FunctionWithException<S, T, Exception> mapper;
+
+    MappedAsyncFuture(
+            RunnerContextImpl owner,
+            SchedulableFuture<S> source,
+            FunctionWithException<S, T, Exception> mapper) {
+        super(owner);
+        this.source = source;
+        this.mapper = mapper;
+    }
+
+    @Override
+    protected T resolveValue() throws Exception {
+        return getOwner().resolveAsyncFuture(this);
+    }
+
+    @Override
+    public Object getCallIdentity() throws Exception {
+        return source.getCallIdentity();
+    }
+
+    @Override
+    public void validate(RunnerContextImpl context) throws Exception {
+        source.validate(context);
+    }
+
+    @Override
+    public Outcome<T> prepare(RunnerContextImpl context) throws Exception {
+        if (!isDone()) {
+            Outcome<S> saved = source.prepare(context);
+            if (saved != null) {
+                mapOutcome(saved);
+            }
+        }
+        return isDone() ? getCompletedOutcome() : null;
+    }
+
+    @Override
+    public CompletableFuture<?> start() throws Exception {
+        return isDone() ? CompletableFuture.completedFuture(null) : source.start();
+    }
+
+    @Override
+    public Outcome<T> finish(TimeoutException timeout) throws Exception {
+        if (!isDone()) {
+            mapOutcome(source.finish(timeout));
+        }
+        return getCompletedOutcome();
+    }
+
+    @Override
+    public void preventStart() {
+        source.preventStart();
+    }
+
+    @Override
+    public void cancel() {
+        source.cancel();
+    }
+
+    @Override
+    public void close() {
+        source.close();
+    }
+
+    @Override
+    protected boolean cacheResolutionFailures() {
+        return false;
+    }
+
+    private void mapOutcome(Outcome<S> outcome) throws Exception {
+        if (outcome.isFailure()) {
+            complete(Outcome.failure(outcome.getError()));
+            return;
+        }
+        try {
+            complete(Outcome.success(mapper.apply(outcome.getValue())));
+        } catch (Exception e) {
+            rethrowFatal(e);
+            complete(Outcome.failure(e));
+        }
     }
 }
 

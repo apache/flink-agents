@@ -37,6 +37,7 @@ import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.condition.ActionMatcher;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.subgraph.SubgraphExecution;
+import org.apache.flink.agents.runtime.subgraph.SubgraphFuture;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.util.ExceptionUtils;
 
@@ -142,8 +143,21 @@ public class InternalSubagentSetup extends BaseSubagentSetup {
     @Override
     public SubagentFuture submit(
             RunnerContext ctx, Object prompt, String sessionId, String callId) {
-        return new InternalSubagentFuture(
-                sessionId, callId, ctx, this, prompt, currentTaskRegistry());
+        return new SubagentFutureImpl(
+                sessionId,
+                callId,
+                ctx,
+                () -> {
+                    SubgraphExecution.requireReleasableOperator((RunnerContextImpl) ctx);
+                    return new SubgraphFuture<>(
+                            (RunnerContextImpl) ctx,
+                            () -> invocation((RunnerContextImpl) ctx, sessionId, callId),
+                            prompt,
+                            result -> result);
+                },
+                currentTaskRegistry(),
+                () -> false,
+                () -> {});
     }
 
     /** The call one action issues against this scope's child plan under the assigned identity. */

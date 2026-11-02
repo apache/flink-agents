@@ -82,7 +82,7 @@ class ChatDurableFutureTest {
             assertThat(executor.executeAction(context.getContinuationContext(), action)).isFalse();
             assertThat(executor.submissions).isZero();
             assertThat(executor.worker.get()).isNull();
-            assertThat(state.getCallResults()).isEmpty();
+            assertThat(state.getCallResults()).hasSize(1).allMatch(r -> r.isPending());
             SubgraphInvocation<ChatResponseEvent> call = dispatchedCall(context);
             assertThat(context.getPendingEvents()).containsExactly(ordinary);
             call.dispatch(
@@ -92,7 +92,7 @@ class ChatDurableFutureTest {
             finish(executor, context, action);
 
             assertThat(executor.submissions).isZero();
-            assertThat(writes).hasValue(1);
+            assertThat(writes).hasValue(2);
             assertThat(state.getCallResults()).hasSize(1);
             // A FAILED response is still a recorded response, not a wait/execution exception.
             assertThat(state.getCallResults().get(0).isSuccess()).isTrue();
@@ -126,12 +126,15 @@ class ChatDurableFutureTest {
         InspectingExecutor executor = new InspectingExecutor();
         try {
             IllegalStateException failure = new IllegalStateException("store unavailable");
+            AtomicInteger writes = new AtomicInteger();
             JavaRunnerContextImpl context =
                     context(
                             executor,
                             new ActionState(new Event("input")),
                             (k, s, a, e, saved) -> {
-                                throw failure;
+                                if (writes.incrementAndGet() > 1) {
+                                    throw failure;
+                                }
                             });
             AtomicReference<Exception> error = new AtomicReference<>();
             Runnable action = captureFailure(context.chat("model", List.of()), error);

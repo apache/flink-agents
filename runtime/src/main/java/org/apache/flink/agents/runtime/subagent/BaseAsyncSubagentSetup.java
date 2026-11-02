@@ -77,7 +77,18 @@ public abstract class BaseAsyncSubagentSetup extends BaseSubagentSetup {
     public final SubagentFuture submit(
             RunnerContext ctx, Object prompt, String sessionId, String callId) throws Exception {
         ctx.durableExecuteAsync(submitRequest(ctx, sessionId, callId, prompt)).await();
-        return new AsyncSubagentFuture(this, ctx, sessionId, callId, currentTaskRegistry());
+        return new SubagentFutureImpl(
+                sessionId,
+                callId,
+                ctx,
+                () -> ctx.durableExecuteAsync(awaitResult(ctx, sessionId, callId)),
+                currentTaskRegistry(),
+                () -> {
+                    RunStatus status = queryStatus(sessionId, callId);
+                    return status.getState() == RunStatus.State.COMPLETED
+                            || status.getState() == RunStatus.State.FAILED;
+                },
+                () -> cancelRequest(ctx, sessionId, callId));
     }
 
     // ------------------------------------------------------------------------------------------

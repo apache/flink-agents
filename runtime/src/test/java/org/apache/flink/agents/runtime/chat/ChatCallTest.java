@@ -37,6 +37,7 @@ import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.subgraph.SubgraphCallManager;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
+import org.apache.flink.agents.runtime.subgraph.SubgraphFuture;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 import org.apache.flink.agents.runtime.utils.IdAllocatorSource;
@@ -255,13 +256,11 @@ class ChatCallTest {
     }
 
     @Test
-    void chatHandleRejectsGatherWithoutStartingCall() {
+    void chatHandleCanBeGatheredWithoutStartingCall() {
         JavaRunnerContextImpl context = javaContext();
         DurableFuture<ChatResult> future = context.chat("model", List.of());
-        assertThat(future).isInstanceOf(ChatDurableFuture.class);
-        assertThatThrownBy(() -> context.gather(List.of(future)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("gather only accepts");
+        assertThat(future).isInstanceOf(SubgraphFuture.class);
+        assertThat(context.gather(List.of(future))).isNotNull();
         assertThat(context.getPendingEvents()).isEmpty();
     }
 
