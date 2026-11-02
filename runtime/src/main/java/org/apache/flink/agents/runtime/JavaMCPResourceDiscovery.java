@@ -20,7 +20,7 @@ package org.apache.flink.agents.runtime;
 
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.subagent.SubagentSetup;
+import org.apache.flink.agents.plan.tools.SubagentConstants;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 
@@ -95,13 +95,13 @@ public class JavaMCPResourceDiscovery {
             for (Resource discovered : tools) {
                 Resource tool = attachMcpServerNameIfSupported(discovered, serverName);
                 String toolName = nameOf(tool);
-                if (toolName.startsWith(SubagentSetup.CALLABLE_NAME_PREFIX)) {
+                if (toolName.startsWith(SubagentConstants.TOOL_NAME_PREFIX)) {
                     throw new IllegalArgumentException(
                             String.format(
                                     "MCP server '%s' advertised a tool with a reserved name: tool"
                                             + " name '%s' must not start with the reserved prefix"
                                             + " '%s', which identifies sub-agent callables.",
-                                    serverName, toolName, SubagentSetup.CALLABLE_NAME_PREFIX));
+                                    serverName, toolName, SubagentConstants.TOOL_NAME_PREFIX));
                 }
                 checkNameFree(cache, TOOL, toolName, serverName, toolOwners);
                 cache.put(toolName, TOOL, tool);

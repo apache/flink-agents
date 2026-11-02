@@ -36,13 +36,6 @@ import java.util.Objects;
 public abstract class SubagentSetup extends Resource {
 
     /**
-     * Prefix of the callable name a sub-agent is exposed to a chat model under. Tools are forbidden
-     * to register under this prefix, so a prefixed callable name unambiguously addresses a
-     * sub-agent and the executing side routes it to the {@code AGENT} namespace.
-     */
-    public static final String CALLABLE_NAME_PREFIX = "_subagent_";
-
-    /**
      * Descriptor argument key carrying the caller-facing {@link #getDescription()}. It is the
      * single source of truth shared by the constructor that reads it back and the subclasses whose
      * descriptors write it, and the cross-language wire key the Python side reads.

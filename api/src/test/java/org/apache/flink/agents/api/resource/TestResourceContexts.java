@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api.resource;
 
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
+import org.apache.flink.agents.api.tools.Tool;
 
 import java.util.Collections;
 import java.util.List;
@@ -30,7 +31,7 @@ public final class TestResourceContexts {
 
     /**
      * Create a {@link ResourceContext} backed by the given resource lookup function. The skill
-     * methods return empty defaults.
+     * methods return empty defaults; subagent tool lookup is unsupported.
      */
     public static ResourceContext fromGetResource(
             BiFunction<String, ResourceType, Resource> getResource) {
@@ -38,6 +39,12 @@ public final class TestResourceContexts {
             @Override
             public Resource getResource(String name, ResourceType type) {
                 return getResource.apply(name, type);
+            }
+
+            @Override
+            public Tool getSubagentTool(String subagentName) {
+                throw new UnsupportedOperationException(
+                        "Subagent tools are not supported by this context.");
             }
 
             @Override
