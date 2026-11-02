@@ -36,6 +36,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
@@ -107,7 +108,7 @@ class AgentPlanDeclareChatModelTest {
                 .get(type)
                 .get(name)
                 .provide(
-                        ResourceContext.fromGetResource(
+                        TestResourceContexts.fromGetResource(
                                 (n, t) -> {
                                     throw new UnsupportedOperationException(
                                             "No dependencies expected");
@@ -151,7 +152,7 @@ class AgentPlanDeclareChatModelTest {
                                 .get(ResourceType.CHAT_MODEL)
                                 .get("testChatModel")
                                 .provide(
-                                        ResourceContext.fromGetResource(
+                                        TestResourceContexts.fromGetResource(
                                                 (n, t) -> {
                                                     throw new UnsupportedOperationException(
                                                             "No dependencies expected");
@@ -182,7 +183,7 @@ class AgentPlanDeclareChatModelTest {
                                 .get(ResourceType.CHAT_MODEL)
                                 .get("testChatModel")
                                 .provide(
-                                        ResourceContext.fromGetResource(
+                                        TestResourceContexts.fromGetResource(
                                                 (n, t) -> {
                                                     throw new UnsupportedOperationException(
                                                             "No dependencies expected");

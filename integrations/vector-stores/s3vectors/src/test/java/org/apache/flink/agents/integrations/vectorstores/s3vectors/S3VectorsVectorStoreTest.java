@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.junit.jupiter.api.Assertions;
@@ -46,7 +47,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 public class S3VectorsVectorStoreTest {
 
-    private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
+    private static final ResourceContext NOOP =
+            TestResourceContexts.fromGetResource((a, b) -> null);
 
     @Test
     @DisplayName("Constructor creates store")
@@ -117,7 +119,8 @@ public class S3VectorsVectorStoreTest {
         store =
                 new S3VectorsVectorStore(
                         desc,
-                        ResourceContext.fromGetResource(S3VectorsVectorStoreTest::getResource));
+                        TestResourceContexts.fromGetResource(
+                                S3VectorsVectorStoreTest::getResource));
     }
 
     @Test

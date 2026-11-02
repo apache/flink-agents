@@ -19,6 +19,7 @@ package org.apache.flink.agents.integrations.chatmodels.openai;
 
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -32,7 +33,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** Tests for {@link VLLMChatModelSetup}. */
 class VLLMChatModelSetupTest {
 
-    private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
+    private static final ResourceContext NOOP =
+            TestResourceContexts.fromGetResource((a, b) -> null);
 
     private static ResourceDescriptor.Builder descriptorBuilder() {
         return ResourceDescriptor.Builder.newBuilder(VLLMChatModelSetup.class.getName());

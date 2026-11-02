@@ -33,6 +33,7 @@ import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -51,7 +52,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class OpenAIResponsesModelConnectionTest {
 
-    private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
+    private static final ResourceContext NOOP =
+            TestResourceContexts.fromGetResource((a, b) -> null);
 
     private static ResourceDescriptor.Builder connectionDescriptor() {
         return ResourceDescriptor.Builder.newBuilder(

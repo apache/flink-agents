@@ -20,10 +20,10 @@ package org.apache.flink.agents.integrations.mcp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.spec.McpSchema;
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.integrations.mcp.auth.ApiKeyAuth;
 import org.apache.flink.agents.integrations.mcp.auth.BasicAuth;
 import org.apache.flink.agents.integrations.mcp.auth.BearerTokenAuth;
@@ -88,7 +88,7 @@ class MCPServerTest {
         MCPServer server =
                 new MCPServer(
                         descriptor,
-                        ResourceContext.fromGetResource(
+                        TestResourceContexts.fromGetResource(
                                 (name, type) -> {
                                     throw new UnsupportedOperationException(
                                             "No dependencies expected");

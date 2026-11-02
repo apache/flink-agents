@@ -25,8 +25,8 @@ import org.apache.flink.agents.api.chat.messages.ContentBlock;
 import org.apache.flink.agents.api.chat.messages.DocumentBlock;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -124,7 +124,8 @@ class OpenAIChatCompletionsMultimodalLiveTest {
         }
         OpenAICompletionsConnection connection =
                 new OpenAICompletionsConnection(
-                        descriptor.build(), ResourceContext.fromGetResource((name, type) -> null));
+                        descriptor.build(),
+                        TestResourceContexts.fromGetResource((name, type) -> null));
         Map<String, Object> params = new HashMap<>();
         params.put("model", model);
         return connection

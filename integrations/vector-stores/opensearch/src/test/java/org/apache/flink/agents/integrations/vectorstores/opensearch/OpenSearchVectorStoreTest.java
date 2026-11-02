@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
@@ -49,7 +50,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 public class OpenSearchVectorStoreTest {
 
-    private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
+    private static final ResourceContext NOOP =
+            TestResourceContexts.fromGetResource((a, b) -> null);
 
     @Test
     @DisplayName("Constructor creates store with IAM auth")
@@ -167,7 +169,8 @@ public class OpenSearchVectorStoreTest {
         store =
                 new OpenSearchVectorStore(
                         builder.build(),
-                        ResourceContext.fromGetResource(OpenSearchVectorStoreTest::getResource));
+                        TestResourceContexts.fromGetResource(
+                                OpenSearchVectorStoreTest::getResource));
     }
 
     @Test
