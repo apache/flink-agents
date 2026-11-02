@@ -17,25 +17,17 @@
  */
 package org.apache.flink.agents.plan.routing;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
-import org.apache.flink.agents.api.chat.messages.ContentBlock;
 import org.apache.flink.agents.api.chat.messages.DataContentBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
-import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
-import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
-import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.chat.model.routing.RoutingCandidate;
 import org.apache.flink.agents.api.chat.model.routing.RoutingContext;
 import org.apache.flink.agents.api.chat.model.routing.RoutingDecision;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
-import org.apache.flink.agents.api.prompt.Prompt;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ChatModelInvoker;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
@@ -74,8 +66,6 @@ import java.util.regex.Pattern;
  */
 final class LlmJudgeRoutingExecutor implements RoutingExecutor {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
     /** Matches {@code "model": "<name>"} in the judge's JSON verdict. */
     private static final Pattern VERDICT_JSON = Pattern.compile("\"model\"\\s*:\\s*\"([^\"]+)\"");
 
@@ -106,13 +96,13 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
         String abstainReason = null;
         try {
             boolean[] truncated = new boolean[1];
-            List<ChatMessage> effective = effectiveJudgeMessages(context, ctx);
+            List<ChatMessage> effective = RoutingInput.effectiveMessages(context, ctx);
             List<ChatMessage> judgeInput =
                     buildJudgeMessages(
                             strategy,
                             context,
                             effective,
-                            pinnedRenderedIndices(context.getMessages(), effective),
+                            RoutingInput.pinnedRenderedIndices(context.getMessages(), effective),
                             truncated);
             if (truncated[0]) {
                 judgeMetadata.put(CONTEXT_TRUNCATED_KEY, true);
@@ -188,58 +178,6 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
         return names;
     }
 
-    /**
-     * The judge routes on what the selected model will actually receive. When the target setup
-     * binds a {@link Prompt}, this mirrors {@code BaseChatModelSetup#chat}: the template is
-     * rendered with the request's prompt args and prepended to the non-empty conversation messages.
-     * The rendering anchor is the router's default candidate (or the first candidate) — where
-     * abstains resolve, and in practice the workload-level prompt shared by the candidates. If the
-     * anchor can't be resolved or binds no prompt, the raw message list is used unchanged.
-     * Cancellation and interruption are not failures of the anchor: they propagate.
-     */
-    static List<ChatMessage> effectiveJudgeMessages(RoutingContext context, RunnerContext ctx)
-            throws Exception {
-        List<ChatMessage> messages = context.getMessages();
-        String anchor =
-                context.getDefaultModel().orElseGet(() -> context.getCandidates().get(0).getName());
-        try {
-            BaseChatModelSetup setup =
-                    (BaseChatModelSetup) ctx.getResource(anchor, ResourceType.CHAT_MODEL);
-            // One shared implementation with the chat path (prepareRequestMessages), so the
-            // judge's view cannot drift from what the selected model receives. Candidates binding
-            // DIFFERENT prompts see their own rendering only at answer time — the anchor (default
-            // candidate, where abstains resolve) is a documented approximation.
-            return setup.prepareRequestMessages(messages, context.getPromptArgs());
-        } catch (Exception unresolvable) {
-            CancellationUtils.rethrowIfCancellation(unresolvable);
-            // An unresolvable candidate surfaces on the real chat path with its normal policy.
-            return messages;
-        }
-    }
-
-    /**
-     * Indices of effective messages that were <i>generated</i> by the anchor's request shaping
-     * (rendered template, skill-discovery prompt) rather than taken from the conversation —
-     * identified by object identity, since {@code prepareRequestMessages} appends the original
-     * message instances unchanged. They carry the task definition, so the context cap pins them.
-     */
-    static Set<Integer> pinnedRenderedIndices(
-            List<ChatMessage> original, List<ChatMessage> effective) {
-        if (effective == original) {
-            return Set.of();
-        }
-        Set<ChatMessage> originals =
-                java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
-        originals.addAll(original);
-        Set<Integer> pinned = new LinkedHashSet<>();
-        for (int i = 0; i < effective.size(); i++) {
-            if (!originals.contains(effective.get(i))) {
-                pinned.add(i);
-            }
-        }
-        return pinned;
-    }
-
     static String judgeModel(RoutingStrategy strategy) {
         return (String) strategy.getArguments().get(RoutingStrategy.ARG_JUDGE_MODEL);
     }
@@ -248,18 +186,13 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
         return (String) strategy.getArguments().get(RoutingStrategy.ARG_PROMPT_TEMPLATE);
     }
 
-    static int maxContextChars(RoutingStrategy strategy) {
-        Object cap = strategy.getArguments().get(RoutingStrategy.ARG_MAX_CONTEXT_CHARS);
-        return cap instanceof Number ? ((Number) cap).intValue() : Integer.MAX_VALUE;
-    }
-
     /**
      * Builds the judge conversation: a system message carrying the candidates (with their {@code
      * describe(...)} descriptions) and the verdict contract, plus the request under judgment.
      *
      * <p>The judge routes on what the selected model will actually receive: {@code
      * effectiveMessages} is the complete message list, with the target setup's bound prompt already
-     * rendered when one exists (see {@link #effectiveJudgeMessages}). With the opt-in {@code
+     * rendered when one exists (see {@link RoutingInput#effectiveMessages}). With the opt-in {@code
      * max_context_chars} cap, the newest message and the SYSTEM message are always kept, remaining
      * messages fill newest-first within the budget, and {@code truncatedOut[0]} is set so the
      * decision metadata records that the judge saw a trimmed view. Media blocks are preserved in
@@ -296,10 +229,10 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
                             + " only task is to pick the model.";
         }
         List<DataContentBlock> conversation =
-                renderConversation(
-                        selectWithinBudget(
+                RoutingInput.renderConversation(
+                        RoutingInput.selectWithinBudget(
                                 effectiveMessages,
-                                maxContextChars(strategy),
+                                RoutingInput.maxContextChars(strategy),
                                 pinnedIndices,
                                 truncatedOut));
         // Fall back to prompt args when no rendered/user text or media is present
@@ -328,144 +261,11 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
         for (int i = 0; i < messages.size(); i++) {
             ChatMessage message = messages.get(i);
             if ((message.getRole() == MessageRole.USER || pinnedIndices.contains(i))
-                    && !judgeContent(message).isEmpty()) {
+                    && !RoutingInput.content(message).isEmpty()) {
                 return true;
             }
         }
         return false;
-    }
-
-    /**
-     * Applies the opt-in context budget: SYSTEM messages and the newest message are pinned, the
-     * remaining messages fill newest-first, and dropped messages set {@code truncatedOut[0]}.
-     * Without a cap this returns the input unchanged.
-     */
-    static List<ChatMessage> selectWithinBudget(
-            List<ChatMessage> messages,
-            int maxChars,
-            Set<Integer> pinnedIndices,
-            boolean[] truncatedOut) {
-        if (messages == null) {
-            return List.of();
-        }
-        if (maxChars == Integer.MAX_VALUE) {
-            return messages;
-        }
-        long total = 0;
-        for (ChatMessage message : messages) {
-            total += length(message);
-        }
-        if (total <= maxChars) {
-            return messages;
-        }
-        Set<Integer> kept = new LinkedHashSet<>();
-        long budget = maxChars;
-        // Pinned first — even if they alone exceed the budget: SYSTEM messages (the task
-        // framing), messages generated by the anchor's request shaping (the rendered template
-        // carries the task definition), and the newest message (the request being routed).
-        for (int i = 0; i < messages.size(); i++) {
-            if (messages.get(i).getRole() == MessageRole.SYSTEM || pinnedIndices.contains(i)) {
-                kept.add(i);
-                budget -= length(messages.get(i));
-            }
-        }
-        int newest = messages.size() - 1;
-        if (!kept.contains(newest)) {
-            kept.add(newest);
-            budget -= length(messages.get(newest));
-        }
-        // Then newest-first within what remains.
-        for (int i = newest - 1; i >= 0; i--) {
-            if (kept.contains(i)) {
-                continue;
-            }
-            long len = length(messages.get(i));
-            if (len <= budget) {
-                kept.add(i);
-                budget -= len;
-            }
-        }
-        truncatedOut[0] = kept.size() < messages.size();
-        List<ChatMessage> selected = new ArrayList<>();
-        for (int i = 0; i < messages.size(); i++) {
-            if (kept.contains(i)) {
-                selected.add(messages.get(i));
-            }
-        }
-        return selected;
-    }
-
-    /** Counts rendered content text; media stays attached to its message, without a byte budget. */
-    private static long length(ChatMessage message) {
-        return judgeContent(message).stream()
-                .filter(block -> block instanceof TextBlock)
-                .mapToLong(block -> ((TextBlock) block).getText().length())
-                .sum();
-    }
-
-    /** Frames conversation roles as data while preserving the order and payload of media blocks. */
-    private static List<DataContentBlock> renderConversation(List<ChatMessage> messages) {
-        List<DataContentBlock> rendered = new ArrayList<>();
-        for (ChatMessage message : messages) {
-            List<DataContentBlock> content = judgeContent(message);
-            if (content.isEmpty()) {
-                continue;
-            }
-            String prefix = rendered.isEmpty() ? "" : "\n";
-            rendered.add(new TextBlock(prefix + message.getRole().name() + ": "));
-            rendered.addAll(content);
-        }
-        return rendered;
-    }
-
-    /**
-     * Projects one message into judge input. Tool interactions are conversation data, not
-     * executable calls to the judge. Reasoning and provider continuation metadata are not
-     * forwarded.
-     */
-    static List<DataContentBlock> judgeContent(ChatMessage message) {
-        List<DataContentBlock> content = new ArrayList<>();
-        for (ContentBlock block : message.getBlocks()) {
-            if (block instanceof TextBlock) {
-                if (!((TextBlock) block).getText().isEmpty()) {
-                    content.add((TextBlock) block);
-                }
-            } else if (block instanceof DataContentBlock) {
-                content.add((DataContentBlock) block);
-            } else if (block instanceof ToolCallBlock) {
-                ToolCallBlock call = (ToolCallBlock) block;
-                content.add(
-                        new TextBlock(
-                                "\nTool call "
-                                        + toolDescription(
-                                                Map.of(
-                                                        "call_id", call.getCallId(),
-                                                        "name", call.getName(),
-                                                        "input", call.getInput()))
-                                        + "\n"));
-            } else if (block instanceof ToolResultBlock) {
-                ToolResultBlock result = (ToolResultBlock) block;
-                content.add(
-                        new TextBlock(
-                                "Tool result "
-                                        + toolDescription(
-                                                Map.of(
-                                                        "call_id", result.getCallId(),
-                                                        "is_error", result.isError()))
-                                        + ":\n"));
-                content.addAll(result.getBlocks());
-            }
-        }
-        return content;
-    }
-
-    private static String toolDescription(Map<String, Object> fields) {
-        try {
-            return MAPPER.writeValueAsString(fields);
-        } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException(
-                    "Cannot render tool interaction for routing judge", e);
-        }
     }
 
     /**

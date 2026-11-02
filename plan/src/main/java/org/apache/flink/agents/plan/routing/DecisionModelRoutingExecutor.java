@@ -199,9 +199,8 @@ final class DecisionModelRoutingExecutor implements RoutingExecutor {
             RunnerContext ctx,
             Map<String, Object> metadata)
             throws Exception {
-        List<ChatMessage> effective = LlmJudgeRoutingExecutor.effectiveJudgeMessages(context, ctx);
-        Set<Integer> pinned =
-                LlmJudgeRoutingExecutor.pinnedRenderedIndices(context.getMessages(), effective);
+        List<ChatMessage> effective = RoutingInput.effectiveMessages(context, ctx);
+        Set<Integer> pinned = RoutingInput.pinnedRenderedIndices(context.getMessages(), effective);
         boolean[] truncated = new boolean[1];
         String input = renderInput(strategy, context, effective, pinned, truncated, metadata);
         if (truncated[0]) {
@@ -244,9 +243,9 @@ final class DecisionModelRoutingExecutor implements RoutingExecutor {
             boolean[] truncatedOut,
             Map<String, Object> metadata) {
         List<ChatMessage> selected =
-                LlmJudgeRoutingExecutor.selectWithinBudget(
+                RoutingInput.selectWithinBudget(
                         effectiveMessages,
-                        LlmJudgeRoutingExecutor.maxContextChars(strategy),
+                        RoutingInput.maxContextChars(strategy),
                         pinnedIndices,
                         truncatedOut);
         // Whether the request carries text is judged on the complete effective list, as the judge
@@ -259,7 +258,7 @@ final class DecisionModelRoutingExecutor implements RoutingExecutor {
             if (message.getRole() != MessageRole.USER && !pinnedIndices.contains(i)) {
                 continue;
             }
-            for (DataContentBlock block : LlmJudgeRoutingExecutor.judgeContent(message)) {
+            for (DataContentBlock block : RoutingInput.content(message)) {
                 if (block instanceof TextBlock && !((TextBlock) block).getText().isEmpty()) {
                     requestHasText = true;
                 }
@@ -268,7 +267,7 @@ final class DecisionModelRoutingExecutor implements RoutingExecutor {
         StringBuilder text = new StringBuilder();
         int mediaDropped = 0;
         for (ChatMessage message : selected) {
-            List<DataContentBlock> content = LlmJudgeRoutingExecutor.judgeContent(message);
+            List<DataContentBlock> content = RoutingInput.content(message);
             if (content.isEmpty()) {
                 continue;
             }
@@ -378,10 +377,6 @@ final class DecisionModelRoutingExecutor implements RoutingExecutor {
     }
 
     /**
-     * Persisted as a real abstain: replay resolves to the router's <i>current</i> default, and the
-     * provider's answer stays in the metadata for the routing event.
-     */
-    /**
      * Appends {@code piece} on a new line, without doubling a line break that either side already
      * carries (tool calls and results are rendered with their own framing newlines).
      */
@@ -405,6 +400,10 @@ final class DecisionModelRoutingExecutor implements RoutingExecutor {
                 : (Object) value;
     }
 
+    /**
+     * Persisted as a real abstain: replay resolves to the router's <i>current</i> default, and the
+     * provider's answer stays in the metadata for the routing event.
+     */
     private static RoutingDecision abstain(String reason, Map<String, Object> metadata) {
         return new RoutingDecision(null, true, reason, null, new HashMap<>(metadata), null);
     }
