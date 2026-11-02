@@ -25,8 +25,9 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
-import org.apache.flink.agents.runtime.chat.ChatDurableFuture;
+import org.apache.flink.agents.runtime.chat.ChatSubgraphDefinition;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.subgraph.SubgraphFuture;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 
 import java.util.concurrent.Callable;
@@ -74,7 +75,11 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
 
     @Override
     public DurableFuture<ChatResult> chat(ChatRequestEvent request) {
-        return new ChatDurableFuture(this, request);
+        return new SubgraphFuture<>(
+                this,
+                () -> ChatSubgraphDefinition.invocationFor(this),
+                request,
+                response -> response.getResponse());
     }
 
     @Override

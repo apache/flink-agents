@@ -43,12 +43,14 @@ public abstract class BaseDeferredSubagentSetup extends BaseSubagentSetup {
     @Override
     public SubagentFuture submit(RunnerContext ctx, Object prompt, String sessionId, String callId)
             throws Exception {
-        return new DeferredSubagentFuture(
+        return new SubagentFutureImpl(
                 sessionId,
                 callId,
                 ctx,
+                () -> ctx.durableExecuteAsync(prepare(ctx, prompt, sessionId, callId)),
                 currentTaskRegistry(),
-                () -> prepare(ctx, prompt, sessionId, callId));
+                () -> false,
+                () -> {});
     }
 
     /**
