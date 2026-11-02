@@ -448,17 +448,19 @@ public class TaskLifecycleListenerNotificationTest {
      */
     public static class ParkingAgent extends Agent {
 
-        static volatile CountDownLatch started;
+        static volatile CountDownLatch waiting;
         static volatile CountDownLatch allow;
 
-        static void resetFixture(int startedCount) {
-            started = new CountDownLatch(startedCount);
+        static void resetFixture(int waitingCount) {
+            waiting = new CountDownLatch(waitingCount);
             allow = new CountDownLatch(1);
         }
 
         @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
         public static void handleInput(Event event, RunnerContext context) throws Exception {
             Long input = (Long) InputEvent.fromEvent(event).getInput();
+            // Count the action before awaiting; its callable may still be queued in the pool.
+            waiting.countDown();
             Long result =
                     context.durableExecuteAsync(
                                     new DurableCallable<Long>() {
@@ -474,7 +476,6 @@ public class TaskLifecycleListenerNotificationTest {
 
                                         @Override
                                         public Long call() {
-                                            started.countDown();
                                             try {
                                                 allow.await();
                                             } catch (InterruptedException e) {
@@ -519,7 +520,7 @@ public class TaskLifecycleListenerNotificationTest {
             for (long key = 1; key <= workers; key++) {
                 testHarness.processElement(new StreamRecord<>(key));
             }
-            assertThat(ParkingAgent.started.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(ParkingAgent.waiting.await(5, TimeUnit.SECONDS)).isTrue();
             testHarness.processElement(new StreamRecord<>(queuedKey));
 
             operator.prepareSnapshotPreBarrier(1L);
@@ -545,7 +546,7 @@ public class TaskLifecycleListenerNotificationTest {
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) restored.getOperator();
             // Wait for replay to reach the async stage before allowing it to finish.
-            assertThat(ParkingAgent.started.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(ParkingAgent.waiting.await(5, TimeUnit.SECONDS)).isTrue();
             ParkingAgent.allow.countDown();
             operator.waitInFlightEventsFinished();
 
