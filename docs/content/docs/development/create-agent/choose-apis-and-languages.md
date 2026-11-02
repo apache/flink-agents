@@ -120,6 +120,7 @@ where supported and install its dependencies.
 
 | Provider | Python | Java |
 |---|---|---|
+| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/calling-llms/chat-models/providers#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
 | [Amazon Bedrock]({{< ref "docs/development/calling-llms/chat-models/providers#amazon-bedrock" >}}) | ❌ | ✅ |
 | [Anthropic]({{< ref "docs/development/calling-llms/chat-models/providers#anthropic" >}}) | ✅ | ✅ |
 | [Azure OpenAI]({{< ref "docs/development/calling-llms/chat-models/providers#azure-openai" >}}) | ✅ | ✅ |
@@ -127,7 +128,6 @@ where supported and install its dependencies.
 | [Ollama]({{< ref "docs/development/calling-llms/chat-models/providers#ollama" >}}) | ✅ | ✅ |
 | [OpenAI Chat Completions]({{< ref "docs/development/calling-llms/chat-models/providers#completions-api" >}}) | ✅ | ✅ |
 | [OpenAI Responses]({{< ref "docs/development/calling-llms/chat-models/providers#responses-api" >}}) | ❌ | ✅ |
-| [DashScope (Alibaba Cloud Model Studio)]({{< ref "docs/development/calling-llms/chat-models/providers#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
 | [vLLM]({{< ref "docs/development/calling-llms/chat-models/providers#vllm" >}}) | ✅ | ✅ |
 | [Watsonx (IBM watsonx.ai)]({{< ref "docs/development/calling-llms/chat-models/providers#watsonx-ibm-watsonxai" >}}) | ✅ | ✅ |
 
@@ -135,10 +135,10 @@ where supported and install its dependencies.
 
 | Provider | Python | Java |
 |---|---|---|
+| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/vector-search/embedding_models/providers#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
 | [Amazon Bedrock]({{< ref "docs/development/vector-search/embedding_models/providers#amazon-bedrock" >}}) | ❌ | ✅ |
 | [Ollama]({{< ref "docs/development/vector-search/embedding_models/providers#ollama" >}}) | ✅ | ✅ |
 | [OpenAI]({{< ref "docs/development/vector-search/embedding_models/providers#openai" >}}) | ✅ | ✅ |
-| [DashScope (Alibaba Cloud Model Studio)]({{< ref "docs/development/vector-search/embedding_models/providers#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
 
 **Vector Stores**
 
