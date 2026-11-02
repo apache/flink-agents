@@ -36,8 +36,9 @@ import java.util.function.Supplier;
  *
  * <p>On the parallel path a {@link ParallelExecutionLock} and {@link
  * ParallelExecutionContextLifecycle} are wired in: async calls suspend the task context before
- * releasing the lock, then resume it after re-acquiring worker ownership. Blocking single calls run
- * inline; batches run on managed workers. Without a lock no lifecycle callbacks run.
+ * releasing the lock, then resume it after re-acquiring worker ownership. Submitted calls and
+ * batches run on managed workers; the {@link #executeAsync} hook runs inline. Without a lock no
+ * lifecycle callbacks run.
  */
 public class ContinuationActionExecutor {
 
@@ -80,6 +81,10 @@ public class ContinuationActionExecutor {
     public boolean executeAction(ContinuationContext context, Runnable action) {
         action.run();
         return true;
+    }
+
+    public <T> CompletableFuture<T> submitAsync(ContinuationContext context, Callable<T> callable) {
+        return batchExecutor.submit(callable);
     }
 
     /**
@@ -186,7 +191,9 @@ public class ContinuationActionExecutor {
      */
     public <T> T awaitFuture(ContinuationContext context, CompletableFuture<T> future)
             throws Exception {
-        return future.get();
+        return parallelExecutionLock == null
+                ? future.get()
+                : executeWithLockHandoff(context, future::get);
     }
 
     /** Stops async work without waiting for worker exit cleanup. */

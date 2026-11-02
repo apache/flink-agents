@@ -990,7 +990,7 @@ public class ActionExecutionOperatorTest {
             for (long key = 1; key <= workers; key++) {
                 testHarness.processElement(new StreamRecord<>(key));
             }
-            assertThat(TestAgent.SINGLE_ASYNC_STARTED.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(TestAgent.SINGLE_ASYNC_WAITING.await(5, TimeUnit.SECONDS)).isTrue();
             testHarness.processElement(new StreamRecord<>(queuedKey));
             testHarness.processElement(new StreamRecord<>(queuedKey));
 
@@ -1036,7 +1036,7 @@ public class ActionExecutionOperatorTest {
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) restored.getOperator();
             // The restored queued task must be re-dispatched and reach the async stage.
-            assertThat(TestAgent.SINGLE_ASYNC_STARTED.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(TestAgent.SINGLE_ASYNC_WAITING.await(5, TimeUnit.SECONDS)).isTrue();
 
             AtomicBoolean budgetFreed = new AtomicBoolean();
             budgetReleaser =
@@ -4290,6 +4290,7 @@ public class ActionExecutionOperatorTest {
         public static volatile CountDownLatch SIBLING_B_ACTION_RETURNING;
 
         public static volatile CountDownLatch SINGLE_ASYNC_STARTED;
+        public static volatile CountDownLatch SINGLE_ASYNC_WAITING;
         public static volatile CountDownLatch SINGLE_ASYNC_ALLOW;
 
         public static final java.util.concurrent.atomic.AtomicInteger EXCEPTION_CALL_COUNTER =
@@ -4522,13 +4523,14 @@ public class ActionExecutionOperatorTest {
         }
 
         /**
-         * Same fixture, but {@code SINGLE_ASYNC_STARTED} opens only after {@code startedCount}
-         * actions have reached the async stage. A test that has to know the whole worker pool is
-         * parked -- because what it is arranging is a task no worker is left to pull -- sizes this
-         * to the pool; awaiting the latch is then the proof of saturation rather than a guess.
+         * Tracks actions entering await separately from callable bodies starting. Tests that
+         * saturate the action-worker pool use {@code SINGLE_ASYNC_WAITING}, because the smaller
+         * async pool may still have their callables queued. {@code SINGLE_ASYNC_STARTED} tracks
+         * actual callable execution.
          */
         public static void resetSingleAsyncFixture(int startedCount) {
             SINGLE_ASYNC_STARTED = new CountDownLatch(startedCount);
+            SINGLE_ASYNC_WAITING = new CountDownLatch(startedCount);
             SINGLE_ASYNC_ALLOW = new CountDownLatch(1);
         }
 
@@ -4540,6 +4542,7 @@ public class ActionExecutionOperatorTest {
         public static void singleAsyncAction(Event event, RunnerContext context) {
             Long inputData = (Long) InputEvent.fromEvent(event).getInput();
             try {
+                SINGLE_ASYNC_WAITING.countDown();
                 Long result =
                         context.durableExecuteAsync(
                                         durableCallable(

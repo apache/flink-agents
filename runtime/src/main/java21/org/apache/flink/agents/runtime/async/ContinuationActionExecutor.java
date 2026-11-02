@@ -17,6 +17,9 @@
  */
 package org.apache.flink.agents.runtime.async;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
 import org.apache.flink.agents.api.context.Outcome;
 
 import jdk.internal.vm.Continuation;
@@ -63,6 +66,7 @@ public class ContinuationActionExecutor {
     private final ThreadPoolExecutor asyncExecutor;
     private final AsyncExecutorThreadFactory asyncThreadFactory;
     private final AtomicLong submissionSequence = new AtomicLong();
+    private final Set<CompletableFuture<?>> submissions = ConcurrentHashMap.newKeySet();
 
     public ContinuationActionExecutor(int numAsyncThreads) {
         this(numAsyncThreads, () -> {}, null, null);
@@ -143,6 +147,15 @@ public class ContinuationActionExecutor {
             LOG.debug("Current continuation still running.");
             return false;
         }
+    }
+
+    public <T> CompletableFuture<T> submitAsync(ContinuationContext context, Callable<T> callable) {
+        CompletableFuture<T> result =
+                AsyncBatchExecutor.submit(
+                        context == null ? asyncExecutor : prioritizedExecutor(context), callable);
+        submissions.add(result);
+        result.whenComplete((value, error) -> submissions.remove(result));
+        return result;
     }
 
     /**
@@ -470,6 +483,7 @@ public class ContinuationActionExecutor {
 
     /** Stops async work without waiting for worker exit cleanup. */
     public void shutdown() {
+        submissions.forEach(future -> future.cancel(true));
         asyncExecutor.shutdownNow();
     }
 
@@ -479,7 +493,7 @@ public class ContinuationActionExecutor {
         try {
             while (!asyncExecutor.isTerminated()) {
                 try {
-                    asyncExecutor.awaitTermination(1, java.util.concurrent.TimeUnit.DAYS);
+                    asyncExecutor.awaitTermination(1, TimeUnit.DAYS);
                 } catch (InterruptedException e) {
                     interrupted = true;
                 }

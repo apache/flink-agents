@@ -26,8 +26,10 @@ import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
@@ -40,11 +42,45 @@ final class AsyncBatchExecutor {
     private final AsyncExecutorThreadFactory threadFactory;
     private final ExecutorService executor;
     private final Set<BatchTask<?>> activeTasks = ConcurrentHashMap.newKeySet();
+    private final Set<CompletableFuture<?>> submissions = ConcurrentHashMap.newKeySet();
 
     AsyncBatchExecutor(int numThreads, Runnable threadCleanup) {
         threadFactory = new AsyncExecutorThreadFactory(threadCleanup);
         // Separate from the action-worker pool: all action workers may be waiting for batches.
         executor = Executors.newFixedThreadPool(numThreads, threadFactory);
+    }
+
+    <T> CompletableFuture<T> submit(Callable<T> callable) {
+        CompletableFuture<T> result = submit(executor, callable);
+        submissions.add(result);
+        result.whenComplete((value, error) -> submissions.remove(result));
+        return result;
+    }
+
+    static <T> CompletableFuture<T> submit(Executor executor, Callable<T> callable) {
+        CompletableFuture<T> result = new CompletableFuture<>();
+        FutureTask<Void> task =
+                new FutureTask<>(
+                        () -> {
+                            try {
+                                result.complete(callable.call());
+                            } catch (Throwable failure) {
+                                result.completeExceptionally(failure);
+                            }
+                            return null;
+                        });
+        result.whenComplete(
+                (value, error) -> {
+                    if (result.isCancelled()) {
+                        task.cancel(true);
+                    }
+                });
+        try {
+            executor.execute(task);
+        } catch (RuntimeException e) {
+            result.completeExceptionally(e);
+        }
+        return result;
     }
 
     <T> BatchExecutionResult<T> execute(
@@ -137,6 +173,7 @@ final class AsyncBatchExecutor {
 
     /** Stops submissions and interrupts workers without waiting for their exit cleanup. */
     void shutdown() {
+        submissions.forEach(future -> future.cancel(true));
         executor.shutdownNow();
         // shutdownNow alone leaves queued FutureTasks incomplete and their batch drivers blocked.
         activeTasks.forEach(task -> task.cancel(true));

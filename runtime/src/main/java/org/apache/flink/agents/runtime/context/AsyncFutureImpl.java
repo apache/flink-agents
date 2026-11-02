@@ -21,8 +21,10 @@ import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.Outcome;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
-import org.apache.flink.util.Preconditions;
+import org.apache.flink.agents.runtime.async.ContinuationNativeCallable;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -30,93 +32,151 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 
-/** Runtime-owned implementation of a deferred asynchronous call handle. */
-abstract class AsyncFutureImpl<T> implements AsyncFuture<T> {
+/** Shared await behavior and local result state for runtime call handles. */
+public abstract class AsyncFutureImpl<T> implements AsyncFuture<T> {
     private final RunnerContextImpl owner;
     private boolean resolving;
-    private boolean done;
-    private T value;
-    private Exception error;
+    private Outcome<T> outcome;
 
-    AsyncFutureImpl(RunnerContextImpl owner) {
+    protected AsyncFutureImpl(RunnerContextImpl owner) {
         this.owner = owner;
     }
 
-    final RunnerContextImpl getOwner() {
+    public final RunnerContextImpl getOwner() {
         return owner;
     }
 
-    final boolean isDone() {
-        return done;
+    public final boolean isDone() {
+        return outcome != null;
     }
 
-    final Outcome<T> getCompletedOutcome() {
-        if (!done) {
+    public final Outcome<T> getCompletedOutcome() {
+        if (outcome == null) {
             throw new IllegalStateException("Async future has not been resolved");
         }
-        return error == null ? Outcome.success(value) : Outcome.failure(error);
+        return outcome;
     }
+
+    public RunnerContextImpl getOwnerContext() {
+        return owner;
+    }
+
+    protected final void complete(Outcome<T> value) {
+        outcome = value;
+    }
+
+    protected boolean cacheResolutionFailures() {
+        return true;
+    }
+
+    protected abstract T resolveValue() throws Exception;
 
     @Override
     public final T await() throws Exception {
-        if (done) {
-            return completedValue();
+        owner.checkMailboxThread();
+        if (isDone()) {
+            return value();
         }
         if (resolving) {
             throw new IllegalStateException("An async future cannot await itself recursively");
         }
-
         resolving = true;
         try {
-            value = resolveValue();
-            done = true;
-            return value;
-        } catch (Exception e) {
-            if (CancellationUtils.isCancellation(e)) {
-                if (CancellationUtils.isInterruption(e)) {
-                    Thread.currentThread().interrupt();
-                }
-                throw e;
+            T result = resolveValue();
+            if (!isDone()) {
+                complete(Outcome.success(result));
             }
-            error = e;
-            done = true;
+            return result;
+        } catch (Exception e) {
+            rethrowFatal(e);
+            if (!isDone() && cacheResolutionFailures()) {
+                complete(Outcome.failure(e));
+            }
             throw e;
         } finally {
             resolving = false;
         }
     }
 
-    final void complete(Outcome<T> outcome) {
-        if (done) {
-            throw new IllegalStateException("Async future has already been resolved");
+    protected final T value() throws Exception {
+        if (outcome.isFailure()) {
+            throw outcome.getError();
         }
-        value = outcome.getValue();
-        error = outcome.getError();
-        done = true;
+        return outcome.getValue();
     }
 
-    private T completedValue() throws Exception {
-        if (error != null) {
-            throw error;
+    public static void rethrowFatal(Throwable failure) throws Exception {
+        if (failure instanceof Error) {
+            throw (Error) failure;
         }
-        return value;
+        if (CancellationUtils.isCancellation(failure)
+                || UncapturableException.isUncapturable(failure)) {
+            if (CancellationUtils.isInterruption(failure)) {
+                Thread.currentThread().interrupt();
+            }
+            throw (Exception) failure;
+        }
     }
 
-    abstract T resolveValue() throws Exception;
+    protected static <T> Outcome<T> getOutcome(CompletableFuture<T> future) throws Exception {
+        // CompletableFuture.get() unwraps an explicitly completed CompletionException. Capture
+        // the original exception as an Outcome before crossing that transport boundary.
+        Outcome<T> result;
+        try {
+            result =
+                    future.handle(
+                                    (value, failure) -> {
+                                        if (failure == null) {
+                                            return Outcome.success(value);
+                                        }
+                                        if (failure instanceof Error) {
+                                            throw (Error) failure;
+                                        }
+                                        return Outcome.<T>failure((Exception) failure);
+                                    })
+                            .get();
+        } catch (ExecutionException e) {
+            rethrowFatal(e.getCause());
+            throw (Exception) e.getCause();
+        }
+        if (result.isFailure()) {
+            rethrowFatal(result.getError());
+        }
+        return result;
+    }
+
+    public static <T> SchedulableFuture<T> requireSchedulable(
+            AsyncFuture<T> future, RunnerContext owner) {
+        if (!(future instanceof SchedulableFuture)) {
+            throw new IllegalArgumentException("gather only accepts runtime-managed call futures");
+        }
+        SchedulableFuture<T> participant = (SchedulableFuture<T>) future;
+        if (participant.getOwnerContext() != null && participant.getOwnerContext() != owner) {
+            throw new IllegalArgumentException(
+                    "An async future must be gathered by the context that created it");
+        }
+        return participant;
+    }
 }
 
-/** Deferred handle for one ordinary callable. */
-class SingleAsyncFuture<T> extends AsyncFutureImpl<T> {
+/** Ordinary callable; durable subclasses reuse the same scheduling lifecycle. */
+class SingleAsyncFuture<T> extends AsyncFutureImpl<T> implements SchedulableFuture<T> {
     private final Callable<T> callable;
+    private Callable<T> execution;
+    private DurableCallSlot<T> slot;
+    private CompletableFuture<T> completion;
+    private boolean prepared;
+    private volatile boolean started;
+    private boolean stopped;
 
     SingleAsyncFuture(RunnerContextImpl owner, Callable<T> callable) {
         super(owner);
         this.callable = callable;
-    }
-
-    Callable<T> getCallable() {
-        return callable;
     }
 
     DurableCallable<T> getDurableCallable() {
@@ -124,86 +184,149 @@ class SingleAsyncFuture<T> extends AsyncFutureImpl<T> {
     }
 
     @Override
-    T resolveValue() throws Exception {
-        return getOwner().resolveAsync(callable);
+    protected T resolveValue() throws Exception {
+        return getOwner().resolveAsyncFuture(this);
+    }
+
+    @Override
+    public Outcome<T> prepare(RunnerContextImpl context) throws Exception {
+        if (prepared || isDone()) {
+            return isDone() ? getCompletedOutcome() : null;
+        }
+        execution = callable;
+        DurableCallable<T> durable = getDurableCallable();
+        if (durable != null) {
+            slot = new DurableCallSlot<>(getOwner(), durable.getId(), durable.getResultClass());
+            Outcome<T> recorded = slot.prepare();
+            if (recorded != null) {
+                complete(recorded);
+            }
+            if (slot.isRecovering() && durable.reconciler() != null) {
+                execution = durable.reconciler();
+            }
+        }
+        prepared = true;
+        return isDone() ? getCompletedOutcome() : null;
+    }
+
+    @Override
+    public CompletableFuture<?> start() {
+        if (isDone()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        synchronized (this) {
+            stopped = false;
+        }
+        Callable<T> work =
+                () -> {
+                    synchronized (this) {
+                        if (stopped) {
+                            throw new CancellationException("Call stopped before execution");
+                        }
+                        started = true;
+                    }
+                    return execution.call();
+                };
+        if (getDurableCallable() instanceof ContinuationNativeCallable) {
+            // These calls yield the caller's continuation and must not run on a pool worker.
+            completion = new CompletableFuture<>();
+            try {
+                completion.complete(work.call());
+            } catch (Throwable failure) {
+                completion.completeExceptionally(failure);
+            }
+        } else {
+            completion = getOwner().submitAsync(work);
+        }
+        return completion;
+    }
+
+    @Override
+    public Outcome<T> finish(TimeoutException timeout) throws Exception {
+        if (isDone()) {
+            return getCompletedOutcome();
+        }
+        if (timeout != null) {
+            Outcome<T> result = Outcome.failure(timeout);
+            if (slot != null && started) {
+                slot.finish(result);
+            }
+            complete(result);
+        } else {
+            Outcome<T> result = getOutcome(completion);
+            try {
+                if (slot != null) {
+                    slot.finish(result);
+                }
+            } catch (Exception e) {
+                rethrowFatal(e);
+                result = Outcome.failure(e);
+            }
+            complete(result);
+        }
+        return getCompletedOutcome();
+    }
+
+    @Override
+    public void close() {}
+
+    @Override
+    public synchronized void preventStart() {
+        stopped = true;
+    }
+
+    @Override
+    public void cancel() {
+        if (isDone()) {
+            return;
+        }
+        preventStart();
+        if (completion != null) {
+            completion.cancel(true);
+        }
     }
 }
 
-/** Deferred handle with the additional durable execution contract. */
 final class SingleDurableFuture<T> extends SingleAsyncFuture<T> implements DurableFuture<T> {
-    private final DurableCallable<T> durableCallable;
+    private final DurableCallable<T> callable;
 
     SingleDurableFuture(RunnerContextImpl owner, DurableCallable<T> callable) {
         super(owner, callable::call);
-        this.durableCallable = callable;
+        this.callable = callable;
     }
 
     @Override
     DurableCallable<T> getDurableCallable() {
-        return durableCallable;
-    }
-
-    @Override
-    T resolveValue() throws Exception {
-        return getOwner().resolveDurableAsync(durableCallable);
+        return callable;
     }
 }
 
-/** Deferred handle for a batch of ordinary and/or durable call handles. */
+/** Batch wrapper; the scheduler sees only the common lifecycle, never individual call kinds. */
 final class GatherAsyncFuture<T> extends AsyncFutureImpl<List<Outcome<T>>> {
-    private final List<SingleAsyncFuture<T>> futures;
+    private final List<SchedulableFuture<T>> futures;
 
-    GatherAsyncFuture(RunnerContextImpl owner, List<? extends AsyncFuture<T>> asyncFutures) {
+    GatherAsyncFuture(RunnerContextImpl owner, List<? extends AsyncFuture<T>> inputs) {
         super(owner);
-        Preconditions.checkNotNull(asyncFutures, "futures must not be null");
-
-        List<SingleAsyncFuture<T>> singleFutures = new ArrayList<>(asyncFutures.size());
-        Set<AsyncFuture<T>> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-        for (AsyncFuture<T> future : asyncFutures) {
-            Preconditions.checkNotNull(future, "future must not be null");
-            if (!(future instanceof SingleAsyncFuture)) {
-                throw new IllegalArgumentException(
-                        "gather only accepts futures returned by executeAsync or durableExecuteAsync");
+        List<SchedulableFuture<T>> calls = new ArrayList<>();
+        Set<Object> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (AsyncFuture<T> input : inputs) {
+            SchedulableFuture<T> call = requireSchedulable(input, owner);
+            try {
+                if (!seen.add(call.getCallIdentity())) {
+                    throw new IllegalArgumentException("gather rejects duplicate futures");
+                }
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new IllegalArgumentException(e.getMessage(), e);
             }
-            SingleAsyncFuture<?> internalFuture = (SingleAsyncFuture<?>) future;
-            if (internalFuture.getOwner() != owner) {
-                throw new IllegalArgumentException(
-                        "All async futures passed to gather must be created by this runner context");
-            }
-            if (!seen.add(future)) {
-                throw new IllegalArgumentException(
-                        "The same async future cannot appear more than once in gather");
-            }
-            @SuppressWarnings("unchecked")
-            SingleAsyncFuture<T> singleFuture = (SingleAsyncFuture<T>) internalFuture;
-            singleFutures.add(singleFuture);
+            calls.add(call);
         }
-        this.futures = List.copyOf(singleFutures);
+        futures = List.copyOf(calls);
     }
 
     @Override
-    List<Outcome<T>> resolveValue() throws Exception {
-        List<Outcome<T>> outcomes = new ArrayList<>(Collections.nCopies(futures.size(), null));
-        List<SingleAsyncFuture<T>> unresolvedFutures = new ArrayList<>();
-        List<Integer> unresolvedIndexes = new ArrayList<>();
-        for (int i = 0; i < futures.size(); i++) {
-            SingleAsyncFuture<T> future = futures.get(i);
-            if (future.isDone()) {
-                outcomes.set(i, future.getCompletedOutcome());
-            } else {
-                unresolvedFutures.add(future);
-                unresolvedIndexes.add(i);
-            }
-        }
-
-        if (!unresolvedFutures.isEmpty()) {
-            List<Outcome<T>> unresolvedOutcomes = getOwner().resolveAsyncBatch(unresolvedFutures);
-            for (int i = 0; i < unresolvedFutures.size(); i++) {
-                Outcome<T> outcome = unresolvedOutcomes.get(i);
-                unresolvedFutures.get(i).complete(outcome);
-                outcomes.set(unresolvedIndexes.get(i), outcome);
-            }
-        }
-        return outcomes;
+    protected List<Outcome<T>> resolveValue() throws Exception {
+        return getOwner().resolveAsyncBatch(futures);
     }
 }

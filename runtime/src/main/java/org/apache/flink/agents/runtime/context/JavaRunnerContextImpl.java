@@ -17,33 +17,20 @@
  */
 package org.apache.flink.agents.runtime.context;
 
-import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
-import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
-import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.plan.AgentPlan;
-import org.apache.flink.agents.plan.exceptions.UncapturableException;
-import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
-import org.apache.flink.agents.runtime.actionstate.CallResult;
-import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
-import org.apache.flink.agents.runtime.async.ContinuationNativeCallable;
 import org.apache.flink.agents.runtime.chat.ChatDurableFuture;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 /**
  * Java-specific implementation of RunnerContext that includes ContinuationActionExecutor for async
@@ -82,279 +69,21 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
     }
 
     @Override
-    protected <T> T resolveDurableAsync(DurableCallable<T> callable) throws Exception {
-        Callable<T> boundary = executionBoundary(callable);
-        if (durableExecutionContext != null) {
-            Callable<T> reconcileCallable = callable.reconciler();
-            if (reconcileCallable != null) {
-                return durableExecuteWithReconcile(callable, reconcileCallable, boundary);
-            }
+    public <T> CompletableFuture<T> submitAsync(Callable<T> callable) {
+        if (continuationExecutor == null) {
+            return super.submitAsync(callable);
         }
-        return durableExecuteCompletionOnly(callable, boundary);
-    }
-
-    /**
-     * Chooses where one durable async call executes, on both the completion-only and the reconcile
-     * path. A {@link ContinuationNativeCallable} suspends by yielding the caller's continuation, so
-     * it runs inline on the mailbox thread; handing it to an async-pool worker would make the
-     * waiting caller hold a worker its own callee needs to progress (issue #1213), and the yield
-     * itself would fail off the mailbox thread. Any other callable is offloaded to the pool, which
-     * lets the continuation yield while it runs.
-     */
-    private <T> Callable<T> executionBoundary(DurableCallable<T> callable) {
-        if (callable instanceof ContinuationNativeCallable) {
-            return callable::call;
-        }
-        return () -> resolveAsync(callable::call);
+        return continuationExecutor.submitAsync(continuationContext, callable);
     }
 
     @Override
-    protected <T> List<Outcome<T>> resolveAsyncBatch(List<SingleAsyncFuture<T>> futures)
-            throws Exception {
-        List<DurableCallable<T>> durableCalls = new ArrayList<>();
-        for (SingleAsyncFuture<T> future : futures) {
-            if (future.getDurableCallable() != null) {
-                durableCalls.add(future.getDurableCallable());
-            }
+    public void awaitCompletion(CompletableFuture<?> future) throws Exception {
+        try {
+            awaitCompletableFuture(future);
+        } catch (ExecutionException error) {
+            AsyncFutureImpl.rethrowFatal(error.getCause());
+            throw (Exception) error.getCause();
         }
-        if (durableExecutionContext == null || durableCalls.isEmpty()) {
-            List<Callable<T>> suppliers = new ArrayList<>();
-            for (SingleAsyncFuture<T> future : futures) {
-                suppliers.add(future.getCallable());
-            }
-            return executeAllWithoutDurableState(suppliers);
-        }
-
-        int base = durableExecutionContext.getCurrentCallIndex();
-        BatchExecutionPlan<T> plan = buildBatchExecutionPlan(durableCalls, base);
-        reservePendingBatchIfNeeded(durableCalls, plan);
-
-        // Keep scheduling order, while durable slot indexes ignore ordinary calls.
-        List<Callable<T>> suppliers = new ArrayList<>();
-        List<Integer> executableIndexes = new ArrayList<>();
-        List<Integer> durableExecutionIndexes = new ArrayList<>();
-        List<Outcome<T>> outcomes = new ArrayList<>(Collections.nCopies(futures.size(), null));
-        int durableIndex = 0;
-        int durableExecutionIndex = 0;
-        for (int i = 0; i < futures.size(); i++) {
-            SingleAsyncFuture<T> future = futures.get(i);
-            if (future.getDurableCallable() == null) {
-                executableIndexes.add(i);
-                suppliers.add(future.getCallable());
-            } else {
-                if (plan.outcomes.get(durableIndex) == null) {
-                    durableExecutionIndexes.add(suppliers.size());
-                    executableIndexes.add(i);
-                    suppliers.add(plan.suppliers.get(durableExecutionIndex++));
-                } else {
-                    outcomes.set(i, plan.outcomes.get(durableIndex));
-                }
-                durableIndex++;
-            }
-        }
-
-        BatchExecutionResult<T> executed = executeOutcomeSuppliers(suppliers);
-        // An ordinary cancellation must not be cached as a business failure either. Durable
-        // children before it in input order are still finalized, as in a durable-only batch, so
-        // recovery does not run a call whose outcome is already known.
-        int ordinaryCancellation = executed.getOutcomes().size();
-        for (int i = 0; i < executed.getOutcomes().size(); i++) {
-            if (futures.get(executableIndexes.get(i)).getDurableCallable() == null
-                    && CancellationUtils.isCancellation(executed.getOutcomes().get(i).getError())) {
-                ordinaryCancellation = i;
-                break;
-            }
-        }
-        List<Outcome<T>> durableOutcomes = new ArrayList<>();
-        List<Boolean> durableStarted = new ArrayList<>();
-        for (int executionIndex : durableExecutionIndexes) {
-            if (executionIndex >= ordinaryCancellation) {
-                break;
-            }
-            durableOutcomes.add(executed.getOutcomes().get(executionIndex));
-            durableStarted.add(executed.wasStarted(executionIndex));
-        }
-        boolean[] started = new boolean[durableStarted.size()];
-        for (int i = 0; i < started.length; i++) {
-            started[i] = durableStarted.get(i);
-        }
-        finalizeExecutedOutcomes(
-                durableCalls, base, plan, new BatchExecutionResult<>(durableOutcomes, started));
-        if (ordinaryCancellation < executed.getOutcomes().size()) {
-            // The call index stays at the batch base, so re-awaiting rereads the saved prefix.
-            rethrowCancellation(executed.getOutcomes().get(ordinaryCancellation).getError());
-        }
-        for (int i = 0; i < executed.getOutcomes().size(); i++) {
-            outcomes.set(executableIndexes.get(i), executed.getOutcomes().get(i));
-        }
-        durableIndex = 0;
-        for (int i = 0; i < futures.size(); i++) {
-            if (futures.get(i).getDurableCallable() != null) {
-                outcomes.set(i, plan.outcomes.get(durableIndex++));
-            }
-        }
-        advanceCallIndexBy(durableCalls.size());
-        return outcomes;
-    }
-
-    private <T> BatchExecutionPlan<T> buildBatchExecutionPlan(
-            List<DurableCallable<T>> callables, int base) throws Exception {
-        BatchExecutionPlan<T> plan = new BatchExecutionPlan<>(callables.size());
-        for (int i = 0; i < callables.size(); i++) {
-            DurableCallable<T> callable = callables.get(i);
-            CallResult current = getCallResultAt(base + i);
-            if (current == null) {
-                markReservationStart(plan, i);
-                addExecutableCall(plan, i, callable::call);
-                continue;
-            }
-            if (!current.matches(callable.getId())) {
-                clearCallResultsFromAndPersist(base + i);
-                plan.needsReservation = true;
-                plan.executionStart = i;
-                addExecutableCall(plan, i, callable::call);
-                appendRemainingExecutions(callables, plan, i + 1);
-                break;
-            }
-            if (current.isPending()) {
-                Callable<T> reconcileCallable = callable.reconciler();
-                Callable<T> executionCallable =
-                        reconcileCallable != null ? reconcileCallable : callable::call;
-                addExecutableCall(plan, i, executionCallable);
-            } else {
-                plan.outcomes.add(
-                        readTerminalOutcomeAt(
-                                base + i, callable.getId(), callable.getResultClass()));
-            }
-        }
-        return plan;
-    }
-
-    private <T> void markReservationStart(BatchExecutionPlan<T> plan, int callIndex) {
-        plan.needsReservation = true;
-        if (plan.executionStart < 0) {
-            plan.executionStart = callIndex;
-        }
-    }
-
-    private <T> void addExecutableCall(
-            BatchExecutionPlan<T> plan, int callIndex, Callable<T> executionCallable) {
-        plan.outcomes.add(null);
-        plan.suppliers.add(executionCallable);
-        plan.executableCallIndexes.add(callIndex);
-    }
-
-    private <T> void appendRemainingExecutions(
-            List<DurableCallable<T>> callables, BatchExecutionPlan<T> plan, int startIndex) {
-        for (int i = startIndex; i < callables.size(); i++) {
-            DurableCallable<T> remaining = callables.get(i);
-            addExecutableCall(plan, i, remaining::call);
-        }
-    }
-
-    private <T> void reservePendingBatchIfNeeded(
-            List<DurableCallable<T>> callables, BatchExecutionPlan<T> plan) {
-        if (!plan.needsReservation) {
-            return;
-        }
-        List<String> ids = new ArrayList<>();
-        for (DurableCallable<T> callable :
-                callables.subList(plan.executionStart, callables.size())) {
-            ids.add(callable.getId());
-        }
-        reservePendingBatch(ids);
-    }
-
-    private <T> void finalizeExecutedOutcomes(
-            List<DurableCallable<T>> callables,
-            int base,
-            BatchExecutionPlan<T> plan,
-            BatchExecutionResult<T> executed)
-            throws Exception {
-        for (int i = 0; i < executed.getOutcomes().size(); i++) {
-            int callIndex = plan.executableCallIndexes.get(i);
-            Outcome<T> outcome = executed.getOutcomes().get(i);
-            DurableCallable<T> callable = callables.get(callIndex);
-            if (!executed.wasStarted(i)) {
-                plan.outcomes.set(callIndex, outcome);
-                continue;
-            }
-            // Cancellation leaves this and later slots pending for recovery.
-            rethrowCancellation(outcome.getError());
-            UncapturableException.rethrowIfPresent(outcome.getError());
-            try {
-                finalizeCallAt(
-                        base + callIndex,
-                        callable.getId(),
-                        serializeDurableResult(outcome.getValue()),
-                        serializeDurableException(outcome.getError()));
-            } catch (Exception e) {
-                rethrowCancellation(e);
-                UncapturableException.rethrowIfPresent(e);
-                outcome = Outcome.failure(e);
-            }
-            plan.outcomes.set(callIndex, outcome);
-        }
-    }
-
-    private static class BatchExecutionPlan<T> {
-        private final List<Outcome<T>> outcomes;
-        private final List<Callable<T>> suppliers = new ArrayList<>();
-        private final List<Integer> executableCallIndexes = new ArrayList<>();
-        private boolean needsReservation;
-        private int executionStart = -1;
-
-        private BatchExecutionPlan(int size) {
-            this.outcomes = new ArrayList<>(size);
-        }
-    }
-
-    private <T> List<Outcome<T>> executeAllWithoutDurableState(List<Callable<T>> suppliers)
-            throws Exception {
-        List<Outcome<T>> outcomes = executeOutcomeSuppliers(suppliers).getOutcomes();
-        for (Outcome<T> outcome : outcomes) {
-            rethrowCancellation(outcome.getError());
-        }
-        return outcomes;
-    }
-
-    private static void rethrowCancellation(Exception failure) throws Exception {
-        if (CancellationUtils.isCancellation(failure)) {
-            if (CancellationUtils.isInterruption(failure)) {
-                Thread.currentThread().interrupt();
-            }
-            throw failure;
-        }
-    }
-
-    private <T> BatchExecutionResult<T> executeOutcomeSuppliers(List<Callable<T>> suppliers)
-            throws Exception {
-        if (suppliers.isEmpty()) {
-            return new BatchExecutionResult<>(List.of(), new boolean[0]);
-        }
-        if (continuationExecutor == null || continuationContext == null) {
-            List<Outcome<T>> outcomes =
-                    suppliers.stream()
-                            .map(
-                                    supplier -> {
-                                        try {
-                                            return Outcome.success(supplier.call());
-                                        } catch (Exception e) {
-                                            return Outcome.<T>failure(e);
-                                        }
-                                    })
-                            .collect(Collectors.toList());
-            boolean[] started = new boolean[suppliers.size()];
-            Arrays.fill(started, true);
-            return new BatchExecutionResult<>(outcomes, started);
-        }
-        Long timeoutMs = getConfig().get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS);
-        Duration timeout =
-                timeoutMs == null || timeoutMs <= 0 ? null : Duration.ofMillis(timeoutMs);
-        Integer parallelism = getConfig().get(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM);
-        int parallelismCap = parallelism == null ? 1 : Math.max(parallelism, 1);
-        return continuationExecutor.executeAllAsync(
-                continuationContext, suppliers, timeout, parallelismCap);
     }
 
     @Override

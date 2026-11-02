@@ -81,13 +81,12 @@ class JavaRunnerContextImplAsyncExecutionTest {
                 assertThat(finished).isFalse();
                 assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
                 assertThat(result.get()).isNull();
-                assertThat(worker.get()).isNotSameAs(Thread.currentThread());
                 release.countDown();
                 finishAction(executor, continuation, action);
             } else {
                 assertThat(finished).isTrue();
-                assertThat(worker.get()).isSameAs(Thread.currentThread());
             }
+            assertThat(worker.get()).isNotSameAs(Thread.currentThread());
             assertThat(result.get()).isEqualTo("done");
             assertThat(context.getCurrentCallIndex()).isZero();
         } finally {
