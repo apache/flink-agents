@@ -21,6 +21,7 @@ from typing import Any
 import cloudpickle
 import pytest
 
+from flink_agents.plan.exceptions import UncapturableException
 from flink_agents.runtime.durable_exception import (
     deserialize_durable_exception,
     is_java_interruption,
@@ -735,3 +736,70 @@ def test_ordinary_java_interruption_propagates_without_caching(
             assert store.operations == []
     finally:
         _close_runner_context(ctx)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("pending", [False, True])
+@pytest.mark.parametrize("java_origin", [False, True])
+def test_framework_fault_is_not_recorded_and_recovery_can_retry(
+    asynchronous, pending, java_origin
+):
+    attempts = []
+    fault = (
+        _java_error("org.apache.flink.agents.plan.exceptions.UncapturableException")
+        if java_origin
+        else UncapturableException("framework unavailable")
+    )
+
+    def call() -> str:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise fault
+        return "recovered"
+
+    store = _FakeJavaRunnerContext()
+    if pending:
+        _preload_pending(store, call)
+    ctx = _create_runner_context(store)
+    try:
+        with pytest.raises(Exception) as caught:
+            _execute(ctx, asynchronous, call)
+        assert caught.value is fault
+    finally:
+        _close_runner_context(ctx)
+    assert [slot.status for slot in store.call_results] == (
+        ["PENDING"] if pending else []
+    )
+    store.current_call_index = 0
+    recovered = _create_runner_context(store)
+    try:
+        assert _execute(recovered, asynchronous, call) == "recovered"
+    finally:
+        _close_runner_context(recovered)
+    assert len(attempts) == 2
+    assert [slot.status for slot in store.call_results] == ["SUCCEEDED"]
+
+
+def test_durable_batch_framework_fault_leaves_its_slot_pending():
+    def failed() -> None:
+        message = "batch state fault"
+        raise UncapturableException(message)
+
+    store = _FakeJavaRunnerContext()
+    ctx = _create_runner_context(store)
+    try:
+        futures = [
+            ctx.durable_execute_async(lambda: "before", durable_id="before"),
+            ctx.durable_execute_async(failed),
+            ctx.durable_execute_async(lambda: "after", durable_id="after"),
+        ]
+        with pytest.raises(UncapturableException, match="batch state fault"):
+            _run_async(ctx.gather(*futures))
+    finally:
+        _close_runner_context(ctx)
+    assert [slot.status for slot in store.call_results] == [
+        "SUCCEEDED",
+        "PENDING",
+        "PENDING",
+    ]
+    assert store.current_call_index == 0

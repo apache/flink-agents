@@ -31,11 +31,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.apache.flink.agents.runtime.python.utils.PythonInterpreterTestUtils.mockInterpreter;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -45,7 +45,7 @@ class PythonInterpreterManagerTest {
 
     @Test
     void routesUnmanagedThreadCallsAwayFromTheCallerThread() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
         AtomicReference<Thread> callerThread = new AtomicReference<>();
         AtomicReference<Thread> interpreterCreationThread = new AtomicReference<>();
         ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -55,7 +55,7 @@ class PythonInterpreterManagerTest {
                         owner,
                         () -> {
                             interpreterCreationThread.set(Thread.currentThread());
-                            return mock(PythonInterpreter.class);
+                            return mockInterpreter();
                         },
                         ignored -> {})) {
             executor.submit(
@@ -75,7 +75,7 @@ class PythonInterpreterManagerTest {
 
     @Test
     void authorizedNonOwnerThreadCanInvokeOwnerInterpreter() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
         AtomicInteger accessChecks = new AtomicInteger();
         ExecutorService executor = Executors.newSingleThreadExecutor();
         when(owner.invoke("owner-call")).thenReturn("result");
@@ -101,11 +101,11 @@ class PythonInterpreterManagerTest {
 
     @Test
     void nonOwnerThreadCannotInvokeOwnerInterpreterWithoutAccess() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
         ExecutorService executor = Executors.newSingleThreadExecutor();
 
         try (PythonInterpreterManager manager =
-                new PythonInterpreterManager(owner, () -> mock(PythonInterpreter.class))) {
+                new PythonInterpreterManager(owner, () -> mockInterpreter())) {
             Future<?> invocation = executor.submit(() -> manager.invokeOnOwner("owner-call"));
 
             assertThatThrownBy(() -> invocation.get(5, TimeUnit.SECONDS))
@@ -120,7 +120,7 @@ class PythonInterpreterManagerTest {
 
     @Test
     void boundsInterpretersCreatedForTransientUnmanagedThreads() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
         AtomicInteger created = new AtomicInteger();
         AtomicReference<Throwable> failure = new AtomicReference<>();
 
@@ -129,7 +129,7 @@ class PythonInterpreterManagerTest {
                         owner,
                         () -> {
                             created.incrementAndGet();
-                            return mock(PythonInterpreter.class);
+                            return mockInterpreter();
                         },
                         ignored -> {})) {
             for (int i = 0; i < 20; i++) {
@@ -156,8 +156,8 @@ class PythonInterpreterManagerTest {
 
     @Test
     void managedJavaAsyncWorkerCreatesUsesAndClosesInterpreterOnItself() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
-        PythonInterpreter worker = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
+        PythonInterpreter worker = mockInterpreter();
         AtomicReference<Thread> creationThread = new AtomicReference<>();
         AtomicReference<Thread> invocationThread = new AtomicReference<>();
         AtomicReference<Thread> closeThread = new AtomicReference<>();
@@ -204,8 +204,8 @@ class PythonInterpreterManagerTest {
 
     @Test
     void callbackInterpreterIsClosedByItsOwningWorker() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
-        PythonInterpreter callback = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
+        PythonInterpreter callback = mockInterpreter();
         AtomicReference<Thread> creationThread = new AtomicReference<>();
         AtomicReference<Thread> closeThread = new AtomicReference<>();
         ExecutorService caller = Executors.newSingleThreadExecutor();
@@ -240,11 +240,11 @@ class PythonInterpreterManagerTest {
 
     @Test
     void rejectsCloseFromANonOwnerThread() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
         ExecutorService caller = Executors.newSingleThreadExecutor();
 
         try (PythonInterpreterManager manager =
-                new PythonInterpreterManager(owner, () -> mock(PythonInterpreter.class))) {
+                new PythonInterpreterManager(owner, () -> mockInterpreter())) {
             Future<?> close =
                     caller.submit(
                             () -> {
@@ -264,8 +264,8 @@ class PythonInterpreterManagerTest {
 
     @Test
     void reusesOwnerInterpreterOnCreatingThread() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
-        PythonInterpreter unused = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
+        PythonInterpreter unused = mockInterpreter();
 
         try (PythonInterpreterManager manager =
                 new PythonInterpreterManager(owner, () -> unused, ignored -> {})) {
@@ -281,8 +281,8 @@ class PythonInterpreterManagerTest {
 
     @Test
     void initializesEveryThreadConfinedInterpreter() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
-        PythonInterpreter worker = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
+        PythonInterpreter worker = mockInterpreter();
         ExecutorService executor = Executors.newSingleThreadExecutor();
 
         try (PythonInterpreterManager manager = new PythonInterpreterManager(owner, () -> worker)) {
@@ -298,7 +298,7 @@ class PythonInterpreterManagerTest {
 
     @Test
     void bindsDifferentInterpretersToDifferentThreads() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
         Queue<PythonInterpreter> created = new ConcurrentLinkedQueue<>();
         ExecutorService executor = Executors.newFixedThreadPool(2);
 
@@ -306,7 +306,7 @@ class PythonInterpreterManagerTest {
                 new PythonInterpreterManager(
                         owner,
                         () -> {
-                            PythonInterpreter interpreter = mock(PythonInterpreter.class);
+                            PythonInterpreter interpreter = mockInterpreter();
                             created.add(interpreter);
                             return interpreter;
                         },
@@ -350,7 +350,7 @@ class PythonInterpreterManagerTest {
 
     @Test
     void doesNotSerializeCallsMadeByDifferentThreads() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
         CountDownLatch entered = new CountDownLatch(2);
         CountDownLatch release = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -359,7 +359,7 @@ class PythonInterpreterManagerTest {
                 new PythonInterpreterManager(
                         owner,
                         () -> {
-                            PythonInterpreter interpreter = mock(PythonInterpreter.class);
+                            PythonInterpreter interpreter = mockInterpreter();
                             doAnswer(
                                             invocation -> {
                                                 entered.countDown();
@@ -388,7 +388,7 @@ class PythonInterpreterManagerTest {
 
     @Test
     void reentrantCallUsesSameInterpreter() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
         AtomicReference<PythonInterpreterManager> managerRef = new AtomicReference<>();
         doAnswer(invocation -> managerRef.get().invoke("inner")).when(owner).invoke("outer");
 
@@ -408,8 +408,8 @@ class PythonInterpreterManagerTest {
 
     @Test
     void reentrantCallbackCallUsesSameInterpreter() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
-        PythonInterpreter callback = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
+        PythonInterpreter callback = mockInterpreter();
         AtomicReference<PythonInterpreterManager> managerRef = new AtomicReference<>();
         ExecutorService caller = Executors.newSingleThreadExecutor();
         doAnswer(invocation -> managerRef.get().invoke("inner")).when(callback).invoke("outer");
@@ -428,8 +428,8 @@ class PythonInterpreterManagerTest {
 
     @Test
     void closesEveryInterpreterAndRejectsLaterCalls() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
-        PythonInterpreter worker = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
+        PythonInterpreter worker = mockInterpreter();
         ExecutorService executor = Executors.newSingleThreadExecutor();
         PythonInterpreterManager manager =
                 new PythonInterpreterManager(owner, () -> worker, ignored -> {});

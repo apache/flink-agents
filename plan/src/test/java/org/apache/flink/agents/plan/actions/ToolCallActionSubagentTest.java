@@ -38,6 +38,7 @@ import org.apache.flink.agents.api.subagent.SubagentFutures;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.tools.ToolExecutionMetadataProvider;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
@@ -45,19 +46,79 @@ import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.ChatFixtures;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
+import org.apache.flink.util.ExceptionUtils;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Tests for dispatching a tool call to an {@code AGENT} resource. */
 class ToolCallActionSubagentTest {
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void metadataOnlyPropagatesFrameworkFaults(boolean framework) throws Exception {
+        RuntimeException failure =
+                framework
+                        ? UncapturableException.wrap(new IOException("metadata state failed"))
+                        : new IllegalStateException("optional metadata unavailable");
+        class MetadataTool extends StubTool implements ToolExecutionMetadataProvider {
+            MetadataTool() {
+                super("search");
+            }
+
+            @Override
+            public Map<String, Object> getToolExecutionMetadata(ToolParameters parameters) {
+                throw failure;
+            }
+        }
+        FakeRunnerContext ctx = new FakeRunnerContext().withTool("search", new MetadataTool());
+        if (framework) {
+            assertThatThrownBy(() -> ToolCallAction.processToolRequest(toolRequest("search"), ctx))
+                    .isSameAs(failure);
+            assertThat(ctx.sentEvents).isEmpty();
+            assertThat(ctx.durableExecutions).isZero();
+        } else {
+            ToolCallAction.processToolRequest(toolRequest("search"), ctx);
+            assertThat(ToolResponseEvent.fromEvent(ctx.sentEvents.get(0)).getSuccess())
+                    .containsEntry("call-1", true);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void frameworkFaultDuringSubmitNeverBecomesAToolResponse(boolean parallel) throws Exception {
+        RecordingSubagentSetup agent = new RecordingSubagentSetup(SubagentResult.ok("unused"));
+        IOException original = new IOException("framework write failed");
+        agent.submitFailure = new ExecutionException(UncapturableException.wrap(original));
+        FakeRunnerContext ctx = new FakeRunnerContext().withAgent("a", agent).withAgent("b", agent);
+        if (parallel) {
+            ctx.withParallelToolCalls();
+        }
+        assertThatThrownBy(
+                        () -> ToolCallAction.processToolRequest(twoSubagentRequest("a", "b"), ctx))
+                .isInstanceOf(UncapturableException.class)
+                .satisfies(
+                        failure ->
+                                assertThat(
+                                                ExceptionUtils.findThrowable(
+                                                                failure, IOException.class)
+                                                        .orElse(null))
+                                        .isSameAs(original));
+        assertThat(ctx.sentEvents).isEmpty();
+    }
 
     @Test
     void delegatesToTheSubagentAndReportsItsNormalizedResult() throws Exception {

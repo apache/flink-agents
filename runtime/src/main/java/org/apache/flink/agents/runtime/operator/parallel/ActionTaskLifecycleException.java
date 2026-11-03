@@ -17,6 +17,8 @@
  */
 package org.apache.flink.agents.runtime.operator.parallel;
 
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
+
 import javax.annotation.Nullable;
 
 /**
@@ -39,7 +41,7 @@ public final class ActionTaskLifecycleException extends RuntimeException {
 
     /** The task's context could not be released before the execution lock was handed off. */
     public static UncapturableException suspendFailed(Throwable cause) {
-        return new UncapturableException(
+        return UncapturableException.wrap(
                 new ActionTaskLifecycleException("Could not suspend action task", cause));
     }
 
@@ -51,7 +53,7 @@ public final class ActionTaskLifecycleException extends RuntimeException {
     public static UncapturableException resumeFailed(
             Throwable cause, @Nullable Throwable supplierFailure) {
         UncapturableException shell =
-                new UncapturableException(
+                UncapturableException.wrap(
                         new ActionTaskLifecycleException("Could not resume action task", cause));
         if (supplierFailure != null) {
             shell.addSuppressed(supplierFailure);

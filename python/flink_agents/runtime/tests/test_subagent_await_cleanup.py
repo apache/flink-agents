@@ -26,12 +26,15 @@ from pydantic import PrivateAttr
 
 from flink_agents.api.subagent import CALLABLE_NAME_PREFIX, SubagentResult
 from flink_agents.plan.actions.tool_call_action import process_tool_request
+from flink_agents.plan.agent_plan import AgentPlan
+from flink_agents.plan.exceptions import UncapturableException
 from flink_agents.plan.tests.actions.test_tool_call_action_subagent import (
     _Context,
     _request,
 )
 from flink_agents.runtime.async_subagent import BaseAsyncSubagentSetup, RunStatus
 from flink_agents.runtime.deferred_subagent import DeferredSubagentSetup
+from flink_agents.runtime.internal_subagent import InternalSubagentSetup
 from flink_agents.runtime.tests.test_base_subagent import _FakeTask, _run
 
 
@@ -161,3 +164,50 @@ def test_direct_await_preserves_exception_and_releases_handle(
         _run(future)
     assert caught.value is failure
     setup.on_action_finishing(task)
+
+
+class _InternalFaultContext(_AwaitContext):
+    def __init__(self, stage) -> None:
+        super().__init__()
+        self.stage = stage
+        self.fault = RuntimeError("framework operation failed")
+
+    def bootstrap_internal_subagent_call(
+        self, scope, session_id, call_id, prompt
+    ) -> None:
+        if self.stage == "bootstrap":
+            raise self.fault
+
+    def try_complete_internal_subagent_call(
+        self, session_id, call_id
+    ) -> SubagentResult | None:
+        raise self.fault
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+@pytest.mark.parametrize("stage", ["bootstrap", "completion"])
+def test_internal_framework_fault_reaches_caller_without_tool_response(parallel, stage):
+    setup = InternalSubagentSetup(plan=AgentPlan(actions={}), scope="reviewer")
+    setup.set_subagent_name("reviewer")
+    task = _FakeTask(action_name="tool_call_action")
+    setup.on_action_prepared(task)
+    ctx = _InternalFaultContext(stage).with_agent("reviewer", setup)
+    if parallel:
+        ctx.with_parallel_tool_calls()
+    request = _request(
+        "model",
+        [
+            {
+                "id": f"call-{i}",
+                "function": {
+                    "name": CALLABLE_NAME_PREFIX + "reviewer",
+                    "arguments": {"input": "hello"},
+                },
+            }
+            for i in range(2)
+        ],
+    )
+    with pytest.raises(UncapturableException) as caught:
+        asyncio.run(process_tool_request(request, ctx))
+    assert caught.value.__cause__ is ctx.fault
+    assert ctx.sent_events == []

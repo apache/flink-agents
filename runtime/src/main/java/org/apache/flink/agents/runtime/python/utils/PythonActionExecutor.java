@@ -248,17 +248,20 @@ public class PythonActionExecutor implements AutoCloseable {
                             PyObject pythonEventObject =
                                     scope.own(
                                             (PyObject)
-                                                    interpreter.invoke(
+                                                    PythonFaultBridge.invoke(
+                                                            interpreter,
                                                             CONVERT_JSON_TO_PYTHON_EVENT,
                                                             eventJson));
-                            interpreter.invoke(
+                            PythonFaultBridge.invoke(
+                                    interpreter,
                                     LOAD_EVENT_ATTACHMENTS_FOR_ACTION,
                                     pythonEventObject,
                                     pythonRunnerContext);
                             PyObject calledResult =
                                     scope.own(
                                             (PyObject)
-                                                    interpreter.invoke(
+                                                    PythonFaultBridge.invoke(
+                                                            interpreter,
                                                             CALL_PYTHON_FUNCTION,
                                                             function.getModule(),
                                                             function.getQualName(),
@@ -339,7 +342,10 @@ public class PythonActionExecutor implements AutoCloseable {
                         // completion flag.
                         Object invokeResult =
                                 scope.own(
-                                        interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable));
+                                        PythonFaultBridge.invoke(
+                                                interpreter,
+                                                CALL_PYTHON_AWAITABLE,
+                                                pythonAwaitable));
                         checkState(
                                 invokeResult instanceof Object[]
                                         && ((Object[]) invokeResult).length == 2);

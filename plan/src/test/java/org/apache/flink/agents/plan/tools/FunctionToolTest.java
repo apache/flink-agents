@@ -23,14 +23,32 @@ import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
+import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.lang.reflect.Method;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 public class FunctionToolTest {
+    @Test
+    void frameworkFaultEscapesTheFunctionToolConversion() throws Exception {
+        FunctionTool tool =
+                FunctionTool.fromStaticMethod(FunctionToolTest.class.getMethod("frameworkFault"));
+        assertThatThrownBy(() -> tool.call(new ToolParameters(Map.of())))
+                .isInstanceOf(UncapturableException.class)
+                .hasRootCauseMessage("state store unavailable");
+    }
+
+    public static String frameworkFault() {
+        throw UncapturableException.wrap(new IOException("state store unavailable"));
+    }
+
     @Tool(description = "Performs basic arithmetic operations")
     public static double calculate(
             @ToolParam(name = "a") Double a,
@@ -93,7 +111,8 @@ public class FunctionToolTest {
         FunctionTool tool =
                 FunctionTool.fromStaticMethod(
                         FunctionToolTest.class.getMethod("failingTool", String.class));
-        for (String kind : java.util.List.of("interrupt", "nio", "wrapped", "cancel")) {
+        for (String kind :
+                java.util.List.of("interrupt", "nio", "wrapped", "cancel", "marked-interrupt")) {
             try {
                 RuntimeException failure =
                         Assertions.assertThrows(
@@ -130,6 +149,8 @@ public class FunctionToolTest {
                 throw new java.nio.channels.ClosedByInterruptException();
             case "wrapped":
                 throw new RuntimeException(new InterruptedException());
+            case "marked-interrupt":
+                throw UncapturableException.wrap(new InterruptedException());
             case "cancel":
                 throw new java.util.concurrent.CancellationException();
             default:

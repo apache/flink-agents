@@ -25,9 +25,10 @@ names the recorded failure.
 """
 
 import logging
-from typing import Any
 
 import cloudpickle
+
+from flink_agents.plan.exceptions import find_java_exception
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,6 @@ _JAVA_INTERRUPTION_CLASS_NAMES = frozenset(
         "java.nio.channels.ClosedByInterruptException",
     }
 )
-_MAX_DEPTH = 64
 
 
 def _class_name(exception: BaseException) -> str:
@@ -147,61 +147,6 @@ def deserialize_durable_exception(payload: bytes) -> BaseException:
     return RuntimeError(f"{class_name}: {message}")
 
 
-def _is_pemja_object(obj: Any) -> bool:
-    cls = type(obj)
-    return cls.__name__ == "PyJObject" and cls.__module__.split(".")[0] == "pemja"
-
-
-def _java_class_is_interruption(j_class: Any) -> bool:
-    depth = 0
-    while j_class is not None and depth < _MAX_DEPTH:
-        if str(j_class.getName()) in _JAVA_INTERRUPTION_CLASS_NAMES:
-            return True
-        j_class = j_class.getSuperclass()
-        depth += 1
-    return False
-
-
-def _java_throwable_is_interruption(obj: Any) -> bool:
-    try:
-        depth = 0
-        while obj is not None and depth < _MAX_DEPTH and _is_pemja_object(obj):
-            if _java_class_is_interruption(obj.getClass()):
-                return True
-            obj = obj.getCause()
-            depth += 1
-    except BaseException:
-        # Not a throwable, or the Java call failed: nothing to conclude from it.
-        # BaseException is caught on purpose, here and in is_java_interruption: the
-        # caller is about to record or re-raise a failure, and anything raised while
-        # looking at it would replace that failure.
-        logger.debug("Failed to inspect a Java object.", exc_info=True)
-    return False
-
-
 def is_java_interruption(exception: BaseException | None) -> bool:
-    """Whether ``exception`` carries a Java throwable that is, or was caused by, a
-    thread interruption.
-
-    Pemja raises a Java exception in Python as ``RuntimeError`` whose only argument
-    is the Java throwable, so the throwable's class and cause chain are checked,
-    never the message. Such a failure belongs to a cancelled attempt and must not
-    be recorded as the result of the call.
-
-    Only the explicit cause chain (``raise ... from error``) is followed. The
-    implicit context is not: a failure raised while an interruption was being
-    handled is a failure of its own. An exception that cannot be inspected is not
-    an interruption, and the inspection never replaces it with a failure of its
-    own.
-    """
-    try:
-        current = exception
-        depth = 0
-        while current is not None and depth < _MAX_DEPTH:
-            if any(_java_throwable_is_interruption(arg) for arg in current.args):
-                return True
-            current = current.__cause__
-            depth += 1
-    except BaseException:
-        logger.debug("Failed to inspect a durable call exception.", exc_info=True)
-    return False
+    """Recognize a Java interruption through Pemja proxies and explicit causes."""
+    return find_java_exception(exception, _JAVA_INTERRUPTION_CLASS_NAMES) is not None

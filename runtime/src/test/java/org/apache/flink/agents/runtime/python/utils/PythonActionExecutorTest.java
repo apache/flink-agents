@@ -40,6 +40,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.apache.flink.agents.runtime.python.utils.PythonInterpreterTestUtils.mockInterpreter;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -71,8 +72,8 @@ class PythonActionExecutorTest {
 
     @Test
     void keepsActionConversionInvocationAndAwaitableOnCallingThreadsInterpreter() throws Exception {
-        PythonInterpreter owner = mock(PythonInterpreter.class);
-        PythonInterpreter worker = mock(PythonInterpreter.class);
+        PythonInterpreter owner = mockInterpreter();
+        PythonInterpreter worker = mockInterpreter();
         PythonInterpreterManager manager =
                 new PythonInterpreterManager(owner, () -> worker, ignored -> {});
         PythonRunnerContextImpl runnerContext = mock(PythonRunnerContextImpl.class);
@@ -129,7 +130,7 @@ class PythonActionExecutorTest {
 
     @Test
     void loadsEventAttachmentsBeforeCallingPythonFunction() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreter interpreter = mockInterpreter();
         PythonActionExecutor executor =
                 newExecutor(interpreter, mock(PythonRunnerContextImpl.class));
         PythonFunction function = new PythonFunction("test_module", "test_action");
@@ -165,7 +166,7 @@ class PythonActionExecutorTest {
 
     @Test
     void resolvesPickledPythonKeyTextFromPyFlinkKeyRow() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreter interpreter = mockInterpreter();
         PythonActionExecutor executor = newExecutor(interpreter);
         byte[] pickledKey = new byte[] {1, 2, 3};
         when(interpreter.invoke(
@@ -179,7 +180,7 @@ class PythonActionExecutorTest {
 
     @Test
     void resolvesExplicitPyFlinkKeyTypesWithStringValueOf() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreter interpreter = mockInterpreter();
         PythonActionExecutor executor = newExecutor(interpreter);
 
         assertThat(executor.resolveKeyText(Row.of(7L), false)).isEqualTo("7");
@@ -188,7 +189,7 @@ class PythonActionExecutorTest {
 
     @Test
     void resolvesExplicitByteArrayWithoutUnpickling() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreter interpreter = mockInterpreter();
         PythonActionExecutor executor = newExecutor(interpreter);
         byte[] firstKey = new byte[] {'N', '.'};
         byte[] secondKey = new byte[] {(byte) 0x80, 0x04, 'N', '.'};
@@ -209,7 +210,7 @@ class PythonActionExecutorTest {
 
     @Test
     void propagatesDecodeFailure() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreter interpreter = mockInterpreter();
         PythonActionExecutor executor = newExecutor(interpreter);
         byte[] malformedKey = new byte[] {2};
         when(interpreter.invoke(
@@ -229,7 +230,7 @@ class PythonActionExecutorTest {
      */
     @Test
     void closeCleansRunnerContextWhenThreadPoolShutdownFails() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreter interpreter = mockInterpreter();
         PythonActionExecutor executor = newExecutor(interpreter);
         PyObject threadPool = mock(PyObject.class);
         PyObject runnerContext = mock(PyObject.class);
@@ -253,7 +254,7 @@ class PythonActionExecutorTest {
     /** The first failure is rethrown and the later one is attached as suppressed, never dropped. */
     @Test
     void closeReportsFirstFailureWithLaterOneSuppressed() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreter interpreter = mockInterpreter();
         PythonActionExecutor executor = newExecutor(interpreter);
         PyObject threadPool = mock(PyObject.class);
         PyObject runnerContext = mock(PyObject.class);
@@ -280,7 +281,7 @@ class PythonActionExecutorTest {
      */
     @Test
     void closeCleansRunnerContextWhenThreadPoolShutdownThrowsError() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreter interpreter = mockInterpreter();
         PythonActionExecutor executor = newExecutor(interpreter);
         PyObject threadPool = mock(PyObject.class);
         PyObject runnerContext = mock(PyObject.class);
@@ -356,7 +357,7 @@ class PythonActionExecutorTest {
 
     @Test
     void closesPythonEventAfterSynchronousAction() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreter interpreter = mockInterpreter();
         PythonRunnerContextImpl runnerContext = mock(PythonRunnerContextImpl.class);
         PythonActionExecutor executor = newExecutor(interpreter, runnerContext);
         PythonFunction function = new PythonFunction("test_module", "test_action");
@@ -377,7 +378,7 @@ class PythonActionExecutorTest {
 
     @Test
     void discardsPendingEventsWhenInitialPythonFunctionFails() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreter interpreter = mockInterpreter();
         PythonRunnerContextImpl runnerContext =
                 new PythonRunnerContextImpl(
                         null, () -> {}, new AgentPlan(Map.of()), null, "test-job");
@@ -411,7 +412,7 @@ class PythonActionExecutorTest {
 
     @Test
     void closesTemporaryWrappersAfterStoringAwaitable() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreter interpreter = mockInterpreter();
         PythonRunnerContextImpl runnerContext = mock(PythonRunnerContextImpl.class);
         PythonActionExecutor executor = newExecutor(interpreter, runnerContext);
         PythonFunction function = new PythonFunction("test_module", "test_action");
@@ -443,7 +444,7 @@ class PythonActionExecutorTest {
 
     @Test
     void closesRetrievedAwaitableWhileItIsPending() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreter interpreter = mockInterpreter();
         PythonActionExecutor executor = newExecutor(interpreter);
         PyObject pythonAwaitable = mock(PyObject.class);
         PyObject yieldedValue = mock(PyObject.class);
@@ -462,7 +463,7 @@ class PythonActionExecutorTest {
 
     @Test
     void deletesCompletedAwaitableAndClosesRetrievedWrapper() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreter interpreter = mockInterpreter();
         PythonActionExecutor executor = newExecutor(interpreter);
         PyObject pythonAwaitable = mock(PyObject.class);
         PyObject returnedValue = mock(PyObject.class);
@@ -492,7 +493,7 @@ class PythonActionExecutorTest {
     }
 
     private static TestFixture createOpenedExecutor() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreter interpreter = mockInterpreter();
         PythonRunnerContextImpl runnerContext = mock(PythonRunnerContextImpl.class);
         JavaResourceAdapter resourceAdapter = mock(JavaResourceAdapter.class);
         PyObject asyncThreadPool = mock(PyObject.class);

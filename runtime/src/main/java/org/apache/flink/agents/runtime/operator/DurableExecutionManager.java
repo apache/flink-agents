@@ -21,6 +21,8 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
@@ -40,6 +42,7 @@ import org.apache.flink.runtime.state.KeyedStateBackend;
 import org.apache.flink.runtime.state.OperatorStateBackend;
 import org.apache.flink.runtime.state.VoidNamespace;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
+import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -336,7 +339,10 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
             actionStateStore.put(key, sequenceNumber, action, event, actionState);
         } catch (Exception e) {
             LOG.error("Failed to persist ActionState", e);
-            throw new RuntimeException("Failed to persist ActionState", e);
+            if (CancellationUtils.isCancellation(e)) {
+                ExceptionUtils.rethrow(e);
+            }
+            throw UncapturableException.wrap(e);
         }
     }
 

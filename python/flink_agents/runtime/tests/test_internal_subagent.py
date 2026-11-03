@@ -227,8 +227,9 @@ def test_fault_of_the_call_itself_reaches_the_caller() -> None:
     future = _future(ctx, registry=registry)
     ctx.poll_faults[future.identity] = RuntimeError("could not record the slot")
 
-    with pytest.raises(RuntimeError, match="could not record the slot"):
+    with pytest.raises(RuntimeError, match="Internal sub-agent call failed") as caught:
         _run(future)
+    assert caught.value.__cause__ is ctx.poll_faults[future.identity]
 
     assert future.done() is False
     assert registry.is_empty() is False
@@ -275,9 +276,7 @@ def test_group_rejects_a_mixed_internal_and_deferred_batch(
     internal = _future(ctx, "inner", call_id="call-i")
     ctx.outputs[internal.identity] = ["child"]
     deferred = _deferred(ctx, "outer", "call-d")
-    group = (
-        internal.combine(deferred) if internal_first else deferred.combine(internal)
-    )
+    group = internal.combine(deferred) if internal_first else deferred.combine(internal)
 
     with pytest.raises(
         RuntimeError, match="cannot mix the internal call InternalSubagentFuture"

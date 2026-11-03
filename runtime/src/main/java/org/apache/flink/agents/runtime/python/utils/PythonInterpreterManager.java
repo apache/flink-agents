@@ -66,7 +66,8 @@ public final class PythonInterpreterManager implements AutoCloseable {
     static final String PYTHON_IMPORTS =
             "from flink_agents.plan import function\n"
                     + "from flink_agents.runtime import flink_runner_context\n"
-                    + "from flink_agents.runtime import python_java_utils";
+                    + "from flink_agents.runtime import python_java_utils\n"
+                    + PythonFaultBridge.INITIALIZER;
 
     private final Supplier<PythonInterpreter> interpreterFactory;
     private final Consumer<PythonInterpreter> interpreterInitializer;
@@ -230,11 +231,12 @@ public final class PythonInterpreterManager implements AutoCloseable {
     }
 
     public Object invoke(String name, Object... args) {
-        return withInterpreter(interpreter -> interpreter.invoke(name, args));
+        return withInterpreter(interpreter -> PythonFaultBridge.invoke(interpreter, name, args));
     }
 
     public Object invokeOnOwner(String name, Object... args) {
-        return withOwnerInterpreter(interpreter -> interpreter.invoke(name, args));
+        return withOwnerInterpreter(
+                interpreter -> PythonFaultBridge.invoke(interpreter, name, args));
     }
 
     public Object get(String name) {
@@ -343,7 +345,7 @@ public final class PythonInterpreterManager implements AutoCloseable {
                                     + " did not match its thread-local interpreter."));
         }
         try {
-            registered.close();
+            PythonFaultBridge.close(registered);
         } catch (Throwable closeFailure) {
             workerCloseFailures.add(closeFailure);
         }
@@ -422,7 +424,7 @@ public final class PythonInterpreterManager implements AutoCloseable {
             }
             if (interpreters.remove(thread) == entry.getValue()) {
                 try {
-                    entry.getValue().close();
+                    PythonFaultBridge.close(entry.getValue());
                 } catch (Throwable closeFailure) {
                     workerCloseFailures.add(closeFailure);
                 }

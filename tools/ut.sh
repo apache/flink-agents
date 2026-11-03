@@ -331,6 +331,7 @@ python_tests() {
                 -o log_cli=true \
                 -o log_cli_level=${LOG_LEVEL:-CRITICAL}
                 rc1=$?
+                echo "Python E2E tests for Flink ${version}: exit code ${rc1}"
                 # Arm 2: integration-marked tests (registered in pyproject.toml).
                 # Trap exit code 5 (no tests collected) as failure to defend
                 # against -m selector typos that --strict-markers does not catch.
@@ -340,6 +341,7 @@ python_tests() {
                 -o log_cli=true \
                 -o log_cli_level=${LOG_LEVEL:-CRITICAL}
                 rc2=$?
+                echo "Python integration tests for Flink ${version}: exit code ${rc2}"
                 if [ $rc2 -eq 5 ]; then rc2=1; fi
                 # Logical-OR aggregation: any nonzero exit on either arm yields testcode=1.
                 # Side effect: pytest exit 5 (no tests collected) becomes failure on BOTH
@@ -374,9 +376,11 @@ python_tests() {
             if $run_e2e; then
                 python3 -m pytest flink_agents -k "e2e_tests_integration" --reruns 2 --reruns-delay 5 -o log_cli=true -o log_cli_level=${LOG_LEVEL:-CRITICAL}
                 rc1=$?
+                echo "Python E2E tests for Flink ${version}: exit code ${rc1}"
                 # Arm 2: integration-marked tests; trap exit code 5 as failure.
                 python3 -m pytest flink_agents -m "integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-CRITICAL}
                 rc2=$?
+                echo "Python integration tests for Flink ${version}: exit code ${rc2}"
                 if [ $rc2 -eq 5 ]; then rc2=1; fi
                 # Logical-OR aggregation: any nonzero exit on either arm yields testcode=1.
                 # Side effect: pytest exit 5 (no tests collected) becomes failure on BOTH

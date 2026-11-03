@@ -30,12 +30,15 @@ import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.plan.subagent.InternalSubagentPlans;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.condition.ActionMatcher;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.subgraph.SubgraphExecution;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
+import org.apache.flink.util.ExceptionUtils;
 
 import java.util.HashMap;
 import java.util.List;
@@ -163,8 +166,10 @@ public class InternalSubagentSetup extends BaseSubagentSetup {
             RunnerContextImpl runner = (RunnerContextImpl) ctx;
             SubgraphExecution.prepare(runner, invocation(runner, sessionId, callId), prompt);
         } catch (Exception e) {
-            throw new IllegalStateException(
-                    "Failed to bootstrap internal sub-agent call for scope " + scope, e);
+            if (CancellationUtils.isCancellation(e)) {
+                ExceptionUtils.rethrow(e);
+            }
+            throw UncapturableException.wrap(e);
         }
     }
 

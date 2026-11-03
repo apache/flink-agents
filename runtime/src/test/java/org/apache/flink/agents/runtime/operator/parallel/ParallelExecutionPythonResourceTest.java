@@ -50,6 +50,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.apache.flink.agents.runtime.python.utils.PythonInterpreterTestUtils.mockInterpreter;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -69,8 +70,8 @@ class ParallelExecutionPythonResourceTest {
     @Timeout(15)
     void pythonObjectsReturnedToJavaAreConsumedAndClosedOnTheirOwningWorker(boolean batch)
             throws Exception {
-        PythonInterpreter ownerInterpreter = mock(PythonInterpreter.class);
-        PythonInterpreter actionInterpreter = mock(PythonInterpreter.class);
+        PythonInterpreter ownerInterpreter = mockInterpreter();
+        PythonInterpreter actionInterpreter = mockInterpreter();
         PyObject vectorStoreHandle = mock(PyObject.class);
         PyObject pythonDocument = mock(PyObject.class);
         AtomicReference<Thread> resultThread = new AtomicReference<>();
@@ -190,8 +191,8 @@ class ParallelExecutionPythonResourceTest {
     @Test
     @Timeout(15)
     void pythonResourceOpenCanReenterResourceCacheOnParallelWorker() throws Exception {
-        PythonInterpreter ownerInterpreter = mock(PythonInterpreter.class);
-        PythonInterpreter actionInterpreter = mock(PythonInterpreter.class);
+        PythonInterpreter ownerInterpreter = mockInterpreter();
+        PythonInterpreter actionInterpreter = mockInterpreter();
         PyObject modelHandle = mock(PyObject.class);
         PythonResourceProvider modelProvider =
                 new PythonResourceProvider(

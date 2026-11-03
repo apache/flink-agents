@@ -55,6 +55,7 @@ public class PythonResourceAdapterImplTest {
     @BeforeEach
     void setUp() throws Exception {
         mocks = MockitoAnnotations.openMocks(this);
+        PythonInterpreterTestUtils.enableFaultEnvelope(mockInterpreter);
         interpreterManager =
                 new PythonInterpreterManager(
                         mockInterpreter,

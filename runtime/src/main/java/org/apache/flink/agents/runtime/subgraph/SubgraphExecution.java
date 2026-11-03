@@ -20,11 +20,11 @@ package org.apache.flink.agents.runtime.subgraph;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.EventAttachmentUtils;
-import org.apache.flink.agents.runtime.operator.parallel.UncapturableException;
 import org.apache.flink.util.ExceptionUtils;
 
 import javax.annotation.Nullable;
@@ -120,7 +120,9 @@ public final class SubgraphExecution {
                 context.resolveAsync(invocation::awaitResult);
             }
         } catch (Exception e) {
-            if (!invocation.capturesActionFailure(e)) {
+            // A failure of the waiting machinery is not the child's recorded failure, even if
+            // the graph normally captures ordinary child exceptions.
+            if (!invocation.isRecordedActionFailure(e) || !invocation.capturesActionFailure(e)) {
                 throw e;
             }
         }

@@ -135,6 +135,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
 
+import static org.apache.flink.agents.runtime.python.utils.PythonInterpreterTestUtils.mockInterpreter;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
@@ -1833,9 +1834,9 @@ public class ActionExecutionOperatorTest {
         ExecutorService closingThread = Executors.newSingleThreadExecutor();
         PythonInterpreterManager interpreters =
                 new PythonInterpreterManager(
-                        mock(PythonInterpreter.class),
+                        mockInterpreter(),
                         () -> {
-                            PythonInterpreter interpreter = mock(PythonInterpreter.class);
+                            PythonInterpreter interpreter = mockInterpreter();
                             doAnswer(
                                             invocation -> {
                                                 closedWorkerInterpreters.incrementAndGet();
