@@ -55,11 +55,12 @@ import java.util.Set;
  * <p>The answer is constrained by construction: the provider must pick one of the requested
  * choices, so the decision model cannot steer routing outside the declared candidates. The choice
  * becomes the selected model and its reported probability the routing score. A refusal, a
- * non-choice answer, a result without an answer for the question, or a probability below the
- * declared {@code min_probability} abstains to the router's default model with the cause recorded.
- * The decision model sees the conversation as text only (tool calls and results included, media and
- * reasoning excluded), rendered like the LLM judge's input and subject to the same optional context
- * cap.
+ * non-choice answer, a result without an answer for the question, a probability below the declared
+ * {@code min_probability}, or no reported probability for the choice while a minimum is set,
+ * abstains to the router's default model with the cause recorded; without a minimum a choice with
+ * no reported probability routes with no score. The decision model sees the conversation as text
+ * only (tool calls and results included, media and reasoning excluded), rendered like the LLM
+ * judge's input and subject to the same optional context cap.
  *
  * <p>Failure policy: a decision call that exhausts its retries fails the request, like a throwing
  * rule/custom strategy or a failed judge call. Cancellation propagates and is never persisted as a

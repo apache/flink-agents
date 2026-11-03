@@ -96,9 +96,10 @@ public final class Strategies {
      * names and whose criteria are the candidates' {@code describe(...)} descriptions. The engine
      * executes the decision call on its durable, metered, observable path. The returned choice
      * becomes the selected model and its reported probability the routing score. A refusal answer,
-     * or a choice whose probability is below {@link RoutingStrategy#withMinProbability(double)},
-     * abstains to the router's default model; a decision call that exhausts its retries fails the
-     * request.
+     * a choice whose probability is below {@link RoutingStrategy#withMinProbability(double)}, or a
+     * choice with no reported probability while that minimum is set, abstains to the router's
+     * default model (without a minimum such a choice routes with no score); a decision call that
+     * exhausts its retries fails the request.
      *
      * <p>Every candidate must carry a description: the descriptions are all the decision model sees
      * of the candidates. The decision model receives the conversation text (tool calls and results

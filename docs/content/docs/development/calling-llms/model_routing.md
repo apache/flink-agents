@@ -219,9 +219,11 @@ normalize the distribution.
 The strategy abstains, and the default model answers, when the answer is a
 refusal, when it is not a choice, when the result carries no answer for the
 question, or when the chosen candidate's probability is below
-`withMinProbability`. For a choice below the minimum, the choice and the
-full probability map stay in the metadata. A router using this strategy needs at
-least two candidates. A decision call that fails after the configured retries is a request
+`withMinProbability`. A provider may omit the chosen candidate from the
+probability map: with `withMinProbability` set that is an abstention too, since
+there is nothing to compare; without it the choice routes with no `score`. For
+either abstention, the choice and the full probability map stay in the
+metadata. A router using this strategy needs at least two candidates. A decision call that fails after the configured retries is a request
 failure, like a failed judge call; it does not select the default or try
 candidate fallback.
 
@@ -329,7 +331,8 @@ behaviors:
 | Strategy abstains, or returns a name outside the candidates | Call `defaultModel`, or the first candidate if no default is configured. |
 | Declaration has an invalid pattern, non-candidate rule target or default, or duplicate/empty candidates | Reject the configuration before processing requests. |
 | Custom strategy throws, or the judge or decision call exhausts retries | Fail the request; do not treat it as abstention or try candidate fallback. |
-| Decision model refuses, answers something other than a choice, or its chosen candidate is below `withMinProbability` | Call `defaultModel`, or the first candidate if no default is configured. |
+| Decision model refuses, answers something other than a choice, or its chosen candidate is below `withMinProbability` or has no reported probability while `withMinProbability` is set | Call `defaultModel`, or the first candidate if no default is configured. |
+| Decision model's chosen candidate has no reported probability and no `withMinProbability` is set | Call the chosen candidate; the routing event carries no `score`. |
 | Candidate call fails with fallback disabled | Fail the request after applicable retries. |
 | Candidate call fails with fallback enabled | Try the remaining candidates in declaration order, stopping at the first successful response. |
 | All attempted candidates fail | Fail the request with the last candidate's error; earlier errors remain in diagnostics. |

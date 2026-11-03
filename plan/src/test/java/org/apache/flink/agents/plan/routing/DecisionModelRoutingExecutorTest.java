@@ -385,6 +385,23 @@ class DecisionModelRoutingExecutorTest {
                 .containsKey(DecisionModelRoutingExecutor.PROBABILITIES_KEY);
     }
 
+    /** Without a minimum there is nothing to compare, so the choice routes with no score. */
+    @Test
+    void missingProbabilityForTheChoiceRoutesWithoutAScoreWhenNoMinimumIsSet() {
+        RoutingDecision decision =
+                DecisionModelRoutingExecutor.toDecision(
+                        Strategies.decision("dm"),
+                        ctx(List.of(), Map.of()),
+                        choice("big", Map.of("small", 1.0), null),
+                        new LinkedHashMap<>());
+        assertThat(decision.isAbstain()).isFalse();
+        assertThat(decision.getSelectedModel()).isEqualTo("big");
+        assertThat(decision.getScore()).isNull();
+        assertThat(decision.getMetadata())
+                .containsEntry(DecisionModelRoutingExecutor.PROBABILITIES_KEY, Map.of("small", 1.0))
+                .doesNotContainKey(DecisionModelRoutingExecutor.CHOICE_KEY);
+    }
+
     /** A provider may omit the chosen candidate from the map; with a minimum set that abstains. */
     @Test
     void missingProbabilityForTheChoiceAbstainsWhenAMinimumIsSet() {

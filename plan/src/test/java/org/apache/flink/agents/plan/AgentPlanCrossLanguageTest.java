@@ -318,9 +318,18 @@ class AgentPlanCrossLanguageTest {
     }
 
     /**
-     * A plan whose only resources are a decision-model-strategy router, its chat models and the
-     * decision model.
+     * A plan whose only resources are two decision-model-strategy routers, their chat models and
+     * the decision model: {@code router} declares the minimum (the common case) and {@code
+     * router_full} every optional argument, so the Python side has each key's name and JSON type.
      */
+    /** Insertion-ordered so the regenerated snapshot does not reorder the keys per JVM run. */
+    private static Map<String, Object> decisionSetupArguments() {
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("model", "m");
+        arguments.put("connection", "conn");
+        return arguments;
+    }
+
     private static AgentPlan compileWithDecisionRouter() throws Exception {
         Map<ResourceType, Map<String, ResourceProvider>> providers = new LinkedHashMap<>();
         ResourceDescriptor routerDescriptor =
@@ -331,10 +340,23 @@ class AgentPlanCrossLanguageTest {
                         .defaultModel("small")
                         .fallback(true)
                         .build();
+        ResourceDescriptor fullDescriptor =
+                ModelRouter.of("small", "big")
+                        .describe("small", "short factual questions")
+                        .describe("big", "code and sql")
+                        .strategy(
+                                Strategies.decision("dm", "Pick the candidate that should answer.")
+                                        .withMinProbability(0.6)
+                                        .withMaxContextChars(4000))
+                        .defaultModel("small")
+                        .build();
         Map<String, ResourceProvider> routers = new LinkedHashMap<>();
         routers.put(
                 "router",
                 new JavaResourceProvider("router", ResourceType.MODEL_ROUTER, routerDescriptor));
+        routers.put(
+                "router_full",
+                new JavaResourceProvider("router_full", ResourceType.MODEL_ROUTER, fullDescriptor));
         providers.put(ResourceType.MODEL_ROUTER, routers);
         Map<String, ResourceProvider> chatModels = new LinkedHashMap<>();
         ResourceDescriptor model = new ResourceDescriptor("some.Clazz", Map.of());
@@ -347,8 +369,7 @@ class AgentPlanCrossLanguageTest {
                 new JavaResourceProvider(
                         "dm",
                         ResourceType.DECISION_MODEL,
-                        new ResourceDescriptor(
-                                "some.Setup", Map.of("connection", "conn", "model", "m"))));
+                        new ResourceDescriptor("some.Setup", decisionSetupArguments())));
         providers.put(ResourceType.DECISION_MODEL, decisionModels);
         Map<String, ResourceProvider> connections = new LinkedHashMap<>();
         connections.put(

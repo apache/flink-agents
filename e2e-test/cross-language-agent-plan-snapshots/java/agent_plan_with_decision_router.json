@@ -26,6 +26,32 @@
           }
         },
         "__resource_provider_type__" : "JavaResourceProvider"
+      },
+      "router_full" : {
+        "name" : "router_full",
+        "type" : "model_router",
+        "descriptor" : {
+          "language" : "java",
+          "target_module" : "",
+          "target_clazz" : "org.apache.flink.agents.api.chat.model.routing.ModelRouter",
+          "arguments" : {
+            "candidates" : [ "small", "big" ],
+            "candidate_descriptions" : {
+              "small" : "short factual questions",
+              "big" : "code and sql"
+            },
+            "strategy_type" : "decision_model",
+            "default_model" : "small",
+            "fallback" : false,
+            "strategy_args" : {
+              "instructions" : "Pick the candidate that should answer.",
+              "decision_model" : "dm",
+              "min_probability" : 0.6,
+              "max_context_chars" : 4000
+            }
+          }
+        },
+        "__resource_provider_type__" : "JavaResourceProvider"
       }
     },
     "chat_model" : {
