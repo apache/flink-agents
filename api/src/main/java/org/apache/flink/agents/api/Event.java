@@ -67,7 +67,7 @@ public class Event {
      * assigned deterministically by the runtime from the occurrence's position in the causal tree
      * (business key and sequence number for a root event; producing action execution plus output
      * ordinal for an action's output event). It lets durable action-state keys distinguish sibling
-     * event occurrences that carry identical attributes. See FLINK-AGENTS issue #1084.
+     * event occurrences that carry identical attributes.
      */
     private String occurrenceId;
 

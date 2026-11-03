@@ -70,15 +70,13 @@ public class InMemoryActionStateStore implements ActionStateStore {
                 .get(keyEncoder.generateKey(key, seqNum, action, event));
     }
 
-    @Override
+    /**
+     * Test-only convenience accessor to this store's own business-key identity, matching what the
+     * runtime now derives independently via its own {@link ActionStateKeyEncoder} (not part of the
+     * {@link ActionStateStore} contract).
+     */
     public String generateBusinessKeyIdentity(Object key) {
         return keyEncoder.generateBusinessKeyIdentity(key);
-    }
-
-    @Override
-    public String generateActionExecutionId(Object key, long seqNum, Action action, Event event)
-            throws IOException {
-        return keyEncoder.generateKey(key, seqNum, action, event);
     }
 
     @Override

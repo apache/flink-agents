@@ -36,6 +36,7 @@ import org.apache.flink.agents.plan.subagent.InternalSubagentPlans;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.ActionStateUtil;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
@@ -294,6 +295,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private final transient DurableExecutionManager durableExecManager;
 
+    // Derives root-event business-key identities directly from the operator's own keyed-state
+    // serializer, independent of whether durable execution (and so an ActionStateStore) is
+    // configured, so every root event gets a stable occurrence identity regardless.
+    private transient ActionStateKeyEncoder occurrenceIdentityKeyEncoder;
+
     private transient OperatorStateManager stateManager;
 
     private transient TypeSerializer<Event> eventSerializer;
@@ -379,6 +385,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         eventRouter.open(builtInMetrics);
 
         int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
+        occurrenceIdentityKeyEncoder =
+                new ActionStateKeyEncoder(maxParallelism, getActionStateKeySerializer());
         durableExecManager.maybeInitActionStateStore(
                 agentPlan.getConfig(), maxParallelism, getActionStateKeySerializer());
         durableExecManager.initRecoveryMarkerState(getOperatorStateBackend());
@@ -619,33 +627,27 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     /**
      * Assigns a root (input) event's replay-stable occurrence identity, derived from its business
-     * key and sequence number. No-op when durable execution is disabled, since nothing keys action
-     * state on it in that case. See FLINK-AGENTS-1084.
+     * key and sequence number. Assigned unconditionally, independent of whether durable execution
+     * is enabled, so chat and internal-subagent call paths can rely on it too.
      */
     private void assignRootOccurrenceId(Object key, Event event) throws Exception {
-        String businessKeyIdentity = durableExecManager.generateBusinessKeyIdentity(key);
-        if (businessKeyIdentity != null) {
-            event.setOccurrenceId(
-                    ActionStateUtil.deriveRootEventOccurrenceId(
-                            businessKeyIdentity, stateManager.getSequenceNumber()));
-        }
+        String businessKeyIdentity = occurrenceIdentityKeyEncoder.generateBusinessKeyIdentity(key);
+        event.setOccurrenceId(
+                ActionStateUtil.deriveRootEventOccurrenceId(
+                        businessKeyIdentity, stateManager.getSequenceNumber()));
     }
 
     /**
      * Assigns each of an action execution's output events its lineage-based occurrence identity
      * before dispatch, so that distinct event occurrences with identical attributes never collide
-     * in the durable action-state key. No-op when durable execution is disabled. See
-     * FLINK-AGENTS-1084.
+     * in the durable action-state key. Derived purely from the triggering event's own occurrence
+     * identity and the action's identity, so it needs neither the business key nor a durable store.
      */
-    private void assignOutputOccurrenceIds(
-            Object key, long sequenceNumber, ActionTask actionTask, List<Event> outputEvents)
+    private void assignOutputOccurrenceIds(ActionTask actionTask, List<Event> outputEvents)
             throws Exception {
         String producerExecutionId =
-                durableExecManager.generateActionExecutionId(
-                        key, sequenceNumber, actionTask.action, actionTask.event);
-        if (producerExecutionId == null) {
-            return;
-        }
+                ActionStateUtil.deriveActionExecutionId(
+                        actionTask.event.getOccurrenceId(), actionTask.action);
         for (int ordinal = 0; ordinal < outputEvents.size(); ordinal++) {
             outputEvents
                     .get(ordinal)
@@ -1077,7 +1079,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             }
         }
 
-        assignOutputOccurrenceIds(key, sequenceNumber, actionTask, outputEvents);
+        assignOutputOccurrenceIds(actionTask, outputEvents);
         for (Event actionOutputEvent : outputEvents) {
             processActionOutputEvent(key, contextKey, actionOutputEvent, actionTask);
         }
@@ -1263,6 +1265,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         + " or set execution.batch-state-backend.enabled to false.");
 
         int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
+        occurrenceIdentityKeyEncoder =
+                new ActionStateKeyEncoder(maxParallelism, getActionStateKeySerializer());
         durableExecManager.maybeInitActionStateStore(
                 agentPlan.getConfig(), maxParallelism, getActionStateKeySerializer());
 
@@ -2149,8 +2153,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     // callback belongs to, which would otherwise get none.
                     notifyActionReused(actionTask);
                 }
-                assignOutputOccurrenceIds(
-                        key, sequenceNumber, actionTask, result.getOutputEvents());
+                assignOutputOccurrenceIds(actionTask, result.getOutputEvents());
             } catch (Throwable t) {
                 if (lifecyclePrepared && actionTask != null) {
                     notifyActionFailed(actionTask, t);

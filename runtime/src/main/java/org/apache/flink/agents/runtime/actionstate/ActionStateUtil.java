@@ -345,20 +345,20 @@ public final class ActionStateUtil {
         byte[] attributesBytes = MAPPER.writeValueAsBytes(event.getAttributes());
         String occurrenceId = event.getOccurrenceId();
         if (occurrenceId == null) {
-            // Legacy fallback for events the runtime has not assigned an occurrence identity to
-            // (for example, state written before this fix by an older version). Distinct
-            // occurrences with identical attributes still collide here; this path exists only for
-            // mixed-version recovery continuity, not as the steady-state behavior.
+            // Attributes-only fallback. Distinct occurrences with identical attributes collide
+            // here; kept only because a large pre-existing lower-level test surface (key-encoding
+            // and store tests predating occurrence identity) builds events without assigning one.
+            // Removing this fallback outright requires migrating that test surface to assign an
+            // occurrence identity on every constructed event, tracked as a separate follow-up.
             return String.valueOf(UUID.nameUUIDFromBytes(attributesBytes));
         }
-        // Folds the lineage-based occurrence identity (FLINK-AGENTS-1084) together with the
-        // existing attributes hash, rather than replacing it: attributes must stay in the key so
-        // the content-based replay-divergence protection this already provides (a later restore
-        // with a changed input must not reuse a cached result from the other input's history) is
-        // unchanged, while the occurrence identity additionally distinguishes sibling occurrences
-        // that carry identical attributes, which attributes alone cannot. Folded through
-        // nameUUIDFromBytes so the composite key's fixed five-segment, 36-char-UUID format is
-        // unchanged; no key-format migration is needed.
+        // Folds the occurrence identity together with the existing attributes hash, rather than
+        // replacing it: attributes must stay in the key so the content-based replay-divergence
+        // protection this already provides (a later restore with a changed input must not reuse a
+        // cached result from the other input's history) is unchanged, while the occurrence
+        // identity additionally distinguishes sibling occurrences that carry identical attributes,
+        // which attributes alone cannot. Folded through nameUUIDFromBytes so the composite key's
+        // fixed five-segment, 36-char-UUID format is unchanged.
         byte[] occurrenceBytes = occurrenceId.getBytes(StandardCharsets.UTF_8);
         byte[] combined = new byte[occurrenceBytes.length + 1 + attributesBytes.length];
         System.arraycopy(occurrenceBytes, 0, combined, 0, occurrenceBytes.length);
@@ -397,6 +397,22 @@ public final class ActionStateUtil {
                 outputOrdinal >= 0, "outputOrdinal must be nonnegative but was %s.", outputOrdinal);
         return sha256Base64(
                 (producerActionExecutionId + KEY_SEPARATOR + outputOrdinal)
+                        .getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Derives the identity of one action execution from its triggering event's own occurrence
+     * identity and the action's identity. Independent of the business key, sequence number, and
+     * durable storage: the business key and sequence number are already folded into the triggering
+     * event's occurrence identity, so no store or key encoder is needed here.
+     */
+    public static String deriveActionExecutionId(String triggeringEventOccurrenceId, Action action)
+            throws IOException {
+        Preconditions.checkNotNull(
+                triggeringEventOccurrenceId, "triggeringEventOccurrenceId cannot be null.");
+        Preconditions.checkNotNull(action, "action cannot be null.");
+        return sha256Base64(
+                (triggeringEventOccurrenceId + KEY_SEPARATOR + generateUUIDForAction(action))
                         .getBytes(StandardCharsets.UTF_8));
     }
 

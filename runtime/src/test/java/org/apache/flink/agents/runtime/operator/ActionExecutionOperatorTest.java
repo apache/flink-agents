@@ -86,6 +86,7 @@ import org.apache.flink.agents.runtime.tracelog.TraceLogWriter;
 import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.base.LongSerializer;
+import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
@@ -1676,12 +1677,18 @@ public class ActionExecutionOperatorTest {
                     (List<StreamRecord<Object>>) testHarness.getRecordOutput();
             assertThat(output).singleElement().extracting(StreamRecord::getValue).isEqualTo(7L);
 
+            InputEvent lookupEvent = new InputEvent(7L);
+            lookupEvent.setOccurrenceId(
+                    ActionStateUtil.deriveRootEventOccurrenceId(
+                            ActionStateUtil.generateBusinessKeyIdentity(
+                                    "7", StringSerializer.INSTANCE),
+                            0L));
             ActionState actionState =
                     actionStateStore.get(
                             "7",
                             0L,
                             agentPlan.getActions().get("bestEffortMemoryObservationAction"),
-                            new InputEvent(7L));
+                            lookupEvent);
             assertThat(actionState).isNotNull();
             assertThat(actionState.getOutputEvents())
                     .filteredOn(ShortTermWriteEvent.class::isInstance)
@@ -5379,7 +5386,7 @@ public class ActionExecutionOperatorTest {
             String actionName,
             ActionState actionState)
             throws Exception {
-        InputEvent event = new InputEvent(input);
+        InputEvent event = rootInputEventWithOccurrenceId(key, input);
         Action action = agentPlan.getActions().get(actionName);
         actionStateStore.put(key, 0L, action, event, actionState);
     }
@@ -5391,9 +5398,30 @@ public class ActionExecutionOperatorTest {
             AgentPlan agentPlan,
             String actionName)
             throws Exception {
-        InputEvent event = new InputEvent(input);
+        InputEvent event = rootInputEventWithOccurrenceId(key, input);
         Action action = agentPlan.getActions().get(actionName);
         return actionStateStore.get(key, 0L, action, event);
+    }
+
+    /**
+     * Builds an {@link InputEvent} carrying the same root occurrence identity the operator itself
+     * assigns on the first (seqNum=0) event for this key, so a fixture's directly-seeded state keys
+     * to the same durable-store key the operator computes when it processes its own {@code
+     * InputEvent} for this key. Uses {@code LongSerializer} directly (the real keyed-state
+     * backend's serializer for these {@code Long}-keyed harnesses, per {@link
+     * #testDefaultStoreUsesKeyedStateBackendSerializer}) rather than the store's own encoder: the
+     * operator now derives this identity independent of the store, and a store built standalone
+     * with a generic serializer (as these fixtures' {@link InMemoryActionStateStore} instances are)
+     * would otherwise compute a different, mismatched identity.
+     */
+    private static InputEvent rootInputEventWithOccurrenceId(long key, long input)
+            throws Exception {
+        InputEvent event = new InputEvent(input);
+        event.setOccurrenceId(
+                ActionStateUtil.deriveRootEventOccurrenceId(
+                        ActionStateUtil.generateBusinessKeyIdentity(key, LongSerializer.INSTANCE),
+                        0L));
+        return event;
     }
 
     /**
