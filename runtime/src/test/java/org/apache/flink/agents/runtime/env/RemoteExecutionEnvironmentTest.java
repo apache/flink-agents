@@ -42,8 +42,11 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.PrintWriter;
+import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -58,6 +61,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class RemoteExecutionEnvironmentTest {
+    private static final String FLINK_1_20 = "1.20.3";
+    private static final String FLINK_2_3 = "2.3.0";
+
     @TempDir private File tmpDir;
 
     @Test
@@ -88,101 +94,147 @@ public class RemoteExecutionEnvironmentTest {
     }
 
     @Test
-    void testLoadAgentConfigurationFromLegacyFile() throws FileNotFoundException {
-        try (final PrintWriter pw = new PrintWriter(new File(tmpDir, LEGACY_FLINK_CONF_FILENAME))) {
-            pw.println("taskmanager.numberOfTaskSlots: 2");
-            pw.println("agent.key1.key2: v1");
-            pw.println("agent.key4: 1");
-        }
-
-        AgentConfiguration conf =
-                RemoteExecutionEnvironment.loadAgentConfiguration(tmpDir.getAbsolutePath());
-
-        assertThat(conf.getConfData())
-                .hasSize(2)
-                .containsEntry("key1.key2", "v1")
-                .containsEntry("key4", 1);
+    void testIsFlink2OrLater() {
+        assertThat(RemoteExecutionEnvironment.isFlink2OrLater("1.20.3")).isFalse();
+        assertThat(RemoteExecutionEnvironment.isFlink2OrLater("1.20-vvr-11.5.0")).isFalse();
+        assertThat(RemoteExecutionEnvironment.isFlink2OrLater("2.3.0")).isTrue();
+        assertThat(RemoteExecutionEnvironment.isFlink2OrLater("2.0-SNAPSHOT")).isTrue();
+        assertThat(RemoteExecutionEnvironment.isFlink2OrLater("<unknown>")).isFalse();
+        assertThat(RemoteExecutionEnvironment.isFlink2OrLater("")).isFalse();
+        assertThat(RemoteExecutionEnvironment.isFlink2OrLater(null)).isFalse();
     }
 
     @Test
-    void testLoadAgentConfigurationWithFlattenedKeys() throws FileNotFoundException {
-        try (final PrintWriter pw = new PrintWriter(new File(tmpDir, FLINK_CONF_FILENAME))) {
-            pw.println("agent:");
-            pw.println("    key1: v1");
-            pw.println("agent.key2: v2");
-        }
+    void testFlink1LoadsLegacyFileWhenOnlyLegacyFileExists() throws IOException {
+        writeLegacyConf("agent.key1: fromLegacy");
 
-        AgentConfiguration conf =
-                RemoteExecutionEnvironment.loadAgentConfiguration(tmpDir.getAbsolutePath());
-
-        assertThat(conf.getConfData())
-                .hasSize(2)
-                .containsEntry("key1", "v1")
-                .containsEntry("key2", "v2");
+        assertThat(load(FLINK_1_20).getConfData()).containsOnly(entry("key1", "fromLegacy"));
     }
 
     @Test
-    void testLoadAgentConfigurationPrefersConfigYamlOverLegacyFile() throws FileNotFoundException {
-        try (final PrintWriter pw = new PrintWriter(new File(tmpDir, FLINK_CONF_FILENAME))) {
-            pw.println("agent:");
-            pw.println("    key1: fromConfigYaml");
-        }
-        try (final PrintWriter pw = new PrintWriter(new File(tmpDir, LEGACY_FLINK_CONF_FILENAME))) {
-            pw.println("agent.key1: fromLegacy");
-        }
+    void testFlink1LoadsConfigYamlWhenOnlyConfigYamlExists() throws IOException {
+        writeConfigYaml("agent:", "    key1: fromConfigYaml");
 
-        AgentConfiguration conf =
-                RemoteExecutionEnvironment.loadAgentConfiguration(tmpDir.getAbsolutePath());
-
-        assertThat(conf.getConfData()).containsOnly(entry("key1", "fromConfigYaml"));
+        assertThat(load(FLINK_1_20).getConfData()).containsOnly(entry("key1", "fromConfigYaml"));
     }
 
     @Test
-    void testLoadAgentConfigurationFromLegacyFileWithoutAgentOptions()
-            throws FileNotFoundException {
-        try (final PrintWriter pw = new PrintWriter(new File(tmpDir, LEGACY_FLINK_CONF_FILENAME))) {
-            pw.println("# Flink configuration as shipped by a distribution");
-            pw.println("jobmanager.rpc.address: localhost");
-            pw.println("taskmanager.memory.process.size: 1728m");
-            pw.println("taskmanager.numberOfTaskSlots: 1");
-            pw.println("env.java.opts.all: -XX:+UseG1GC -Dfoo=bar");
-            pw.println(
-                    "metrics.reporter.prom.factory.class: org.example.PrometheusReporterFactory");
-        }
+    void testFlink1PrefersLegacyFileOverConfigYaml() throws IOException {
+        writeConfigYaml("agent:", "    key1: fromConfigYaml");
+        writeLegacyConf("agent.key1: fromLegacy");
 
-        AgentConfiguration conf =
-                RemoteExecutionEnvironment.loadAgentConfiguration(tmpDir.getAbsolutePath());
-
-        assertThat(conf.getConfData()).isEmpty();
+        assertThat(load(FLINK_1_20).getConfData()).containsOnly(entry("key1", "fromLegacy"));
     }
 
     @Test
-    void testLoadAgentConfigurationFromLegacyFileReadsTypedOptions() throws FileNotFoundException {
-        try (final PrintWriter pw = new PrintWriter(new File(tmpDir, LEGACY_FLINK_CONF_FILENAME))) {
-            pw.println("agent.trace-log.base-dir: /tmp/agent-traces");
-            pw.println("agent.trace-log.pretty-print: true");
-        }
+    void testFlink1FailsWhenNoConfigFileExists() {
+        assertThatThrownBy(() -> load(FLINK_1_20)).isInstanceOf(RuntimeException.class);
+    }
 
-        AgentConfiguration conf =
-                RemoteExecutionEnvironment.loadAgentConfiguration(tmpDir.getAbsolutePath());
+    @Test
+    void testFlink2IgnoresLegacyFile() throws IOException {
+        writeLegacyConf("agent.key1: fromLegacy");
 
+        assertThatThrownBy(() -> load(FLINK_2_3))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining(tmpDir.getAbsolutePath());
+    }
+
+    @Test
+    void testFlink2LoadsConfigYamlWhenOnlyConfigYamlExists() throws IOException {
+        writeConfigYaml("agent:", "    key1: fromConfigYaml");
+
+        assertThat(load(FLINK_2_3).getConfData()).containsOnly(entry("key1", "fromConfigYaml"));
+    }
+
+    @Test
+    void testFlink2LoadsConfigYamlWhenBothFilesExist() throws IOException {
+        writeConfigYaml("agent:", "    key1: fromConfigYaml");
+        writeLegacyConf("agent.key1: fromLegacy");
+
+        assertThat(load(FLINK_2_3).getConfData()).containsOnly(entry("key1", "fromConfigYaml"));
+    }
+
+    @Test
+    void testFlink2FailsWhenNoConfigFileExists() {
+        assertThatThrownBy(() -> load(FLINK_2_3)).isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    void testLegacyFileAcceptsDuplicateKeysAndValuesContainingColonSpace() throws IOException {
+        // Both lines are rejected by a standard YAML parser but accepted by Flink 1.20.
+        writeLegacyConf(
+                "env.java.opts.all: -Dfoo=bar",
+                "env.java.opts.all: -Dfoo=baz",
+                "kubernetes.jobmanager.annotations: owner: team-a",
+                "agent.key1: first",
+                "agent.key1: second",
+                "agent.key2: a: b");
+
+        assertThat(load(FLINK_1_20).getConfData())
+                .containsOnly(entry("key1", "second"), entry("key2", "a: b"));
+    }
+
+    @Test
+    void testLegacyFileWithoutAgentOptions() throws IOException {
+        writeLegacyConf(
+                "# Flink configuration as shipped by a distribution",
+                "jobmanager.rpc.address: localhost",
+                "taskmanager.memory.process.size: 1728m",
+                "env.java.opts.all: -XX:+UseG1GC -Dfoo=bar");
+
+        assertThat(load(FLINK_1_20).getConfData()).isEmpty();
+    }
+
+    @Test
+    void testLegacyFileIgnoresNestedAgentBlock() throws IOException {
+        writeLegacyConf("agent:", "    key1: nested", "agent.key2: flat");
+
+        assertThat(load(FLINK_1_20).getConfData()).containsOnly(entry("key2", "flat"));
+    }
+
+    @Test
+    void testLegacyFileValuesAreStringsAndConvertOnRead() throws IOException {
+        writeLegacyConf(
+                "agent.trace-log.base-dir: /tmp/agent-traces",
+                "agent.trace-log.pretty-print: true");
+
+        AgentConfiguration conf = load(FLINK_1_20);
+
+        assertThat(conf.getConfData()).containsEntry("trace-log.pretty-print", "true");
         assertThat(conf.get(AgentConfigOptions.TRACE_LOG_OUTPUT_BASE_DIR))
                 .isEqualTo("/tmp/agent-traces");
         assertThat(conf.get(AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT)).isTrue();
     }
 
     @Test
-    void testLoadAgentConfigurationFailIfLegacyFileUnparseable() throws FileNotFoundException {
-        try (final PrintWriter pw = new PrintWriter(new File(tmpDir, LEGACY_FLINK_CONF_FILENAME))) {
-            pw.println("agent.key1: [unclosed");
-        }
+    void testConfigYamlAcceptsNestedAndFlattenedKeys() throws IOException {
+        writeConfigYaml("agent:", "    key1: v1", "agent.key2: v2");
 
-        assertThatThrownBy(
-                        () ->
-                                RemoteExecutionEnvironment.loadAgentConfiguration(
-                                        tmpDir.getAbsolutePath()))
+        assertThat(load(FLINK_2_3).getConfData())
+                .containsOnly(entry("key1", "v1"), entry("key2", "v2"));
+    }
+
+    @Test
+    void testFailIfConfigYamlUnparseable() throws IOException {
+        writeConfigYaml("agent.key1: [unclosed");
+
+        assertThatThrownBy(() -> load(FLINK_2_3))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining(tmpDir.getAbsolutePath());
+    }
+
+    private AgentConfiguration load(String flinkVersion) {
+        return RemoteExecutionEnvironment.loadAgentConfiguration(
+                tmpDir.getAbsolutePath(), flinkVersion);
+    }
+
+    private void writeLegacyConf(String... lines) throws IOException {
+        Files.write(new File(tmpDir, LEGACY_FLINK_CONF_FILENAME).toPath(), Arrays.asList(lines));
+    }
+
+    private void writeConfigYaml(String... lines) throws IOException {
+        Files.write(new File(tmpDir, FLINK_CONF_FILENAME).toPath(), Arrays.asList(lines));
     }
 
     @Test
