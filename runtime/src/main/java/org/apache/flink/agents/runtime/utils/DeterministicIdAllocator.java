@@ -18,138 +18,32 @@
 
 package org.apache.flink.agents.runtime.utils;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.MapperFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.json.JsonMapper;
-import org.apache.flink.agents.api.Event;
-
-import javax.annotation.Nullable;
-
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.UUID;
 
-/**
- * Deterministically assigns session and call ids for one action execution and target namespace.
- * Shared by chat calls and subagents, the {@link Namespace} of caller-side facts fixes the counting
- * range, so replaying the same facts and call order reproduces the same id sequence.
- */
+/** Session and call ordinals scoped to one action execution and one target. */
 public final class DeterministicIdAllocator {
+    private final String namespace;
+    private long sessionOrdinal;
+    private final Map<String, Long> perSessionCallOrdinals = new HashMap<>();
 
-    private final Namespace namespace;
-
-    private int sessionOrdinal = 0;
-    private final Map<String, Integer> perSessionCallOrdinals = new HashMap<>();
-
-    /** Creates an allocator for one action execution from the execution's caller-side facts. */
-    public DeterministicIdAllocator(
-            Object key, long sequenceNumber, String actionName, Event event, String targetName) {
-        // The target name is required. It is the only input that separates the id ranges of two
-        // calls issued from the same execution, so a null here would collapse them onto one digest
-        // and one ordinal sequence, colliding registration keys and durable slots.
+    public DeterministicIdAllocator(String executionId, String targetName) {
         this.namespace =
-                new Namespace(
-                        key,
-                        sequenceNumber,
-                        actionName,
-                        event,
+                RuntimeIdentity.hash(
+                        "call",
+                        Objects.requireNonNull(executionId),
                         Objects.requireNonNull(
-                                targetName,
-                                "An id allocation target name is required: the framework must"
-                                        + " inject the sub-agent resource name, and a built-in"
-                                        + " chat call supplies its own namespace."));
+                                targetName, "An id allocation target name is required"));
     }
 
-    /** Creates a new, ordinal-increasing session id scoped to this task's namespace. */
     public String nextSessionId() {
-        return namespace.digest() + "-" + (sessionOrdinal++);
+        return namespace + "-" + sessionOrdinal++;
     }
 
-    /**
-     * Creates a new call id by appending the per-session ordinal (starting at 1) to the session id.
-     * A caller-supplied session id is used verbatim and never parsed. Ordinals restart per action
-     * execution, so ids assigned here stay valid only within it.
-     */
     public String nextCallId(String sessionId) {
-        int ordinal = perSessionCallOrdinals.merge(sessionId, 1, Integer::sum);
-        return sessionId + "-" + ordinal;
-    }
-
-    /**
-     * The caller-side facts and target namespace used to seed deterministic call ids.
-     *
-     * <p>Key, sequence number, action name, and the event's type and attributes are facts of the
-     * execution itself, identical for every target called from it. The target name distinguishes a
-     * named subagent or a built-in capability, keeping their id ranges apart.
-     */
-    @JsonInclude(JsonInclude.Include.NON_NULL)
-    public static final class Namespace {
-
-        /**
-         * Sorts map entries and bean properties so the namespace bytes do not depend on map
-         * iteration order, which is not guaranteed across JVMs.
-         */
-        private static final ObjectMapper DIGEST_MAPPER =
-                JsonMapper.builder()
-                        .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
-                        .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
-                        .build();
-
-        @JsonProperty("key")
-        private final String key;
-
-        @JsonProperty("sequenceNumber")
-        private final long sequenceNumber;
-
-        @JsonProperty("actionName")
-        private final String actionName;
-
-        @JsonProperty("eventType")
-        private final String eventType;
-
-        @JsonProperty("eventAttributes")
-        private final Map<String, Object> eventAttributes;
-
-        // Preserve this digest field name so the component rename does not change allocated ids.
-        @JsonProperty("subagentName")
-        private final String targetName;
-
-        /** Computed lazily under operator ownership, so it needs no additional synchronization. */
-        @JsonIgnore @Nullable private String digest;
-
-        public Namespace(
-                Object key,
-                long sequenceNumber,
-                String actionName,
-                Event event,
-                String targetName) {
-            this.key = key.toString();
-            this.sequenceNumber = sequenceNumber;
-            this.actionName = actionName;
-            this.eventType = event.getType();
-            this.eventAttributes = event.getAttributes();
-            this.targetName = targetName;
-        }
-
-        /** Digests the id-bearing facts into a name-based UUID string, stable across replays. */
-        public String digest() {
-            if (digest == null) {
-                try {
-                    digest =
-                            String.valueOf(
-                                    UUID.nameUUIDFromBytes(DIGEST_MAPPER.writeValueAsBytes(this)));
-                } catch (JsonProcessingException e) {
-                    throw new IllegalStateException(
-                            "Failed to digest the call identity namespace", e);
-                }
-            }
-            return digest;
-        }
+        long ordinal = perSessionCallOrdinals.merge(sessionId, 1L, Long::sum);
+        return RuntimeIdentity.hash(
+                "call-id", namespace, Objects.requireNonNull(sessionId), Long.toString(ordinal));
     }
 }

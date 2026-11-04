@@ -46,6 +46,7 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_BOOTSTRAP_SERVERS;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.createKeyEncoder;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.generateKey;
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
@@ -74,7 +75,7 @@ public class FlussActionStateStoreIntegrationTest {
         waitForTableReady();
 
         testAction = new NoOpAction("test-action");
-        testEvent = new InputEvent("test-data");
+        testEvent = occurrence(new InputEvent("test-data"));
     }
 
     @AfterEach
@@ -107,9 +108,9 @@ public class FlussActionStateStoreIntegrationTest {
 
     @Test
     void testMultipleSeqNums() throws Exception {
-        InputEvent event1 = new InputEvent("data-1");
-        InputEvent event2 = new InputEvent("data-2");
-        InputEvent event3 = new InputEvent("data-3");
+        InputEvent event1 = occurrence(new InputEvent("data-1"));
+        InputEvent event2 = occurrence(new InputEvent("data-2"));
+        InputEvent event3 = occurrence(new InputEvent("data-3"));
         ActionState state1 = new ActionState(event1);
         ActionState state2 = new ActionState(event2);
         ActionState state3 = new ActionState(event3);
@@ -125,10 +126,10 @@ public class FlussActionStateStoreIntegrationTest {
 
     @Test
     void testUpsertOverwrite() throws Exception {
-        ActionState original = new ActionState(new InputEvent("original"));
+        ActionState original = new ActionState(occurrence(new InputEvent("original")));
         store.put(TEST_KEY, 1L, testAction, testEvent, original);
 
-        InputEvent updatedEvent = new InputEvent("updated");
+        InputEvent updatedEvent = occurrence(new InputEvent("updated"));
         ActionState updated = new ActionState(updatedEvent);
         store.put(TEST_KEY, 1L, testAction, testEvent, updated);
 

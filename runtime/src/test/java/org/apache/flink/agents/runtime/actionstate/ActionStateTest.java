@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Unit tests for {@link ActionState} with focus on fine-grained durable execution fields. */
@@ -32,7 +33,7 @@ public class ActionStateTest {
 
     @Test
     public void testConstructorWithEvent() {
-        InputEvent event = new InputEvent("test");
+        InputEvent event = occurrence(new InputEvent("test"));
         ActionState state = new ActionState(event);
 
         assertEquals(event, state.getTaskEvent());
@@ -45,13 +46,13 @@ public class ActionStateTest {
 
     @Test
     public void testFullConstructorWithCallResults() {
-        InputEvent taskEvent = new InputEvent("test");
+        InputEvent taskEvent = occurrence(new InputEvent("test"));
         List<MemoryUpdate> sensoryUpdates = new ArrayList<>();
         sensoryUpdates.add(new MemoryUpdate("sm.path", "value"));
         List<MemoryUpdate> shortTermUpdates = new ArrayList<>();
         shortTermUpdates.add(new MemoryUpdate("stm.path", "value"));
         List<org.apache.flink.agents.api.Event> outputEvents = new ArrayList<>();
-        outputEvents.add(new OutputEvent("output"));
+        outputEvents.add(occurrence(new OutputEvent("output")));
         List<CallResult> callResults = new ArrayList<>();
         callResults.add(new CallResult("func1", "result1".getBytes()));
         callResults.add(new CallResult("func2", "result2".getBytes()));
@@ -76,7 +77,7 @@ public class ActionStateTest {
 
     @Test
     public void testAddCallResult() {
-        ActionState state = new ActionState(new InputEvent("test"));
+        ActionState state = new ActionState(occurrence(new InputEvent("test")));
 
         CallResult result1 = new CallResult("func1", "result1".getBytes());
         CallResult result2 = new CallResult("func2", "result2".getBytes());
@@ -92,7 +93,7 @@ public class ActionStateTest {
 
     @Test
     public void testReplaceCallResult() {
-        ActionState state = new ActionState(new InputEvent("test"));
+        ActionState state = new ActionState(occurrence(new InputEvent("test")));
         CallResult original = new CallResult("func1", "result1".getBytes());
         CallResult replacement = CallResult.pending("func1");
 
@@ -106,7 +107,7 @@ public class ActionStateTest {
 
     @Test
     public void testGetCallResultOutOfBounds() {
-        ActionState state = new ActionState(new InputEvent("test"));
+        ActionState state = new ActionState(occurrence(new InputEvent("test")));
 
         assertNull(state.getCallResult(-1));
         assertNull(state.getCallResult(0));
@@ -119,7 +120,7 @@ public class ActionStateTest {
 
     @Test
     public void testClearCallResults() {
-        ActionState state = new ActionState(new InputEvent("test"));
+        ActionState state = new ActionState(occurrence(new InputEvent("test")));
         state.addCallResult(new CallResult("func1", "result1".getBytes()));
         state.addCallResult(new CallResult("func2", "result2".getBytes()));
         assertEquals(2, state.getCallResultCount());
@@ -131,7 +132,7 @@ public class ActionStateTest {
 
     @Test
     public void testClearCallResultsFrom() {
-        ActionState state = new ActionState(new InputEvent("test"));
+        ActionState state = new ActionState(occurrence(new InputEvent("test")));
         state.addCallResult(new CallResult("func0", "result0".getBytes()));
         state.addCallResult(new CallResult("func1", "result1".getBytes()));
         state.addCallResult(new CallResult("func2", "result2".getBytes()));
@@ -148,7 +149,7 @@ public class ActionStateTest {
 
     @Test
     public void testClearCallResultsFromInvalidIndex() {
-        ActionState state = new ActionState(new InputEvent("test"));
+        ActionState state = new ActionState(occurrence(new InputEvent("test")));
         state.addCallResult(new CallResult("func", "result".getBytes()));
 
         // Negative index - should do nothing
@@ -162,7 +163,7 @@ public class ActionStateTest {
 
     @Test
     public void testClearCallResultsFromZero() {
-        ActionState state = new ActionState(new InputEvent("test"));
+        ActionState state = new ActionState(occurrence(new InputEvent("test")));
         state.addCallResult(new CallResult("func1", "result1".getBytes()));
         state.addCallResult(new CallResult("func2", "result2".getBytes()));
 
@@ -173,7 +174,7 @@ public class ActionStateTest {
 
     @Test
     public void testMarkCompleted() {
-        ActionState state = new ActionState(new InputEvent("test"));
+        ActionState state = new ActionState(occurrence(new InputEvent("test")));
         state.addCallResult(new CallResult("func1", "result1".getBytes()));
         state.addCallResult(new CallResult("func2", "result2".getBytes()));
 
@@ -188,7 +189,7 @@ public class ActionStateTest {
 
     @Test
     public void testEqualsWithCallResultsAndCompleted() {
-        InputEvent event = new InputEvent("test");
+        InputEvent event = occurrence(new InputEvent("test"));
         List<CallResult> callResults1 = new ArrayList<>();
         callResults1.add(new CallResult("func", "result".getBytes()));
 
@@ -205,7 +206,7 @@ public class ActionStateTest {
 
     @Test
     public void testHashCodeWithCallResultsAndCompleted() {
-        InputEvent event = new InputEvent("test");
+        InputEvent event = occurrence(new InputEvent("test"));
         List<CallResult> callResults = new ArrayList<>();
         callResults.add(new CallResult("func", "result".getBytes()));
 
@@ -218,7 +219,7 @@ public class ActionStateTest {
 
     @Test
     public void testToStringIncludesNewFields() {
-        ActionState state = new ActionState(new InputEvent("test"));
+        ActionState state = new ActionState(occurrence(new InputEvent("test")));
         state.addCallResult(new CallResult("func", "result".getBytes()));
         state.markCompleted();
 
@@ -248,7 +249,7 @@ public class ActionStateTest {
         // Simulate a typical fine-grained durable execution flow
 
         // 1. Create initial state
-        ActionState state = new ActionState(new InputEvent("test"));
+        ActionState state = new ActionState(occurrence(new InputEvent("test")));
         assertFalse(state.isCompleted());
         assertEquals(0, state.getCallResultCount());
 
@@ -266,7 +267,7 @@ public class ActionStateTest {
         // 4. Action completes - mark completed and clear results
         state.addSensoryMemoryUpdate(new MemoryUpdate("sm.key", "value"));
         state.addShortTermMemoryUpdate(new MemoryUpdate("stm.key", "value"));
-        state.addEvent(new OutputEvent("final_output"));
+        state.addEvent(occurrence(new OutputEvent("final_output")));
         state.markCompleted();
 
         assertTrue(state.isCompleted());
@@ -281,7 +282,7 @@ public class ActionStateTest {
         // Simulate recovery scenario where we need to check call results
 
         // State from before failure (with 2 completed code blocks)
-        ActionState recoveredState = new ActionState(new InputEvent("test"));
+        ActionState recoveredState = new ActionState(occurrence(new InputEvent("test")));
         recoveredState.addCallResult(new CallResult("func1", "result1".getBytes()));
         recoveredState.addCallResult(new CallResult("func2", "result2".getBytes()));
 
@@ -303,7 +304,7 @@ public class ActionStateTest {
     @Test
     public void testNonDeterministicRecovery() {
         // Simulate detection of non-deterministic call order
-        ActionState state = new ActionState(new InputEvent("test"));
+        ActionState state = new ActionState(occurrence(new InputEvent("test")));
         state.addCallResult(new CallResult("func1", "result1".getBytes()));
         state.addCallResult(new CallResult("func2", "result2".getBytes()));
         state.addCallResult(new CallResult("func3", "result3".getBytes()));

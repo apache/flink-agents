@@ -61,13 +61,9 @@ public class Event {
     private Long sourceTimestamp;
 
     /**
-     * Runtime-internal lineage identity for this specific event occurrence. Not part of the
-     * cross-language event contract and not {@link #id}: {@link #id} is a fresh random value on
-     * every construction (including on replay of the same logical input), while this field is
-     * assigned deterministically by the runtime from the occurrence's position in the causal tree
-     * (business key and sequence number for a root event; producing action execution plus output
-     * ordinal for an action's output event). It lets durable action-state keys distinguish sibling
-     * event occurrences that carry identical attributes.
+     * Replay-stable identity assigned by the runtime to each event occurrence. Derived from the
+     * input round for root events, or the producing action and output ordinal for emitted events.
+     * Excluded from the public event JSON contract.
      */
     private String occurrenceId;
 

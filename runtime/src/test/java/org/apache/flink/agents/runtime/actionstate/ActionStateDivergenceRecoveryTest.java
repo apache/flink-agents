@@ -53,6 +53,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -217,7 +218,7 @@ public class ActionStateDivergenceRecoveryTest {
             retainedStart = journal.log.size();
             // Another key can keep a shared partition's recovery offset between this key's
             // original input and its old suffix. Its pending record is not checkpoint-covered.
-            Event pendingInput = new InputEvent("other-key-pending");
+            Event pendingInput = occurrence(new InputEvent("other-key-pending"));
             journal.save(
                     99L,
                     1L,
@@ -248,8 +249,8 @@ public class ActionStateDivergenceRecoveryTest {
         Journal journal = new Journal(backend);
         Action root = action("input", "setAndEmit", InputEvent.EVENT_TYPE);
         Action child = action("child", "readBranch", "step");
-        Event oldInput = new InputEvent("A");
-        Event oldChildEvent = new Event("step", Map.of("value", "identical"));
+        Event oldInput = occurrence(new InputEvent("A"));
+        Event oldChildEvent = occurrence(new Event("step", Map.of("value", "identical")));
         ActionState oldRoot = new ActionState(oldInput);
         oldRoot.addEvent(oldChildEvent);
         oldRoot.markCompleted();
@@ -257,15 +258,15 @@ public class ActionStateDivergenceRecoveryTest {
 
         long start = journal.log.size();
         // This pending key pins a checkpoint's shared replay boundary after oldRoot.
-        Event other = new InputEvent("other-pending");
+        Event other = occurrence(new InputEvent("other-pending"));
         journal.save(99L, 1L, root, other, new ActionState(other));
         ActionState oldChild = new ActionState(oldChildEvent);
-        oldChild.addEvent(new OutputEvent("A"));
+        oldChild.addEvent(occurrence(new OutputEvent("A")));
         oldChild.markCompleted();
         journal.save(7L, 1L, child, oldChildEvent, oldChild);
 
-        Event newInput = new InputEvent("B");
-        Event newChildEvent = new Event("step", Map.of("value", "identical"));
+        Event newInput = occurrence(new InputEvent("B"));
+        Event newChildEvent = occurrence(new Event("step", Map.of("value", "identical")));
         ActionState newRoot = new ActionState(newInput);
         newRoot.addEvent(newChildEvent);
         newRoot.markCompleted();
@@ -286,14 +287,20 @@ public class ActionStateDivergenceRecoveryTest {
             throws Exception {
         Journal journal = new Journal(backend);
         Action child = action("child", "count", SubgraphEvent.EVENT_TYPE);
-        Event oldEvent = new SubgraphEvent("same-invocation", new InputEvent("prompt"), true);
+        Event oldEvent =
+                occurrence(
+                        new SubgraphEvent(
+                                "same-invocation", occurrence(new InputEvent("prompt")), true));
         ActionState completed = new ActionState(oldEvent);
-        completed.addEvent(new OutputEvent("saved-child-result"));
+        completed.addEvent(occurrence(new OutputEvent("saved-child-result")));
         completed.markCompleted();
         try (ActionStateStore store = journal.newStore()) {
             store.put(7L, 1L, child, oldEvent, completed);
         }
-        Event regenerated = new SubgraphEvent("same-invocation", new InputEvent("prompt"), true);
+        Event regenerated =
+                occurrence(
+                        new SubgraphEvent(
+                                "same-invocation", occurrence(new InputEvent("prompt")), true));
         assertThat(regenerated.getId()).isNotEqualTo(oldEvent.getId());
         try (ActionStateStore store = journal.newStore()) {
             store.rebuildState(List.of(Map.of(0, 0L)));

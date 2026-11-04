@@ -75,6 +75,8 @@ public final class SubgraphExecution {
                 context.tryGetCachedResult(
                         invocation.getDurableSlotKey(), invocation.resultClass());
         if (recorded.isPresent()) {
+            // The original call emitted a bootstrap before producing its terminal result.
+            context.reserveOutputIdentity();
             invocation.installRecorded(recorded.get().getValue());
             return invocation.getId();
         }

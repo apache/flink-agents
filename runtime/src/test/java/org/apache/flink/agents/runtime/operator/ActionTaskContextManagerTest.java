@@ -61,6 +61,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -139,8 +140,8 @@ class ActionTaskContextManagerTest {
     void perTaskContextsAreIsolatedAcrossPutGetRemove() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
-            ActionTask t1 = new JavaActionTask("k", new InputEvent(1L), action, 1L);
-            ActionTask t2 = new JavaActionTask("k", new InputEvent(2L), action, 1L);
+            ActionTask t1 = new JavaActionTask("k", occurrence(new InputEvent(1L)), action, 1L);
+            ActionTask t2 = new JavaActionTask("k", occurrence(new InputEvent(2L)), action, 1L);
 
             // Contexts records are created explicitly; mutators never create one implicitly.
             mgr.createContexts(t1);
@@ -190,7 +191,8 @@ class ActionTaskContextManagerTest {
     void createAndSetRunnerContextBuildsFreshMemoryContextOnFirstCall() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             ActionTask t =
-                    new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
+                    new JavaActionTask(
+                            "k", occurrence(new InputEvent(1L)), TestActions.noopAction(), 1L);
             invokeCreateAndSetRunnerContext(mgr, t);
 
             // Production path: createAndSetRunnerContext pins the freshly created MemoryContext.
@@ -211,10 +213,20 @@ class ActionTaskContextManagerTest {
             Action action = TestActions.noopAction();
             ActionTask first =
                     new JavaActionTask(
-                            "a", new SubgraphEvent("scoped", new InputEvent(1L), true), action, 1L);
+                            "a",
+                            occurrence(
+                                    new SubgraphEvent(
+                                            "scoped", occurrence(new InputEvent(1L)), true)),
+                            action,
+                            1L);
             ActionTask second =
                     new JavaActionTask(
-                            "b", new SubgraphEvent("scoped", new InputEvent(2L), true), action, 2L);
+                            "b",
+                            occurrence(
+                                    new SubgraphEvent(
+                                            "scoped", occurrence(new InputEvent(2L)), true)),
+                            action,
+                            2L);
             // The runner context is shared and switched per task, so each memory context has to be
             // read right after its own task is prepared.
             invokeCreateAndSetRunnerContext(mgr, first);
@@ -242,7 +254,9 @@ class ActionTaskContextManagerTest {
             ActionTask task =
                     new JavaActionTask(
                             "a",
-                            new SubgraphEvent("plain", new InputEvent(1L), true),
+                            occurrence(
+                                    new SubgraphEvent(
+                                            "plain", occurrence(new InputEvent(1L)), true)),
                             TestActions.noopAction(),
                             1L);
             invokeCreateAndSetRunnerContext(mgr, task);
@@ -262,8 +276,8 @@ class ActionTaskContextManagerTest {
             throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
-            ActionTask taskA = new JavaActionTask("a", new InputEvent(1L), action, 1L);
-            ActionTask taskB = new JavaActionTask("b", new InputEvent(2L), action, 2L);
+            ActionTask taskA = new JavaActionTask("a", occurrence(new InputEvent(1L)), action, 1L);
+            ActionTask taskB = new JavaActionTask("b", occurrence(new InputEvent(2L)), action, 2L);
 
             invokeCreateAndSetRunnerContext(mgr, taskA);
             RunnerContextImpl.MemoryContext memoryA = taskA.getRunnerContext().getMemoryContext();
@@ -298,7 +312,7 @@ class ActionTaskContextManagerTest {
     void idCountersRestoreActiveCallAndSurviveContinuationTransfer() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
-            ActionTask caller = new JavaActionTask("k", new InputEvent(1L), action, 1L);
+            ActionTask caller = new JavaActionTask("k", occurrence(new InputEvent(1L)), action, 1L);
             invokeCreateAndSetRunnerContext(mgr, caller);
             RunnerContextImpl context = caller.getRunnerContext();
             IdAllocatorSource callerIds = context.getIdAllocatorSource();
@@ -321,7 +335,8 @@ class ActionTaskContextManagerTest {
             assertThat(context.getIdAllocatorSource()).isSameAs(activeIds);
 
             // A generated task may no longer carry the bootstrap event; keep the whole context.
-            ActionTask continuation = new JavaActionTask("k", new Event("resume"), action, 2L);
+            ActionTask continuation =
+                    new JavaActionTask("k", occurrence(new Event("resume")), action, 2L);
             mgr.removeContexts(chatTask);
             mgr.transferContexts(chatTask, continuation, new DurableExecutionManager(null));
             invokeCreateAndSetRunnerContext(mgr, continuation);
@@ -339,9 +354,9 @@ class ActionTaskContextManagerTest {
                 new DurableExecutionManager(new InMemoryActionStateStore(false));
         try (ActionTaskContextManager mgr = newManager(durableManager)) {
             Action action = TestActions.noopAction();
-            InputEvent event = new InputEvent(1L);
+            InputEvent event = occurrence(new InputEvent(1L));
             ActionTask taskA = new JavaActionTask("a", event, action, 1L);
-            ActionTask taskB = new JavaActionTask("b", new InputEvent(2L), action, 2L);
+            ActionTask taskB = new JavaActionTask("b", occurrence(new InputEvent(2L)), action, 2L);
 
             invokeCreateAndSetRunnerContext(mgr, taskA);
             ActionState actionState = new ActionState(event);
@@ -363,8 +378,10 @@ class ActionTaskContextManagerTest {
     void sameKeyTasksSwitchLtmWithDistinctObservationIds() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
-            ActionTask suspended = new JavaActionTask("k", new InputEvent(1L), action, 1L);
-            ActionTask sibling = new JavaActionTask("k", new InputEvent(1L), action, 1L);
+            ActionTask suspended =
+                    new JavaActionTask("k", occurrence(new InputEvent(1L)), action, 1L);
+            ActionTask sibling =
+                    new JavaActionTask("k", occurrence(new InputEvent(1L)), action, 1L);
             InteranlBaseLongTermMemory ltm = mock(InteranlBaseLongTermMemory.class);
 
             invokeCreateAndSetRunnerContext(mgr, suspended, ltm);
@@ -380,8 +397,8 @@ class ActionTaskContextManagerTest {
     void transferContextsCopiesMemoryAndContinuationToNewTask() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
-            ActionTask from = new JavaActionTask("k", new InputEvent(1L), action, 1L);
-            ActionTask to = new JavaActionTask("k", new InputEvent(2L), action, 1L);
+            ActionTask from = new JavaActionTask("k", occurrence(new InputEvent(1L)), action, 1L);
+            ActionTask to = new JavaActionTask("k", occurrence(new InputEvent(2L)), action, 1L);
 
             // Populate `from`'s runner context with a MemoryContext and ContinuationContext.
             invokeCreateAndSetRunnerContext(mgr, from);
@@ -426,9 +443,14 @@ class ActionTaskContextManagerTest {
     void componentReportsKeepTheirIdentityAcrossContinuationTasksAndRestore() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
-            ActionTask from = new JavaActionTask("k", new InputEvent(1L), action, 1L);
+            ActionTask from = new JavaActionTask("k", occurrence(new InputEvent(1L)), action, 1L);
             ActionTask to =
-                    new JavaActionTask("k", new InputEvent(1L), action, 1L, from.getTraceContext());
+                    new JavaActionTask(
+                            "k",
+                            occurrence(new InputEvent(1L)),
+                            action,
+                            1L,
+                            from.getTraceContext());
             RecordingComponentListener listener = new RecordingComponentListener();
             AtomicInteger factoryInvocations = new AtomicInteger();
             Function<ActionTask, ExecutionReportingContext> factory =
@@ -454,7 +476,8 @@ class ActionTaskContextManagerTest {
                     .reportExecutionStarted(
                             "call-1", ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
 
-            ActionTask other = new JavaActionTask("other", new InputEvent(2L), action, 2L);
+            ActionTask other =
+                    new JavaActionTask("other", occurrence(new InputEvent(2L)), action, 2L);
             invokeCreateAndSetRunnerContext(
                     mgr,
                     other,
@@ -495,8 +518,8 @@ class ActionTaskContextManagerTest {
     void componentReportsRemainIsolatedWhenRestoringDifferentActions() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
-            ActionTask taskA = new JavaActionTask("a", new InputEvent(1L), action, 1L);
-            ActionTask taskB = new JavaActionTask("b", new InputEvent(2L), action, 2L);
+            ActionTask taskA = new JavaActionTask("a", occurrence(new InputEvent(1L)), action, 1L);
+            ActionTask taskB = new JavaActionTask("b", occurrence(new InputEvent(2L)), action, 2L);
             List<TraceRecord> records = new ArrayList<>();
             Function<ActionTask, ExecutionReportingContext> factory =
                     task ->
@@ -553,7 +576,8 @@ class ActionTaskContextManagerTest {
     void removingContextsReplacesListenersWithoutRewritingTheSuppliedIdentity() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             ActionTask task =
-                    new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
+                    new JavaActionTask(
+                            "k", occurrence(new InputEvent(1L)), TestActions.noopAction(), 1L);
             List<RecordingComponentListener> created = new ArrayList<>();
             Function<ActionTask, ExecutionReportingContext> factory =
                     actionTask -> {
@@ -591,7 +615,7 @@ class ActionTaskContextManagerTest {
     @Test
     void activeExecutionReportsDoNotEnterActionTaskState() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
-            InputEvent input = new InputEvent(1L);
+            InputEvent input = occurrence(new InputEvent(1L));
             Action action = TestActions.noopAction();
             TraceContext actionContext =
                     TraceContext.forAction(
@@ -632,8 +656,8 @@ class ActionTaskContextManagerTest {
     void transferContextsSharesPendingEventsBufferWithGeneratedTask() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
-            ActionTask from = new JavaActionTask("k", new InputEvent(1L), action, 1L);
-            ActionTask to = new JavaActionTask("k", new InputEvent(1L), action, 1L);
+            ActionTask from = new JavaActionTask("k", occurrence(new InputEvent(1L)), action, 1L);
+            ActionTask to = new JavaActionTask("k", occurrence(new InputEvent(1L)), action, 1L);
 
             invokeCreateAndSetRunnerContext(mgr, from);
             OutputEvent bufferedBeforeYield = new OutputEvent("before-yield");
@@ -658,7 +682,7 @@ class ActionTaskContextManagerTest {
                 new DurableExecutionManager(new InMemoryActionStateStore(false));
         try (ActionTaskContextManager mgr = newManager(durableManager)) {
             Action action = TestActions.noopAction();
-            InputEvent event = new InputEvent(1L);
+            InputEvent event = occurrence(new InputEvent(1L));
             ActionTask task = new JavaActionTask("k", event, action, 1L);
 
             invokeCreateAndSetRunnerContext(mgr, task);
@@ -693,9 +717,9 @@ class ActionTaskContextManagerTest {
     void transferContextsRoutesDurableContextThroughManager() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
-            InputEvent event = new InputEvent(1L);
+            InputEvent event = occurrence(new InputEvent(1L));
             ActionTask from = new JavaActionTask("k", event, action, 1L);
-            ActionTask to = new JavaActionTask("k", new InputEvent(2L), action, 1L);
+            ActionTask to = new JavaActionTask("k", occurrence(new InputEvent(2L)), action, 1L);
 
             invokeCreateAndSetRunnerContext(mgr, from);
 
@@ -730,7 +754,9 @@ class ActionTaskContextManagerTest {
     void closeIsIdempotent() throws Exception {
         // Not using try-with-resources here because we want to call close() explicitly twice.
         ActionTaskContextManager mgr = newManager();
-        ActionTask t = new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
+        ActionTask t =
+                new JavaActionTask(
+                        "k", occurrence(new InputEvent(1L)), TestActions.noopAction(), 1L);
         invokeCreateAndSetRunnerContext(mgr, t);
 
         // First close() shuts down the runner context and the continuation executor
