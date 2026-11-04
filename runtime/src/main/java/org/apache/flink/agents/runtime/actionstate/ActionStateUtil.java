@@ -342,8 +342,92 @@ public final class ActionStateUtil {
     }
 
     private static String generateUUIDForEvent(Event event) throws IOException {
-        return String.valueOf(
-                UUID.nameUUIDFromBytes(MAPPER.writeValueAsBytes(event.getAttributes())));
+        byte[] attributesBytes = MAPPER.writeValueAsBytes(event.getAttributes());
+        String occurrenceId = event.getOccurrenceId();
+        if (occurrenceId == null) {
+            // Attributes-only fallback. Distinct occurrences with identical attributes collide
+            // here; kept only because a large pre-existing lower-level test surface (key-encoding
+            // and store tests predating occurrence identity) builds events without assigning one.
+            // Removing this fallback outright requires migrating that test surface to assign an
+            // occurrence identity on every constructed event, tracked as a separate follow-up.
+            return String.valueOf(UUID.nameUUIDFromBytes(attributesBytes));
+        }
+        // Folds the occurrence identity together with the existing attributes hash, rather than
+        // replacing it: attributes must stay in the key so the content-based replay-divergence
+        // protection this already provides (a later restore with a changed input must not reuse a
+        // cached result from the other input's history) is unchanged, while the occurrence
+        // identity additionally distinguishes sibling occurrences that carry identical attributes,
+        // which attributes alone cannot. Folded through nameUUIDFromBytes so the composite key's
+        // fixed five-segment, 36-char-UUID format is unchanged.
+        byte[] occurrenceBytes = occurrenceId.getBytes(StandardCharsets.UTF_8);
+        byte[] combined = new byte[occurrenceBytes.length + 1 + attributesBytes.length];
+        System.arraycopy(occurrenceBytes, 0, combined, 0, occurrenceBytes.length);
+        combined[occurrenceBytes.length] = '#';
+        System.arraycopy(
+                attributesBytes, 0, combined, occurrenceBytes.length + 1, attributesBytes.length);
+        return String.valueOf(UUID.nameUUIDFromBytes(combined));
+    }
+
+    /**
+     * Derives the replay-stable occurrence identity of a root (input) event from its business-key
+     * identity and sequence number. Stable across replay of the same logical input: a replayed
+     * {@code InputEvent} gets a fresh random {@link Event#getId()} but the same business key and
+     * sequence number, so it derives the same occurrence identity.
+     */
+    public static String deriveRootEventOccurrenceId(String businessKeyIdentity, long seqNum) {
+        Preconditions.checkNotNull(businessKeyIdentity, "businessKeyIdentity cannot be null.");
+        return sha256Base64(
+                (businessKeyIdentity + KEY_SEPARATOR + seqNum).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Derives the occurrence identity of one of an action execution's output events from that
+     * execution's own action-execution identity (its composite action-state key, which already
+     * folds in its own triggering event's occurrence identity and the action's identity) and the
+     * event's 0-based position among that execution's emitted outputs. Two sibling output events
+     * with identical attributes get distinct identities because their ordinals differ; the same
+     * event re-derived during a deterministic replay gets the same identity because the producing
+     * execution's identity and the emission order are themselves replay-stable.
+     */
+    public static String deriveOutputEventOccurrenceId(
+            String producerActionExecutionId, int outputOrdinal) {
+        Preconditions.checkNotNull(
+                producerActionExecutionId, "producerActionExecutionId cannot be null.");
+        Preconditions.checkArgument(
+                outputOrdinal >= 0, "outputOrdinal must be nonnegative but was %s.", outputOrdinal);
+        return sha256Base64(
+                (producerActionExecutionId + KEY_SEPARATOR + outputOrdinal)
+                        .getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Derives the identity of one action execution from its triggering event's own occurrence
+     * identity and the action's identity. Independent of the business key, sequence number, and
+     * durable storage: the business key and sequence number are already folded into the triggering
+     * event's occurrence identity, so no store or key encoder is needed here.
+     *
+     * <p>Chat and internal-subagent call paths construct their own triggering events (subgraph
+     * delegates, chat requests) without routing them through the root-event assignment that gives
+     * an ordinary {@code InputEvent} its occurrence identity, so {@code triggeringEvent} can arrive
+     * here with none set. Falls back to an attributes-only identity for that event in that case,
+     * same tradeoff as {@link #generateUUIDForEvent}'s fallback: collides on distinct occurrences
+     * with identical attributes, kept only because propagating occurrence identity through those
+     * paths is a larger migration tracked as a separate follow-up.
+     */
+    public static String deriveActionExecutionId(Event triggeringEvent, Action action)
+            throws IOException {
+        Preconditions.checkNotNull(triggeringEvent, "triggeringEvent cannot be null.");
+        Preconditions.checkNotNull(action, "action cannot be null.");
+        String occurrenceId = triggeringEvent.getOccurrenceId();
+        String effectiveId =
+                occurrenceId != null
+                        ? occurrenceId
+                        : String.valueOf(
+                                UUID.nameUUIDFromBytes(
+                                        MAPPER.writeValueAsBytes(triggeringEvent.getAttributes())));
+        return sha256Base64(
+                (effectiveId + KEY_SEPARATOR + generateUUIDForAction(action))
+                        .getBytes(StandardCharsets.UTF_8));
     }
 
     private static String generateUUIDForAction(Action action) throws IOException {

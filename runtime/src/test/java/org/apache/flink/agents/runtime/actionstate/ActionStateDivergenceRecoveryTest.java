@@ -97,6 +97,26 @@ public class ActionStateDivergenceRecoveryTest {
                 6);
     }
 
+    /**
+     * FLINK-AGENTS-1084 regression guard: two sibling output events with identical attributes (not
+     * merely two different ones, as above) must each trigger a genuinely separate action execution
+     * of "child" rather than the second silently reusing the first's durable state. Without the
+     * occurrence-identity fix this collapses to 4 total calls (1 "input" + 1 "child" per input)
+     * instead of 6, because the second "child" execution's state lookup would find the first's
+     * just-persisted completed state under the same (then-colliding) key.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"kafka", "fluss", "kafka-parallel", "fluss-parallel"})
+    void normalFanoutWithIdenticalSiblingAttributesStillExecutesBothSiblings(String backend)
+            throws Exception {
+        assertNormalRecovery(
+                backend,
+                Map.of(
+                        "input", action("input", "emitTwoIdentical", InputEvent.EVENT_TYPE),
+                        "child", action("child", "count", "step")),
+                6);
+    }
+
     private void assertNormalRecovery(String backend, Map<String, Action> actions, int expected)
             throws Exception {
         CALLS.set(0);
@@ -299,6 +319,20 @@ public class ActionStateDivergenceRecoveryTest {
         CALLS.incrementAndGet();
         ctx.sendEvent(new Event("step", Map.of("value", "first")));
         ctx.sendEvent(new Event("step", Map.of("value", "second")));
+    }
+
+    /**
+     * Emits two sibling output events with IDENTICAL attributes (FLINK-AGENTS-1084's reproduction
+     * shape). Before the occurrence-identity fix, both siblings' durable action-state keys
+     * collided: the second child's pre-execution lookup found the first child's just-persisted
+     * completed state and incorrectly skipped its own real execution, replaying the first child's
+     * result instead. See {@link #emitTwo} for the distinct-attributes sibling case this
+     * complements.
+     */
+    public static void emitTwoIdentical(Event event, RunnerContext ctx) {
+        CALLS.incrementAndGet();
+        ctx.sendEvent(new Event("step", Map.of("value", "same")));
+        ctx.sendEvent(new Event("step", Map.of("value", "same")));
     }
 
     public static void setOrRead(Event event, RunnerContext ctx) throws Exception {

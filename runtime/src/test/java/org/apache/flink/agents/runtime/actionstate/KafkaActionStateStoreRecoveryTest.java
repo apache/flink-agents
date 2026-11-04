@@ -31,6 +31,7 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
@@ -165,6 +166,20 @@ public class KafkaActionStateStoreRecoveryTest {
             harness.getOutput().clear();
 
             InputEvent inputEvent = new InputEvent(7L);
+            // The real pipeline assigns a root occurrence identity (businessKeyIdentity#seqNum)
+            // to every InputEvent before it reaches the durable store; this fixture fabricates
+            // pending state directly, bypassing that assignment, so it must assign the same
+            // identity itself or the key this computes below would not match the key the operator
+            // computes for its own InputEvent(7L) on the same (key=1L, seqNum=1). The operator
+            // derives this identity from the keyed-state backend's own serializer (LongSerializer
+            // for this Long-keyed harness), not from the store's encoder (which uses a generic
+            // Object serializer in this test suite, per ActionStateTestUtils.KEY_SERIALIZER), so
+            // this must match the former, not createKeyEncoder(MAX_PARALLELISM).
+            inputEvent.setOccurrenceId(
+                    ActionStateUtil.deriveRootEventOccurrenceId(
+                            ActionStateUtil.generateBusinessKeyIdentity(
+                                    1L, LongSerializer.INSTANCE),
+                            1L));
             ActionState pendingState = new ActionState(inputEvent);
             pendingState.addCallResult(
                     new CallResult("multiply", OBJECT_MAPPER.writeValueAsBytes(callExternal(7L))));
