@@ -646,8 +646,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private void assignOutputOccurrenceIds(ActionTask actionTask, List<Event> outputEvents)
             throws Exception {
         String producerExecutionId =
-                ActionStateUtil.deriveActionExecutionId(
-                        actionTask.event.getOccurrenceId(), actionTask.action);
+                ActionStateUtil.deriveActionExecutionId(actionTask.event, actionTask.action);
         for (int ordinal = 0; ordinal < outputEvents.size(); ordinal++) {
             outputEvents
                     .get(ordinal)

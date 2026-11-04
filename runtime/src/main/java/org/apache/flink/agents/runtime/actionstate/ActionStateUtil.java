@@ -405,14 +405,28 @@ public final class ActionStateUtil {
      * identity and the action's identity. Independent of the business key, sequence number, and
      * durable storage: the business key and sequence number are already folded into the triggering
      * event's occurrence identity, so no store or key encoder is needed here.
+     *
+     * <p>Chat and internal-subagent call paths construct their own triggering events (subgraph
+     * delegates, chat requests) without routing them through the root-event assignment that gives
+     * an ordinary {@code InputEvent} its occurrence identity, so {@code triggeringEvent} can arrive
+     * here with none set. Falls back to an attributes-only identity for that event in that case,
+     * same tradeoff as {@link #generateUUIDForEvent}'s fallback: collides on distinct occurrences
+     * with identical attributes, kept only because propagating occurrence identity through those
+     * paths is a larger migration tracked as a separate follow-up.
      */
-    public static String deriveActionExecutionId(String triggeringEventOccurrenceId, Action action)
+    public static String deriveActionExecutionId(Event triggeringEvent, Action action)
             throws IOException {
-        Preconditions.checkNotNull(
-                triggeringEventOccurrenceId, "triggeringEventOccurrenceId cannot be null.");
+        Preconditions.checkNotNull(triggeringEvent, "triggeringEvent cannot be null.");
         Preconditions.checkNotNull(action, "action cannot be null.");
+        String occurrenceId = triggeringEvent.getOccurrenceId();
+        String effectiveId =
+                occurrenceId != null
+                        ? occurrenceId
+                        : String.valueOf(
+                                UUID.nameUUIDFromBytes(
+                                        MAPPER.writeValueAsBytes(triggeringEvent.getAttributes())));
         return sha256Base64(
-                (triggeringEventOccurrenceId + KEY_SEPARATOR + generateUUIDForAction(action))
+                (effectiveId + KEY_SEPARATOR + generateUUIDForAction(action))
                         .getBytes(StandardCharsets.UTF_8));
     }
 
