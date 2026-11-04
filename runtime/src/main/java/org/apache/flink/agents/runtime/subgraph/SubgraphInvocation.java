@@ -111,6 +111,11 @@ public class SubgraphInvocation<R> {
         return response.isDone();
     }
 
+    /** Cancellation stops result delivery; already scheduled actions still have to retire. */
+    public final boolean isCancelled() {
+        return response.isCancelled();
+    }
+
     /** Whether the terminal outcome came from the caller's durable slot rather than the graph. */
     public final boolean isReplayed() {
         return replayed;
@@ -118,6 +123,11 @@ public class SubgraphInvocation<R> {
 
     /** Routes one persisted output or an authorized bootstrap under operator ownership. */
     public final List<Action> dispatch(Event event) {
+        if (isCancelled()) {
+            // A timed-out caller no longer accepts results or successor actions. Keep the
+            // invocation until record cleanup so late producers can still retire normally.
+            return List.of();
+        }
         if (failure != null) {
             // Already scheduled siblings may finish after a captured child failure. Their outputs
             // must not re-open the failed call or escape into the outer graph.

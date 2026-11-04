@@ -172,7 +172,9 @@ public final class SubgraphFuture<R, T> extends AsyncFutureImpl<T>
 
     @Override
     public void close() {
-        if (started && !invocation.capturesActionFailures()) {
+        // Cancellation ends the wait, not the actions already dispatched by the operator.
+        // Retain their routing/accounting state until SubgraphCallManager.finishRecord.
+        if (started && !invocation.isCancelled() && !invocation.capturesActionFailures()) {
             getOwner().getSubgraphCalls().remove(invocation.getId());
         }
     }
