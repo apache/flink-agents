@@ -19,7 +19,7 @@
 package org.apache.flink.agents.runtime;
 
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.plan.tools.SubagentConstants;
+import org.apache.flink.agents.plan.subagent.SubagentConstants;
 import org.apache.flink.agents.plan.resource.python.PythonMCPPrompt;
 import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
 import org.apache.flink.agents.plan.resource.python.PythonMCPTool;

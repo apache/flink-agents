@@ -24,8 +24,6 @@ import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
 
 import javax.annotation.Nullable;
 
-import java.time.Duration;
-import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
@@ -104,31 +102,6 @@ public class ContinuationActionExecutor {
         }
 
         return executeWithLockHandoff(context, supplier::get);
-    }
-
-    /**
-     * Executes a batch concurrently on managed workers. The calling action waits without the shared
-     * operator lock; its context is restored after worker ownership is re-acquired.
-     *
-     * @param context the continuation context
-     * @param suppliers the suppliers to execute
-     * @param timeout whole-batch timeout, or null/negative for no timeout
-     * @param maxParallelism maximum in-flight calls in this batch
-     * @param <T> the result type
-     * @return outcomes in supplier order
-     */
-    public <T> BatchExecutionResult<T> executeAllAsync(
-            ContinuationContext context,
-            List<Callable<T>> suppliers,
-            Duration timeout,
-            int maxParallelism)
-            throws Exception {
-        if (parallelExecutionLock == null || suppliers.isEmpty()) {
-            return batchExecutor.execute(suppliers, timeout, maxParallelism);
-        }
-
-        return executeWithLockHandoff(
-                context, () -> batchExecutor.execute(suppliers, timeout, maxParallelism));
     }
 
     /**

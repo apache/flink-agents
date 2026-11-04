@@ -29,8 +29,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import java.util.List;
 import java.util.Queue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -51,6 +51,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
 /** Tests the JDK<21 mailbox-lock handoff contract. */
 @Timeout(15)
@@ -66,7 +67,7 @@ class ContinuationActionExecutorTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void suspendsAndResumesUnderLockAroundSupplier(boolean batch) throws Exception {
+    void suspendsAndResumesUnderLockAroundSupplier(boolean awaiting) throws Exception {
         ParallelExecutionLock lock = new ParallelExecutionLock();
         ContinuationContext context = new ContinuationContext();
         Queue<String> calls = new ConcurrentLinkedQueue<>();
@@ -86,7 +87,7 @@ class ContinuationActionExecutorTest {
                                     return execute(
                                             executor,
                                             context,
-                                            batch,
+                                            awaiting,
                                             () -> {
                                                 assertThat(lock.isHeldByCurrentThread()).isFalse();
                                                 calls.add("supplier");
@@ -122,7 +123,7 @@ class ContinuationActionExecutorTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void abortsBeforeCallbacksAndSupplierWhenCallerDoesNotOwnLock(boolean batch) {
+    void abortsBeforeCallbacksAndSupplierWhenCallerDoesNotOwnLock(boolean awaiting) {
         ParallelExecutionLock lock = new ParallelExecutionLock();
         AtomicBoolean supplierCalled = new AtomicBoolean();
         ParallelExecutionContextLifecycle lifecycle = mock(ParallelExecutionContextLifecycle.class);
@@ -134,7 +135,7 @@ class ContinuationActionExecutorTest {
                                     execute(
                                             executor,
                                             new ContinuationContext(),
-                                            batch,
+                                            awaiting,
                                             () -> {
                                                 supplierCalled.set(true);
                                                 return "unexpected";
@@ -149,7 +150,7 @@ class ContinuationActionExecutorTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void suspendFailureKeepsLockAndSkipsSupplierAndResume(boolean batch) throws Exception {
+    void suspendFailureKeepsLockAndSkipsSupplierAndResume(boolean awaiting) throws Exception {
         ParallelExecutionLock lock = new ParallelExecutionLock();
         ContinuationContext context = new ContinuationContext();
         AtomicBoolean supplierCalled = new AtomicBoolean();
@@ -171,7 +172,7 @@ class ContinuationActionExecutorTest {
                                     execute(
                                             executor,
                                             context,
-                                            batch,
+                                            awaiting,
                                             () -> {
                                                 supplierCalled.set(true);
                                                 return "unexpected";
@@ -197,7 +198,7 @@ class ContinuationActionExecutorTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void resumeFailureIsUncapturableAfterSupplierCompletes(boolean batch) throws Exception {
+    void resumeFailureIsUncapturableAfterSupplierCompletes(boolean awaiting) throws Exception {
         ParallelExecutionLock lock = new ParallelExecutionLock();
         ContinuationContext context = new ContinuationContext();
         AtomicBoolean supplierCalled = new AtomicBoolean();
@@ -220,7 +221,7 @@ class ContinuationActionExecutorTest {
                                     execute(
                                             executor,
                                             context,
-                                            batch,
+                                            awaiting,
                                             () -> {
                                                 supplierCalled.set(true);
                                                 return "result";
@@ -244,9 +245,9 @@ class ContinuationActionExecutorTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"false, false", "false, true", "true, true"})
-    void resumeFailureSuppressesEscapingSupplierFailure(boolean batch, boolean supplierThrowsError)
-            throws Exception {
+    @CsvSource({"false, false", "false, true", "true, false", "true, true"})
+    void resumeFailureSuppressesEscapingSupplierFailure(
+            boolean awaiting, boolean supplierThrowsError) throws Exception {
         ParallelExecutionLock lock = new ParallelExecutionLock();
         ContinuationContext context = new ContinuationContext();
         Throwable supplierFailure =
@@ -271,7 +272,7 @@ class ContinuationActionExecutorTest {
                                     execute(
                                             executor,
                                             context,
-                                            batch,
+                                            awaiting,
                                             () -> {
                                                 if (supplierFailure instanceof Error) {
                                                     throw (Error) supplierFailure;
@@ -298,7 +299,7 @@ class ContinuationActionExecutorTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void supplierErrorIsNotWrappedWhenResumeSucceeds(boolean batch) throws Exception {
+    void supplierErrorIsNotWrappedWhenResumeSucceeds(boolean awaiting) throws Exception {
         ParallelExecutionLock lock = new ParallelExecutionLock();
         ContinuationContext context = new ContinuationContext();
         Queue<String> calls = new ConcurrentLinkedQueue<>();
@@ -312,7 +313,7 @@ class ContinuationActionExecutorTest {
                                     execute(
                                             executor,
                                             context,
-                                            batch,
+                                            awaiting,
                                             () -> {
                                                 calls.add("supplier");
                                                 throw failure;
@@ -328,7 +329,7 @@ class ContinuationActionExecutorTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void supplierExceptionKeepsBusinessSemantics(boolean batch) throws Exception {
+    void supplierExceptionKeepsBusinessSemantics(boolean awaiting) throws Exception {
         ParallelExecutionLock lock = new ParallelExecutionLock();
         ContinuationContext context = new ContinuationContext();
         Queue<String> calls = new ConcurrentLinkedQueue<>();
@@ -342,16 +343,8 @@ class ContinuationActionExecutorTest {
                 };
         lock.acquireByWorker(0, 0);
         try {
-            if (batch) {
-                BatchExecutionResult<String> result =
-                        executor.executeAllAsync(
-                                context, List.of(supplier::get, () -> "second"), null, 1);
-                assertThat(result.getOutcomes().get(0).getError()).isSameAs(failure);
-                assertThat(result.getOutcomes().get(1).getValue()).isEqualTo("second");
-            } else {
-                assertThatThrownBy(() -> executor.executeAsync(context, supplier))
-                        .isSameAs(failure);
-            }
+            assertThatThrownBy(() -> execute(executor, context, awaiting, supplier))
+                    .isSameAs(failure);
             assertThat(calls).containsExactly("suspend", "supplier", "resume");
             assertThat(lock.isHeldByCurrentThread()).isTrue();
         } finally {
@@ -510,40 +503,15 @@ class ContinuationActionExecutorTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void executionWithoutLockDoesNotCallLifecycle(boolean batch) throws Exception {
+    void executionWithoutLockDoesNotCallLifecycle(boolean awaiting) throws Exception {
         ParallelExecutionContextLifecycle lifecycle = mock(ParallelExecutionContextLifecycle.class);
         ContinuationActionExecutor executor =
                 new ContinuationActionExecutor(1, () -> {}, null, lifecycle);
         try {
-            assertThat(execute(executor, new ContinuationContext(), batch, () -> "result"))
+            assertThat(execute(executor, new ContinuationContext(), awaiting, () -> "result"))
                     .isEqualTo("result");
             verifyNoInteractions(lifecycle);
         } finally {
-            executor.close();
-        }
-    }
-
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void emptyBatchDoesNotCallLifecycleOrChangeLockOwnership(boolean ownsLock) throws Exception {
-        ParallelExecutionLock lock = new ParallelExecutionLock();
-        ParallelExecutionContextLifecycle lifecycle = mock(ParallelExecutionContextLifecycle.class);
-        ContinuationActionExecutor executor =
-                new ContinuationActionExecutor(1, () -> {}, lock, lifecycle);
-        if (ownsLock) {
-            lock.acquireByWorker(0, 0);
-        }
-        try {
-            assertThat(
-                            executor.executeAllAsync(new ContinuationContext(), List.of(), null, 1)
-                                    .getOutcomes())
-                    .isEmpty();
-            assertThat(lock.isHeldByCurrentThread()).isEqualTo(ownsLock);
-            verifyNoInteractions(lifecycle);
-        } finally {
-            if (lock.isHeldByCurrentThread()) {
-                lock.release();
-            }
             executor.close();
         }
     }
@@ -572,13 +540,14 @@ class ContinuationActionExecutorTest {
     private static String execute(
             ContinuationActionExecutor executor,
             ContinuationContext context,
-            boolean batch,
+            boolean awaiting,
             Supplier<String> supplier)
             throws Exception {
-        if (batch) {
-            BatchExecutionResult<String> result =
-                    executor.executeAllAsync(context, List.of(supplier::get), null, 1);
-            return result.getOutcomes().get(0).getValue();
+        if (awaiting) {
+            // Exercise lock handoff around the wait, independently of worker submission.
+            CompletableFuture<String> future = mock(CompletableFuture.class);
+            when(future.get()).thenAnswer(invocation -> supplier.get());
+            return executor.awaitFuture(context, future);
         }
         return executor.executeAsync(context, supplier);
     }
