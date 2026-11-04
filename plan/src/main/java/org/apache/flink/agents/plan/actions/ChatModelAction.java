@@ -98,6 +98,9 @@ public class ChatModelAction {
     private static final String TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT";
     private static final String INITIAL_REQUEST_ID = "initialRequestId";
     private static final String MODEL = "model";
+    /** Sensory-memory key for the chat request's opaque user context. Matches the event field. */
+    private static final String USER_CONTEXT = "context";
+
     private static final String ROUTING_METADATA_CONTEXT = "_ROUTING_METADATA_CONTEXT";
     private static final String OUTPUT_SCHEMA = "outputSchema";
     private static final String PROMPT_ARGS = "prompt_args";
@@ -153,7 +156,8 @@ public class ChatModelAction {
             UUID initialRequestId,
             String model,
             Map<String, Object> promptArgs,
-            Object outputSchema)
+            Object outputSchema,
+            @Nullable Object userContext)
             throws Exception {
         Map<UUID, Object> toolRequestEventContext;
         if (sensoryMem.isExist(TOOL_REQUEST_EVENT_CONTEXT)) {
@@ -168,6 +172,9 @@ public class ChatModelAction {
         context.put(PROMPT_ARGS, promptArgs != null ? promptArgs : Collections.emptyMap());
         if (outputSchema != null) {
             context.put(OUTPUT_SCHEMA, outputSchema);
+        }
+        if (userContext != null) {
+            context.put(USER_CONTEXT, userContext);
         }
         toolRequestEventContext.put(toolRequestEventId, context);
         sensoryMem.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
@@ -238,6 +245,7 @@ public class ChatModelAction {
             List<ChatMessage> messages,
             Map<String, Object> promptArgs,
             Object outputSchema,
+            @Nullable Object userContext,
             RunnerContext ctx)
             throws Exception {
         updateToolCallContext(
@@ -255,7 +263,8 @@ public class ChatModelAction {
                 initialRequestId,
                 model,
                 promptArgs,
-                outputSchema);
+                outputSchema,
+                userContext);
 
         ctx.sendEvent(toolRequestEvent);
     }
@@ -342,6 +351,7 @@ public class ChatModelAction {
                 messages,
                 promptArgs,
                 outputSchema,
+                null,
                 ctx);
     }
 
@@ -351,6 +361,7 @@ public class ChatModelAction {
             List<ChatMessage> messages,
             Map<String, Object> promptArgs,
             @Nullable Object outputSchema,
+            @Nullable Object userContext,
             RunnerContext ctx)
             throws Exception {
         int numRetries = ChatModelInvoker.configuredRetries(ctx);
@@ -420,6 +431,7 @@ public class ChatModelAction {
                             messages,
                             promptArgs,
                             outputSchema,
+                            userContext,
                             ctx);
                 } else {
                     if (routingMetadata == null) {
@@ -433,10 +445,11 @@ public class ChatModelAction {
                     clearRequestContext(ctx.getSensoryMemory(), initialRequestId);
                     ChatResponseEvent completed =
                             ChatResponseEvent.success(
-                                    initialRequestId,
-                                    result.response,
-                                    totalRetryCount,
-                                    totalRetryWaitSec);
+                                            initialRequestId,
+                                            result.response,
+                                            totalRetryCount,
+                                            totalRetryWaitSec)
+                                    .withContext(userContext);
                     completed.setStructuredOutput(result.structuredOutput);
                     if (routingMetadata != null) completed.setRoutingMetadata(routingMetadata);
                     ctx.sendEvent(completed);
@@ -472,20 +485,22 @@ public class ChatModelAction {
         // The reasoning loop is over; a routed loop that dies mid-way must not leak its
         // parked metadata before completing the failed logical request.
         takeRoutingMetadata(ctx.getSensoryMemory(), initialRequestId);
-        sendFailure(initialRequestId, Objects.requireNonNull(lastError), ctx);
+        sendFailure(initialRequestId, Objects.requireNonNull(lastError), userContext, ctx);
     }
 
-    private static void sendFailure(UUID requestId, Exception error, RunnerContext ctx)
+    private static void sendFailure(
+            UUID requestId, Exception error, @Nullable Object userContext, RunnerContext ctx)
             throws Exception {
         LOG.warn("Chat request {} failed", requestId, error);
         Map<String, Long> stats = getRetryStats(ctx.getSensoryMemory(), requestId);
         clearRequestContext(ctx.getSensoryMemory(), requestId);
         ctx.sendEvent(
                 ChatResponseEvent.failed(
-                        requestId,
-                        ChatModelInvoker.errorText(error),
-                        stats.get(TOTAL_RETRY_COUNT).intValue(),
-                        stats.get(TOTAL_RETRY_WAIT_SEC).intValue()));
+                                requestId,
+                                ChatModelInvoker.errorText(error),
+                                stats.get(TOTAL_RETRY_COUNT).intValue(),
+                                stats.get(TOTAL_RETRY_WAIT_SEC).intValue())
+                        .withContext(userContext));
     }
 
     @SuppressWarnings("unchecked")
@@ -618,7 +633,7 @@ public class ChatModelAction {
                             event.getPromptArgs(),
                             ctx);
         } catch (ModelRoutingResolver.RoutingFailure e) {
-            sendFailure(event.getId(), e, ctx);
+            sendFailure(event.getId(), e, event.getContext(), ctx);
             return;
         }
         chat(
@@ -627,6 +642,7 @@ public class ChatModelAction {
                 event.getMessages(),
                 event.getPromptArgs(),
                 event.getOutputSchema(),
+                event.getContext(),
                 ctx);
     }
 
@@ -643,6 +659,7 @@ public class ChatModelAction {
         Map<String, Object> promptArgs =
                 (Map<String, Object>) context.getOrDefault(PROMPT_ARGS, Map.of());
         Object outputSchema = context.get(OUTPUT_SCHEMA);
+        Object userContext = context.get(USER_CONTEXT);
 
         Map<String, ToolResponse> responses = event.getResponses();
         Map<String, Boolean> success = event.getSuccess();
@@ -670,6 +687,7 @@ public class ChatModelAction {
                 messages,
                 promptArgs,
                 outputSchema,
+                userContext,
                 ctx);
     }
 

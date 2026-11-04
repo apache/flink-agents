@@ -38,6 +38,9 @@ class ToolRequestEvent(Event):
         name of the model that generated the tool request.
     tool_calls : List[ToolCallBlock]
         tool calls that should be executed in batch.
+    context : Any | None
+        Opaque application data echoed on the matching response. Not added to
+        tool-call arguments. Omitted when unset.
     """
 
     EVENT_TYPE: ClassVar[str] = "_tool_request_event"
@@ -47,20 +50,29 @@ class ToolRequestEvent(Event):
         BuiltInAttribute.required_list(
             "tool_calls", "a tool call", (dict, ToolCallBlock)
         ),
+        BuiltInAttribute.optional_untyped("context"),
     )
 
-    def __init__(self, model: str, tool_calls: List[ToolCallBlock]) -> None:
+    def __init__(
+        self,
+        model: str,
+        tool_calls: List[ToolCallBlock],
+        context: Any | None = None,
+    ) -> None:
         """Create a ToolRequestEvent."""
         tool_calls = [ToolCallBlock.model_validate(c) for c in tool_calls]
         if len({c.call_id for c in tool_calls}) != len(tool_calls):
             msg = "Duplicate tool call ID in one request"
             raise ValueError(msg)
+        attributes: Dict[str, Any] = {
+            "model": model,
+            "tool_calls": tool_calls,
+        }
+        if context is not None:
+            attributes["context"] = context
         super().__init__(
             type=ToolRequestEvent.EVENT_TYPE,
-            attributes={
-                "model": model,
-                "tool_calls": tool_calls,
-            },
+            attributes=attributes,
         )
 
     @classmethod
@@ -72,6 +84,7 @@ class ToolRequestEvent(Event):
         result = ToolRequestEvent(
             model=event.attributes["model"],
             tool_calls=event.attributes["tool_calls"],
+            context=event.attributes.get("context"),
         )
         return result.reconstruct_from(event)
 
@@ -85,6 +98,11 @@ class ToolRequestEvent(Event):
         """Return the list of tool calls."""
         return self.get_attr("tool_calls")
 
+    @property
+    def context(self) -> Any | None:
+        """Return opaque application data to echo on the response, if set."""
+        return self.get_attr("context")
+
 
 class ToolResponseEvent(Event):
     """Event representing a result from tool call.
@@ -95,6 +113,8 @@ class ToolResponseEvent(Event):
         The id of the request event.
     responses : Dict[str, Any]
         The dict maps tool call id to result.
+    context : Any | None
+        Opaque application data from the originating request. Omitted when unset.
     """
 
     EVENT_TYPE: ClassVar[str] = "_tool_response_event"
@@ -108,6 +128,7 @@ class ToolResponseEvent(Event):
         # Java-produced events restore, then drop it (Python does not carry it)
         # to stay consistent with the Python snapshot shape.
         BuiltInAttribute.optional("timestamp", int),
+        BuiltInAttribute.optional_untyped("context"),
     )
 
     def __init__(
@@ -116,6 +137,7 @@ class ToolResponseEvent(Event):
         responses: Dict[str, Any],
         success: Dict[str, bool] | None = None,
         error: Dict[str, str] | None = None,
+        context: Any | None = None,
     ) -> None:
         """Create a ToolResponseEvent."""
         responses = {
@@ -134,16 +156,17 @@ class ToolResponseEvent(Event):
         }
         if success is None:
             success = {k: v.is_success() for k, v in responses.items()}
+        attributes: Dict[str, Any] = {
+            "request_id": request_id,
+            "responses": responses,
+            "success": success,
+            "error": error if error is not None else {},
+        }
+        if context is not None:
+            attributes["context"] = context
         super().__init__(
             type=ToolResponseEvent.EVENT_TYPE,
-            attributes={
-                "request_id": request_id,
-                "responses": responses,
-                "success": success
-                if success is not None
-                else dict.fromkeys(responses, True),
-                "error": error if error is not None else {},
-            },
+            attributes=attributes,
         )
 
     @classmethod
@@ -158,6 +181,7 @@ class ToolResponseEvent(Event):
             responses=responses,
             success=event.attributes.get("success", dict.fromkeys(responses, True)),
             error=event.attributes.get("error", {}),
+            context=event.attributes.get("context"),
         )
         return result.reconstruct_from(event)
 
@@ -181,3 +205,8 @@ class ToolResponseEvent(Event):
     def error(self) -> Dict[str, str]:
         """Return diagnostic errors for failed tool calls."""
         return self.get_attr("error")
+
+    @property
+    def context(self) -> Any | None:
+        """Return the originating request's opaque context, if set."""
+        return self.get_attr("context")

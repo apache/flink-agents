@@ -107,6 +107,8 @@ InputEvent → request Action → ChatRequestEvent
 
 A `ChatRequestEvent` can name a model router instead of a chat model. The built-in action selects the model first and emits a `ModelRoutingEvent`; see [Model Routing]({{< ref "docs/development/calling-llms/model_routing" >}}).
 
+Pass optional `context` (Python) or `withContext` (Java) when one Action sends several chat requests and the response Action needs to tell them apart. The value is returned unchanged on the `ChatResponseEvent`, including after tool-call rounds, retries, model fallback, and a failed response. It is not added to the prompt. See [Request context]({{< ref "docs/development/create-agent/events#request-context" >}}).
+
 ### Example {#usage-example}
 
 Start with the Agent and model declarations in the

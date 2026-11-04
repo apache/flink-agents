@@ -19,7 +19,7 @@
 
 import json
 from collections.abc import Mapping
-from typing import ClassVar, Tuple
+from typing import Any, ClassVar, Tuple
 from uuid import UUID
 
 from pydantic import JsonValue
@@ -36,6 +36,8 @@ class DecisionRequestEvent(Event):
     ``model`` is the registered resource name, not a provider model identifier.
     ``request`` supplies the shared input and named questions for this call.
     ``request_params`` supplies provider-specific parameters for this call.
+    ``context`` is opaque application data echoed on the response. It is not
+    part of ``request`` or ``request_params``, and is omitted when unset.
     """
 
     EVENT_TYPE: ClassVar[str] = "_decision_request_event"
@@ -43,6 +45,7 @@ class DecisionRequestEvent(Event):
         BuiltInAttribute.required("model", str),
         BuiltInAttribute.required_untyped("request"),
         BuiltInAttribute.optional_untyped("request_params"),
+        BuiltInAttribute.optional_untyped("context"),
     )
 
     def __init__(
@@ -51,18 +54,22 @@ class DecisionRequestEvent(Event):
         request: DecisionRequest,
         *,
         request_params: Mapping[str, JsonValue] | None = None,
+        context: Any | None = None,
     ) -> None:
         """Create a decision request event."""
         if not isinstance(model, str) or not isinstance(request, DecisionRequest):
             msg = "Decision request requires a model resource name and DecisionRequest."
             raise TypeError(msg)
+        attributes: dict[str, Any] = {
+            "model": model,
+            "request": request,
+            "request_params": _validate_request_params(request_params),
+        }
+        if context is not None:
+            attributes["context"] = context
         super().__init__(
             type=self.EVENT_TYPE,
-            attributes={
-                "model": model,
-                "request": request,
-                "request_params": _validate_request_params(request_params),
-            },
+            attributes=attributes,
         )
 
     @classmethod
@@ -76,6 +83,7 @@ class DecisionRequestEvent(Event):
             model=attributes["model"],
             request=DecisionRequest.model_validate(attributes["request"]),
             request_params=attributes.get("request_params"),
+            context=attributes.get("context"),
         )
         return result.reconstruct_from(event)
 
@@ -93,6 +101,11 @@ class DecisionRequestEvent(Event):
     def request_params(self) -> dict[str, JsonValue]:
         """Return provider-specific parameters for this request."""
         return self.get_attr("request_params")
+
+    @property
+    def context(self) -> Any | None:
+        """Return opaque application data to echo on the response, if set."""
+        return self.get_attr("context")
 
 
 class DecisionResponseError(RuntimeError):
@@ -117,6 +130,8 @@ class DecisionResponseEvent(Event):
         The total number of retries for this request.
     total_retry_wait_sec : int
         The total time spent waiting during retries in seconds.
+    context : Any | None
+        Opaque application data from the originating request. Omitted when unset.
     """
 
     EVENT_TYPE: ClassVar[str] = "_decision_response_event"
@@ -137,6 +152,7 @@ class DecisionResponseEvent(Event):
         BuiltInAttribute.optional_untyped(_ERROR),
         BuiltInAttribute.optional(_RETRY_COUNT, int),
         BuiltInAttribute.optional(_TOTAL_RETRY_WAIT_SEC, int),
+        BuiltInAttribute.optional_untyped("context"),
     )
 
     def __init__(
@@ -147,6 +163,7 @@ class DecisionResponseEvent(Event):
         error: str | None = None,
         retry_count: int = 0,
         total_retry_wait_sec: int = 0,
+        context: Any | None = None,
     ) -> None:
         """Create a DecisionResponseEvent."""
         if not (
@@ -170,16 +187,19 @@ class DecisionResponseEvent(Event):
         if not isinstance(request_id, UUID):
             msg = "request_id must be a UUID"
             raise TypeError(msg)
+        attributes: dict[str, Any] = {
+            self._REQUEST_ID: request_id,
+            self._STATUS: status,
+            self._RESPONSE: response,
+            self._ERROR: error,
+            self._RETRY_COUNT: retry_count,
+            self._TOTAL_RETRY_WAIT_SEC: total_retry_wait_sec,
+        }
+        if context is not None:
+            attributes["context"] = context
         super().__init__(
             type=DecisionResponseEvent.EVENT_TYPE,
-            attributes={
-                self._REQUEST_ID: request_id,
-                self._STATUS: status,
-                self._RESPONSE: response,
-                self._ERROR: error,
-                self._RETRY_COUNT: retry_count,
-                self._TOTAL_RETRY_WAIT_SEC: total_retry_wait_sec,
-            },
+            attributes=attributes,
         )
 
     @classmethod
@@ -189,6 +209,7 @@ class DecisionResponseEvent(Event):
         response: DecisionResult,
         retry_count: int = 0,
         total_retry_wait_sec: int = 0,
+        context: Any | None = None,
     ) -> "DecisionResponseEvent":
         """Create a successful terminal response."""
         return cls(
@@ -197,6 +218,7 @@ class DecisionResponseEvent(Event):
             response=response,
             retry_count=retry_count,
             total_retry_wait_sec=total_retry_wait_sec,
+            context=context,
         )
 
     @classmethod
@@ -206,6 +228,7 @@ class DecisionResponseEvent(Event):
         error: str,
         retry_count: int = 0,
         total_retry_wait_sec: int = 0,
+        context: Any | None = None,
     ) -> "DecisionResponseEvent":
         """Create a failed terminal response."""
         return cls(
@@ -214,6 +237,7 @@ class DecisionResponseEvent(Event):
             error=error,
             retry_count=retry_count,
             total_retry_wait_sec=total_retry_wait_sec,
+            context=context,
         )
 
     @classmethod
@@ -238,6 +262,7 @@ class DecisionResponseEvent(Event):
             error=attributes.get(cls._ERROR),
             retry_count=attributes.get(cls._RETRY_COUNT, 0),
             total_retry_wait_sec=attributes.get(cls._TOTAL_RETRY_WAIT_SEC, 0),
+            context=attributes.get("context"),
         )
         return result.reconstruct_from(event)
 
@@ -286,3 +311,8 @@ class DecisionResponseEvent(Event):
     def total_retry_wait_sec(self) -> int:
         """Return the total retry wait time in seconds."""
         return self.get_attr(self._TOTAL_RETRY_WAIT_SEC)
+
+    @property
+    def context(self) -> Any | None:
+        """Return the originating request's opaque context, if set."""
+        return self.get_attr("context")

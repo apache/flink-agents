@@ -429,6 +429,47 @@ public class ToolCallActionTest {
     }
 
     @Test
+    void processToolRequestEchoesContextOnSuccessAndFailureWithoutInjectingIt() throws Exception {
+        Map<String, Object> context = Map.of("task", "lookup", "item_id", "42");
+        FakeRunnerContext success = new FakeRunnerContext();
+        ToolRequestEvent request = toolRequest("queryOrder").withContext(context);
+        request.setAttachment("trace", "keep-on-request");
+
+        ToolCallAction.processToolRequest(request, success);
+
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(success.sentEvents.get(0));
+        assertThat(response.getContext()).isEqualTo(context);
+        assertThat(response.getRequestId()).isEqualTo(request.getId());
+        assertThat(response.getResponses().get("call-1").getText()).isEqualTo("tenant-1:order-1");
+        assertThat(response.getAttachments()).isEmpty();
+        assertThat(response.getSuccess()).containsEntry("call-1", true);
+
+        FakeRunnerContext failed =
+                new FakeRunnerContext() {
+                    @Override
+                    public Resource getResource(String name, ResourceType type) {
+                        return new FailingTool();
+                    }
+                };
+        ToolRequestEvent failing = toolRequest("queryOrder").withContext(context);
+        ToolCallAction.processToolRequest(failing, failed);
+        ToolResponseEvent failure = ToolResponseEvent.fromEvent(failed.sentEvents.get(0));
+        assertThat(failure.getSuccess()).containsEntry("call-1", false);
+        assertThat(failure.getError()).containsEntry("call-1", "database timeout");
+        assertThat(failure.getContext()).isEqualTo(context);
+        assertThat(failure.getAttachments()).isEmpty();
+    }
+
+    @Test
+    void processToolRequestOmitsContextWhenTheRequestDoes() throws Exception {
+        FakeRunnerContext ctx = new FakeRunnerContext();
+        ToolCallAction.processToolRequest(toolRequest("queryOrder"), ctx);
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getContext()).isNull();
+        assertThat(response.getAttributes()).doesNotContainKey("context");
+    }
+
+    @Test
     void processToolRequestKeepsDiagnosticErrorWhenToolExecutionFails() throws Exception {
         FakeRunnerContext ctx =
                 new FakeRunnerContext() {

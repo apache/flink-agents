@@ -25,6 +25,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 
+import javax.annotation.Nullable;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -41,14 +43,20 @@ public class ToolRequestEvent extends Event {
             List.of(
                     BuiltInAttribute.required("model", String.class),
                     BuiltInAttribute.requiredList(
-                            "tool_calls", "a tool call", Map.class, ToolCallBlock.class));
+                            "tool_calls", "a tool call", Map.class, ToolCallBlock.class),
+                    BuiltInAttribute.optionalUntyped(UserDefinedContext.ATTRIBUTE));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    public ToolRequestEvent(String model, List<ToolCallBlock> toolCalls) {
+    public ToolRequestEvent(String model, List<ToolCallBlock> toolCalls, @Nullable Object context) {
         super(EVENT_TYPE);
         setAttr("model", model);
         setAttr("tool_calls", validate(toolCalls));
+        UserDefinedContext.set(this, context);
+    }
+
+    public ToolRequestEvent(String model, List<ToolCallBlock> toolCalls) {
+        this(model, toolCalls, null);
     }
 
     @JsonCreator
@@ -79,6 +87,22 @@ public class ToolRequestEvent extends Event {
     @SuppressWarnings("unchecked")
     public List<ToolCallBlock> getToolCalls() {
         return Collections.unmodifiableList((List<ToolCallBlock>) getAttr("tool_calls"));
+    }
+
+    /**
+     * Attaches opaque application data to echo unchanged on the matching {@link ToolResponseEvent}.
+     * The value is not added to tool-call arguments. {@code null} omits it.
+     */
+    public ToolRequestEvent withContext(@Nullable Object context) {
+        UserDefinedContext.set(this, context);
+        return this;
+    }
+
+    /** Returns the opaque application context, or {@code null} when this request omitted it. */
+    @JsonIgnore
+    @Nullable
+    public Object getContext() {
+        return UserDefinedContext.get(this);
     }
 
     private static List<ToolCallBlock> restoreToolCalls(List<?> values) {

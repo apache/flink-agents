@@ -25,6 +25,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.vectorstores.Document;
 
+import javax.annotation.Nullable;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +47,8 @@ public class ContextRetrievalResponseEvent extends Event {
                             "documents",
                             "a Document or its serialized map",
                             Document.class,
-                            Map.class));
+                            Map.class),
+                    BuiltInAttribute.optionalUntyped(UserDefinedContext.ATTRIBUTE));
 
     public ContextRetrievalResponseEvent(UUID requestId, String query, List<Document> documents) {
         super(EVENT_TYPE);
@@ -88,8 +91,9 @@ public class ContextRetrievalResponseEvent extends Event {
      * types.
      *
      * <p>Enforces the fixed cross-language schema: {@code request_id}, {@code query}, and {@code
-     * documents} are required and no other attribute is allowed; {@code query} must be a string and
-     * every {@code documents} element must be a {@link Document} or its serialized map.
+     * documents} are required, {@code context} is optional, and no other attribute is allowed;
+     * {@code query} must be a string and every {@code documents} element must be a {@link Document}
+     * or its serialized map.
      *
      * @param event the base event containing context retrieval response data in attributes
      * @return a typed ContextRetrievalResponseEvent
@@ -118,6 +122,22 @@ public class ContextRetrievalResponseEvent extends Event {
     @SuppressWarnings("unchecked")
     public List<Document> getDocuments() {
         return (List<Document>) getAttr("documents");
+    }
+
+    /**
+     * Attaches opaque application data echoed from the originating retrieval request. {@code null}
+     * omits it.
+     */
+    public ContextRetrievalResponseEvent withContext(@Nullable Object context) {
+        UserDefinedContext.set(this, context);
+        return this;
+    }
+
+    /** Returns the originating request's opaque context, or {@code null} when it was omitted. */
+    @JsonIgnore
+    @Nullable
+    public Object getContext() {
+        return UserDefinedContext.get(this);
     }
 
     @Override

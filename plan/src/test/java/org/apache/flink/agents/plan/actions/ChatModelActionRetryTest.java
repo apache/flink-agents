@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.plan.actions;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
@@ -31,6 +32,7 @@ import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
@@ -1277,6 +1279,177 @@ class ChatModelActionRetryTest {
                                         "configured-model",
                                         "usage",
                                         Map.of("promptTokens", 9L, "completionTokens", 0L))));
+    }
+
+    @Test
+    void omittedContextStaysOffTheResponse() throws Exception {
+        configureRetryStrategy(0, 0);
+        when(mockChatModel.chat(any(), any(), any())).thenReturn(ChatFixtures.response("hello"));
+
+        ChatRequestEvent request =
+                new ChatRequestEvent(
+                        "test-model",
+                        List.of(ChatMessage.user("hi")),
+                        Map.of("tone", "brief"),
+                        null);
+        ChatModelAction.processChatRequestOrToolResponse(request, mockCtx);
+
+        ChatResponseEvent response = ChatResponseEvent.fromEvent(sentEvents.get(0));
+        assertThat(response.getContext()).isNull();
+        assertThat(response.getAttributes()).doesNotContainKey("context");
+        assertThat(response.getRequestId()).isEqualTo(request.getId());
+        assertThat(response.getAttachments()).isEmpty();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void successFailureAndRetryEchoContextWithoutTouchingThePrompt() throws Exception {
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("task", "summary");
+        context.put("item_id", "42");
+        context.put("n", 1);
+        context.put("ok", true);
+        context.put("tags", List.of("a"));
+        Map<String, Object> promptArgs = Map.of("tone", "brief");
+        List<ChatMessage> messages = List.of(ChatMessage.user("hi"));
+
+        configureRetryStrategy(1, 0);
+        when(mockChatModel.chat(any(), any(), any()))
+                .thenThrow(new IllegalStateException("transient"))
+                .thenReturn(ChatFixtures.response("done"));
+        ChatRequestEvent request =
+                new ChatRequestEvent("test-model", messages, promptArgs, null).withContext(context);
+        request.setAttachment("trace", "keep-on-request");
+        ChatModelAction.processChatRequestOrToolResponse(request, mockCtx);
+
+        ChatResponseEvent response = ChatResponseEvent.fromEvent(sentEvents.get(0));
+        assertThat(response.isSuccess()).isTrue();
+        assertThat(response.getContext()).isEqualTo(context);
+        assertThat(response.getRetryCount()).isEqualTo(1);
+        assertThat(response.getAttachments()).isEmpty();
+        assertThat(response.getRequestId()).isEqualTo(request.getId());
+
+        ArgumentCaptor<List<ChatMessage>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<Map<String, Object>> promptCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(mockChatModel, times(2))
+                .chat(messagesCaptor.capture(), promptCaptor.capture(), any());
+        assertThat(promptCaptor.getAllValues()).containsOnly(promptArgs);
+        assertThat(messagesCaptor.getAllValues())
+                .allSatisfy(sent -> assertThat(sent).containsExactlyElementsOf(messages));
+
+        sentEvents.clear();
+        when(mockChatModel.chat(any(), any(), any()))
+                .thenThrow(new IllegalStateException("persistent"));
+        ChatRequestEvent failing =
+                new ChatRequestEvent("test-model", messages, promptArgs, null).withContext(context);
+        ChatModelAction.processChatRequestOrToolResponse(failing, mockCtx);
+        ChatResponseEvent failed = ChatResponseEvent.fromEvent(sentEvents.get(0));
+        assertThat(failed.isFailed()).isTrue();
+        assertThat(failed.getError()).contains("persistent");
+        assertThat(failed.getContext()).isEqualTo(context);
+        assertThat(failed.getRequestId()).isEqualTo(failing.getId());
+    }
+
+    @Test
+    void toolRoundsKeepTheInitialContextAndDoNotCopyItOntoToolRequests() throws Exception {
+        configureRetryStrategy(0, 0);
+        Map<String, Object> contextA = Map.of("task", "summary", "item_id", "42");
+        Map<String, Object> contextB = Map.of("task", "risk_assessment", "item_id", "42");
+        Map<String, Object> toolCall =
+                Map.of(
+                        "id",
+                        "call-1",
+                        "type",
+                        "function",
+                        "function",
+                        Map.of("name", "lookup", "arguments", Map.of("x", 1)));
+        when(mockChatModel.chat(any(), any(), any()))
+                .thenReturn(ChatFixtures.response("", List.of(toolCall)))
+                .thenReturn(ChatFixtures.response("", List.of(toolCall)))
+                .thenReturn(ChatFixtures.response("risk done"))
+                .thenReturn(ChatFixtures.response("summary done"));
+
+        ChatRequestEvent requestA =
+                new ChatRequestEvent(
+                                "test-model",
+                                List.of(ChatMessage.user("a")),
+                                Map.of("who", "a"),
+                                null)
+                        .withContext(contextA);
+        ChatRequestEvent requestB =
+                new ChatRequestEvent(
+                                "test-model",
+                                List.of(ChatMessage.user("b")),
+                                Map.of("who", "b"),
+                                null)
+                        .withContext(contextB);
+        ChatModelAction.processChatRequestOrToolResponse(requestA, mockCtx);
+        ChatModelAction.processChatRequestOrToolResponse(requestB, mockCtx);
+
+        ToolRequestEvent toolA = ToolRequestEvent.fromEvent(sentEvents.get(0));
+        ToolRequestEvent toolB = ToolRequestEvent.fromEvent(sentEvents.get(1));
+        assertThat(toolA.getContext()).isNull();
+        assertThat(toolB.getContext()).isNull();
+        assertThat(toolA.getToolCalls().get(0).getInput()).containsExactly(Map.entry("x", 1));
+        assertThat(toolA.getAttachments()).isEmpty();
+
+        @SuppressWarnings("unchecked")
+        Map<UUID, Map<String, Object>> parked =
+                (Map<UUID, Map<String, Object>>)
+                        sensoryMemory.get("_TOOL_REQUEST_EVENT_CONTEXT").getValue();
+        Object checkpointed =
+                new ObjectMapper()
+                        .readValue(
+                                new ObjectMapper()
+                                        .writeValueAsBytes(
+                                                parked.get(toolB.getId()).get("context")),
+                                Object.class);
+        parked.get(toolB.getId()).put("context", checkpointed);
+
+        // Finish B before A. Each final response keeps its own request context.
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ToolResponseEvent(
+                        toolB.getId(),
+                        Map.of("call-1", ToolResponse.text("b")),
+                        Map.of("call-1", true),
+                        Map.of()),
+                mockCtx);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ToolResponseEvent(
+                        toolA.getId(),
+                        Map.of("call-1", ToolResponse.text("a")),
+                        Map.of("call-1", true),
+                        Map.of()),
+                mockCtx);
+
+        ChatResponseEvent responseB = ChatResponseEvent.fromEvent(sentEvents.get(2));
+        ChatResponseEvent responseA = ChatResponseEvent.fromEvent(sentEvents.get(3));
+        assertThat(responseB.getRequestId()).isEqualTo(requestB.getId());
+        assertThat(responseB.getContext()).isEqualTo(contextB);
+        assertThat(responseB.getResponse().getText()).isEqualTo("risk done");
+        assertThat(responseA.getRequestId()).isEqualTo(requestA.getId());
+        assertThat(responseA.getContext()).isEqualTo(contextA);
+        assertThat(responseA.getResponse().getText()).isEqualTo("summary done");
+        assertThat(responseA.getAttachments()).isEmpty();
+    }
+
+    @Test
+    void restoredRequestStillEchoesContext() throws Exception {
+        configureRetryStrategy(0, 0);
+        when(mockChatModel.chat(any(), any(), any())).thenReturn(ChatFixtures.response("ok"));
+        Map<String, Object> context = Map.of("task", "summary", "item_id", "42");
+        ChatRequestEvent original =
+                new ChatRequestEvent("test-model", List.of(ChatMessage.user("hi")))
+                        .withContext(context);
+        ChatRequestEvent restored =
+                ChatRequestEvent.fromEvent(
+                        Event.fromJson(new ObjectMapper().writeValueAsString(original)));
+
+        ChatModelAction.processChatRequestOrToolResponse(restored, mockCtx);
+
+        ChatResponseEvent response = ChatResponseEvent.fromEvent(sentEvents.get(0));
+        assertThat(response.getRequestId()).isEqualTo(original.getId());
+        assertThat(response.getContext()).isEqualTo(context);
     }
 
     // --- Helper methods ---

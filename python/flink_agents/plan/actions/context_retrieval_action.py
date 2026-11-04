@@ -59,7 +59,10 @@ async def process_context_retrieval_request(event: Event, ctx: RunnerContext) ->
 
     ctx.send_event(
         ContextRetrievalResponseEvent(
-            request_id=event.id, query=event.query, documents=result.documents
+            request_id=event.id,
+            query=event.query,
+            documents=result.documents,
+            context=event.context,
         )
     )
 

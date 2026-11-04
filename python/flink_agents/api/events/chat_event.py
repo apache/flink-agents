@@ -43,6 +43,9 @@ class ChatRequestEvent(Event):
         resource is configured on the chat model setup. Empty by default.
     output_schema: OutputSchema | None
         The expected output schema of the chat model final response. Optional.
+    context : Any | None
+        Opaque application data echoed on the matching response. Not added to
+        messages or prompt arguments. Omitted when unset.
     """
 
     EVENT_TYPE: ClassVar[str] = "_chat_request_event"
@@ -54,6 +57,7 @@ class ChatRequestEvent(Event):
         ),
         BuiltInAttribute.optional("prompt_args", dict),
         BuiltInAttribute.optional_untyped("output_schema"),
+        BuiltInAttribute.optional_untyped("context"),
     )
 
     def __init__(
@@ -62,16 +66,20 @@ class ChatRequestEvent(Event):
         messages: List[ChatMessage],
         prompt_args: Dict[str, Any] | None = None,
         output_schema: OutputSchema | None = None,
+        context: Any | None = None,
     ) -> None:
         """Create a ChatRequestEvent."""
+        attributes: Dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "prompt_args": prompt_args if prompt_args is not None else {},
+            "output_schema": output_schema,
+        }
+        if context is not None:
+            attributes["context"] = context
         super().__init__(
             type=ChatRequestEvent.EVENT_TYPE,
-            attributes={
-                "model": model,
-                "messages": messages,
-                "prompt_args": prompt_args if prompt_args is not None else {},
-                "output_schema": output_schema,
-            },
+            attributes=attributes,
         )
 
     @classmethod
@@ -93,6 +101,7 @@ class ChatRequestEvent(Event):
             messages=messages,
             prompt_args=attributes.get("prompt_args"),
             output_schema=output_schema_raw,
+            context=attributes.get("context"),
         )
         return result.reconstruct_from(event)
 
@@ -117,6 +126,11 @@ class ChatRequestEvent(Event):
         """Return the expected output schema, if any."""
         return self.get_attr("output_schema")
 
+    @property
+    def context(self) -> Any | None:
+        """Return opaque application data to echo on the response, if set."""
+        return self.get_attr("context")
+
 
 class ChatResponseError(RuntimeError):
     """A failed chat result, retaining the request ID and textual error."""
@@ -140,6 +154,8 @@ class ChatResponseEvent(Event):
         The total number of retries across all tool call rounds.
     total_retry_wait_sec : int
         The total time spent waiting during retries in seconds.
+    context : Any | None
+        Opaque application data from the originating request. Omitted when unset.
     """
 
     EVENT_TYPE: ClassVar[str] = "_chat_response_event"
@@ -164,6 +180,7 @@ class ChatResponseEvent(Event):
         BuiltInAttribute.optional(_TOTAL_RETRY_WAIT_SEC, int),
         BuiltInAttribute.optional_untyped(_STRUCTURED_OUTPUT),
         BuiltInAttribute.optional(_MODEL_ROUTING, dict),
+        BuiltInAttribute.optional_untyped("context"),
     )
 
     def __init__(
@@ -174,6 +191,7 @@ class ChatResponseEvent(Event):
         error: str | None = None,
         retry_count: int = 0,
         total_retry_wait_sec: int = 0,
+        context: Any | None = None,
     ) -> None:
         """Create a ChatResponseEvent."""
         if not (
@@ -195,16 +213,19 @@ class ChatResponseEvent(Event):
         if not isinstance(request_id, UUID):
             msg = "request_id must be a UUID"
             raise TypeError(msg)
+        attributes: Dict[str, Any] = {
+            self._REQUEST_ID: request_id,
+            self._STATUS: status,
+            self._RESPONSE: response,
+            self._ERROR: error,
+            self._RETRY_COUNT: retry_count,
+            self._TOTAL_RETRY_WAIT_SEC: total_retry_wait_sec,
+        }
+        if context is not None:
+            attributes["context"] = context
         super().__init__(
             type=ChatResponseEvent.EVENT_TYPE,
-            attributes={
-                self._REQUEST_ID: request_id,
-                self._STATUS: status,
-                self._RESPONSE: response,
-                self._ERROR: error,
-                self._RETRY_COUNT: retry_count,
-                self._TOTAL_RETRY_WAIT_SEC: total_retry_wait_sec,
-            },
+            attributes=attributes,
         )
 
     @classmethod
@@ -214,6 +235,7 @@ class ChatResponseEvent(Event):
         response: ChatResult,
         retry_count: int = 0,
         total_retry_wait_sec: int = 0,
+        context: Any | None = None,
     ) -> "ChatResponseEvent":
         """Create a successful terminal response."""
         return cls(
@@ -222,6 +244,7 @@ class ChatResponseEvent(Event):
             response=response,
             retry_count=retry_count,
             total_retry_wait_sec=total_retry_wait_sec,
+            context=context,
         )
 
     @classmethod
@@ -231,6 +254,7 @@ class ChatResponseEvent(Event):
         error: str,
         retry_count: int = 0,
         total_retry_wait_sec: int = 0,
+        context: Any | None = None,
     ) -> "ChatResponseEvent":
         """Create a failed terminal response."""
         return cls(
@@ -239,6 +263,7 @@ class ChatResponseEvent(Event):
             error=error,
             retry_count=retry_count,
             total_retry_wait_sec=total_retry_wait_sec,
+            context=context,
         )
 
     @classmethod
@@ -261,6 +286,7 @@ class ChatResponseEvent(Event):
             error=attributes.get(cls._ERROR),
             retry_count=attributes.get(cls._RETRY_COUNT, 0),
             total_retry_wait_sec=attributes.get(cls._TOTAL_RETRY_WAIT_SEC, 0),
+            context=attributes.get("context"),
         )
         result.attributes[cls._STRUCTURED_OUTPUT] = event.attributes.get(
             cls._STRUCTURED_OUTPUT
@@ -319,3 +345,8 @@ class ChatResponseEvent(Event):
     def total_retry_wait_sec(self) -> int:
         """Return the total retry wait time in seconds."""
         return self.get_attr(self._TOTAL_RETRY_WAIT_SEC)
+
+    @property
+    def context(self) -> Any | None:
+        """Return the originating request's opaque context, if set."""
+        return self.get_attr("context")

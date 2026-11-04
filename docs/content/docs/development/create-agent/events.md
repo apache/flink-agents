@@ -278,3 +278,48 @@ Event that your Actions can handle to continue the workflow:
 | Call tools | `ToolRequestEvent`, `ToolResponseEvent` | [Tool Use]({{< ref "docs/development/calling-llms/tool_use#built-in-events-and-actions" >}}) |
 | Retrieve context | `ContextRetrievalRequestEvent`, `ContextRetrievalResponseEvent` | [Vector Stores]({{< ref "docs/development/vector-search/vector_stores#built-in-events-and-actions" >}}) |
 | Call a decision model | `DecisionRequestEvent`, `DecisionResponseEvent` | [Decision Models]({{< ref "docs/development/decision_models#event-driven-calls" >}}) |
+
+### Request context
+
+Chat, tool, context-retrieval, and decision request events accept an optional `context`
+value: a map or other JSON-compatible object your Action uses to tell responses apart.
+The built-in Action copies that value onto the matching response and does not add it to
+the prompt, tool arguments, or vector-store query. Omitting it leaves the response
+without a `context` attribute, which is what existing callers do.
+
+A chat response keeps the context from the original `ChatRequestEvent` after tool-call
+rounds, retries, and model fallback. Tool responses keep the context from the
+`ToolRequestEvent` that asked for those calls, including when a call in the batch
+fails. Decision responses keep it on both success and failure. Context retrieval has
+no failure event; a query error propagates and the request still holds its context.
+
+`context` is separate from event attachments. Attachments are not copied onto the
+response.
+
+{{< tabs "Request Context" >}}
+{{< tab "Python" >}}
+```python
+ctx.send_event(ChatRequestEvent(
+    model="review_model",
+    messages=[ChatMessage.user(text)],
+    context={"task": "summary", "item_id": "42"},
+))
+```
+
+```python
+response = ChatResponseEvent.from_event(event)
+task = response.context["task"]
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+ctx.sendEvent(new ChatRequestEvent("reviewModel", List.of(ChatMessage.user(text)))
+        .withContext(Map.of("task", "summary", "item_id", "42")));
+```
+
+```java
+ChatResponseEvent response = ChatResponseEvent.fromEvent(event);
+String task = String.valueOf(((Map<?, ?>) response.getContext()).get("task"));
+```
+{{< /tab >}}
+{{< /tabs >}}

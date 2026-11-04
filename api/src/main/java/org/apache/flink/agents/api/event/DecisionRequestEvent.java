@@ -43,7 +43,8 @@ public class DecisionRequestEvent extends Event {
             List.of(
                     BuiltInAttribute.required("model", String.class),
                     BuiltInAttribute.requiredUntyped("request"),
-                    BuiltInAttribute.optionalUntyped("request_params"));
+                    BuiltInAttribute.optionalUntyped("request_params"),
+                    BuiltInAttribute.optionalUntyped(UserDefinedContext.ATTRIBUTE));
 
     /** The model is the registered resource name, not a provider model identifier. */
     public DecisionRequestEvent(String model, DecisionRequest request) {
@@ -53,10 +54,25 @@ public class DecisionRequestEvent extends Event {
     /** Requests a decision with provider-specific parameters for this call. */
     public DecisionRequestEvent(
             String model, DecisionRequest request, @Nullable Map<String, Object> requestParams) {
+        this(model, request, requestParams, null);
+    }
+
+    /**
+     * Requests a decision with provider-specific parameters and opaque application context.
+     *
+     * <p>{@code context} is echoed on the response and is not part of {@code request} or {@code
+     * requestParams}. {@code null} omits it.
+     */
+    public DecisionRequestEvent(
+            String model,
+            DecisionRequest request,
+            @Nullable Map<String, Object> requestParams,
+            @Nullable Object context) {
         super(EVENT_TYPE);
         setAttr("model", Objects.requireNonNull(model, "model"));
         setAttr("request", Objects.requireNonNull(request, "request"));
         setAttr("request_params", normalizeRequestParams(requestParams));
+        UserDefinedContext.set(this, context);
     }
 
     @JsonCreator
@@ -110,5 +126,21 @@ public class DecisionRequestEvent extends Event {
     @JsonIgnore
     public Map<String, Object> getRequestParams() {
         return (Map<String, Object>) getAttr("request_params");
+    }
+
+    /**
+     * Attaches opaque application data to echo unchanged on the matching response. The value is not
+     * added to the decision request or {@code request_params}. {@code null} omits it.
+     */
+    public DecisionRequestEvent withContext(@Nullable Object context) {
+        UserDefinedContext.set(this, context);
+        return this;
+    }
+
+    /** Returns the opaque application context, or {@code null} when this request omitted it. */
+    @JsonIgnore
+    @Nullable
+    public Object getContext() {
+        return UserDefinedContext.get(this);
     }
 }

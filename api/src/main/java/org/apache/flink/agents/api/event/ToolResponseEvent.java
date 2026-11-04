@@ -25,6 +25,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.tools.ToolResponse;
 
+import javax.annotation.Nullable;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +43,8 @@ public class ToolResponseEvent extends Event {
                     BuiltInAttribute.required("responses", Map.class),
                     BuiltInAttribute.optional("success", Map.class),
                     BuiltInAttribute.optional("error", Map.class),
-                    BuiltInAttribute.optional("timestamp", Number.class));
+                    BuiltInAttribute.optional("timestamp", Number.class),
+                    BuiltInAttribute.optionalUntyped(UserDefinedContext.ATTRIBUTE));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -143,6 +146,22 @@ public class ToolResponseEvent extends Event {
     @JsonIgnore
     public long getTimestamp() {
         return ((Number) getAttr("timestamp")).longValue();
+    }
+
+    /**
+     * Attaches opaque application data echoed from the originating tool request. {@code null} omits
+     * it. Per-call success and error maps are independent of this value.
+     */
+    public ToolResponseEvent withContext(@Nullable Object context) {
+        UserDefinedContext.set(this, context);
+        return this;
+    }
+
+    /** Returns the originating request's opaque context, or {@code null} when it was omitted. */
+    @JsonIgnore
+    @Nullable
+    public Object getContext() {
+        return UserDefinedContext.get(this);
     }
 
     @Override
