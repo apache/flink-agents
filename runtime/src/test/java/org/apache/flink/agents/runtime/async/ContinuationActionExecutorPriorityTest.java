@@ -20,7 +20,6 @@ package org.apache.flink.agents.runtime.async;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -65,18 +64,16 @@ class ContinuationActionExecutorPriorityTest {
             assertThat(executor.executeAction(blocker, actions.get(0))).isFalse();
             assertThat(blockerStarted.await(5, TimeUnit.SECONDS)).isTrue();
 
-            // Submitted in the reverse of the expected order. The batch goes through
-            // executeAllAsync, the rest through executeAsync.
+            // Submitted in reverse priority order, mixing submit/await with executeAsync.
             ContinuationContext laterRecord = context(2, 0);
             contexts.add(laterRecord);
             actions.add(
                     () -> {
                         try {
-                            executor.executeAllAsync(
+                            executor.awaitFuture(
                                     laterRecord,
-                                    List.of(() -> runOrder.add("record 2")),
-                                    Duration.ZERO,
-                                    1);
+                                    executor.submitAsync(
+                                            laterRecord, () -> runOrder.add("record 2")));
                         } catch (Exception e) {
                             throw new RuntimeException(e);
                         }

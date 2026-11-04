@@ -33,6 +33,7 @@ import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
+import org.apache.flink.agents.runtime.async.AsyncExecutorThreadFactory;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
@@ -57,15 +58,18 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 
@@ -139,39 +143,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                         () -> fail("reconcile should not be called on initial async execution"));
 
         String result = context.durableExecuteAsync(callable).await();
-
-        assertEquals("ok", result);
-        assertEquals(1, callable.getCallCount());
-        assertEquals(0, callable.getReconcileCount());
-        assertEquals(2, persistCallCount.get());
-        CallResult persisted =
-                context.getDurableExecutionContext().getActionState().getCallResults().get(0);
-        assertTrue(persisted.isSuccess());
-    }
-
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void testDurableExecuteAsyncContinuationNativeReconcilableRunsInline(boolean gathered)
-            throws Exception {
-        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
-        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
-        Thread caller = Thread.currentThread();
-        TestContinuationNativeReconcilableCallable<String> callable =
-                new TestContinuationNativeReconcilableCallable<>(
-                        "recon-inline",
-                        String.class,
-                        () -> {
-                            assertSame(caller, Thread.currentThread());
-                            return "ok";
-                        },
-                        () -> fail("reconcile should not be called on initial async execution"));
-
-        DurableFuture<String> future = context.durableExecuteAsync(callable);
-        String result =
-                gathered
-                        ? context.gather(List.of(future)).await().get(0).getValue()
-                        : future.await();
-        assertEquals(0, executor.submittedCalls);
 
         assertEquals("ok", result);
         assertEquals(1, callable.getCallCount());
@@ -1277,7 +1248,8 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
             assertEquals(0, second.getCallCount());
             release.countDown();
             // Queue barrier: cancelled calls cannot sneak in after timeout.
-            executor.executeAllAsync(new ContinuationContext(), List.of(() -> "drained"), null, 1);
+            executor.submitAsync(new ContinuationContext(), () -> "drained")
+                    .get(5, TimeUnit.SECONDS);
             JavaRunnerContextImpl recovered = createContext(state, executor);
             List<Outcome<String>> replay =
                     recovered
@@ -1411,6 +1383,146 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                 Thread.interrupted();
             }
         }
+    }
+
+    @Test
+    void slidingWindowMakesProgressPastSlowFirstCallAndPreservesOrder() throws Exception {
+        ContinuationActionExecutor executor = new ContinuationActionExecutor(3);
+        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+        CountDownLatch thirdStarted = new CountDownLatch(1);
+        CyclicBarrier firstPair = new CyclicBarrier(2);
+        AtomicInteger inFlight = new AtomicInteger();
+        AtomicInteger peak = new AtomicInteger();
+        try {
+            List<Callable<String>> calls =
+                    List.of(
+                            () -> {
+                                peak.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+                                try {
+                                    firstPair.await(5, TimeUnit.SECONDS);
+                                    assertThat(thirdStarted.await(5, TimeUnit.SECONDS)).isTrue();
+                                    return "first";
+                                } finally {
+                                    inFlight.decrementAndGet();
+                                }
+                            },
+                            () -> {
+                                peak.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+                                try {
+                                    firstPair.await(5, TimeUnit.SECONDS);
+                                    throw new IllegalArgumentException("second failed");
+                                } finally {
+                                    inFlight.decrementAndGet();
+                                }
+                            },
+                            () -> {
+                                peak.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+                                try {
+                                    assertThat(AsyncExecutorThreadFactory.isAsyncExecutorThread())
+                                            .isTrue();
+                                    thirdStarted.countDown();
+                                    return "third";
+                                } finally {
+                                    inFlight.decrementAndGet();
+                                }
+                            });
+            ((Configuration) context.getConfig())
+                    .set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
+            List<Outcome<String>> result = runGather(context, calls);
+            assertThat(peak.get()).isEqualTo(2);
+            assertThat(result.get(0).getValue()).isEqualTo("first");
+            assertThat(result.get(1).getError()).hasMessage("second failed");
+            assertThat(result.get(2).getValue()).isEqualTo("third");
+        } finally {
+            executor.close();
+        }
+    }
+
+    @Test
+    void parallelismOneSerializesCallsEvenWithMultipleWorkers() throws Exception {
+        ContinuationActionExecutor executor = new ContinuationActionExecutor(3);
+        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+        AtomicInteger sequence = new AtomicInteger();
+        try {
+            ((Configuration) context.getConfig())
+                    .set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 1);
+            List<Outcome<Integer>> result =
+                    runGather(
+                            context,
+                            List.of(
+                                    sequence::incrementAndGet,
+                                    sequence::incrementAndGet,
+                                    sequence::incrementAndGet));
+            assertThat(result).extracting(Outcome::getValue).containsExactly(1, 2, 3);
+        } finally {
+            executor.close();
+        }
+    }
+
+    @Test
+    void callerInterruptionCancelsRunningAndQueuedCalls() throws Exception {
+        Assumptions.assumeFalse(ContinuationActionExecutor.isContinuationSupported());
+        ContinuationActionExecutor executor = new ContinuationActionExecutor(1);
+        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+        ((Configuration) context.getConfig()).set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
+        ExecutorService driver = Executors.newSingleThreadExecutor();
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch interrupted = new CountDownLatch(1);
+        AtomicInteger unwantedCalls = new AtomicInteger();
+        try {
+            Future<?> batch =
+                    driver.submit(
+                            () ->
+                                    runGather(
+                                            context,
+                                            List.of(
+                                                    () -> {
+                                                        started.countDown();
+                                                        try {
+                                                            new CountDownLatch(1).await();
+                                                            return 0;
+                                                        } catch (InterruptedException e) {
+                                                            interrupted.countDown();
+                                                            throw e;
+                                                        }
+                                                    },
+                                                    unwantedCalls::incrementAndGet)));
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            batch.cancel(true);
+            assertThat(interrupted.await(5, TimeUnit.SECONDS)).isTrue();
+            driver.submit(() -> {}).get(5, TimeUnit.SECONDS);
+            executor.submitAsync(new ContinuationContext(), () -> "sentinel")
+                    .get(5, TimeUnit.SECONDS);
+            assertThat(unwantedCalls.get()).isZero();
+        } finally {
+            driver.shutdownNow();
+            executor.close();
+        }
+    }
+
+    /** Runs the production scheduler on both fallback workers and JDK 21 continuations. */
+    private static <T> List<Outcome<T>> runGather(
+            JavaRunnerContextImpl context, List<Callable<T>> calls) throws Exception {
+        CompletableFuture<List<Outcome<T>>> result = new CompletableFuture<>();
+        Runnable action =
+                () -> {
+                    try {
+                        List<AsyncFuture<T>> futures = new ArrayList<>();
+                        for (Callable<T> call : calls) {
+                            futures.add(context.executeAsync(call));
+                        }
+                        result.complete(context.gather(futures).await());
+                    } catch (Exception | Error failure) {
+                        result.completeExceptionally(failure);
+                    }
+                };
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!context.getContinuationExecutor()
+                .executeAction(context.getContinuationContext(), action)) {
+            assertTrue(System.nanoTime() < deadline, "Gather did not finish");
+            Thread.sleep(1);
+        }
+        return result.get(5, TimeUnit.SECONDS);
     }
 
     private JavaRunnerContextImpl createContext(

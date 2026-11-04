@@ -67,7 +67,6 @@ import org.apache.flink.agents.runtime.actionstate.ActionStateUtil;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
-import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
@@ -114,7 +113,6 @@ import pemja.core.PythonInterpreter;
 import java.io.IOException;
 import java.io.Serializable;
 import java.lang.reflect.Field;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -123,6 +121,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -1822,7 +1821,7 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
-    void closeInterruptsTimedOutPythonBatchBeforeJoiningActionWorkers() throws Exception {
+    void closeInterruptsOutstandingPythonCallBeforeJoiningActionWorkers() throws Exception {
         assumeFalse(ContinuationActionExecutor.isContinuationSupported());
         KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness = openCloseTestHarness();
         ActionExecutionOperator<?, ?> operator =
@@ -1889,17 +1888,19 @@ public class ActionExecutionOperatorTest {
                     @Override
                     public void execute() {
                         try {
-                            // The timed-out batch retains the lifecycle read lock; Action-worker
-                            // exit cleanup needs its write lock.
+                            // The callback retains the interpreter lifecycle read lock after
+                            // the action stops waiting. Action-worker exit needs its write lock.
                             interpreters.withInterpreter(interpreter -> null);
-                            BatchExecutionResult<String> result =
-                                    batch.executeAllAsync(
-                                            new ContinuationContext(),
-                                            List.of(pythonCall),
-                                            Duration.ofSeconds(1),
-                                            1);
-                            assertThat(result.getOutcomes().get(0).getError())
-                                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                            ContinuationContext context = new ContinuationContext();
+                            CompletableFuture<String> callback =
+                                    batch.submitAsync(context, pythonCall);
+                            // Time out only the wait, leaving outstanding work for shutdown.
+                            CompletableFuture<String> wait =
+                                    callback.thenApply(value -> value)
+                                            .orTimeout(1, TimeUnit.SECONDS);
+                            assertThatThrownBy(() -> batch.awaitFuture(context, wait))
+                                    .hasCauseInstanceOf(
+                                            java.util.concurrent.TimeoutException.class);
                         } catch (Throwable t) {
                             actionFailure.set(t);
                         }

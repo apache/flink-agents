@@ -23,7 +23,6 @@ import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
-import org.apache.flink.agents.runtime.async.ContinuationNativeCallable;
 import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.util.function.FunctionWithException;
 
@@ -245,17 +244,7 @@ class SingleAsyncFuture<T> extends AsyncFutureImpl<T> implements SchedulableFutu
                     }
                     return execution.call();
                 };
-        if (getDurableCallable() instanceof ContinuationNativeCallable) {
-            // These calls yield the caller's continuation and must not run on a pool worker.
-            completion = new CompletableFuture<>();
-            try {
-                completion.complete(work.call());
-            } catch (Throwable failure) {
-                completion.completeExceptionally(failure);
-            }
-        } else {
-            completion = getOwner().submitAsync(work);
-        }
+        completion = getOwner().submitAsync(work);
         return completion;
     }
 

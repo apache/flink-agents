@@ -17,37 +17,27 @@
  */
 package org.apache.flink.agents.runtime.async;
 
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-
-import org.apache.flink.agents.api.context.Outcome;
-
-import jdk.internal.vm.Continuation;
-import jdk.internal.vm.ContinuationScope;
-
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionContextLifecycle;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
 
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import jdk.internal.vm.Continuation;
+import jdk.internal.vm.ContinuationScope;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Executor for Java actions that supports asynchronous execution using JDK 21+ Continuation API.
@@ -97,18 +87,17 @@ public class ContinuationActionExecutor {
     /**
      * Executes the action inside a Continuation.
      *
-     * <p>If the action calls executeAsync and yields, this method checks if the async Future is
-     * done. If not done, returns false to indicate the action is not finished. If done, resumes the
-     * Continuation.
+     * <p>If the action calls executeAsync or awaitFuture and yields, this method checks if the
+     * Future is done. If not done, returns false to indicate the action is not finished. If done,
+     * resumes the Continuation.
      *
      * @param context the continuation context for this action
      * @param action the action to execute
      * @return true if the action completed, false if waiting for async execution
      */
     public boolean executeAction(ContinuationContext context, Runnable action) {
-        // Wait while async work is still pending, unless the batch deadline elapsed — then resume
-        // so executeAllAsync can finalize timed-out slots.
-        if (context.hasPendingAsync() && !context.isBatchDeadlineElapsed()) {
+        // The runner completes the pending signal when work finishes or its timeout expires.
+        if (context.hasPendingAsync()) {
             return false;
         }
 
@@ -116,11 +105,6 @@ public class ContinuationActionExecutor {
         if (pending != null) {
             LOG.debug("Async task done...");
             context.setPendingFuture(null);
-        }
-        Future<?> pendingBatch = context.getPendingBatchFuture();
-        if (pendingBatch != null) {
-            LOG.debug("Async batch done...");
-            context.setPendingBatchFuture(null);
         }
 
         Continuation currentContinuation = context.getCurrentContinuation();
@@ -132,7 +116,7 @@ public class ContinuationActionExecutor {
         }
 
         // Run the continuation. It returns either when the action completes or when it yields
-        // inside executeAsync; in the latter case we return false and let the next executeAction
+        // inside executeAsync or awaitFuture; return false and let the next executeAction
         // call observe pendingFuture completion and resume.
         currentContinuation.run();
 
@@ -143,7 +127,7 @@ public class ContinuationActionExecutor {
             return true;
         } else {
             // Continuation yielded, waiting for async task
-            // pendingFuture should have been set by executeAsync
+            // pendingFuture was set by executeAsync or awaitFuture.
             LOG.debug("Current continuation still running.");
             return false;
         }
@@ -212,99 +196,6 @@ public class ContinuationActionExecutor {
         return (T) context.getAsyncResultRef().get();
     }
 
-    /**
-     * Executes all suppliers as one async batch and returns one {@link Outcome} per supplier.
-     * Supplier failures are captured in their own outcome so one failed supplier does not abort the
-     * whole batch.
-     *
-     * @param context the continuation context for this action
-     * @param suppliers the suppliers to execute
-     * @param timeout the timeout for the whole batch; null or non-positive means no timeout
-     * @param <T> the result type
-     * @return outcomes in supplier order
-     */
-    @SuppressWarnings("unchecked")
-    public <T> BatchExecutionResult<T> executeAllAsync(
-            ContinuationContext context,
-            List<Callable<T>> suppliers,
-            Duration timeout,
-            int maxParallelism)
-            throws Exception {
-        context.clearAsyncState();
-        if (suppliers.isEmpty()) {
-            return new BatchExecutionResult<>(List.of(), new boolean[0]);
-        }
-
-        final int batchSize = suppliers.size();
-        CompletableFuture<Outcome<T>>[] slots = new CompletableFuture[batchSize];
-        AtomicIntegerArray started = new AtomicIntegerArray(batchSize);
-        boolean[] counted = new boolean[batchSize];
-        int completed = 0;
-        int nextToSubmit = 0;
-        int parallelismLimit = Math.min(Math.max(maxParallelism, 1), batchSize);
-
-        long deadlineNanos = getDeadlineNanos(timeout);
-        Executor executor = prioritizedExecutor(context);
-
-        while (completed < batchSize) {
-            if (System.nanoTime() >= deadlineNanos) {
-                TimeoutException exception =
-                        new TimeoutException(
-                                "Async durable batch execution timed out after " + timeout);
-                context.setPendingBatchFuture(null);
-                return collectBatchOutcomesOnTimeout(slots, started, exception);
-            }
-
-            while (nextToSubmit < batchSize && countInFlight(slots, nextToSubmit) < parallelismLimit) {
-                int index = nextToSubmit++;
-                Callable<T> supplier = suppliers.get(index);
-                slots[index] =
-                        CompletableFuture.supplyAsync(
-                                () -> {
-                                    // Mark started only when the worker truly begins, so a task
-                                    // queued in a saturated pool but never run stays re-executable
-                                    // on recovery instead of being recorded as a timeout failure.
-                                    started.set(index, 1);
-                                    try {
-                                        return Outcome.success(supplier.call());
-                                    } catch (Exception e) {
-                                        return Outcome.failure(e);
-                                    }
-                                }, executor);
-            }
-
-            List<CompletableFuture<?>> inFlight = new ArrayList<>(parallelismLimit);
-            for (int i = 0; i < nextToSubmit; i++) {
-                if (slots[i].isDone()) {
-                    if (!counted[i]) {
-                        counted[i] = true;
-                        completed++;
-                    }
-                } else {
-                    inFlight.add(slots[i]);
-                }
-            }
-
-            if (completed < batchSize) {
-                if (inFlight.isEmpty()) {
-                    continue;
-                }
-
-                CompletableFuture<Object> progressBarrier =
-                        CompletableFuture.anyOf(
-                                inFlight.toArray(new CompletableFuture<?>[0]));
-                context.setPendingBatchFuture(progressBarrier, deadlineNanos);
-                if (!progressBarrier.isDone()) {
-                    Continuation.yield(SCOPE);
-                }
-                context.setPendingBatchFuture(null);
-            }
-        }
-
-        context.setPendingBatchFuture(null);
-        return collectBatchOutcomes(Arrays.asList(slots), started);
-    }
-
     /** Returns an executor that queues work at the priority of {@code context}. */
     private Executor prioritizedExecutor(ContinuationContext context) {
         long recordIndex = context.getRecordIndex();
@@ -346,101 +237,6 @@ public class ContinuationActionExecutor {
             int byTask = Long.compare(taskIndex, other.taskIndex);
             return byTask != 0 ? byTask : Long.compare(sequence, other.sequence);
         }
-    }
-
-    private static <T> int countInFlight(
-            CompletableFuture<Outcome<T>>[] slots, int submittedCount) {
-        int inFlight = 0;
-        for (int i = 0; i < submittedCount; i++) {
-            if (!slots[i].isDone()) {
-                inFlight++;
-            }
-        }
-        return inFlight;
-    }
-
-
-    /**
-     * Collects per-slot outcomes after the batch barrier completes normally.
-     *
-     * <p>Each supplier already wraps success and failure into an {@link Outcome}, so {@code join()}
-     * returns that outcome rather than throwing for ordinary tool exceptions.
-     */
-    private static <T> BatchExecutionResult<T> collectBatchOutcomes(
-            List<CompletableFuture<Outcome<T>>> futures, AtomicIntegerArray started) {
-        List<Outcome<T>> results = new ArrayList<>(futures.size());
-        for (CompletableFuture<Outcome<T>> future : futures) {
-            results.add(joinBatchOutcome(future));
-        }
-        return new BatchExecutionResult<>(results, toStartedFlags(started));
-    }
-
-    /**
-     * Collects per-slot outcomes when the batch deadline elapses.
-     *
-     * <p>Completed slots keep their success or failure outcome. A slot whose worker never began
-     * ({@code started == 0}) is reported as a timeout failure but flagged as not started, so the
-     * caller leaves it pending for re-execution on recovery. Slots that started but are still
-     * running are cancelled and finalized as timeout failures; {@code cancel(true)} is attempted
-     * only for unfinished futures, and a future that completes between the check and cancel stays
-     * non-cancelled and is collected as a normal outcome.
-     *
-     * <p>Queued-but-unstarted slots are cancelled too. Unlike Python's {@code
-     * ThreadPoolExecutor.Future.cancel}, {@link CompletableFuture#cancel} cannot contractually
-     * retract a supplier already handed to the executor: skipping it is a best-effort effect of
-     * common JVM implementations, not a guarantee. Correctness therefore never depends on the
-     * cancel taking effect — whether the supplier actually ran is decided when recovery sees the
-     * {@code started} flag — but on JVMs that do skip cancelled suppliers this avoids executing
-     * the tool after the batch already timed out, only to discard its result.
-     */
-    private static <T> BatchExecutionResult<T> collectBatchOutcomesOnTimeout(
-            CompletableFuture<Outcome<T>>[] futures,
-            AtomicIntegerArray started,
-            TimeoutException timeoutException) {
-        List<Outcome<T>> results = new ArrayList<>(futures.length);
-        for (int i = 0; i < futures.length; i++) {
-            CompletableFuture<Outcome<T>> future = futures[i];
-            if (future == null) {
-                results.add(Outcome.failure(timeoutException));
-                continue;
-            }
-            if (!future.isDone()) {
-                future.cancel(true);
-            }
-            if (future.isDone() && !future.isCancelled()) {
-                results.add(joinBatchOutcome(future));
-            } else {
-                results.add(Outcome.failure(timeoutException));
-            }
-        }
-        return new BatchExecutionResult<>(results, toStartedFlags(started));
-    }
-
-    private static <T> Outcome<T> joinBatchOutcome(CompletableFuture<Outcome<T>> future) {
-        try {
-            return future.join();
-        } catch (CompletionException e) {
-            // Business Exceptions are already stored in Outcome. Preserve a worker's Error
-            // instead of exposing CompletableFuture's wrapper to catch (Exception) handlers.
-            if (e.getCause() instanceof Error) {
-                throw (Error) e.getCause();
-            }
-            throw e;
-        }
-    }
-
-    private static boolean[] toStartedFlags(AtomicIntegerArray started) {
-        boolean[] flags = new boolean[started.length()];
-        for (int i = 0; i < flags.length; i++) {
-            flags[i] = started.get(i) == 1;
-        }
-        return flags;
-    }
-
-    private long getDeadlineNanos(Duration timeout) {
-        return timeout == null || timeout.isZero() || timeout.isNegative()
-                ? Long.MAX_VALUE
-                : System.nanoTime() + timeout.toNanos();
     }
 
     /**
