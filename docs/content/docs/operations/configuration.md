@@ -94,6 +94,19 @@ agent:
     async: true
 ```
 
+In Java, settings can also be written as flattened keys prefixed with `agent.`:
+
+```yaml
+agent.max-retries: 3
+agent.chat.async: true
+```
+
+This is the only form the legacy `flink-conf.yaml` supports. Java reads that file with Flink's
+legacy rules rather than as YAML, as Flink 1.20 does: one `key: value` pair per line, split on
+the first `": "`, with `#` starting a comment, invalid lines skipped and a repeated key overriding
+earlier ones. Values are read as strings and converted when an option is read, so list-typed
+options such as `event-listeners` cannot be set in `flink-conf.yaml`.
+
 #### Loading Behavior
 
 When creating an `AgentsExecutionEnvironment` for a Flink job, Flink Agents loads
@@ -104,7 +117,13 @@ Set this environment variable before creating the environment:
 export FLINK_CONF_DIR="/path/to/flink/conf"
 ```
 
-`FLINK_CONF_DIR` points to a directory. Java reads `config.yaml` from that directory.
+`FLINK_CONF_DIR` points to a directory. Java selects the file the way Flink itself does:
+
+| Flink version | Files read |
+| --- | --- |
+| 1.20 | `flink-conf.yaml` if it exists (legacy rules), otherwise `config.yaml` (standard YAML) |
+| 2.0 and later | `config.yaml` only (standard YAML) |
+
 Python reads `flink-conf.yaml` if it exists, otherwise `config.yaml`.
 
 If `FLINK_CONF_DIR` is unset, no YAML configuration file is loaded. Configuration
