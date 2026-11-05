@@ -44,6 +44,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -118,6 +119,35 @@ public class CompileUtilsTest {
         resultList.sort(Long::compareTo);
 
         checkResult(resultList);
+    }
+
+    @Test
+    void connectToAgentWithUidSetsUidOnAgentTransformation() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        KeyedStream<Long, Long> keyedInputStream = env.fromData(testSequence).keyBy(x -> x);
+
+        DataStream<Object> withUid =
+                CompileUtils.connectToAgent(keyedInputStream, TEST_AGENT_PLAN, "agent-uid");
+        DataStream<Object> withoutUid =
+                CompileUtils.connectToAgent(keyedInputStream, TEST_AGENT_PLAN);
+        DataStream<Object> nullUid =
+                CompileUtils.connectToAgent(keyedInputStream, TEST_AGENT_PLAN, null);
+
+        assertThat(withUid.getTransformation().getUid()).isEqualTo("agent-uid");
+        assertThat(withoutUid.getTransformation().getUid()).isNull();
+        assertThat(nullUid.getTransformation().getUid()).isNull();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", " ", "   "})
+    void connectToAgentRejectsBlankUid(String uid) {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        KeyedStream<Long, Long> keyedInputStream = env.fromData(testSequence).keyBy(x -> x);
+
+        assertThatThrownBy(
+                        () -> CompileUtils.connectToAgent(keyedInputStream, TEST_AGENT_PLAN, uid))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must not be empty or blank");
     }
 
     @Test

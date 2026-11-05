@@ -76,6 +76,7 @@ class RemoteAgentBuilder(AgentBuilder):
 
     __input: DataStream
     __agent_plan_json: str | None = None
+    __agent_uid: str | None = None
     __raw_output: DataStream = None
     __t_env: StreamTableEnvironment
     __config: AgentConfiguration
@@ -106,7 +107,7 @@ class RemoteAgentBuilder(AgentBuilder):
             )
         return self.__t_env
 
-    def apply(self, agent: Agent | str) -> "AgentBuilder":
+    def apply(self, agent: Agent | str, uid: str | None = None) -> "AgentBuilder":
         """Set agent of execution environment.
 
         Parameters
@@ -114,10 +115,22 @@ class RemoteAgentBuilder(AgentBuilder):
         agent : Agent | str
             Either an Agent instance, or the name of an agent registered
             on the environment (e.g. by ``load_yaml``).
+        uid : str | None
+            Optional stable UID of the agent operator. It identifies the operator
+            in the job, so it must be unique there. When omitted, no UID is set
+            and the generated operator ID is unchanged. An empty or blank UID is
+            rejected.
         """
         if self.__agent_plan_json is not None:
             err_msg = "RemoteAgentBuilder doesn't support apply multiple agents yet."
             raise RuntimeError(err_msg)
+        if uid is not None and (not isinstance(uid, str) or not uid.strip()):
+            msg = (
+                "The agent operator UID must not be empty or blank; pass a "
+                "non-blank UID, or None to leave the UID unset and keep the "
+                "generated operator ID."
+            )
+            raise ValueError(msg)
         agent_name = None
         if isinstance(agent, str):
             agent_name = agent
@@ -150,6 +163,7 @@ class RemoteAgentBuilder(AgentBuilder):
         ).model_dump_json(serialize_as_any=True)
         self.__validate_agent_plan_json(agent_plan_json)
         self.__agent_plan_json = agent_plan_json
+        self.__agent_uid = uid
 
         return self
 
@@ -190,9 +204,11 @@ class RemoteAgentBuilder(AgentBuilder):
                 [
                     self.__input._j_data_stream,
                     self.__agent_plan_json,
+                    self.__agent_uid,
                 ],
                 [
                     "org.apache.flink.streaming.api.datastream.KeyedStream",
+                    "java.lang.String",
                     "java.lang.String",
                 ],
             )

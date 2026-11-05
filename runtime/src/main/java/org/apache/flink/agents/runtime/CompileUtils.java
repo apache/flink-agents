@@ -30,9 +30,12 @@ import org.apache.flink.configuration.ExecutionOptions;
 import org.apache.flink.configuration.ReadableConfig;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.typeinfo.python.PickledByteArrayTypeInfo;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.StringUtils;
+
+import javax.annotation.Nullable;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkState;
@@ -47,6 +50,18 @@ public class CompileUtils {
     // ============================ invoke by python ====================================
     public static DataStream<byte[]> connectToAgent(
             KeyedStream<Row, Row> inputDataStream, String agentPlanJson)
+            throws JsonProcessingException {
+        return connectToAgent(inputDataStream, agentPlanJson, null);
+    }
+
+    /**
+     * Same as {@link #connectToAgent(KeyedStream, String)}, with a stable UID on the agent
+     * operator.
+     *
+     * @param uid The operator UID, or {@code null} to leave it unset.
+     */
+    public static DataStream<byte[]> connectToAgent(
+            KeyedStream<Row, Row> inputDataStream, String agentPlanJson, @Nullable String uid)
             throws JsonProcessingException {
         TypeInformation<?> inputType = inputDataStream.getType();
         checkArgument(
@@ -64,19 +79,60 @@ public class CompileUtils {
                 agentPlan,
                 TypeInformation.of(byte[].class),
                 false,
-                isPickledPythonFieldType(inputDataStream.getKeyType(), PYTHON_KEY_FIELD_INDEX));
+                isPickledPythonFieldType(inputDataStream.getKeyType(), PYTHON_KEY_FIELD_INDEX),
+                uid);
     }
 
     // ============================ invoke by java ====================================
     public static <IN, K> DataStream<Object> connectToAgent(
             DataStream<IN> inputStream, KeySelector<IN, K> keySelector, AgentPlan agentPlan) {
-        return connectToAgent(inputStream.keyBy(keySelector), agentPlan);
+        return connectToAgent(inputStream.keyBy(keySelector), agentPlan, null);
     }
 
     public static <IN, K> DataStream<Object> connectToAgent(
             KeyedStream<IN, K> keyedInputStream, AgentPlan agentPlan) {
+        return connectToAgent(keyedInputStream, agentPlan, null);
+    }
+
+    /**
+     * Same as {@link #connectToAgent(DataStream, KeySelector, AgentPlan)}, with a stable UID on the
+     * agent operator.
+     *
+     * @param uid The operator UID, or {@code null} to leave it unset.
+     */
+    public static <IN, K> DataStream<Object> connectToAgent(
+            DataStream<IN> inputStream,
+            KeySelector<IN, K> keySelector,
+            AgentPlan agentPlan,
+            @Nullable String uid) {
+        return connectToAgent(inputStream.keyBy(keySelector), agentPlan, uid);
+    }
+
+    /**
+     * Same as {@link #connectToAgent(KeyedStream, AgentPlan)}, with a stable UID on the agent
+     * operator.
+     *
+     * @param uid The operator UID, or {@code null} to leave it unset.
+     */
+    public static <IN, K> DataStream<Object> connectToAgent(
+            KeyedStream<IN, K> keyedInputStream, AgentPlan agentPlan, @Nullable String uid) {
         return connectToAgent(
-                keyedInputStream, agentPlan, TypeInformation.of(Object.class), true, false);
+                keyedInputStream, agentPlan, TypeInformation.of(Object.class), true, false, uid);
+    }
+
+    /**
+     * Rejects an empty or whitespace-only operator UID. A {@code null} UID means "not set" and is
+     * accepted.
+     *
+     * @throws IllegalArgumentException if the UID is non-null and blank.
+     */
+    public static void validateOperatorUid(@Nullable String uid) {
+        if (uid != null && StringUtils.isNullOrWhitespaceOnly(uid)) {
+            throw new IllegalArgumentException(
+                    "The agent operator UID must not be empty or blank; pass a non-blank UID,"
+                            + " or null to leave the UID unset and keep the generated"
+                            + " operator ID.");
+        }
     }
 
     // ============================ basic ====================================
@@ -92,6 +148,8 @@ public class CompileUtils {
      * @param inputIsJava A flag indicating whether the input stream originates from Java. - If
      *     true, input and output types are Java Objects. - If false, input and output types are
      *     byte[].
+     * @param uid The UID to set on the agent operator, or {@code null} to leave it unset so Flink
+     *     generates the operator ID from the topology.
      * @param <K> The type of the key used in the keyed DataStream.
      * @param <IN> The type of the input data (Object or byte[]).
      * @param <OUT> The type of the output data (Object or byte[]).
@@ -102,12 +160,14 @@ public class CompileUtils {
             AgentPlan agentPlan,
             TypeInformation<OUT> outTypeInformation,
             boolean inputIsJava,
-            boolean pythonKeyIsPickled) {
+            boolean pythonKeyIsPickled,
+            @Nullable String uid) {
+        validateOperatorUid(uid);
         checkBatchStateBackendCompatibility(keyedInputStream);
         String agentName = agentPlan.getAgentName();
         String operatorName =
                 StringUtils.isNullOrWhitespaceOnly(agentName) ? DEFAULT_OPERATOR_NAME : agentName;
-        return (DataStream<OUT>)
+        SingleOutputStreamOperator<OUT> agentStream =
                 keyedInputStream
                         .transform(
                                 operatorName,
@@ -115,6 +175,10 @@ public class CompileUtils {
                                 new ActionExecutionOperatorFactory(
                                         agentPlan, inputIsJava, pythonKeyIsPickled))
                         .setParallelism(keyedInputStream.getParallelism());
+        if (uid != null) {
+            agentStream.uid(uid);
+        }
+        return agentStream;
     }
 
     /**
