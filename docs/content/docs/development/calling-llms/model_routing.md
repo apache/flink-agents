@@ -41,8 +41,9 @@ Routing can also try another candidate if the initial model call fails.
 
 {{< hint info >}}
 Routers currently support the Java Programmatic API: register them on an Agent or
-its execution environment. There is no router declaration annotation, Python
-registration API, or YAML router section. The built-in `ReActAgent` does not
+its execution environment. Python supports programmatic router declarations with
+rule-based and custom strategies. YAML router declarations and Java annotations
+are separate entry points and are not supported here. The built-in `ReActAgent` does not
 accept a router in place of its chat model setup.
 {{< /hint >}}
 
@@ -91,8 +92,8 @@ environment.
 | `fallback(boolean)` | Optional | Try remaining candidates after the selected model fails. Defaults to `false`. |
 | `build()` | Required | Validate the declaration and produce the descriptor. |
 
-A resource name cannot identify both a chat model and a router. Candidates and
-judges must be chat model setups; a router cannot serve as another router's
+Within one scope, a resource name cannot identify both a chat model and a router.
+Candidates and judges must be chat model setups; a router cannot serve as another router's
 candidate or judge, or as a chat model connection.
 
 ## Routing Strategies
@@ -424,3 +425,58 @@ for the persistence and replay guarantees.
 - {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/openai/OpenAiDecisionRoutingExample.java" name="`OpenAiDecisionRoutingExample`" >}}: the same two OpenAI models routed by a decision model (the built-in Python OpenAI decision model, used through the cross-language API), with an agent that reports the selected model, decision source and score.
 
 All of them register their resources on the execution environment. The first three use the {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/agents/ModelRoutingAgent.java" name="`ModelRoutingAgent`" >}} to send requests and handle responses.
+
+
+## Python routers
+
+Register the candidate chat models as usual, then register a router on the agent
+or its execution environment. A router name can be passed to `ChatRequestEvent`
+or `ctx.chat` wherever a concrete chat model name is accepted.
+
+```python
+from flink_agents.api.chat_models.routing import ModelRouter, Strategies
+from flink_agents.api.resource import ResourceType
+
+agent.add_resource(
+    "router",
+    ResourceType.MODEL_ROUTER,
+    ModelRouter.of("small", "big")
+    .strategy(Strategies.rules({"big": r"code|sql"}))
+    .default_model("small")
+    .fallback(enabled=True)
+    .build(),
+)
+```
+
+In Python sub-agent scopes, chat models and routers share a name namespace.
+A local declaration of either type shadows an inherited declaration of the same
+name, including the other type. Unshadowed routers remain inherited. Declaring
+both types under one name in the same scope is rejected.
+
+Rules inspect the latest user text in declaration order. Python uses
+`re.IGNORECASE | re.ASCII`. Patterns must compile in both Python and Java because
+the Java plan validator also checks Python descriptors: Python named groups
+(`(?P<name>...)`) and Java Unicode properties (`\p{Alpha}`) are not portable.
+Matching is not identical for every expression. For example, Java 11's `\b`
+recognizes Unicode word boundaries while Python's ASCII mode does not; newer
+JDKs can behave differently. Use plain keyword patterns when sharing rules.
+
+For custom routing, subclass `CustomRoutingExecutor` and implement
+`route(strategy, context) -> RoutingDecision`. Use `Strategies.custom(MyExecutor,
+{"key": "value"})`; the class must be importable by its module and class name.
+The constructor may accept the argument map or no arguments. The context is a
+snapshot of the messages, prompt arguments and candidates; it provides no model
+invocation API. Return `RoutingDecision.of("big")` to select or
+`RoutingDecision.abstain()` to use the default. A non-candidate selection also
+uses the default and records the rejected name. An executor exception fails the
+request instead of triggering fallback.
+
+Selection runs once per initial request. After a candidate exhausts retries,
+fallback tries the remaining candidates in declaration order. Once a model
+starts a tool loop, subsequent rounds use that model without routing or fallback.
+With durable execution enabled, `route:<router>` stores the decision or strategy
+error, and `chat:<router>:<candidate>` stores each model attempt. Recovery reuses
+those records. Routing events and the `model_routing` final-response attribute
+report selection and fallback; `routingDecisionLatencyMs` records decision time.
+Python decision-model routing is rejected during plan compilation and remains a
+separate follow-up.

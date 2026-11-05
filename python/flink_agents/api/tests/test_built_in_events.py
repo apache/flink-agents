@@ -60,6 +60,7 @@ from flink_agents.api.events.memory_event import (
     ShortTermReadEvent,
     ShortTermWriteEvent,
 )
+from flink_agents.api.events.model_routing_event import ModelRoutingEvent
 from flink_agents.api.events.run_event import AgentRunBeginEvent
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 
@@ -368,9 +369,18 @@ def _valid_attributes_by_type() -> dict:
     Each entry satisfies both its ``from_event`` schema check and the concrete
     constructor, so the positive-control test below proves the fixtures are
     genuinely valid and the unknown-attribute test fails only because of the
-    injected key. ``ModelRoutingEvent`` is Java-only and absent from ``REGISTRY``.
+    injected key.
     """
     return {
+        ModelRoutingEvent.EVENT_TYPE: {
+            "request_id": _REQUEST_ID,
+            "router": "router",
+            "candidates": ["small"],
+            "selected_model": "small",
+            "decision_source": "strategy",
+            "fallback_enabled": False,
+            "metadata": {},
+        },
         InputEvent.EVENT_TYPE: {"input": "hello"},
         OutputEvent.EVENT_TYPE: {"output": "world"},
         ChatRequestEvent.EVENT_TYPE: {"model": "test-model", "messages": []},
@@ -535,13 +545,23 @@ def _mistyped_attribute_cases() -> list[tuple[str, str, object]]:
     Mirrors the Java ``mistypedAttributeCases``: each row overrides (required) or
     adds (optional) one attribute of that type's minimal-valid fixture with a value
     of the wrong shape, so the only schema violation is the target attribute's
-    type. ``ModelRoutingEvent`` is Java-only and absent here. Untyped attributes
+    type. Untyped attributes
     (``required_untyped`` / ``optional_untyped``) are omitted because the boundary
     performs no type check on them;
     :func:`test_mistyped_attribute_cases_cover_every_typed_schema_attribute` keeps
     this table in lockstep with the schemas.
     """
     return [
+        (ModelRoutingEvent.EVENT_TYPE, "request_id", "not-a-uuid"),
+        (ModelRoutingEvent.EVENT_TYPE, "router", 0),
+        (ModelRoutingEvent.EVENT_TYPE, "candidates", [0]),
+        (ModelRoutingEvent.EVENT_TYPE, "selected_model", 0),
+        (ModelRoutingEvent.EVENT_TYPE, "decision_source", 0),
+        (ModelRoutingEvent.EVENT_TYPE, "fallback_enabled", "false"),
+        (ModelRoutingEvent.EVENT_TYPE, "metadata", "not-a-map"),
+        (ModelRoutingEvent.EVENT_TYPE, "reason", 0),
+        (ModelRoutingEvent.EVENT_TYPE, "score", "not-a-number"),
+        (ModelRoutingEvent.EVENT_TYPE, "decision_ms", "not-a-number"),
         # ChatRequestEvent
         (ChatRequestEvent.EVENT_TYPE, "model", 0),
         (ChatRequestEvent.EVENT_TYPE, "messages", [0]),

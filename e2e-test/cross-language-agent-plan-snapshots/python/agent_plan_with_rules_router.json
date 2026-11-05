@@ -1,0 +1,83 @@
+{
+  "actions": {
+    "chat_model_action": {
+      "name": "chat_model_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.actions.chat_model_action",
+        "qualname": "process_chat_request_or_tool_response"
+      },
+      "trigger_conditions": [
+        "_chat_request_event",
+        "_tool_response_event"
+      ],
+      "config": null
+    },
+    "tool_call_action": {
+      "name": "tool_call_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.actions.tool_call_action",
+        "qualname": "process_tool_request"
+      },
+      "trigger_conditions": [
+        "_tool_request_event"
+      ],
+      "config": null
+    },
+    "context_retrieval_action": {
+      "name": "context_retrieval_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.actions.context_retrieval_action",
+        "qualname": "process_context_retrieval_request"
+      },
+      "trigger_conditions": [
+        "_context_retrieval_request_event"
+      ],
+      "config": null
+    },
+    "decision_model_action": {
+      "name": "decision_model_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.actions.decision_model_action",
+        "qualname": "process_decision_request"
+      },
+      "trigger_conditions": [
+        "_decision_request_event"
+      ],
+      "config": null
+    }
+  },
+  "resource_providers": {
+    "model_router": {
+      "router": {
+        "name": "router",
+        "type": "model_router",
+        "descriptor": {
+          "language": "python",
+          "target_module": "flink_agents.api.chat_models.routing",
+          "target_clazz": "ModelRouter",
+          "arguments": {
+            "candidates": [
+              "small",
+              "big"
+            ],
+            "strategy_type": "rule_based",
+            "strategy_args": {
+              "rules": {
+                "big": "code"
+              }
+            }
+          }
+        },
+        "__resource_provider_type__": "PythonResourceProvider"
+      }
+    }
+  },
+  "agent_name": "Agent",
+  "config": {
+    "conf_data": {}
+  }
+}

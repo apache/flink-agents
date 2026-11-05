@@ -182,6 +182,7 @@ def _create_mock_runner_context(
     ctx.sensory_memory = sensory_memory
     ctx.action_metric_group = metric_group
     ctx.send_event = MagicMock(side_effect=lambda e: sent_events.append(e))
+    ctx.has_resource = MagicMock(return_value=False)
     ctx.get_resource = MagicMock(return_value=chat_model)
     # Like the runtime, the reserved durable_id keyword is not forwarded to fn.
     ctx.durable_execute = MagicMock(
