@@ -950,7 +950,22 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     @Override
     public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
-        return new SingleDurableFuture<>(this, Preconditions.checkNotNull(callable));
+        Preconditions.checkNotNull(callable);
+        return durableExecuteAsync(callable.getId(), callable.getResultClass(), () -> callable);
+    }
+
+    /**
+     * Reserves a durable call before invoking user preparation on the mailbox. Terminal replay
+     * skips preparation; ordinary preparation failures are recorded in the same slot as execution.
+     * The prepared callable must use the supplied id and result class.
+     */
+    public <T> DurableFuture<T> durableExecuteAsync(
+            String id, Class<T> resultClass, Callable<DurableCallable<T>> preparation) {
+        return new SingleDurableFuture<>(
+                this,
+                Preconditions.checkNotNull(id),
+                Preconditions.checkNotNull(resultClass),
+                Preconditions.checkNotNull(preparation));
     }
 
     @Override

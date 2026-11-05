@@ -181,23 +181,28 @@ public abstract class AsyncFutureImpl<T> implements AsyncFuture<T> {
     }
 }
 
-/** Ordinary callable; durable subclasses reuse the same scheduling lifecycle. */
+/** Single-call execution, completion collection, and cancellation shared by runtime futures. */
 class SingleAsyncFuture<T> extends AsyncFutureImpl<T> implements SchedulableFuture<T> {
-    private final Callable<T> callable;
     private Callable<T> execution;
-    private DurableCallSlot<T> slot;
     private CompletableFuture<T> completion;
-    private boolean prepared;
     private volatile boolean started;
     private boolean stopped;
 
     SingleAsyncFuture(RunnerContextImpl owner, Callable<T> callable) {
         super(owner);
-        this.callable = callable;
+        execution = callable;
     }
 
-    DurableCallable<T> getDurableCallable() {
-        return null;
+    SingleAsyncFuture(RunnerContextImpl owner) {
+        super(owner);
+    }
+
+    protected final void setExecution(Callable<T> execution) {
+        this.execution = execution;
+    }
+
+    protected final boolean hasStarted() {
+        return started;
     }
 
     @Override
@@ -207,22 +212,6 @@ class SingleAsyncFuture<T> extends AsyncFutureImpl<T> implements SchedulableFutu
 
     @Override
     public Outcome<T> prepare(RunnerContextImpl context) throws Exception {
-        if (prepared || isDone()) {
-            return isDone() ? getCompletedOutcome() : null;
-        }
-        execution = callable;
-        DurableCallable<T> durable = getDurableCallable();
-        if (durable != null) {
-            slot = new DurableCallSlot<>(getOwner(), durable.getId(), durable.getResultClass());
-            Outcome<T> recorded = slot.prepare();
-            if (recorded != null) {
-                complete(recorded);
-            }
-            if (slot.isRecovering() && durable.reconciler() != null) {
-                execution = durable.reconciler();
-            }
-        }
-        prepared = true;
         return isDone() ? getCompletedOutcome() : null;
     }
 
@@ -250,28 +239,15 @@ class SingleAsyncFuture<T> extends AsyncFutureImpl<T> implements SchedulableFutu
 
     @Override
     public Outcome<T> finish(TimeoutException timeout) throws Exception {
-        if (isDone()) {
-            return getCompletedOutcome();
-        }
-        if (timeout != null) {
-            Outcome<T> result = Outcome.failure(timeout);
-            if (slot != null && started) {
-                slot.finish(result);
-            }
-            complete(result);
-        } else {
-            Outcome<T> result = getOutcome(completion);
-            try {
-                if (slot != null) {
-                    slot.finish(result);
-                }
-            } catch (Exception e) {
-                rethrowFatal(e);
-                result = Outcome.failure(e);
-            }
-            complete(result);
+        if (!isDone()) {
+            complete(collectOutcome(timeout));
         }
         return getCompletedOutcome();
+    }
+
+    /** Reads the outcome without marking the future complete. */
+    protected final Outcome<T> collectOutcome(TimeoutException timeout) throws Exception {
+        return timeout != null ? Outcome.failure(timeout) : getOutcome(completion);
     }
 
     @Override
@@ -295,16 +271,78 @@ class SingleAsyncFuture<T> extends AsyncFutureImpl<T> implements SchedulableFutu
 }
 
 final class SingleDurableFuture<T> extends SingleAsyncFuture<T> implements DurableFuture<T> {
-    private final DurableCallable<T> callable;
+    private final Callable<DurableCallable<T>> preparation;
+    private final String id;
+    private final Class<T> resultClass;
+    private final DurableCallSlot<T> slot;
+    private boolean prepared;
 
-    SingleDurableFuture(RunnerContextImpl owner, DurableCallable<T> callable) {
-        super(owner, callable::call);
-        this.callable = callable;
+    SingleDurableFuture(
+            RunnerContextImpl owner,
+            String id,
+            Class<T> resultClass,
+            Callable<DurableCallable<T>> preparation) {
+        super(owner);
+        this.id = id;
+        this.resultClass = resultClass;
+        this.preparation = preparation;
+        this.slot = new DurableCallSlot<>(owner, id, resultClass);
     }
 
     @Override
-    DurableCallable<T> getDurableCallable() {
-        return callable;
+    public Outcome<T> prepare(RunnerContextImpl context) throws Exception {
+        if (prepared || isDone()) {
+            return isDone() ? getCompletedOutcome() : null;
+        }
+        Outcome<T> recorded = slot.prepare();
+        if (recorded != null) {
+            complete(recorded);
+        } else {
+            try {
+                // User preparation runs on the mailbox only after its slot has been reserved.
+                setExecution(prepareExecution());
+            } catch (Exception e) {
+                rethrowFatal(e);
+                Outcome<T> failure = Outcome.failure(e);
+                slot.finish(failure);
+                complete(failure);
+            }
+        }
+        prepared = true;
+        return isDone() ? getCompletedOutcome() : null;
+    }
+
+    @Override
+    public Outcome<T> finish(TimeoutException timeout) throws Exception {
+        if (isDone()) {
+            return getCompletedOutcome();
+        }
+        Outcome<T> result = collectOutcome(timeout);
+        if (timeout != null) {
+            if (hasStarted()) {
+                slot.finish(result);
+            }
+        } else {
+            try {
+                slot.finish(result);
+            } catch (Exception e) {
+                rethrowFatal(e);
+                result = Outcome.failure(e);
+            }
+        }
+        complete(result);
+        return getCompletedOutcome();
+    }
+
+    private Callable<T> prepareExecution() throws Exception {
+        DurableCallable<T> prepared = preparation.call();
+        if (!id.equals(prepared.getId()) || resultClass != prepared.getResultClass()) {
+            throw new IllegalArgumentException(
+                    "Prepared callable must retain the reserved durable id and result class: "
+                            + id);
+        }
+        Callable<T> reconciler = slot.isRecovering() ? prepared.reconciler() : null;
+        return reconciler != null ? reconciler : prepared::call;
     }
 }
 

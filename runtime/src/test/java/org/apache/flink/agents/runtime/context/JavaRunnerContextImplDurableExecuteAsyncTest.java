@@ -92,6 +92,131 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     }
 
     @Test
+    void pendingCallPreparesOnMailboxAndReconcilesBeforeTerminalReplay() throws Exception {
+        ActionState state = new ActionState(null);
+        state.getCallResults().add(CallResult.pending("prepared"));
+        Thread mailbox = Thread.currentThread();
+        AtomicInteger preparations = new AtomicInteger();
+        try (var executor = new InspectingContinuationActionExecutor()) {
+            JavaRunnerContextImpl context = createContext(state, executor);
+            var future =
+                    context.durableExecuteAsync(
+                            "prepared",
+                            String.class,
+                            () -> {
+                                assertSame(mailbox, Thread.currentThread());
+                                assertEquals(1, context.getCurrentCallIndex());
+                                assertTrue(state.getCallResults().get(0).isPending());
+                                preparations.incrementAndGet();
+                                return new TestReconcilableCallable<>(
+                                        "prepared",
+                                        String.class,
+                                        () ->
+                                                fail(
+                                                        "A pending call must reconcile instead of submitting again"),
+                                        () -> "reconciled");
+                            });
+            var batch = context.gather(List.of(future));
+            assertEquals(0, preparations.get());
+            assertEquals("reconciled", batch.await().get(0).getValue());
+            assertTrue(state.getCallResults().get(0).isSuccess());
+            assertEquals(1, preparations.get());
+            JavaRunnerContextImpl recovered = createContext(state, executor);
+            assertEquals(
+                    "reconciled",
+                    recovered
+                            .durableExecuteAsync(
+                                    "prepared",
+                                    String.class,
+                                    () -> fail("Terminal replay must skip preparation"))
+                            .await());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"framework", "cancel", "interrupt", "error"})
+    void preparationFatalFailureLeavesPendingSlot(String kind) throws Exception {
+        Throwable failure;
+        switch (kind) {
+            case "framework":
+                failure = UncapturableException.wrap(new IOException("framework failed"));
+                break;
+            case "cancel":
+                failure = new CancellationException("cancelled");
+                break;
+            case "interrupt":
+                failure = new InterruptedException("interrupted");
+                break;
+            default:
+                failure = new AssertionError("fatal");
+        }
+        ActionState state = new ActionState(null);
+        try (var executor = new InspectingContinuationActionExecutor()) {
+            JavaRunnerContextImpl context = createContext(state, executor);
+            var future =
+                    context.durableExecuteAsync(
+                            "prepared",
+                            String.class,
+                            () -> {
+                                if (failure instanceof Error) {
+                                    throw (Error) failure;
+                                }
+                                throw (Exception) failure;
+                            });
+            Throwable thrown = assertThrows(failure.getClass(), future::await);
+            assertSame(failure, thrown);
+            assertThat(state.getCallResults())
+                    .singleElement()
+                    .satisfies(
+                            result -> {
+                                assertTrue(result.isPending());
+                                assertNull(result.getExceptionPayload());
+                            });
+            assertEquals(kind.equals("interrupt"), Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void terminalPersistenceFailureDoesNotCompleteFuture(boolean preparationFails)
+            throws Exception {
+        ActionState state = new ActionState(null);
+        try (var executor = new InspectingContinuationActionExecutor()) {
+            JavaRunnerContextImpl context = createContext(state, executor);
+            context.setDurableExecutionContext(
+                    new RunnerContextImpl.DurableExecutionContext(
+                            "test-key",
+                            1L,
+                            mock(Action.class),
+                            mock(Event.class),
+                            state,
+                            (key, sequence, action, event, saved) -> {
+                                if (!saved.getCallResults().get(0).isPending()) {
+                                    // DurableExecutionManager marks store failures at this
+                                    // boundary.
+                                    throw UncapturableException.wrap(
+                                            new IOException("terminal persistence failed"));
+                                }
+                            }));
+            var future =
+                    context.durableExecuteAsync(
+                            "prepared",
+                            String.class,
+                            () -> {
+                                if (preparationFails) {
+                                    throw new IllegalStateException("preparation failed");
+                                }
+                                return new TestDurableCallable<>(
+                                        "prepared", String.class, () -> "ok");
+                            });
+            assertThrows(UncapturableException.class, future::await);
+            assertFalse(((AsyncFutureImpl<?>) future).isDone());
+        }
+    }
+
+    @Test
     void testDurableExecuteAsyncLegacyCall() throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
