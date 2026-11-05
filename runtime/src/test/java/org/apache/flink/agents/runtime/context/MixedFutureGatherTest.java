@@ -63,11 +63,16 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.AdditionalAnswers.delegatesTo;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 
 /** Production mixed scheduler exercised with a real journal and continuation executor. */
 @EnabledForJreRange(min = JRE.JAVA_21)
@@ -469,6 +474,143 @@ class MixedFutureGatherTest {
             assertThat(f.run(remote::await).getResult()).isEqualTo("fetched");
             assertThat(fetches).hasValue(1);
         }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"success", "failure", "fatal"})
+    void completionBetweenTimeoutSweepAndCancellationKeepsActualOutcome(String outcome)
+            throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        byte[] snapshot;
+        CountDownLatch release = new CountDownLatch(1);
+        IllegalStateException businessFailure = new IllegalStateException("tool failed");
+        AssertionError fatal = new AssertionError("fatal tool failure");
+        try (Fixture f = new Fixture()) {
+            ((Configuration) f.runner.getConfig())
+                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS, 250L);
+            var tool =
+                    f.runner.durableExecuteAsync(
+                            call(
+                                    "tool",
+                                    String.class,
+                                    () -> {
+                                        calls.incrementAndGet();
+                                        release.await();
+                                        if (outcome.equals("failure")) {
+                                            throw businessFailure;
+                                        }
+                                        if (outcome.equals("fatal")) {
+                                            throw fatal;
+                                        }
+                                        return "tool-result";
+                                    }));
+            var racing =
+                    completeBeforeTimeoutCancellation(
+                            AsyncFutureImpl.requireSchedulable(tool, f.runner), release::countDown);
+            if (outcome.equals("fatal")) {
+                assertThatThrownBy(() -> f.run(() -> f.runner.gather(List.of(racing)).await()))
+                        .isSameAs(fatal);
+                assertThat(f.state.getCallResults().get(0).isPending()).isTrue();
+                return;
+            }
+            var result = f.run(() -> f.runner.gather(List.of(racing)).await()).get(0);
+            if (outcome.equals("failure")) {
+                assertThat(result.getError()).isSameAs(businessFailure);
+            } else {
+                assertThat(result.getValue()).isEqualTo("tool-result");
+                assertThat(result.isFailure()).isFalse();
+            }
+            snapshot = ActionStateSerde.serialize(f.state);
+        } finally {
+            release.countDown();
+        }
+        try (Fixture f = new Fixture(ActionStateSerde.deserialize(snapshot))) {
+            var tool =
+                    f.runner.durableExecuteAsync(
+                            call(
+                                    "tool",
+                                    String.class,
+                                    () -> {
+                                        calls.incrementAndGet();
+                                        return "unexpected retry";
+                                    }));
+            var replay = f.run(() -> f.runner.gather(List.of(tool)).await()).get(0);
+            if (outcome.equals("failure")) {
+                assertThat(replay.getError())
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessage("tool failed");
+            } else {
+                assertThat(replay.getValue()).isEqualTo("tool-result");
+                assertThat(replay.isFailure()).isFalse();
+            }
+            assertThat(calls).hasValue(1);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void graphCompletionBetweenTimeoutSweepAndCancellationIsRecorded(boolean chat)
+            throws Exception {
+        byte[] snapshot;
+        try (Fixture f = new Fixture()) {
+            ((Configuration) f.runner.getConfig())
+                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS, 250L);
+            var graph =
+                    chat
+                            ? AsyncFutureImpl.map(
+                                    f.runner, f.chat(), r -> r.getResponse().getMessage().getText())
+                            : AsyncFutureImpl.map(
+                                    f.runner, f.internal("child"), r -> (String) r.getResult());
+            var racing =
+                    completeBeforeTimeoutCancellation(
+                            AsyncFutureImpl.requireSchedulable(graph, f.runner),
+                            () -> assertThat(f.completeGraphs(false)).isEqualTo(1));
+            var result = f.run(() -> f.runner.gather(List.of(racing)).await()).get(0);
+            assertThat(result.isFailure()).isFalse();
+            assertThat(result.getValue()).isEqualTo(chat ? "chat-answer" : "child-answer");
+            assertThat(f.state.getCallResults().get(0).isSuccess()).isTrue();
+            snapshot = ActionStateSerde.serialize(f.state);
+        }
+        try (Fixture f = new Fixture(ActionStateSerde.deserialize(snapshot))) {
+            var graph =
+                    chat
+                            ? AsyncFutureImpl.map(
+                                    f.runner, f.chat(), r -> r.getResponse().getMessage().getText())
+                            : AsyncFutureImpl.map(
+                                    f.runner, f.internal("child"), r -> (String) r.getResult());
+            var replay = f.run(() -> f.runner.gather(List.of(graph)).await()).get(0);
+            assertThat(replay.isFailure()).isFalse();
+            assertThat(replay.getValue()).isEqualTo(chat ? "chat-answer" : "child-answer");
+            assertThat(f.completeGraphs(false)).isZero();
+        }
+    }
+
+    /** Completes the real call after the scheduler's sweep, but before cancellation. */
+    @SuppressWarnings("unchecked")
+    private static <T> SchedulableFuture<T> completeBeforeTimeoutCancellation(
+            SchedulableFuture<T> source, Runnable complete) throws Exception {
+        SchedulableFuture<T> wrapper = mock(SchedulableFuture.class, delegatesTo(source));
+        AtomicReference<CompletableFuture<?>> signal = new AtomicReference<>();
+        doAnswer(
+                        invocation -> {
+                            var started = source.start();
+                            signal.set(started);
+                            return started;
+                        })
+                .when(wrapper)
+                .start();
+        doAnswer(
+                        invocation -> {
+                            source.preventStart();
+                            complete.run();
+                            // Wait for exceptional completions too, without throwing their error in
+                            // this hook.
+                            signal.get().handle((value, failure) -> null).get(5, TimeUnit.SECONDS);
+                            return null;
+                        })
+                .when(wrapper)
+                .preventStart();
+        return wrapper;
     }
 
     private static <T> DurableCallable<T> call(String id, Class<T> type, Callable<T> body) {

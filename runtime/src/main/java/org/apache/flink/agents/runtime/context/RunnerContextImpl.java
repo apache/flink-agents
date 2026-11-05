@@ -1047,7 +1047,12 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                     }
                     for (SchedulableFuture<T> future : futures) {
                         if (!completed.containsKey(future)) {
-                            completed.put(future, future.finish(timeout));
+                            // Completion may win the race with cancellation after the sweep.
+                            // A cancelled signal is also done, but has no result to preserve.
+                            CompletableFuture<?> signal = running.get(future);
+                            boolean finished =
+                                    signal != null && signal.isDone() && !signal.isCancelled();
+                            completed.put(future, future.finish(finished ? null : timeout));
                         }
                     }
                     break;
