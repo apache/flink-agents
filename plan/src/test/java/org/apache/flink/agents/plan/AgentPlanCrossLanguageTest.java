@@ -317,6 +317,94 @@ class AgentPlanCrossLanguageTest {
         assertThat(actual).isEqualTo(expected);
     }
 
+    /**
+     * A plan whose only resources are two decision-model-strategy routers, their chat models and
+     * the decision model: {@code router} declares the minimum (the common case) and {@code
+     * router_full} every optional argument, so the Python side has each key's name and JSON type.
+     */
+    /** Insertion-ordered so the regenerated snapshot does not reorder the keys per JVM run. */
+    private static Map<String, Object> decisionSetupArguments() {
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("model", "m");
+        arguments.put("connection", "conn");
+        return arguments;
+    }
+
+    private static AgentPlan compileWithDecisionRouter() throws Exception {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = new LinkedHashMap<>();
+        ResourceDescriptor routerDescriptor =
+                ModelRouter.of("small", "big")
+                        .describe("small", "short factual questions")
+                        .describe("big", "code and sql")
+                        .strategy(Strategies.decision("dm").withMinProbability(0.6))
+                        .defaultModel("small")
+                        .fallback(true)
+                        .build();
+        ResourceDescriptor fullDescriptor =
+                ModelRouter.of("small", "big")
+                        .describe("small", "short factual questions")
+                        .describe("big", "code and sql")
+                        .strategy(
+                                Strategies.decision("dm", "Pick the candidate that should answer.")
+                                        .withMinProbability(0.6)
+                                        .withMaxContextChars(4000))
+                        .defaultModel("small")
+                        .build();
+        Map<String, ResourceProvider> routers = new LinkedHashMap<>();
+        routers.put(
+                "router",
+                new JavaResourceProvider("router", ResourceType.MODEL_ROUTER, routerDescriptor));
+        routers.put(
+                "router_full",
+                new JavaResourceProvider("router_full", ResourceType.MODEL_ROUTER, fullDescriptor));
+        providers.put(ResourceType.MODEL_ROUTER, routers);
+        Map<String, ResourceProvider> chatModels = new LinkedHashMap<>();
+        ResourceDescriptor model = new ResourceDescriptor("some.Clazz", Map.of());
+        chatModels.put("small", new JavaResourceProvider("small", ResourceType.CHAT_MODEL, model));
+        chatModels.put("big", new JavaResourceProvider("big", ResourceType.CHAT_MODEL, model));
+        providers.put(ResourceType.CHAT_MODEL, chatModels);
+        Map<String, ResourceProvider> decisionModels = new LinkedHashMap<>();
+        decisionModels.put(
+                "dm",
+                new JavaResourceProvider(
+                        "dm",
+                        ResourceType.DECISION_MODEL,
+                        new ResourceDescriptor("some.Setup", decisionSetupArguments())));
+        providers.put(ResourceType.DECISION_MODEL, decisionModels);
+        Map<String, ResourceProvider> connections = new LinkedHashMap<>();
+        connections.put(
+                "conn",
+                new JavaResourceProvider("conn", ResourceType.DECISION_MODEL_CONNECTION, model));
+        providers.put(ResourceType.DECISION_MODEL_CONNECTION, connections);
+        return new AgentPlan(Map.of(), providers);
+    }
+
+    @Test
+    void regenerateJavaPlanWithDecisionRouterSnapshot() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        AgentPlan plan = compileWithDecisionRouter();
+        String json = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(plan);
+
+        Path target = snapshotDir.resolve("java/agent_plan_with_decision_router.json");
+        Files.createDirectories(target.getParent());
+        Files.writeString(target, json + "\n");
+    }
+
+    @Test
+    void javaPlanWithDecisionRouterSnapshotIsStable() throws Exception {
+        Path committed = snapshotDir.resolve("java/agent_plan_with_decision_router.json");
+        assertTrue(
+                Files.exists(committed),
+                "Decision-router plan snapshot missing from "
+                        + committed
+                        + ". Regenerate with -Dregenerate.snapshots=true and commit alongside the test.");
+
+        AgentPlan plan = compileWithDecisionRouter();
+        JsonNode actual = MAPPER.readTree(MAPPER.writeValueAsString(plan));
+        JsonNode expected = MAPPER.readTree(Files.readString(committed));
+        assertThat(actual).isEqualTo(expected);
+    }
+
     /** A plan that nests a child agent carried by an ordinary resource descriptor. */
     private static AgentPlan compileWithInternalSubagent() throws Exception {
         Agent child = new Agent();

@@ -51,6 +51,9 @@ public class ModelRoutingEvent extends Event {
     /** The decision came from a framework-managed LLM judge verdict. */
     public static final String SOURCE_LLM_JUDGE = "llm_judge";
 
+    /** The decision came from a framework-managed decision model choice. */
+    public static final String SOURCE_DECISION_MODEL = "decision_model";
+
     /** Attribute/metadata key carrying the decision source (events, payloads, durable records). */
     public static final String DECISION_SOURCE_KEY = "decision_source";
 

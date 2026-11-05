@@ -90,12 +90,7 @@ public final class ModelRoutingResolver {
     }
 
     private static RoutingFailure failure(Exception e) throws Exception {
-        if (Thread.currentThread().isInterrupted() || CancellationUtils.isCancellation(e)) {
-            if (CancellationUtils.isInterruption(e)) {
-                Thread.currentThread().interrupt();
-            }
-            throw e;
-        }
+        CancellationUtils.rethrowIfCancellation(e);
         return new RoutingFailure(ChatModelInvoker.errorText(e));
     }
 

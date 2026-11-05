@@ -42,6 +42,9 @@ import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.decision.BaseDecisionModelSetup;
+import org.apache.flink.agents.api.decision.DecisionRequest;
+import org.apache.flink.agents.api.decision.DecisionResult;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
@@ -70,9 +73,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -104,6 +110,7 @@ public class ChatModelActionRoutingTest {
         private int callCount;
         private boolean nativeStructuredOutput;
         private RuntimeException gateFailure;
+        private RuntimeException prepareFailure;
         final List<List<ChatMessage>> structuredRequests = new ArrayList<>();
 
         FakeChatModel(Object... outcomes) {
@@ -120,6 +127,21 @@ public class ChatModelActionRoutingTest {
         FakeChatModel withGateFailure(RuntimeException gateFailure) {
             this.gateFailure = gateFailure;
             return this;
+        }
+
+        /** Makes request shaping (prompt rendering) throw, e.g. a cancellation signal. */
+        FakeChatModel withPrepareFailure(RuntimeException prepareFailure) {
+            this.prepareFailure = prepareFailure;
+            return this;
+        }
+
+        @Override
+        public List<ChatMessage> prepareRequestMessages(
+                List<ChatMessage> messages, Map<String, Object> promptArgs) {
+            if (prepareFailure != null) {
+                throw prepareFailure;
+            }
+            return super.prepareRequestMessages(messages, promptArgs);
         }
 
         // This fake binds no connection, so it answers the gate itself: a test chooses the native
@@ -164,12 +186,69 @@ public class ChatModelActionRoutingTest {
         }
     }
 
+    /**
+     * A decision model stub: answers from a queue of outcomes, throwing on RuntimeException
+     * entries, and records every request it received.
+     */
+    static class FakeDecisionModel extends BaseDecisionModelSetup {
+        private final Deque<Object> outcomes = new ArrayDeque<>();
+        int callCount;
+        boolean async;
+        final List<DecisionRequest> requests = new ArrayList<>();
+
+        FakeDecisionModel(Object... outcomes) {
+            super(
+                    new ResourceDescriptor(
+                            "fake-decision", Map.of("connection", "c", "model", "m")),
+                    null);
+            Collections.addAll(this.outcomes, outcomes);
+        }
+
+        static DecisionResult choice(String choice, Map<String, Double> probabilities) {
+            return new DecisionResult(
+                    Map.of("model", new DecisionResult.ChoiceAnswer(choice, probabilities, null)),
+                    "fake-model",
+                    new DecisionResult.TokenUsage(10L, 2L, 12L),
+                    Map.of());
+        }
+
+        FakeDecisionModel supportingAsync() {
+            this.async = true;
+            return this;
+        }
+
+        @Override
+        public boolean supportsAsyncExecution() {
+            return async;
+        }
+
+        @Override
+        public DecisionResult decide(DecisionRequest request) {
+            return decide(request, Map.of());
+        }
+
+        @Override
+        public DecisionResult decide(DecisionRequest request, Map<String, Object> requestParams) {
+            callCount++;
+            requests.add(request);
+            Object next = outcomes.isEmpty() ? null : outcomes.poll();
+            if (next instanceof RuntimeException) {
+                throw (RuntimeException) next;
+            }
+            if (next instanceof DecisionResult) {
+                return (DecisionResult) next;
+            }
+            return choice("small", Map.of("small", 1.0, "big", 0.0));
+        }
+    }
+
     static class FakeRunnerContext implements RunnerContext {
         final List<Event> sentEvents = new ArrayList<>();
         final List<String> resolvedChatModels = new ArrayList<>();
         final List<String> durableCallIds = new ArrayList<>();
         final List<String> durableAsyncCallIds = new ArrayList<>();
         final Map<String, BaseChatModelSetup> models = new HashMap<>();
+        final Map<String, BaseDecisionModelSetup> decisionModels = new HashMap<>();
         final Set<String> unresolvable = new HashSet<>();
         private final ModelRouter router;
         private final MemoryObject sensoryMemory = new FakeMemoryObject(new HashMap<>());
@@ -188,9 +267,19 @@ public class ChatModelActionRoutingTest {
             return this;
         }
 
+        FakeRunnerContext registerDecision(String name, BaseDecisionModelSetup model) {
+            decisionModels.put(name, model);
+            return this;
+        }
+
         /** Marks a chat-model name whose resource lookup fails (e.g. a typo'd candidate). */
         FakeRunnerContext unresolvable(String name) {
             unresolvable.add(name);
+            return this;
+        }
+
+        FakeRunnerContext withDecisionAsync() {
+            config.set(AgentExecutionOptions.DECISION_ASYNC, true);
             return this;
         }
 
@@ -221,6 +310,13 @@ public class ChatModelActionRoutingTest {
                 }
                 resolvedChatModels.add(name);
                 return models.getOrDefault(name, new FakeChatModel());
+            }
+            if (type == ResourceType.DECISION_MODEL) {
+                BaseDecisionModelSetup model = decisionModels.get(name);
+                if (model == null) {
+                    throw new IllegalArgumentException("resource not found: " + name);
+                }
+                return model;
             }
             throw new IllegalArgumentException("unexpected resource " + name + " " + type);
         }
@@ -280,6 +376,8 @@ public class ChatModelActionRoutingTest {
                 value = outcome;
             } else if (value instanceof ChatResult) {
                 value = new ChatModelInvoker.InvocationOutcome((ChatResult) value, null);
+            } else if (value instanceof DecisionResult) {
+                value = new DecisionModelInvoker.DecisionOutcome((DecisionResult) value, null);
             }
             durableStore.put(id, value);
             return this;
@@ -1825,5 +1923,348 @@ public class ChatModelActionRoutingTest {
         assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
         assertThat(event.getReason()).contains("not a candidate name");
         assertThat(ctx.hasChatResponse()).isTrue();
+    }
+
+    // ── Decision-model strategy ─────────────────────────────────────────────
+
+    private static ModelRouter decisionRouter(RoutingStrategy strategy) throws Exception {
+        return new ModelRouter(
+                ModelRouter.of("small", "big")
+                        .describe("small", "cheap chit-chat")
+                        .describe("big", "code and sql")
+                        .strategy(strategy)
+                        .defaultModel("small")
+                        .build(),
+                null);
+    }
+
+    @Test
+    void decisionModelChoiceRoutesToNamedCandidate() throws Exception {
+        FakeDecisionModel dm =
+                new FakeDecisionModel(
+                        FakeDecisionModel.choice("big", Map.of("small", 0.18, "big", 0.82)));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionRouter(Strategies.decision("dm")))
+                        .registerDecision("dm", dm)
+                        .register("big", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(new ChatMessage(MessageRole.USER, "write some sql"))),
+                ctx);
+
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event).isNotNull();
+        assertThat(event.getSelectedModel()).isEqualTo("big");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DECISION_MODEL);
+        assertThat(event.getScore()).isEqualTo(0.82);
+        assertThat(event.getMetadata())
+                .containsEntry("decision_model", "dm")
+                .containsKey("decision_probabilities");
+        assertThat(event.getDecisionMs()).isNotNull();
+        // the decision call is durable under its own id; the decision persists under the route id
+        assertThat(ctx.durableCallIds).contains("decide:router", "route:router");
+        // resolution order: the anchor candidate (bound-prompt rendering), then the winner answers
+        assertThat(ctx.resolvedChatModels).containsExactly("small", "big");
+        assertThat(ctx.hasChatResponse()).isTrue();
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+        // one decision call, carrying the conversation and both candidates as choices
+        assertThat(dm.callCount).isEqualTo(1);
+        DecisionRequest request = dm.requests.get(0);
+        assertThat(String.valueOf(request.getInput())).contains("write some sql");
+        DecisionRequest.ChoiceQuestion question =
+                (DecisionRequest.ChoiceQuestion) request.getQuestions().get("model");
+        assertThat(question.getCriteria())
+                .containsEntry("small", "cheap chit-chat")
+                .containsEntry("big", "code and sql");
+    }
+
+    @Test
+    void decisionBelowMinProbabilityAbstainsToDefault() throws Exception {
+        FakeDecisionModel dm =
+                new FakeDecisionModel(
+                        FakeDecisionModel.choice("big", Map.of("small", 0.45, "big", 0.55)));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(
+                                decisionRouter(Strategies.decision("dm").withMinProbability(0.6)))
+                        .registerDecision("dm", dm)
+                        .register("small", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hmm"))),
+                ctx);
+
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("small");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(event.getReason()).contains("below min_probability");
+        assertThat(event.getScore()).isNull();
+        assertThat(event.getMetadata())
+                .containsEntry("decision_choice", "big")
+                .containsKey("decision_probabilities")
+                // the strategy abstained on its own; non-candidate normalization is not involved
+                .doesNotContainKey(ModelRoutingResolver.REJECTED_MODEL_KEY);
+        assertThat(ctx.resolvedChatModels).containsExactly("small", "small");
+        assertThat(ctx.hasChatResponse()).isTrue();
+    }
+
+    @Test
+    void decisionRefusalAbstainsToDefault() throws Exception {
+        DecisionResult refused =
+                new DecisionResult(
+                        Map.of("model", new DecisionResult.RefusalAnswer("insufficient evidence")),
+                        null,
+                        null,
+                        Map.of());
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionRouter(Strategies.decision("dm")))
+                        .registerDecision("dm", new FakeDecisionModel(refused))
+                        .register("small", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                ctx);
+
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("small");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(event.getReason()).isEqualTo("decision model refused: insufficient evidence");
+        assertThat(ctx.hasChatResponse()).isTrue();
+    }
+
+    @Test
+    void decisionModelUsesTheRetryBudgetAndRecordsMetrics() throws Exception {
+        FlinkAgentsMetricGroup actionMetricGroup = mock(FlinkAgentsMetricGroup.class);
+        FlinkAgentsMetricGroup dmMetricGroup = mock(FlinkAgentsMetricGroup.class);
+        FlinkAgentsMetricGroup tokenMetricGroup = mock(FlinkAgentsMetricGroup.class);
+        Counter retryCount = mock(Counter.class);
+        Counter retryWaitSec = mock(Counter.class);
+        Counter promptTokens = mock(Counter.class);
+        when(actionMetricGroup.getHistogram("routingDecisionLatencyMs"))
+                .thenReturn(mock(Histogram.class));
+        when(actionMetricGroup.getSubGroup("model_resource", "dm")).thenReturn(dmMetricGroup);
+        when(dmMetricGroup.getCounter("retryCount")).thenReturn(retryCount);
+        when(dmMetricGroup.getCounter("retryWaitSec")).thenReturn(retryWaitSec);
+        when(dmMetricGroup.getSubGroup("model", "fake-model")).thenReturn(tokenMetricGroup);
+        when(tokenMetricGroup.getCounter(anyString())).thenReturn(mock(Counter.class));
+        when(tokenMetricGroup.getCounter("promptTokens")).thenReturn(promptTokens);
+        FakeDecisionModel dm =
+                new FakeDecisionModel(
+                        new RuntimeException("transient"),
+                        FakeDecisionModel.choice("big", Map.of("small", 0.1, "big", 0.9)));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionRouter(Strategies.decision("dm")))
+                        .withRetryBudget(1, 0)
+                        .withActionMetricGroup(actionMetricGroup)
+                        .registerDecision("dm", dm)
+                        .register("big", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(new ChatMessage(MessageRole.USER, "hard one"))),
+                ctx);
+
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("big");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DECISION_MODEL);
+        assertThat(dm.callCount).isEqualTo(2);
+        // the decision retry counts against the routed request, like a judge retry
+        assertThat(ctx.chatResponse().getRetryCount()).isEqualTo(1);
+        // token metrics and retry counters both land on the decision model's resource group
+        verify(actionMetricGroup, atLeastOnce()).getSubGroup("model_resource", "dm");
+        verify(retryCount).inc(1);
+        verify(retryWaitSec).inc(0);
+        verify(promptTokens).inc(10L);
+    }
+
+    @Test
+    void decisionModelFailureFailsTheRequestWithoutCandidateFallback() throws Exception {
+        // The default zero retry budget produces a failed terminal response, like a failed judge.
+        FakeDecisionModel dm = new FakeDecisionModel(new RuntimeException("decision down"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(
+                                new ModelRouter(
+                                        ModelRouter.of("small", "big")
+                                                .describe("small", "cheap chit-chat")
+                                                .describe("big", "code and sql")
+                                                .strategy(Strategies.decision("dm"))
+                                                .defaultModel("small")
+                                                .fallback(true)
+                                                .build(),
+                                        null))
+                        .registerDecision("dm", dm)
+                        .register("small", new FakeChatModel())
+                        .register("big", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                ctx);
+
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
+        assertThat(ctx.chatResponse().getError())
+                .contains("Decision model 'dm' failed")
+                .contains("decision down");
+        // no routing event and no candidate was called: only the anchor was resolved for
+        // rendering the decision input
+        assertThat(ctx.routingEventCount()).isZero();
+        assertThat(ctx.resolvedChatModels).containsExactly("small");
+    }
+
+    @Test
+    void unresolvableDecisionModelFailsTheRequest() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionRouter(Strategies.decision("dm")))
+                        .register("small", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                ctx);
+
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
+        assertThat(ctx.chatResponse().getError()).contains("Decision model 'dm'");
+        assertThat(ctx.routingEventCount()).isZero();
+    }
+
+    @Test
+    void decisionReplayReusesTheStoredAnswerWithoutCallingTheProvider() throws Exception {
+        // Recovery: the decide:<router> record is already stored, so the provider is not called
+        // again even though it would fail now; the stored choice routes the request.
+        FakeDecisionModel dm = new FakeDecisionModel(new RuntimeException("would fail now"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionRouter(Strategies.decision("dm")))
+                        .registerDecision("dm", dm)
+                        .register("big", new FakeChatModel())
+                        .seedDurable(
+                                "decide:router",
+                                FakeDecisionModel.choice("big", Map.of("small", 0.2, "big", 0.8)));
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(new ChatMessage(MessageRole.USER, "write some sql"))),
+                ctx);
+
+        assertThat(dm.callCount).isZero();
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("big");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DECISION_MODEL);
+        assertThat(ctx.resolvedChatModels).containsExactly("small", "big");
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+    }
+
+    /**
+     * Cancellation raised while the anchor renders the decision input is a cancellation signal, not
+     * an unresolvable anchor: it propagates before the provider or any candidate is called.
+     */
+    @Test
+    void cancellationDuringDecisionInputPreparationPropagatesBeforeTheProviderCall()
+            throws Exception {
+        FakeDecisionModel dm =
+                new FakeDecisionModel(
+                        FakeDecisionModel.choice("big", Map.of("small", 0.1, "big", 0.9)));
+        FakeChatModel big = new FakeChatModel();
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionRouter(Strategies.decision("dm")))
+                        .registerDecision("dm", dm)
+                        .register(
+                                "small",
+                                new FakeChatModel()
+                                        .withPrepareFailure(new CancellationException("cancelled")))
+                        .register("big", big);
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.processChatRequestOrToolResponse(
+                                        new ChatRequestEvent(
+                                                "router",
+                                                List.of(
+                                                        new ChatMessage(
+                                                                MessageRole.USER,
+                                                                "write some sql"))),
+                                        ctx))
+                .isInstanceOf(CancellationException.class)
+                .hasMessage("cancelled");
+        assertThat(dm.callCount).isZero();
+        assertThat(big.callCount).isZero();
+        assertThat(ctx.durableCallIds).isEmpty();
+        assertThat(ctx.hasChatResponse()).isFalse();
+    }
+
+    /** The judge shares the rendering helper, so it propagates the same signal. */
+    @Test
+    void cancellationDuringJudgeInputPreparationPropagatesBeforeTheJudgeCall() throws Exception {
+        FakeChatModel judge = new FakeChatModel(ChatFixtures.response("{\"model\": \"big\"}"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(
+                                new ModelRouter(
+                                        ModelRouter.of("small", "big")
+                                                .strategy(Strategies.llm("judge"))
+                                                .defaultModel("small")
+                                                .build(),
+                                        null))
+                        .register("judge", judge)
+                        .register(
+                                "small",
+                                new FakeChatModel()
+                                        .withPrepareFailure(new CancellationException("cancelled")))
+                        .register("big", new FakeChatModel());
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.processChatRequestOrToolResponse(
+                                        new ChatRequestEvent(
+                                                "router",
+                                                List.of(
+                                                        new ChatMessage(
+                                                                MessageRole.USER,
+                                                                "write some sql"))),
+                                        ctx))
+                .isInstanceOf(CancellationException.class);
+        assertThat(judge.callCount).isZero();
+        assertThat(ctx.durableCallIds).isEmpty();
+        assertThat(ctx.hasChatResponse()).isFalse();
+    }
+
+    @Test
+    void asyncDecisionCallRunsAsFlatSiblingBeforeTheRouteRecord() throws Exception {
+        // The sequencing contract: the executor's durable call lands ahead of the resolver's
+        // route:<router> record, on the async path as on the sync one.
+        FakeDecisionModel dm =
+                new FakeDecisionModel(
+                                FakeDecisionModel.choice("big", Map.of("small", 0.1, "big", 0.9)))
+                        .supportingAsync();
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionRouter(Strategies.decision("dm")))
+                        .withDecisionAsync()
+                        .registerDecision("dm", dm)
+                        .register("big", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(new ChatMessage(MessageRole.USER, "write some sql"))),
+                ctx);
+
+        assertThat(ctx.durableAsyncCallIds).contains("decide:router");
+        assertThat(ctx.durableCallIds.indexOf("decide:router"))
+                .isLessThan(ctx.durableCallIds.indexOf("route:router"));
+        assertThat(ctx.routingEvent().getSelectedModel()).isEqualTo("big");
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+    }
+
+    @Test
+    void durableStateFailureDuringTheDecisionCallPropagatesToTheRunner() throws Exception {
+        // Persistence and recovery failures are not routing failures: they escape the executor
+        // and the resolver unchanged, with no terminal chat response.
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionRouter(Strategies.decision("dm"))) {
+                    @Override
+                    public <T> T durableExecute(DurableCallable<T> callable) throws Exception {
+                        if ("decide:router".equals(callable.getId())) {
+                            throw new IllegalStateException("state backend unavailable");
+                        }
+                        return super.durableExecute(callable);
+                    }
+                };
+        ctx.registerDecision("dm", new FakeDecisionModel()).register("big", new FakeChatModel());
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.processChatRequestOrToolResponse(
+                                        new ChatRequestEvent(
+                                                "router",
+                                                List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                                        ctx))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("state backend unavailable");
+        assertThat(ctx.hasChatResponse()).isFalse();
+        assertThat(ctx.routingEventCount()).isZero();
     }
 }
