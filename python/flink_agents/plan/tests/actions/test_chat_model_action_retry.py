@@ -48,6 +48,8 @@ from flink_agents.api.trace import (
     LLMExecutionMetadataKeys,
 )
 from flink_agents.plan.actions.chat_model_action import (
+    _chat_with_retries,
+    _ChatAttemptFailed,
     chat,
     process_chat_request_or_tool_response,
 )
@@ -1373,3 +1375,43 @@ class TestNativeStructuredOutputFinalization:
         assert ctx.durable_execute_async.call_count == 2
         ctx.durable_execute.assert_not_called()
         assert sent_events[0].structured_output.result == 42
+
+
+@pytest.mark.parametrize("chat_async", [False, True])
+def test_candidate_attempt_exhausts_retries_without_emitting_failure(chat_async):
+    model = MagicMock()
+    model.chat.side_effect = RuntimeError("candidate unavailable")
+    ctx, events, metrics, memory = _create_mock_runner_context(
+        model, max_retries=2, retry_wait_interval_sec=0, chat_async=chat_async
+    )
+    request_id = uuid4()
+    with pytest.raises(_ChatAttemptFailed) as caught:
+        asyncio.run(_chat_with_retries(
+            request_id, "candidate", [ChatMessage.user("hello")], None, None,
+            ctx, durable_id="chat:router:candidate",
+        ))
+    assert str(caught.value.error) == "RuntimeError: candidate unavailable"
+    assert caught.value.__cause__ is caught.value.error
+    assert events == []
+    assert model.chat.call_count == 3
+    durable = ctx.durable_execute_async if chat_async else ctx.durable_execute
+    assert [c.kwargs["durable_id"] for c in durable.call_args_list] == [
+        "chat:router:candidate"
+    ] * 3
+    assert memory.get("_RETRY_STATS_CONTEXT")[str(request_id)]["total_retry_count"] == 2
+    assert metrics.get_sub_group("model_resource", "candidate").get_counter("retryCount").get_count() == 2
+
+
+def test_candidate_native_finalization_uses_attempt_identity():
+    model = _native_chat_model()
+    ctx, events, _, _ = _native_context(model)
+    result = asyncio.run(_chat_with_retries(
+        uuid4(), "candidate", [ChatMessage.user("hello")], None,
+        OutputSchema(output_schema=_StructuredResult), ctx,
+        durable_id="chat:router:candidate",
+    ))
+    assert result.structured_output is not None
+    assert events == []
+    assert [c.kwargs["durable_id"] for c in ctx.durable_execute.call_args_list] == [
+        "chat:router:candidate", "chat:router:candidate:final"
+    ]

@@ -588,6 +588,34 @@ class BaseChatModelSetup(Resource):
             )
         self.tools = callables
 
+    def prepare_request_messages(
+        self,
+        messages: Sequence[ChatMessage],
+        prompt_args: Mapping[str, Any] | None = None,
+    ) -> Sequence[ChatMessage]:
+        """Render the setup prompt and skill discovery for a chat request."""
+        # Apply prompt template
+        if self.prompt is not None:
+            str_prompt_args: Dict[str, str] = (
+                {k: str(v) for k, v in prompt_args.items()} if prompt_args else {}
+            )
+            prompt_messages = self._get_prompt().format_messages(**str_prompt_args)
+
+            # append meaningful messages
+            # any block counts, so image-only messages survive
+            for msg in messages:
+                if len(msg.blocks) > 0 or msg.role == MessageRole.ASSISTANT:
+                    prompt_messages.append(msg)
+            messages = prompt_messages
+
+        if self.skill_discovery_prompt:
+            # Right after the first system message, or at the head when there
+            # is none.
+            index = find_first_system_message(messages) + 1
+            injected = [ChatMessage.system(self.skill_discovery_prompt)]
+            messages = list(messages[:index]) + injected + list(messages[index:])
+        return messages
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -638,26 +666,7 @@ class BaseChatModelSetup(Resource):
             raise ValueError(msg)
 
         if tools is None:
-            # Apply prompt template
-            if self.prompt is not None:
-                str_prompt_args: Dict[str, str] = (
-                    {k: str(v) for k, v in prompt_args.items()} if prompt_args else {}
-                )
-                prompt_messages = self._get_prompt().format_messages(**str_prompt_args)
-
-                # append meaningful messages
-                # any block counts, so image-only messages survive
-                for msg in messages:
-                    if len(msg.blocks) > 0 or msg.role == MessageRole.ASSISTANT:
-                        prompt_messages.append(msg)
-                messages = prompt_messages
-
-            if self.skill_discovery_prompt:
-                # Right after the first system message, or at the head when there
-                # is none.
-                index = find_first_system_message(messages) + 1
-                injected = [ChatMessage.system(self.skill_discovery_prompt)]
-                messages = list(messages[:index]) + injected + list(messages[index:])
+            messages = self.prepare_request_messages(messages, prompt_args)
 
         # Call chat model connection to execute chat
         merged_kwargs = self.model_kwargs.copy()

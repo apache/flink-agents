@@ -20,6 +20,7 @@ import logging
 import re
 import time
 from concurrent.futures import CancelledError
+from dataclasses import dataclass
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Sequence, cast
 from uuid import UUID
@@ -76,9 +77,6 @@ _FINALIZE_DIRECTIVE = (
     " Preserve its meaning and do not add or infer any new information.\n\n"
     "Response:\n"
 )
-# The loop call's own record already pins the answer this call converts, so a fixed
-# identity is enough and stays stable whatever form the arguments take on recovery.
-_FINALIZE_DURABLE_ID = "chat:final"
 
 _logger = logging.getLogger(__name__)
 
@@ -557,25 +555,34 @@ def _accept_model_response(
     return response
 
 
-async def chat(
+@dataclass
+class _ChatAttemptResult:
+    response: ChatResult
+    chat_model: "BaseChatModelSetup"
+    structured_output: Any
+
+
+class _ChatAttemptFailed(Exception):
+    """A candidate exhausted its retry budget or could not be prepared."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
+async def _chat_with_retries(
     initial_request_id: UUID,
     model: str,
     messages: List[ChatMessage],
     prompt_args: Dict | None,
     output_schema: OutputSchema | None,
     ctx: RunnerContext,
-) -> None:
-    """Chat with llm.
+    durable_id: str = _CHAT_DURABLE_ID,
+) -> _ChatAttemptResult:
+    """Attempt one model without sending a response or request failure event.
 
-    If there is no tool call generated, we return the chat response event directly,
-    otherwise, we generate tool request event according to the tool calls in chat model
-    response, and save the request and response messages in tool call context.
-
-    When ``output_schema`` is set and the chat model reports that it travels through
-    the provider's native structured output, the final answer is followed by one more
-    call without tools that carries the schema, and that call's response is parsed.
-    The extra call belongs to the same attempt, so its failures, and a failure to
-    parse its response, consume the same retry budget.
+    Provider and preparation failures raise ``_ChatAttemptFailed``. Cancellation
+    and durable storage failures propagate unchanged to the runtime.
     """
     try:
         chat_model = cast(
@@ -584,8 +591,7 @@ async def chat(
     except (CancelledError, InterruptedError):
         raise
     except Exception as error:
-        _send_failure(initial_request_id, error, ctx)
-        return
+        raise _ChatAttemptFailed(error) from error
 
     # Evaluated once: the answer depends only on the chat model and the schema, and
     # a raise (a NATIVE strategy the connection cannot honor) cannot change on retry.
@@ -600,8 +606,7 @@ async def chat(
         except (CancelledError, InterruptedError):
             raise
         except Exception as error:
-            _send_failure(initial_request_id, error, ctx)
-            return
+            raise _ChatAttemptFailed(error) from error
 
     request_metric_group = ctx.action_metric_group
 
@@ -669,7 +674,7 @@ async def chat(
                 messages,
                 chat_async=chat_async,
                 prompt_args=prompt_args,
-                durable_id=_CHAT_DURABLE_ID,
+                durable_id=durable_id,
             )
             try:
                 response = _accept_model_response(
@@ -705,7 +710,7 @@ async def chat(
                     response.text,
                     output_schema,
                     chat_async=chat_async,
-                    durable_id=_FINALIZE_DURABLE_ID,
+                    durable_id=f"{durable_id}:final",
                 )
                 try:
                     structured = _accept_model_response(
@@ -741,8 +746,41 @@ async def chat(
         )
 
     if final_error is not None:
-        _send_failure(initial_request_id, final_error, ctx)
+        raise _ChatAttemptFailed(final_error) from final_error
+
+    return _ChatAttemptResult(response, chat_model, structured_output)
+
+
+async def chat(
+    initial_request_id: UUID,
+    model: str,
+    messages: List[ChatMessage],
+    prompt_args: Dict | None,
+    output_schema: OutputSchema | None,
+    ctx: RunnerContext,
+) -> None:
+    """Chat with llm.
+
+    If there is no tool call generated, we return the chat response event directly,
+    otherwise, we generate tool request event according to the tool calls in chat model
+    response, and save the request and response messages in tool call context.
+
+    When ``output_schema`` is set and the chat model reports that it travels through
+    the provider's native structured output, the final answer is followed by one more
+    call without tools that carries the schema, and that call's response is parsed.
+    The extra call belongs to the same attempt, so its failures, and a failure to
+    parse its response, consume the same retry budget.
+    """
+    try:
+        attempt = await _chat_with_retries(
+            initial_request_id, model, messages, prompt_args, output_schema, ctx
+        )
+    except _ChatAttemptFailed as failure:
+        _send_failure(initial_request_id, failure.error, ctx)
         return
+    response = attempt.response
+    chat_model = attempt.chat_model
+    structured_output = attempt.structured_output
 
     if (
         len(response.tool_calls) > 0
