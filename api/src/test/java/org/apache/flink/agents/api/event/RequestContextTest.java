@@ -29,6 +29,7 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -195,5 +196,82 @@ class RequestContextTest {
         assertThatThrownBy(() -> ChatRequestEvent.fromEvent(event))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("extra");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void reusedContextMapIsCopiedIncludingNestedMapsAndLists() {
+        Map<String, Object> shared = new LinkedHashMap<>();
+        shared.put("task", "summary");
+        List<String> tags = new ArrayList<>();
+        tags.add("keep");
+        shared.put("tags", tags);
+        Map<String, Object> nested = new LinkedHashMap<>();
+        nested.put("label", "keep");
+        shared.put("meta", nested);
+
+        ChatRequestEvent requestA =
+                new ChatRequestEvent("model", List.of(ChatMessage.user("a"))).withContext(shared);
+        shared.put("task", "risk");
+        tags.add("changed");
+        nested.put("label", "changed");
+        ChatRequestEvent requestB =
+                new ChatRequestEvent("model", List.of(ChatMessage.user("b"))).withContext(shared);
+
+        assertThat(requestA.getContext())
+                .isEqualTo(
+                        Map.of(
+                                "task",
+                                "summary",
+                                "tags",
+                                List.of("keep"),
+                                "meta",
+                                Map.of("label", "keep")));
+        assertThat(requestB.getContext())
+                .isEqualTo(
+                        Map.of(
+                                "task",
+                                "risk",
+                                "tags",
+                                List.of("keep", "changed"),
+                                "meta",
+                                Map.of("label", "changed")));
+        Map<String, Object> storedA = (Map<String, Object>) requestA.getContext();
+        assertThat(storedA).isNotSameAs(shared);
+        assertThat(storedA.get("tags")).isNotSameAs(tags);
+        assertThat(storedA.get("meta")).isNotSameAs(nested);
+    }
+
+    @Test
+    void rowShapedContextStaysTheSuppliedJsonObject() throws Exception {
+        String requestJson =
+                "{"
+                        + "\"id\":\"00000000-0000-0000-0000-000000000001\","
+                        + "\"type\":\"_chat_request_event\","
+                        + "\"attributes\":{"
+                        + "\"model\":\"model\","
+                        + "\"messages\":[{\"role\":\"user\",\"blocks\":[{\"type\":\"text\",\"text\":\"hi\"}],\"metadata\":{}}],"
+                        + "\"context\":{\"type\":\"Row\",\"values\":[1],\"label\":\"keep\"}"
+                        + "}}";
+        ChatRequestEvent request = ChatRequestEvent.fromEvent(Event.fromJson(requestJson));
+        assertThat(request.getContext())
+                .isEqualTo(Map.of("type", "Row", "values", List.of(1), "label", "keep"));
+
+        String responseJson =
+                "{"
+                        + "\"id\":\"00000000-0000-0000-0000-000000000001\","
+                        + "\"type\":\"_chat_response_event\","
+                        + "\"attributes\":{"
+                        + "\"request_id\":\"00000000-0000-0000-0000-000000000002\","
+                        + "\"status\":\"SUCCESS\","
+                        + "\"response\":{\"message\":{\"role\":\"assistant\",\"blocks\":[{\"type\":\"text\",\"text\":\"ok\"}],\"metadata\":{}}},"
+                        + "\"error\":null,"
+                        + "\"retry_count\":0,"
+                        + "\"total_retry_wait_sec\":0,"
+                        + "\"context\":{\"type\":\"Row\",\"values\":[1],\"label\":\"keep\"}"
+                        + "}}";
+        ChatResponseEvent response = ChatResponseEvent.fromEvent(Event.fromJson(responseJson));
+        assertThat(response.getContext())
+                .isEqualTo(Map.of("type", "Row", "values", List.of(1), "label", "keep"));
     }
 }

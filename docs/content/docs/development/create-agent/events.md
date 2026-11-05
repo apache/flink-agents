@@ -287,6 +287,11 @@ The built-in Action copies that value onto the matching response and does not ad
 the prompt, tool arguments, or vector-store query. Omitting it leaves the response
 without a `context` attribute, which is what existing callers do.
 
+The value is copied when the event is created, including nested maps and lists, so a
+later change to the object you passed in does not change the event. It round-trips as
+the JSON you supplied. An object is not turned into a framework type such as a PyFlink
+row, so every field on that object stays.
+
 A chat response keeps the context from the original `ChatRequestEvent` after tool-call
 rounds, retries, and model fallback. Tool responses keep the context from the
 `ToolRequestEvent` that asked for those calls, including when a call in the batch

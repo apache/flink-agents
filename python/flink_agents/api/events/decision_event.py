@@ -27,7 +27,7 @@ from typing_extensions import override
 
 from flink_agents.api.decision_models import DecisionRequest, DecisionResult
 from flink_agents.api.decision_models.decision_model import _validate_request_params
-from flink_agents.api.events.event import BuiltInAttribute, Event
+from flink_agents.api.events.event import BuiltInAttribute, Event, copy_user_context
 
 
 class DecisionRequestEvent(Event):
@@ -66,7 +66,7 @@ class DecisionRequestEvent(Event):
             "request_params": _validate_request_params(request_params),
         }
         if context is not None:
-            attributes["context"] = context
+            attributes["context"] = copy_user_context(context)
         super().__init__(
             type=self.EVENT_TYPE,
             attributes=attributes,
@@ -196,7 +196,7 @@ class DecisionResponseEvent(Event):
             self._TOTAL_RETRY_WAIT_SEC: total_retry_wait_sec,
         }
         if context is not None:
-            attributes["context"] = context
+            attributes["context"] = copy_user_context(context)
         super().__init__(
             type=DecisionResponseEvent.EVENT_TYPE,
             attributes=attributes,

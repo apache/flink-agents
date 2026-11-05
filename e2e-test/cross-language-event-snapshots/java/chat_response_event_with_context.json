@@ -1,0 +1,34 @@
+{
+  "id" : "00000000-0000-0000-0000-000000000001",
+  "attributes" : {
+    "response" : {
+      "message" : {
+        "role" : "assistant",
+        "blocks" : [ {
+          "text" : "hi there",
+          "type" : "text"
+        } ],
+        "metadata" : { }
+      },
+      "model" : null,
+      "response_id" : null,
+      "usage" : null,
+      "finish_reason" : null,
+      "metadata" : { }
+    },
+    "total_retry_wait_sec" : 0,
+    "retry_count" : 0,
+    "context" : {
+      "task" : "summary",
+      "item_id" : "42",
+      "n" : 1,
+      "ok" : true,
+      "tags" : [ "a" ]
+    },
+    "error" : null,
+    "request_id" : "00000000-0000-0000-0000-000000000002",
+    "status" : "SUCCESS"
+  },
+  "attachments" : { },
+  "type" : "_chat_response_event"
+}

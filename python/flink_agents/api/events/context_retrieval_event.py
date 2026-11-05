@@ -23,7 +23,7 @@ except ImportError:
     from typing_extensions import override
 from uuid import UUID
 
-from flink_agents.api.events.event import BuiltInAttribute, Event
+from flink_agents.api.events.event import BuiltInAttribute, Event, copy_user_context
 from flink_agents.api.vector_stores.vector_store import Document
 
 
@@ -81,7 +81,7 @@ class ContextRetrievalRequestEvent(Event):
             "max_results": max_results,
         }
         if context is not None:
-            attributes["context"] = context
+            attributes["context"] = copy_user_context(context)
         super().__init__(
             type=ContextRetrievalRequestEvent.EVENT_TYPE,
             attributes=attributes,
@@ -163,7 +163,7 @@ class ContextRetrievalResponseEvent(Event):
             "documents": documents,
         }
         if context is not None:
-            attributes["context"] = context
+            attributes["context"] = copy_user_context(context)
         super().__init__(
             type=ContextRetrievalResponseEvent.EVENT_TYPE,
             attributes=attributes,

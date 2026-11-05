@@ -22,11 +22,20 @@ import org.apache.flink.agents.api.Event;
 
 import javax.annotation.Nullable;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 /**
  * Optional opaque application data carried on a built-in request and echoed on its response.
  *
  * <p>The value is not interpreted, not injected into prompts or tool arguments, and omitted
  * entirely when absent so existing events keep their serialized shape.
+ *
+ * <p>Maps and lists, including nested ones, are copied when attached. A later change to the
+ * caller's object does not change an event that already holds the value. Other values are stored as
+ * given.
  */
 final class UserDefinedContext {
 
@@ -38,8 +47,32 @@ final class UserDefinedContext {
         if (context == null) {
             event.getAttributes().remove(ATTRIBUTE);
         } else {
-            event.setAttr(ATTRIBUTE, context);
+            event.setAttr(ATTRIBUTE, snapshot(context));
         }
+    }
+
+    /**
+     * Returns a detached copy of {@code value}. Maps and lists are copied recursively so the event
+     * does not share the caller's mutable structure.
+     */
+    static Object snapshot(Object value) {
+        if (value instanceof Map) {
+            Map<?, ?> map = (Map<?, ?>) value;
+            Map<Object, Object> copy = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                copy.put(snapshot(entry.getKey()), snapshot(entry.getValue()));
+            }
+            return copy;
+        }
+        if (value instanceof List) {
+            List<?> list = (List<?>) value;
+            List<Object> copy = new ArrayList<>(list.size());
+            for (Object item : list) {
+                copy.add(snapshot(item));
+            }
+            return copy;
+        }
+        return value;
     }
 
     @Nullable

@@ -1452,6 +1452,65 @@ class ChatModelActionRetryTest {
         assertThat(response.getContext()).isEqualTo(context);
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void reusedContextMapKeepsEachResponseSnapshot() throws Exception {
+        configureRetryStrategy(0, 0);
+        when(mockChatModel.chat(any(), any(), any()))
+                .thenReturn(ChatFixtures.response("summary done"))
+                .thenReturn(ChatFixtures.response("risk done"));
+
+        Map<String, Object> shared = new LinkedHashMap<>();
+        shared.put("task", "summary");
+        List<String> tags = new ArrayList<>();
+        tags.add("keep");
+        shared.put("tags", tags);
+        Map<String, Object> nested = new LinkedHashMap<>();
+        nested.put("label", "keep");
+        shared.put("meta", nested);
+
+        ChatRequestEvent requestA =
+                new ChatRequestEvent("test-model", List.of(ChatMessage.user("a")))
+                        .withContext(shared);
+        shared.put("task", "risk");
+        tags.add("changed");
+        nested.put("label", "changed");
+        ChatRequestEvent requestB =
+                new ChatRequestEvent("test-model", List.of(ChatMessage.user("b")))
+                        .withContext(shared);
+
+        ChatModelAction.processChatRequestOrToolResponse(requestA, mockCtx);
+        ChatModelAction.processChatRequestOrToolResponse(requestB, mockCtx);
+
+        ChatResponseEvent responseA = ChatResponseEvent.fromEvent(sentEvents.get(0));
+        ChatResponseEvent responseB = ChatResponseEvent.fromEvent(sentEvents.get(1));
+        assertThat(responseA.getRequestId()).isEqualTo(requestA.getId());
+        assertThat(responseA.getResponse().getText()).isEqualTo("summary done");
+        assertThat(responseA.getContext())
+                .isEqualTo(
+                        Map.of(
+                                "task",
+                                "summary",
+                                "tags",
+                                List.of("keep"),
+                                "meta",
+                                Map.of("label", "keep")));
+        assertThat(responseB.getRequestId()).isEqualTo(requestB.getId());
+        assertThat(responseB.getResponse().getText()).isEqualTo("risk done");
+        assertThat(responseB.getContext())
+                .isEqualTo(
+                        Map.of(
+                                "task",
+                                "risk",
+                                "tags",
+                                List.of("keep", "changed"),
+                                "meta",
+                                Map.of("label", "changed")));
+        Map<String, Object> storedA = (Map<String, Object>) responseA.getContext();
+        assertThat(storedA).isNotSameAs(shared);
+        assertThat(storedA.get("tags")).isNotSameAs(tags);
+    }
+
     // --- Helper methods ---
 
     private static void assertInvocationIdentities(ExecutionReporter reporter, int expectedCalls) {

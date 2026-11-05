@@ -34,6 +34,7 @@ from flink_agents.api.events.context_retrieval_event import (
 )
 from flink_agents.api.events.event import Event
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
+from flink_agents.api.memory_object import validate_memory_value
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.tools.tool_response import ToolResponse
 from flink_agents.api.trace import ExecutionReporter
@@ -54,6 +55,7 @@ class _Memory:
         return self._store.get(path)
 
     def set(self, path: str, value: Any) -> None:
+        validate_memory_value(path, value)
         self._store[path] = value
 
 
@@ -316,3 +318,87 @@ def test_retrieval_query_failure_propagates_without_a_response() -> None:
 
     assert sent == []
     assert request.context == {"task": "retrieve"}
+
+
+def test_reused_context_mapping_keeps_each_response_snapshot() -> None:
+    chat_model = MagicMock()
+    chat_model.chat = MagicMock(side_effect=[_text("summary done"), _text("risk done")])
+    ctx, sent, _ = _runner(chat_model)
+    shared = {
+        "task": "summary",
+        "tags": ["keep"],
+        "meta": {"label": "keep"},
+    }
+    request_a = _request("a", {"who": "a"}, shared)
+    shared["task"] = "risk"
+    shared["tags"].append("changed")
+    shared["meta"]["label"] = "changed"
+    request_b = _request("b", {"who": "b"}, shared)
+
+    asyncio.run(process_chat_request_or_tool_response(request_a, ctx))
+    asyncio.run(process_chat_request_or_tool_response(request_b, ctx))
+
+    response_a, response_b = sent
+    assert response_a.request_id == request_a.id
+    assert response_a.response.text == "summary done"
+    assert response_a.context == {
+        "task": "summary",
+        "tags": ["keep"],
+        "meta": {"label": "keep"},
+    }
+    assert response_b.request_id == request_b.id
+    assert response_b.response.text == "risk done"
+    assert response_b.context == {
+        "task": "risk",
+        "tags": ["keep", "changed"],
+        "meta": {"label": "changed"},
+    }
+    assert response_a.context is not shared
+    assert response_a.context["tags"] is not shared["tags"]
+
+
+def test_row_shaped_context_survives_a_tool_round() -> None:
+    row_shaped = {"type": "Row", "values": [1], "label": "keep"}
+    request = Event.from_json(
+        json.dumps(
+            {
+                "type": ChatRequestEvent.EVENT_TYPE,
+                "attributes": {
+                    "model": "test-model",
+                    "messages": [ChatMessage.user("hi").model_dump(mode="json")],
+                    "prompt_args": {},
+                    "context": row_shaped,
+                },
+            }
+        )
+    )
+    assert type(request.context) is dict
+    assert request.context == row_shaped
+
+    chat_model = MagicMock()
+    chat_model.chat = MagicMock(side_effect=[_tool_result(), _text("done")])
+    ctx, sent, memory = _runner(chat_model)
+
+    asyncio.run(process_chat_request_or_tool_response(request, ctx))
+    tool = sent[0]
+    assert isinstance(tool, ToolRequestEvent)
+    assert tool.context is None
+    parked = memory.get("_TOOL_REQUEST_EVENT_CONTEXT")
+    assert parked[str(tool.id)]["context"] == row_shaped
+
+    asyncio.run(
+        process_chat_request_or_tool_response(
+            ToolResponseEvent(
+                request_id=tool.id,
+                responses={"call-1": ToolResponse.text("ok")},
+                success={"call-1": True},
+                error={},
+            ),
+            ctx,
+        )
+    )
+    response = sent[1]
+    assert response.request_id == request.id
+    assert response.response.text == "done"
+    assert response.context == row_shaped
+    assert response.context["label"] == "keep"

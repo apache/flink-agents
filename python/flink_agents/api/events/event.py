@@ -59,6 +59,20 @@ def _reconstruct_row_if_needed(data: Any) -> Any:
     return data
 
 
+def copy_user_context(context: Any) -> Any:
+    """Detach maps and lists from a caller-supplied context value.
+
+    Built-in request and response events store this copy so a later mutation of
+    the caller's object does not change an event that already holds the value.
+    Nested maps and lists are copied. Other values are returned as given.
+    """
+    if isinstance(context, dict):
+        return {key: copy_user_context(value) for key, value in context.items()}
+    if isinstance(context, list):
+        return [copy_user_context(item) for item in context]
+    return context
+
+
 class _AttrKind(Enum):
     """The shape a built-in attribute value takes at the JSON boundary."""
 
@@ -445,6 +459,11 @@ class Event(BaseModel, extra="allow"):
         nested typed values survive the cross-language boundary; unknown or
         user-defined types are returned as a generic ``Event``.
 
+        ``context`` on the built-in request and response events is left as the
+        parsed JSON. An object shaped like a PyFlink ``Row`` is not reconstructed,
+        so every field on that object stays. Other attributes still reconstruct
+        native rows.
+
         Parameters
         ----------
         json_str : str
@@ -466,12 +485,17 @@ class Event(BaseModel, extra="allow"):
             msg = "Event JSON must contain a non-empty 'type' field."
             raise ValueError(msg)
         event = cls.model_validate(data)
-        for key in list(event.attributes):
-            event.attributes[key] = _reconstruct_row_if_needed(event.attributes[key])
         # Imported lazily: built_in_events imports the concrete subclasses, which
         # import this module, so a top-level import here would be circular.
-        from flink_agents.api.events.built_in_events import restore
+        from flink_agents.api.events.built_in_events import (
+            context_is_preserved_json,
+            restore,
+        )
 
+        for key in list(event.attributes):
+            if key == "context" and context_is_preserved_json(event.type):
+                continue
+            event.attributes[key] = _reconstruct_row_if_needed(event.attributes[key])
         return restore(event)
 
 

@@ -1,0 +1,24 @@
+{
+  "id" : "00000000-0000-0000-0000-000000000001",
+  "attributes" : {
+    "context" : {
+      "task" : "summary",
+      "item_id" : "42",
+      "n" : 1,
+      "ok" : true,
+      "tags" : [ "a" ]
+    },
+    "messages" : [ {
+      "role" : "user",
+      "blocks" : [ {
+        "text" : "hello world",
+        "type" : "text"
+      } ],
+      "metadata" : { }
+    } ],
+    "model" : "test-model",
+    "prompt_args" : { }
+  },
+  "attachments" : { },
+  "type" : "_chat_request_event"
+}

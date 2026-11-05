@@ -26,7 +26,7 @@ from uuid import UUID
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_result import ChatResult
-from flink_agents.api.events.event import BuiltInAttribute, Event
+from flink_agents.api.events.event import BuiltInAttribute, Event, copy_user_context
 
 
 class ChatRequestEvent(Event):
@@ -76,7 +76,7 @@ class ChatRequestEvent(Event):
             "output_schema": output_schema,
         }
         if context is not None:
-            attributes["context"] = context
+            attributes["context"] = copy_user_context(context)
         super().__init__(
             type=ChatRequestEvent.EVENT_TYPE,
             attributes=attributes,
@@ -222,7 +222,7 @@ class ChatResponseEvent(Event):
             self._TOTAL_RETRY_WAIT_SEC: total_retry_wait_sec,
         }
         if context is not None:
-            attributes["context"] = context
+            attributes["context"] = copy_user_context(context)
         super().__init__(
             type=ChatResponseEvent.EVENT_TYPE,
             attributes=attributes,

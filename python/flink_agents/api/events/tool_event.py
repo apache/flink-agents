@@ -25,7 +25,7 @@ except ImportError:
 from uuid import UUID
 
 from flink_agents.api.chat_message import ToolCallBlock
-from flink_agents.api.events.event import BuiltInAttribute, Event
+from flink_agents.api.events.event import BuiltInAttribute, Event, copy_user_context
 from flink_agents.api.tools.tool_response import ToolResponse
 
 
@@ -69,7 +69,7 @@ class ToolRequestEvent(Event):
             "tool_calls": tool_calls,
         }
         if context is not None:
-            attributes["context"] = context
+            attributes["context"] = copy_user_context(context)
         super().__init__(
             type=ToolRequestEvent.EVENT_TYPE,
             attributes=attributes,
@@ -163,7 +163,7 @@ class ToolResponseEvent(Event):
             "error": error if error is not None else {},
         }
         if context is not None:
-            attributes["context"] = context
+            attributes["context"] = copy_user_context(context)
         super().__init__(
             type=ToolResponseEvent.EVENT_TYPE,
             attributes=attributes,
