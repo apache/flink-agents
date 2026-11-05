@@ -244,7 +244,8 @@ public class ToolCallAction {
                 futures.add(createCallFuture(execution, ctx));
                 prepared.add(execution);
             } catch (Exception e) {
-                if (CancellationUtils.isCancellation(e) || UncapturableException.isUncapturable(e)) {
+                if (CancellationUtils.isCancellation(e)
+                        || UncapturableException.isUncapturable(e)) {
                     cancelPrepared(prepared, e);
                 }
                 rethrowFrameworkFaultOrCancellation(e);

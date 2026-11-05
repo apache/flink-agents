@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
@@ -144,7 +145,7 @@ class ChatDurableFutureTest {
                     ChatResponseEvent.success(
                             UUID.randomUUID(), new ChatResult(ChatMessage.assistant("answer"))));
             finish(executor, context, action);
-            assertThat(error.get()).isSameAs(failure);
+            assertThat(error.get()).isInstanceOf(UncapturableException.class).hasCause(failure);
             assertThat(call.awaitResult().isSuccess()).isTrue();
         } finally {
             executor.close();

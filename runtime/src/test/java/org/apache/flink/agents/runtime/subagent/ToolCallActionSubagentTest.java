@@ -46,12 +46,12 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.plan.AgentConfiguration;
-import org.apache.flink.agents.plan.exceptions.UncapturableException;
-import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.agents.plan.actions.ToolCallAction;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.plan.subagent.SubagentConstants;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
+import org.apache.flink.util.ExceptionUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -63,14 +63,13 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import java.util.Set;
-import java.util.concurrent.Callable;
-
 import static org.mockito.Mockito.mock;
 
 /** Tests for dispatching a tool call to an {@code AGENT} resource. */

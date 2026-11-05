@@ -31,6 +31,7 @@ import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
@@ -54,6 +55,7 @@ import org.junit.jupiter.api.condition.JRE;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -71,8 +73,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.AdditionalAnswers.delegatesTo;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 
 /** Production mixed scheduler exercised with a real journal and continuation executor. */
 @EnabledForJreRange(min = JRE.JAVA_21)
@@ -349,13 +355,34 @@ class MixedFutureGatherTest {
     }
 
     @Test
-    void graphRuntimeFailureIsNotPersistedAsChatOutcome() throws Exception {
+    void schedulerWaitFailurePropagatesWithoutRecordingAToolFailure() throws Exception {
         try (Fixture f = new Fixture()) {
-            var chat = f.chat();
-            var run = f.start(() -> f.runner.gather(List.of(chat)).await());
+            var runner = spy(f.runner);
+            CompletableFuture<String> completion = new CompletableFuture<>();
+            IOException fault = new IOException("wait machinery failed");
+            doReturn(completion).when(runner).submitAsync(any());
+            doThrow(fault).when(runner).awaitCompletion(any());
+            var tool = runner.durableExecuteAsync(call("tool", String.class, () -> "unused"));
+            assertThatThrownBy(() -> f.run(() -> runner.gather(List.of(tool)).await()))
+                    .isInstanceOf(UncapturableException.class)
+                    .hasCause(fault);
+            assertThat(f.state.getCallResults()).hasSize(1);
+            assertThat(f.state.getCallResults().get(0).isPending()).isTrue();
+            assertThat(completion.isCancelled()).isTrue();
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void graphRuntimeFailureIsNotPersistedAsBusinessOutcome(boolean internal) throws Exception {
+        try (Fixture f = new Fixture()) {
+            var graph = internal ? f.internal("child") : f.chat();
+            var run = f.start(() -> f.runner.gather(List.of(graph)).await());
             IllegalStateException fault = new IllegalStateException("graph runtime failed");
-            chat.getInvocation().completionFuture().completeExceptionally(fault);
-            assertThatThrownBy(() -> f.finish(run)).isSameAs(fault);
+            graph.getInvocation().completionFuture().completeExceptionally(fault);
+            assertThatThrownBy(() -> f.finish(run))
+                    .isInstanceOf(UncapturableException.class)
+                    .hasCause(fault);
             assertThat(f.state.getCallResults()).hasSize(1);
             assertThat(f.state.getCallResults().get(0).isPending()).isTrue();
         }

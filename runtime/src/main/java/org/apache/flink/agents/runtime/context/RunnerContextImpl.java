@@ -1080,6 +1080,11 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                         awaitCompletion(signal);
                     } catch (TimeoutException ignored) {
                         /* handled above */
+                    } catch (Exception e) {
+                        // Call failures are collected by finish(); this signal only reports
+                        // progress, so other wait failures belong to the runtime protocol.
+                        AsyncFutureImpl.rethrowFatal(e);
+                        throw UncapturableException.wrap(e);
                     }
                 }
             }
