@@ -148,7 +148,11 @@ public class InternalSubagentSetup extends BaseSubagentSetup {
                 callId,
                 ctx,
                 () -> {
-                    SubgraphExecution.requireReleasableOperator((RunnerContextImpl) ctx);
+                    try {
+                        SubgraphExecution.requireReleasableOperator((RunnerContextImpl) ctx);
+                    } catch (RuntimeException failure) {
+                        throw UncapturableException.wrap(failure);
+                    }
                     return new SubgraphFuture<>(
                             (RunnerContextImpl) ctx,
                             () -> invocation((RunnerContextImpl) ctx, sessionId, callId),

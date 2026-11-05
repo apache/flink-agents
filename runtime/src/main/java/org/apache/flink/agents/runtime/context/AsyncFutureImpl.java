@@ -22,8 +22,8 @@ import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
-import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.plan.exceptions.UncapturableException;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.util.function.FunctionWithException;
 
 import java.util.ArrayList;
