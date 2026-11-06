@@ -41,6 +41,7 @@ import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
 import org.apache.flink.agents.api.event.DecisionRequestEvent;
 import org.apache.flink.agents.api.event.DecisionResponseEvent;
 import org.apache.flink.agents.api.event.MemoryEvent;
+import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
@@ -143,6 +144,19 @@ class CrossLanguageEventSnapshotTest {
                         + pythonSnapshot
                         + ". Regenerate the Python side with REGENERATE_SNAPSHOTS=1 and commit alongside this test.");
         return Event.fromJson(Files.readString(pythonSnapshot));
+    }
+
+    @Test
+    void pythonModelRoutingEventRestoresItsTypedSchema() throws Exception {
+        ModelRoutingEvent event =
+                assertInstanceOf(
+                        ModelRoutingEvent.class, readPythonSnapshot("model_routing_event.json"));
+        assertEquals(FIXED_REQUEST_ID, event.getRequestId());
+        assertEquals("router", event.getRouter());
+        assertEquals(List.of("small", "big"), event.getCandidates());
+        assertEquals("big", event.getSelectedModel());
+        assertEquals(0.5, event.getScore());
+        assertEquals(Map.of("tag", "python"), event.getMetadata());
     }
 
     // ── InputEvent ─────────────────────────────────────────────────────────

@@ -717,6 +717,11 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             raise RuntimeError(err_msg) from e
 
     @override
+    def has_resource(self, name: str, type: ResourceType) -> bool:
+        self._j_runner_context.checkMailboxThread()
+        return self.__active_resource_cache().has_resource(name, type)
+
+    @override
     def get_resource(
         self, name: str, type: ResourceType, metric_group: MetricGroup = None
     ) -> Resource:

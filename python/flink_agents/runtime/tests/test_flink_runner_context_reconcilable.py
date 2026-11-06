@@ -354,6 +354,7 @@ def test_native_finalization_replays_both_calls_without_provider_calls(
         store.current_call_index = 0
         runner = _create_runner_context(store)
         ctx = MagicMock(spec=ExecutionReporter)
+        ctx.has_resource = MagicMock(return_value=False)
         ctx.get_resource = MagicMock(return_value=chat_model)
         ctx.action_metric_group = None
         ctx.sensory_memory = MagicMock()
