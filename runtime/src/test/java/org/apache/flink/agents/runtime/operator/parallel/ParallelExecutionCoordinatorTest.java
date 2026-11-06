@@ -416,49 +416,6 @@ class ParallelExecutionCoordinatorTest {
 
     @Test
     @Timeout(15)
-    void drainingPausesNewDispatchUntilStopped() throws Exception {
-        ParallelExecutionLock lock = new ParallelExecutionLock();
-        BlockingQueue<ThrowingRunnable<? extends Exception>> mails = new LinkedBlockingQueue<>();
-        List<String> events = Collections.synchronizedList(new ArrayList<>());
-        Queue<ParallelExecutionTask> works = new ConcurrentLinkedQueue<>();
-        CountDownLatch started = new CountDownLatch(1);
-        CountDownLatch allow = new CountDownLatch(1);
-        try (ParallelExecutionCoordinator coordinator = newCoordinator(lock, mails, works::poll)) {
-            coordinator.startDraining();
-
-            works.add(
-                    FakeWork.blockingAsync(
-                            "A",
-                            events,
-                            lock,
-                            () -> {
-                                started.countDown();
-                                await(allow);
-                            }));
-            lock.acquireByMain();
-            coordinator.addTask(KEY);
-            lock.release();
-
-            // While draining, the worker declines the pulled credit; the task is not started, but
-            // its node stays pending (outstanding), so its task stays in the durable queue.
-            assertThat(started.await(1, TimeUnit.SECONDS)).isFalse();
-            assertThat(events).isEmpty();
-            assertThat(coordinator.hasOutstanding(KEY)).isTrue();
-
-            // Resuming dispatch alone must revive the worker — no other mailbox lock cycle runs.
-            coordinator.stopDraining();
-            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
-            assertThat(coordinator.isQuiesced()).isFalse();
-
-            allow.countDown();
-            runOneMail(mails);
-        } finally {
-            allow.countDown();
-        }
-    }
-
-    @Test
-    @Timeout(15)
     void shutdownDuringAsyncReacquireAbandonsTaskWithoutLockErrors() throws Exception {
         ParallelExecutionLock lock = new ParallelExecutionLock();
         BlockingQueue<ThrowingRunnable<? extends Exception>> mails = new LinkedBlockingQueue<>();
@@ -510,7 +467,7 @@ class ParallelExecutionCoordinatorTest {
 
     @Test
     @Timeout(15)
-    void dependentCommitsDuringDrainingBeforeItsWaitingCaller() throws Exception {
+    void dependentCommitsBeforeItsWaitingCaller() throws Exception {
         ParallelExecutionLock lock = new ParallelExecutionLock();
         BlockingQueue<ThrowingRunnable<? extends Exception>> mails = new LinkedBlockingQueue<>();
         List<String> events = Collections.synchronizedList(new ArrayList<>());
@@ -532,7 +489,6 @@ class ParallelExecutionCoordinatorTest {
             coordinator.addTask(KEY);
             lock.release();
             assertThat(callerStarted.await(5, TimeUnit.SECONDS)).isTrue();
-            coordinator.startDraining();
 
             lock.acquireByMain();
             coordinator.addDependentTask(
@@ -558,85 +514,8 @@ class ParallelExecutionCoordinatorTest {
                             "finish-caller->caller");
             assertThat(coordinator.hasOutstanding(KEY)).isFalse();
             assertThat(coordinator.isQuiesced()).isTrue();
-            coordinator.stopDraining();
         } finally {
             childCommitted.countDown();
-        }
-    }
-
-    @Test
-    @Timeout(15)
-    void dependentSubmittedDuringDrainIsNotStarvedByAQueuedRootPermit() throws Exception {
-        ParallelExecutionLock lock = new ParallelExecutionLock();
-        BlockingQueue<ThrowingRunnable<? extends Exception>> mails = new LinkedBlockingQueue<>();
-        List<String> events = Collections.synchronizedList(new ArrayList<>());
-        Queue<ParallelExecutionTask> works = new ConcurrentLinkedQueue<>();
-        CountDownLatch callerStarted = new CountDownLatch(1);
-        CountDownLatch callerMayFinish = new CountDownLatch(1);
-        CountDownLatch childStarted = new CountDownLatch(1);
-        CountDownLatch queuedStarted = new CountDownLatch(1);
-        // One worker, so both the second root permit and the dependent permit queue behind the
-        // caller: whichever the single worker redeems once the caller returns decides the outcome.
-        try (ParallelExecutionCoordinator coordinator =
-                newCoordinator(1, lock, mails, works::poll)) {
-            works.add(
-                    FakeWork.blockingAsync(
-                            "caller",
-                            events,
-                            lock,
-                            () -> {
-                                callerStarted.countDown();
-                                await(callerMayFinish);
-                            }));
-            works.add(
-                    FakeWork.blocking(
-                            "queued",
-                            events,
-                            () -> {
-                                lock.checkReentrant();
-                                queuedStarted.countDown();
-                            }));
-            lock.acquireByMain();
-            coordinator.addTask(KEY);
-            coordinator.addTask(KEY);
-            lock.release();
-            assertThat(callerStarted.await(5, TimeUnit.SECONDS)).isTrue();
-
-            coordinator.startDraining();
-            lock.acquireByMain();
-            coordinator.addDependentTask(
-                    FakeWork.blocking(
-                            "child",
-                            events,
-                            () -> {
-                                lock.checkReentrant();
-                                childStarted.countDown();
-                            }),
-                    KEY,
-                    0L,
-                    0L);
-            // The dependency is outstanding from submission, so quiesce now waits on a permit that
-            // sits behind a root permit no worker will pull while draining.
-            assertThat(coordinator.isQuiesced()).isFalse();
-            lock.release();
-
-            callerMayFinish.countDown();
-            // The caller's commit mail must run: it is what consumes the sticky main-grant its
-            // worker left behind, without which no worker can re-acquire the lock at all.
-            runOneMail(mails);
-            // A worker that parked on the root permit would hold the pool's only thread for the
-            // whole snapshot and the child would never run; forfeiting it hands the thread back.
-            assertThat(childStarted.await(5, TimeUnit.SECONDS))
-                    .as("a queued root permit must not starve a dependent submitted during a drain")
-                    .isTrue();
-
-            // The forfeited permit is re-submitted on resume, so the queued node is not lost.
-            coordinator.stopDraining();
-            assertThat(queuedStarted.await(5, TimeUnit.SECONDS))
-                    .as("resume must re-submit the forfeited permit")
-                    .isTrue();
-        } finally {
-            callerMayFinish.countDown();
         }
     }
 
@@ -826,60 +705,6 @@ class ParallelExecutionCoordinatorTest {
         } finally {
             allowFinish.countDown();
             coordinator.close();
-        }
-    }
-
-    @Test
-    @Timeout(15)
-    void startDrainingFencesInProgressPullSoQuiesceCannotMissIt() throws Exception {
-        ParallelExecutionLock lock = new ParallelExecutionLock();
-        BlockingQueue<ThrowingRunnable<? extends Exception>> mails = new LinkedBlockingQueue<>();
-        List<String> events = Collections.synchronizedList(new ArrayList<>());
-        CountDownLatch factoryEntered = new CountDownLatch(1);
-        CountDownLatch allowFactory = new CountDownLatch(1);
-        CountDownLatch drainerDone = new CountDownLatch(1);
-        AtomicBoolean quiescedAfterFence = new AtomicBoolean();
-        // The factory runs inside the worker's pull section: after the draining check, before
-        // inFlightExecuting is incremented — exactly the TOCTOU window.
-        Supplier<ParallelExecutionTask> works =
-                () -> {
-                    factoryEntered.countDown();
-                    await(allowFactory);
-                    return FakeWork.blocking("A", events, () -> {});
-                };
-        try (ParallelExecutionCoordinator coordinator = newCoordinator(lock, mails, works)) {
-            lock.acquireByMain();
-            coordinator.addTask(KEY);
-            lock.release();
-            assertThat(factoryEntered.await(5, TimeUnit.SECONDS)).isTrue();
-
-            // Start draining while the worker sits in the window; the fence must block until the
-            // worker's lock hold (which includes the increment) is over.
-            Thread drainer =
-                    new Thread(
-                            () -> {
-                                try {
-                                    coordinator.startDraining();
-                                } catch (InterruptedException e) {
-                                    Thread.currentThread().interrupt();
-                                }
-                                quiescedAfterFence.set(coordinator.isQuiesced());
-                                drainerDone.countDown();
-                            });
-            drainer.start();
-            // Give the drainer time to reach the fence (pre-fix it would finish immediately).
-            Thread.sleep(300L);
-            allowFactory.countDown();
-            assertThat(drainerDone.await(5, TimeUnit.SECONDS)).isTrue();
-
-            // The pulled-but-uncommitted task must be visible to the quiesce check.
-            assertThat(quiescedAfterFence.get()).isFalse();
-
-            coordinator.stopDraining();
-            runOneMail(mails);
-            assertThat(coordinator.isQuiesced()).isTrue();
-        } finally {
-            allowFactory.countDown();
         }
     }
 
