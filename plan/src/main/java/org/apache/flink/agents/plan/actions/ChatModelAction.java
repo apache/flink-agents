@@ -489,7 +489,10 @@ public class ChatModelAction {
     }
 
     private static void sendFailure(
-            UUID requestId, Exception error, @Nullable Map<String, Object> userContext, RunnerContext ctx)
+            UUID requestId,
+            Exception error,
+            @Nullable Map<String, Object> userContext,
+            RunnerContext ctx)
             throws Exception {
         LOG.warn("Chat request {} failed", requestId, error);
         Map<String, Long> stats = getRetryStats(ctx.getSensoryMemory(), requestId);

@@ -1371,18 +1371,18 @@ class ChatModelActionRetryTest {
 
         ChatRequestEvent requestA =
                 new ChatRequestEvent(
-                                "test-model",
-                                List.of(ChatMessage.user("a")),
-                                Map.of("who", "a"),
-                                null,
-                                contextA);
+                        "test-model",
+                        List.of(ChatMessage.user("a")),
+                        Map.of("who", "a"),
+                        null,
+                        contextA);
         ChatRequestEvent requestB =
                 new ChatRequestEvent(
-                                "test-model",
-                                List.of(ChatMessage.user("b")),
-                                Map.of("who", "b"),
-                                null,
-                                contextB);
+                        "test-model",
+                        List.of(ChatMessage.user("b")),
+                        Map.of("who", "b"),
+                        null,
+                        contextB);
         ChatModelAction.processChatRequestOrToolResponse(requestA, mockCtx);
         ChatModelAction.processChatRequestOrToolResponse(requestB, mockCtx);
 
