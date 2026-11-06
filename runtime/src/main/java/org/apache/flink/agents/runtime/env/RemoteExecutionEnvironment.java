@@ -217,6 +217,7 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
         private final Map<String, Agent> agents;
 
         private AgentPlan agentPlan;
+        private @Nullable String agentUid;
         private DataStream<Object> outputDataStream;
 
         // Constructor for DataStream input
@@ -265,14 +266,26 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
 
         @Override
         public AgentBuilder apply(Agent agent) {
-            return apply(agent, null);
+            return applyAgent(agent, null, null);
         }
 
-        private AgentBuilder apply(Agent agent, @Nullable String agentName) {
+        @Override
+        public AgentBuilder apply(Agent agent, @Nullable String uid) {
+            return applyAgent(agent, null, uid);
+        }
+
+        private AgentBuilder applyAgent(
+                Agent agent, @Nullable String agentName, @Nullable String uid) {
+            if (outputDataStream != null) {
+                throw new IllegalStateException(
+                        "Cannot apply an agent after the output stream has been built; create a new builder.");
+            }
+            CompileUtils.validateOperatorUid(uid);
             try {
                 // Inspect resources registered in environment to agent.
                 agent.addResourcesIfAbsent(resources);
                 this.agentPlan = new AgentPlan(agent, config, agentName);
+                this.agentUid = uid;
                 return this;
             } catch (Exception e) {
                 throw new RuntimeException("Failed to create agent plan from agent", e);
@@ -281,6 +294,11 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
 
         @Override
         public AgentBuilder apply(String agentName) {
+            return apply(agentName, null);
+        }
+
+        @Override
+        public AgentBuilder apply(String agentName, @Nullable String uid) {
             Agent agent = agents.get(agentName);
             if (agent == null) {
                 throw new IllegalArgumentException(
@@ -289,7 +307,7 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
                                 + "'; no agent with that name is registered on the environment. "
                                 + "Did you forget to call env.loadYaml(...) or env.getAgents().put(...) first?");
             }
-            return apply(agent, agentName);
+            return applyAgent(agent, agentName, uid);
         }
 
         @Override
@@ -308,14 +326,15 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
             if (outputDataStream == null) {
                 if (keySelector != null) {
                     outputDataStream =
-                            CompileUtils.connectToAgent(inputDataStream, keySelector, agentPlan);
+                            CompileUtils.connectToAgent(
+                                    inputDataStream, keySelector, agentPlan, agentUid);
                 } else if (inputDataStream instanceof KeyedStream) {
                     // An already-keyed input carries its business key; connect through the
                     // keyed-stream path to preserve that key, instead of replacing it with a
                     // pass-through selector that would split a session across its messages.
                     outputDataStream =
                             CompileUtils.connectToAgent(
-                                    (KeyedStream<T, ?>) inputDataStream, agentPlan);
+                                    (KeyedStream<T, ?>) inputDataStream, agentPlan, agentUid);
                 } else {
                     // Without a key selector there is no business key to key the agent by;
                     // keying by the whole record would silently split sessions, so require

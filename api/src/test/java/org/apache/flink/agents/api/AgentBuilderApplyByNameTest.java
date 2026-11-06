@@ -39,6 +39,15 @@ class AgentBuilderApplyByNameTest {
     }
 
     @Test
+    void defaultApplyWithUidThrows() {
+        AgentBuilder b = new SimpleStubBuilder();
+        assertThatThrownBy(() -> b.apply(new Agent(), "uid"))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> b.apply("any", "uid"))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
     void overrideResolvesFromEnv() {
         Agent inc = new Agent();
         AgentBuilder b = new RegistryStubBuilder("inc", inc);
