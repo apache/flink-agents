@@ -1,7 +1,8 @@
 # Code Review Guide
 
 This guide records repository-specific expectations for pull request reviews.
-It is meant to be read before reviewing a PR.
+Read it before implementing changes or reviewing a PR, and apply the relevant
+guidance during development as well as review.
 
 ## Review Posture
 
@@ -94,10 +95,13 @@ For bugfix PRs, ask:
 
 For public APIs, configuration, and common runtime extension points, ask:
 
-- Do names and error messages describe user-facing behavior instead of exposing
-  implementation details?
-- Does a doc comment describe the final contract, not old implementation
-  history, generated rationale, or a not-yet-existing parallel implementation?
+- Do field and method names accurately express their purpose or behavior and use
+  consistent project terminology? Avoid names that are overly broad, easily
+  confused with existing concepts, or misleading about how the API is used.
+- Do user docs and API comments describe the final contract users need to
+  understand, including usage and behavioral boundaries? Omit development history,
+  unrelated mechanism comparisons, and implementation details that do not help
+  users use the API correctly.
 - Do changed user inputs reject values that were previously valid? If so, is the
   incompatibility intentional, documented, and covered by tests?
 - Are invalid user inputs rejected with clear errors that name the invalid value
