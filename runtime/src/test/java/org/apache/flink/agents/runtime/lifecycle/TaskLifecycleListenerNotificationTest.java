@@ -47,6 +47,8 @@ import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -80,50 +82,67 @@ public class TaskLifecycleListenerNotificationTest {
 
         static final List<String> EVENTS = new CopyOnWriteArrayList<>();
 
+        private final Object recordedKey;
+
+        RecordingListener() {
+            this(null);
+        }
+
+        RecordingListener(Object recordedKey) {
+            this.recordedKey = recordedKey;
+        }
+
+        private void record(Object key, String event) {
+            if (recordedKey == null || recordedKey.equals(key)) {
+                EVENTS.add(event);
+            }
+        }
+
         @Override
         public void onRecordStart(Object key) {
-            EVENTS.add("recordStart:" + key);
+            record(key, "recordStart:" + key);
         }
 
         @Override
         public void onActionPrepared(ActionTask task) {
-            EVENTS.add("prepared:" + task.getAction().getName());
+            record(task.getKey(), "prepared:" + task.getAction().getName());
         }
 
         @Override
         public void onActionStarted(ActionTask task) {
-            EVENTS.add("started:" + task.getAction().getName());
+            record(task.getKey(), "started:" + task.getAction().getName());
         }
 
         @Override
         public void onActionTransferred(ActionTask from, ActionTask to) {
-            EVENTS.add(
+            record(
+                    from.getKey(),
                     "transferred:" + from.getAction().getName() + "->" + to.getAction().getName());
         }
 
         @Override
         public void onActionFinishing(ActionTask task) {
-            EVENTS.add("finishing:" + task.getAction().getName());
+            record(task.getKey(), "finishing:" + task.getAction().getName());
         }
 
         @Override
         public void onActionFinished(ActionTask task) {
-            EVENTS.add("finished:" + task.getAction().getName());
+            record(task.getKey(), "finished:" + task.getAction().getName());
         }
 
         @Override
         public void onActionReused(ActionTask task) {
-            EVENTS.add("reused:" + task.getAction().getName());
+            record(task.getKey(), "reused:" + task.getAction().getName());
         }
 
         @Override
         public void onActionFailed(ActionTask task, Throwable error) {
-            EVENTS.add("failed:" + task.getAction().getName());
+            record(task.getKey(), "failed:" + task.getAction().getName());
         }
 
         @Override
         public void onRecordFinished(Object key) {
-            EVENTS.add("recordFinished:" + key);
+            record(key, "recordFinished:" + key);
         }
     }
 
@@ -469,28 +488,25 @@ public class TaskLifecycleListenerNotificationTest {
         }
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
     @Timeout(30)
-    void resumedInFlightRecordReEmitsRecordStartOnParallelRestore() throws Exception {
+    void resumedInFlightRecordReEmitsRecordStartOnParallelRestore(boolean queued) throws Exception {
         assumeFalse(ContinuationActionExecutor.isContinuationSupported());
         int numAsyncThreads = 1;
-        // Every worker has to be parked before the key under test queues its task, or a free
-        // worker pulls that task and it retires during the drain, leaving nothing in flight to
-        // restore. Derived from the ceiling rather than hard-coded, so it tracks the pool it fills.
+        // Park every worker so the snapshot contains both pulled and still-queued tasks.
         int workers = ParallelExecutionCoordinator.workerCeiling(numAsyncThreads);
         long queuedKey = workers + 1L;
+        long recordedKey = queued ? queuedKey : 1L;
         AgentConfiguration config = new AgentConfiguration();
         config.set(AgentExecutionOptions.NUM_ASYNC_THREADS, numAsyncThreads);
         config.set(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS, workers + 2);
         AgentPlan plan = new AgentPlan(new ParkingAgent(), config);
         assertThat(usesParallelWorker(plan)).isTrue();
 
-        // Phase 1: fill the pool, queue one record no worker is left to pull, then drain. The
-        // drain retires the parked keys and forfeits the queued record's dispatch permit, so the
-        // snapshot captures it as a processing key whose task is still queued.
+        // Snapshot while all workers remain parked: every admitted record must be restored.
         OperatorSubtaskState snapshot;
         ParkingAgent.resetFixture(workers);
-        Thread releaser = null;
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
                         new ActionExecutionOperatorFactory<>(plan, true),
@@ -506,27 +522,13 @@ public class TaskLifecycleListenerNotificationTest {
             assertThat(ParkingAgent.started.await(5, TimeUnit.SECONDS)).isTrue();
             testHarness.processElement(new StreamRecord<>(queuedKey));
 
-            // Released only once the drain has paused dispatch: any earlier and a retiring worker
-            // pulls the queued task, which then retires and empties the snapshot.
-            releaser =
-                    new Thread(
-                            () -> {
-                                try {
-                                    Thread.sleep(300);
-                                } catch (InterruptedException e) {
-                                    Thread.currentThread().interrupt();
-                                }
-                                ParkingAgent.allow.countDown();
-                            });
-            releaser.setDaemon(true);
-            releaser.start();
             operator.prepareSnapshotPreBarrier(1L);
             snapshot = testHarness.snapshot(1L, 1L);
+            assertThat(testHarness.getRecordOutput()).isEmpty();
+            ParkingAgent.allow.countDown();
+            operator.waitInFlightEventsFinished();
         } finally {
             ParkingAgent.allow.countDown();
-            if (releaser != null) {
-                releaser.join();
-            }
         }
 
         // Phase 2: the restored round opens its bracket before dispatching, so the record start
@@ -534,34 +536,45 @@ public class TaskLifecycleListenerNotificationTest {
         ParkingAgent.resetFixture(1);
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> restored =
                 new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ListenerInjectingOperatorFactory(plan, new RecordingListener()),
+                        new ListenerInjectingOperatorFactory(
+                                plan, new RecordingListener(recordedKey)),
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             restored.initializeState(snapshot);
             restored.open();
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) restored.getOperator();
-            // Proof the snapshot really held the queued record: it was re-dispatched and reached
-            // the async stage. Without this the assertions below would pass on an empty restore.
+            // Wait for replay to reach the async stage before allowing it to finish.
             assertThat(ParkingAgent.started.await(5, TimeUnit.SECONDS)).isTrue();
             ParkingAgent.allow.countDown();
             operator.waitInFlightEventsFinished();
 
-            assertThat(RecordingListener.EVENTS)
-                    .containsExactly(
-                            "recordStart:" + queuedKey,
-                            "prepared:handleInput",
-                            "started:handleInput",
+            List<String> expected =
+                    new ArrayList<>(List.of("recordStart:" + recordedKey, "prepared:handleInput"));
+            if (queued) {
+                expected.add("started:handleInput");
+            }
+            expected.addAll(
+                    List.of(
                             "transferred:handleInput->handleInput",
                             "prepared:handleInput",
                             "transferred:handleInput->handleInput",
                             "prepared:handleInput",
                             "finishing:handleInput",
                             "finished:handleInput",
-                            "recordFinished:" + queuedKey);
+                            "recordFinished:" + recordedKey));
+            assertThat(RecordingListener.EVENTS).containsExactlyElementsOf(expected);
             List<StreamRecord<Object>> output =
                     (List<StreamRecord<Object>>) restored.getRecordOutput();
-            assertThat(output).extracting(StreamRecord::getValue).containsExactly(queuedKey * 2);
+            List<Long> expectedOutput = new ArrayList<>();
+            for (long key = 1; key <= queuedKey; key++) {
+                expectedOutput.add(key * 2);
+            }
+            assertThat(output)
+                    .extracting(StreamRecord::getValue)
+                    .containsExactlyInAnyOrderElementsOf(expectedOutput);
+        } finally {
+            ParkingAgent.allow.countDown();
         }
     }
 

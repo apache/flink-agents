@@ -56,12 +56,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * A real Flink job that fails mid-stream and recovers from its own checkpoint, for both kinds of
  * internal graph call on the JDK&lt;21 parallel execution engine.
  *
- * <p>Recovery is the part a harness cannot cover: the operator drains in-flight work before it
- * snapshots, so a harness can only snapshot a settled record. Here the task genuinely fails after a
- * checkpoint completed, Flink restores the agent operator, and the remaining records must still run
- * their graph calls to completion. A regression that only deadlocks on a restored operator — a
- * coordinator that never re-arms, a call whose bootstrap is not re-dispatched — shows up as a job
- * that never finishes, which the timeout turns into a failure.
+ * <p>Here the task genuinely fails after a checkpoint completed, Flink restores the agent operator,
+ * and the remaining records must still run their graph calls to completion. A regression that only
+ * deadlocks on a restored operator — a coordinator that never re-arms, a call whose bootstrap is
+ * not re-dispatched — shows up as a job that never finishes, which the timeout turns into a
+ * failure.
  */
 @EnabledForJreRange(max = JRE.JAVA_20)
 @Execution(ExecutionMode.SAME_THREAD)

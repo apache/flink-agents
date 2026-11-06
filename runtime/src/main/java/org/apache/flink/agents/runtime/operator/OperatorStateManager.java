@@ -44,7 +44,9 @@ import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import javax.annotation.Nullable;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
 
@@ -56,6 +58,7 @@ import static org.apache.flink.agents.runtime.utils.StateUtil.*;
  *
  * <ul>
  *   <li>Keyed list state of pending {@link ActionTask}s for the current key.
+ *   <li>Keyed map state of pulled root tasks awaiting commit on the worker engine.
  *   <li>Keyed list state of pending {@link Event}s buffered while another input is processing.
  *   <li>Keyed value state holding the per-key message sequence number.
  *   <li>Keyed map states for sensory and short-term memory.
@@ -77,9 +80,11 @@ class OperatorStateManager {
 
     static final String MESSAGE_SEQUENCE_NUMBER_STATE_NAME = "messageSequenceNumber";
     static final String ACTION_TASK_STATE_NAME = "actionTasks";
+    static final String IN_FLIGHT_ACTION_TASK_STATE_NAME = "inFlightActionTasks";
     static final String PENDING_INPUT_EVENT_STATE_NAME = "pendingInputEvents";
 
     private ListState<ActionTask> actionTasksKState;
+    private MapState<Long, ActionTask> inFlightActionTasksKState;
     private ListState<Event> pendingInputEventsKState;
     private ListState<Object> currentProcessingKeysOpState;
     private ValueState<Long> sequenceNumberKState;
@@ -128,6 +133,7 @@ class OperatorStateManager {
                 runtimeContext.getListState(
                         new ListStateDescriptor<>(
                                 ACTION_TASK_STATE_NAME, TypeInformation.of(ActionTask.class)));
+        inFlightActionTasksKState = runtimeContext.getMapState(inFlightActionTasksDescriptor());
         pendingInputEventsKState =
                 runtimeContext.getListState(
                         new ListStateDescriptor<>(
@@ -258,6 +264,47 @@ class OperatorStateManager {
 
     void addActionTask(ActionTask actionTask) throws Exception {
         actionTasksKState.add(actionTask);
+    }
+
+    /** Records a pulled root task until its mailbox commit finishes, under the execution lock. */
+    void addInFlightActionTask(long taskIndex, ActionTask actionTask) throws Exception {
+        inFlightActionTasksKState.put(taskIndex, actionTask);
+    }
+
+    void removeInFlightActionTask(long taskIndex) throws Exception {
+        inFlightActionTasksKState.remove(taskIndex);
+    }
+
+    private static MapStateDescriptor<Long, ActionTask> inFlightActionTasksDescriptor() {
+        return new MapStateDescriptor<>(
+                IN_FLIGHT_ACTION_TASK_STATE_NAME,
+                TypeInformation.of(Long.class),
+                TypeInformation.of(ActionTask.class));
+    }
+
+    /**
+     * Restores pulled roots ahead of the unstarted FIFO before either engine starts dispatching.
+     * Workers and continuations are transient; roots replay their child graphs on recovery. The
+     * map's iteration order is unspecified, so retain the original per-key dispatch order
+     * explicitly.
+     */
+    void restoreInFlightActionTasks(KeyedStateBackend<?> keyedStateBackend) throws Exception {
+        keyedStateBackend.applyToAllKeys(
+                VoidNamespace.INSTANCE,
+                VoidNamespaceSerializer.INSTANCE,
+                inFlightActionTasksDescriptor(),
+                (key, state) -> {
+                    List<Map.Entry<Long, ActionTask>> entries = new ArrayList<>();
+                    state.entries().forEach(entries::add);
+                    entries.sort(Map.Entry.comparingByKey());
+                    List<ActionTask> tasks = new ArrayList<>();
+                    for (Map.Entry<Long, ActionTask> entry : entries) {
+                        tasks.add(entry.getValue());
+                    }
+                    actionTasksKState.get().forEach(tasks::add);
+                    actionTasksKState.update(tasks);
+                    state.clear();
+                });
     }
 
     void addPendingInputEvent(Event event) throws Exception {
