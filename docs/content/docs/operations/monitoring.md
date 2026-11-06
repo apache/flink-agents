@@ -84,6 +84,8 @@ Flink Agents provides built-in metrics for input runs, Events, Actions, executio
 | **Action** | action.\<action_name\>.numOfPendingActionTasks | Action tasks waiting to run, including continuations of asynchronous Actions. [3] | Gauge |
 | **Action** | action.\<action_name\>.numOfActiveActionExecutions | Action executions that have started and not yet finished. [3] | Gauge |
 | **Action** | action.\<action_name\>.routingDecisionLatencyMs | Time to resolve a routing decision when a `ChatRequestEvent` names a `MODEL_ROUTER`, including replayed decisions; see [Model Routing]({{< ref "docs/development/calling-llms/model_routing#observability" >}}). | Histogram |
+| **Action** | action.\<action_name\>.routingEscalationCount | Escalations of a routed request to a higher tier after a quality signal rejected an answer; see [Quality-Triggered Escalation]({{< ref "docs/development/calling-llms/model_routing#quality-triggered-escalation" >}}). | Counter |
+| **Action** | action.\<action_name\>.routingEscalatedTokens | Tokens of the answers discarded by escalation, as reported by the providers. | Counter |
 | **Agent** | traceLogTruncatedRecords | Trace Log records whose attributes were truncated at `STANDARD` level, counted once per record. | Counter |
 | **Agent** | traceLogWriteFailures | Detected Trace Log write failures. Writes are best effort and do not fail the job. | Counter |
 

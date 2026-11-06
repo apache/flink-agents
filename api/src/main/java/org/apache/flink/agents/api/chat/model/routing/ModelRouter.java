@@ -23,6 +23,8 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 
+import javax.annotation.Nullable;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -72,6 +74,7 @@ public class ModelRouter extends Resource {
     private final String defaultModel;
     private final boolean fallbackEnabled;
     private final RoutingStrategy strategy;
+    @Nullable private final Escalation escalation;
 
     public ModelRouter(ResourceDescriptor descriptor, ResourceContext resourceContext)
             throws Exception {
@@ -81,18 +84,31 @@ public class ModelRouter extends Resource {
         // with the candidate message instead of failing the cast here.
         Object defaultModel = descriptor.getArgument(DEFAULT_MODEL_KEY);
         RoutingCandidateValidator.validate("ModelRouter", names, defaultModel);
+        this.escalation =
+                Escalation.fromArguments("ModelRouter", descriptor.getInitialArguments())
+                        .orElse(null);
+        if (this.escalation != null) {
+            this.escalation.requireTiersAreCandidates("ModelRouter", names);
+        }
         String typeTag = descriptor.getArgument(STRATEGY_TYPE_KEY);
         if (typeTag == null || typeTag.isEmpty()) {
-            throw new IllegalArgumentException("ModelRouter requires a routing strategy.");
+            if (this.escalation == null) {
+                throw new IllegalArgumentException("ModelRouter requires a routing strategy.");
+            }
+            // Tiers without a strategy: every request starts on the first tier. An empty rule
+            // set abstains, and the default model (the first tier unless declared) answers.
+            this.strategy = Strategies.rules(Collections.emptyMap());
+        } else {
+            Map<String, Object> strategyArgs =
+                    descriptor.getArgument(STRATEGY_ARGS_KEY, Collections.emptyMap());
+            String executorClass = descriptor.getArgument(STRATEGY_EXECUTOR_CLASS_KEY);
+            // The declaration constructor owns the per-type argument rules, so a structurally
+            // invalid configuration fails here (resource construction) with the same message as
+            // at build().
+            this.strategy =
+                    new RoutingStrategy(
+                            RoutingStrategyType.fromTag(typeTag), strategyArgs, executorClass);
         }
-        Map<String, Object> strategyArgs =
-                descriptor.getArgument(STRATEGY_ARGS_KEY, Collections.emptyMap());
-        String executorClass = descriptor.getArgument(STRATEGY_EXECUTOR_CLASS_KEY);
-        // The declaration constructor owns the per-type argument rules, so a structurally invalid
-        // configuration fails here (resource construction) with the same message as at build().
-        this.strategy =
-                new RoutingStrategy(
-                        RoutingStrategyType.fromTag(typeTag), strategyArgs, executorClass);
         Object rawDescriptions = descriptor.getArgument(CANDIDATE_DESCRIPTIONS_KEY);
         if (rawDescriptions != null && !(rawDescriptions instanceof Map)) {
             // A hand-built or deserialized descriptor may carry any JSON type here; diagnose it
@@ -114,7 +130,10 @@ public class ModelRouter extends Resource {
         RoutingCandidateValidator.requireDescriptionsForDecisionStrategy(
                 "ModelRouter", this.strategy, names, descriptions);
         this.candidates = Collections.unmodifiableList(parsed);
-        this.defaultModel = (String) defaultModel;
+        this.defaultModel =
+                defaultModel == null && this.escalation != null
+                        ? this.escalation.getTiers().get(0)
+                        : (String) defaultModel;
         this.fallbackEnabled =
                 Boolean.TRUE.equals(descriptor.getArgument("fallback", Boolean.FALSE));
     }
@@ -142,6 +161,11 @@ public class ModelRouter extends Resource {
 
     public boolean isFallbackEnabled() {
         return fallbackEnabled;
+    }
+
+    /** The quality-triggered escalation policy, when one is declared. */
+    public Optional<Escalation> getEscalation() {
+        return Optional.ofNullable(escalation);
     }
 
     /** Whether the given model name is one of this router's candidates. */
@@ -173,6 +197,7 @@ public class ModelRouter extends Resource {
         private RoutingStrategy strategy;
         private String defaultModel;
         private boolean fallback = false;
+        private Escalation escalation;
 
         private Builder(List<String> candidates) {
             this.candidates = candidates;
@@ -218,6 +243,17 @@ public class ModelRouter extends Resource {
         }
 
         /**
+         * Escalate answers that arrive but fail a quality check to the next of the declared tiers;
+         * see {@link Escalation}. Fallback keeps handling invocation failures. With tiers set,
+         * {@link #strategy(RoutingStrategy)} may be omitted: every request starts on the first
+         * tier, which is also the default model unless one is declared.
+         */
+        public Builder escalation(Escalation escalation) {
+            this.escalation = escalation;
+            return this;
+        }
+
+        /**
          * Builds the descriptor to register after checking the declaration.
          *
          * @throws IllegalStateException if no strategy was set
@@ -226,12 +262,31 @@ public class ModelRouter extends Resource {
          *     candidate
          */
         public ResourceDescriptor build() {
-            if (strategy == null) {
-                throw new IllegalStateException("ModelRouter requires a strategy(...).");
+            if (strategy == null && escalation == null) {
+                throw new IllegalStateException(
+                        "ModelRouter requires a strategy(...) or escalation(...) tiers.");
+            }
+            if (escalation != null) {
+                escalation.requireTiersAreCandidates("ModelRouter", candidates);
             }
             // Same check as the constructor: a duplicate or blank candidate, or a default model
             // that is not a candidate, fails at the registration call site.
             RoutingCandidateValidator.validate("ModelRouter", candidates, defaultModel);
+            if (strategy == null) {
+                // Tiers without a strategy: every request starts on the first tier (see the
+                // constructor); the descriptor carries no strategy_type.
+                Map<String, Object> args = new HashMap<>();
+                args.put(CANDIDATES_KEY, new ArrayList<>(candidates));
+                if (!descriptions.isEmpty()) {
+                    args.put(CANDIDATE_DESCRIPTIONS_KEY, new HashMap<>(descriptions));
+                }
+                args.put(
+                        DEFAULT_MODEL_KEY,
+                        defaultModel != null ? defaultModel : escalation.getTiers().get(0));
+                args.put("fallback", fallback);
+                escalation.toArguments(args);
+                return new ResourceDescriptor(ModelRouter.class.getName(), args);
+            }
             // Rule shape/pattern validation ran in the RoutingStrategy constructor (the single
             // declaration-validation path). build() additionally checks rule keys against the
             // candidate set so a typo fails at the registration call site; descriptors that skip
@@ -266,6 +321,9 @@ public class ModelRouter extends Resource {
             args.put(STRATEGY_ARGS_KEY, strategy.getArguments());
             if (strategy.getExecutorClass() != null) {
                 args.put(STRATEGY_EXECUTOR_CLASS_KEY, strategy.getExecutorClass());
+            }
+            if (escalation != null) {
+                escalation.toArguments(args);
             }
             return new ResourceDescriptor(ModelRouter.class.getName(), args);
         }
