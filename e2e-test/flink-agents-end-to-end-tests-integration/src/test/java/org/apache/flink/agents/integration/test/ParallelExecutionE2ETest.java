@@ -34,6 +34,8 @@ import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.Serializable;
 import java.lang.reflect.Method;
@@ -1074,13 +1076,19 @@ public class ParallelExecutionE2ETest {
         }
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
     @Timeout(25)
-    public void maxInFlightInputRecordsThrottlesAdmission() throws Exception {
+    public void maxInFlightInputRecordsThrottlesAdmission(boolean parallel) throws Exception {
         List<String> outputs =
                 runJob(
                         new BackpressureAgent(),
                         agentsEnv -> {
+                            agentsEnv
+                                    .getConfig()
+                                    .set(
+                                            AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED,
+                                            parallel);
                             agentsEnv
                                     .getConfig()
                                     .set(
