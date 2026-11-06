@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
@@ -312,7 +313,8 @@ class ChatCallTest {
                             executor);
             context.setContinuationContext(new ContinuationContext());
             assertThatThrownBy(() -> context.chat("model", List.of()).await())
-                    .isInstanceOf(UnsupportedOperationException.class)
+                    .isInstanceOf(UncapturableException.class)
+                    .hasCauseInstanceOf(UnsupportedOperationException.class)
                     .hasMessageContaining("JDK 21");
             assertThat(context.getPendingEvents()).isEmpty();
         } finally {

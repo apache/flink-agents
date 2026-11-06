@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.function.PythonFunction;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.InternalSubagentResourceDescriptorBuilder;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
@@ -128,7 +129,14 @@ public class FrameworkFaultBridgeTest {
                                 PythonFunction.of(FIXTURES, "child_action"),
                                 null);
         Agent parent = new Agent();
-        parent.addResource("child", ResourceType.AGENT, child);
+        parent.addResource(
+                "child",
+                ResourceType.AGENT,
+                new InternalSubagentResourceDescriptorBuilder()
+                        .agent(child)
+                        .inputSchema(
+                                "{\"type\":\"object\",\"properties\":{\"framework\":{\"type\":\"boolean\"}}}")
+                        .build());
         parent.addAction(
                 new String[] {InputEvent.EVENT_TYPE},
                 FrameworkFaultBridgeTest.class.getMethod(
@@ -156,8 +164,11 @@ public class FrameworkFaultBridgeTest {
             } else {
                 env.execute();
                 results.forEachRemaining(outputs::add);
-                // receiveChild checks the failed result; diagnostic text is not a public contract.
-                assertThat(outputs).singleElement().asString().isNotBlank();
+                // Ensure the Python child ran; a tool-resolution failure must not pass this test.
+                assertThat(outputs)
+                        .singleElement()
+                        .asString()
+                        .contains("Subgraph action failed", "PythonActionExecutionException");
             }
         }
     }
