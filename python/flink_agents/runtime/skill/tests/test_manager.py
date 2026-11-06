@@ -29,6 +29,10 @@ from pathlib import Path
 import pytest
 
 from flink_agents.api.skills import Skills, SkillSourceSpec
+from flink_agents.runtime.skill.repository._materialize import (
+    DEFAULT_LIMITS,
+    MaterializerLimits,
+)
 from flink_agents.runtime.skill.repository.package_repository import (
     PackageSkillRepository,
 )
@@ -536,3 +540,51 @@ class TestSkillManagerMixedSources:
             "a registration failure must close every repo opened so far — the "
             "earlier source's repo and the one whose registration failed"
         )
+
+
+class TestSkillManagerLimits:
+    """The limits reach the url and local handlers (D14)."""
+
+    def test_local_zip_source_uses_given_limits(self, tmp_path: Path) -> None:
+        zip_path = tmp_path / "skills.zip"
+        _zip_dir(base_dir / "resources" / "skills", zip_path)
+        limits = MaterializerLimits(
+            max_download_bytes=DEFAULT_LIMITS.max_download_bytes,
+            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
+            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
+            max_extract_entries=1,
+        )
+        config = Skills.from_local_dir(str(zip_path))
+        with pytest.raises(RuntimeError) as exc_info:
+            SkillManager(config, limits=limits)
+        assert "exceeding the limit of 1" in str(exc_info.value.__cause__)
+        # Control: the same zip loads with the default limits.
+        with SkillManager(config) as manager:
+            assert manager.size > 0
+
+    def test_url_source_uses_given_limits(self, mixed_sources) -> None:
+        _dir, url, _pkg, _resource = mixed_sources
+        limits = MaterializerLimits(
+            max_download_bytes=1,
+            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
+            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
+            max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
+        )
+        config = Skills.from_url_unsafe(url)
+        with pytest.raises(RuntimeError) as exc_info:
+            SkillManager(config, limits=limits)
+        assert "limit of 1 bytes" in str(exc_info.value.__cause__)
+        # Control: the same archive loads with the default limits.
+        with SkillManager(config) as manager:
+            assert manager.size > 0
+
+    def test_package_source_keeps_default_limits(self, mixed_sources) -> None:
+        _dir, _url, pkg, resource = mixed_sources
+        limits = MaterializerLimits(
+            max_download_bytes=1,
+            max_extract_entry_bytes=1,
+            max_extract_total_bytes=1,
+            max_extract_entries=1,
+        )
+        with SkillManager(Skills.from_package((pkg, resource)), limits=limits) as m:
+            assert m.size > 0

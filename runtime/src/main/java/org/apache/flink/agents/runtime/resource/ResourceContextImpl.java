@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime.resource;
 
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -25,6 +26,7 @@ import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.agents.runtime.skill.SkillManager;
+import org.apache.flink.agents.runtime.skill.repository.SkillMaterializer;
 
 import javax.annotation.Nullable;
 
@@ -49,6 +51,7 @@ public class ResourceContextImpl implements ResourceContext, AutoCloseable {
     @Nullable private SkillManager skillManager;
     private boolean skillManagerInitialized;
     private final Supplier<PythonInterpreterManager> interpreterManagerSupplier;
+    @Nullable private final ReadableConfiguration config;
 
     /**
      * Construct a context that resolves {@code classpath:} skill sources via {@code classLoader}.
@@ -65,9 +68,23 @@ public class ResourceContextImpl implements ResourceContext, AutoCloseable {
             BiFunction<String, ResourceType, Resource> getResource,
             ClassLoader classLoader,
             Supplier<PythonInterpreterManager> interpreterManagerSupplier) {
+        this(getResource, classLoader, interpreterManagerSupplier, null);
+    }
+
+    /**
+     * Also takes the agent configuration that supplies the {@code skill.source.url.max-*} download
+     * and extraction limits when the {@link SkillManager} is created. A {@code null} config means
+     * the default limits.
+     */
+    public ResourceContextImpl(
+            BiFunction<String, ResourceType, Resource> getResource,
+            ClassLoader classLoader,
+            Supplier<PythonInterpreterManager> interpreterManagerSupplier,
+            @Nullable ReadableConfiguration config) {
         this.getResource = getResource;
         this.classLoader = classLoader;
         this.interpreterManagerSupplier = interpreterManagerSupplier;
+        this.config = config;
     }
 
     /** Convenience overload that uses the current thread's context class loader. */
@@ -125,18 +142,22 @@ public class ResourceContextImpl implements ResourceContext, AutoCloseable {
 
     @Nullable
     private SkillManager createSkillManager() throws Exception {
-        Skills config;
+        Skills skills;
         try {
             Resource r = getResource(Skills.SKILLS_CONFIG, ResourceType.SKILLS);
             if (!(r instanceof Skills)) {
                 return null;
             }
-            config = (Skills) r;
+            skills = (Skills) r;
         } catch (Exception e) {
             // No skills config registered — that's fine, return null.
             return null;
         }
-        return new SkillManager(config, classLoader, interpreterManagerSupplier.get());
+        return new SkillManager(
+                skills,
+                classLoader,
+                interpreterManagerSupplier.get(),
+                SkillMaterializer.Limits.fromConfig(config));
     }
 
     /**

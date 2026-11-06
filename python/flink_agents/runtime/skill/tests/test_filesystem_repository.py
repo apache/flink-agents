@@ -22,6 +22,10 @@ from pathlib import Path
 
 import pytest
 
+from flink_agents.runtime.skill.repository._materialize import (
+    DEFAULT_LIMITS,
+    MaterializerLimits,
+)
 from flink_agents.runtime.skill.repository.filesystem_repository import (
     FileSystemSkillRepository,
 )
@@ -140,3 +144,26 @@ class TestFileSystemSkillRepositoryZip:
         non_zip_file.write_text("not a zip")
         with pytest.raises(ValueError, match=r"must be a directory or a \.zip file"):
             FileSystemSkillRepository(non_zip_file)
+
+    def test_zip_uses_given_limits(self, skills_zip: Path) -> None:
+        limits = MaterializerLimits(
+            max_download_bytes=DEFAULT_LIMITS.max_download_bytes,
+            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
+            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
+            max_extract_entries=1,
+        )
+        with pytest.raises(ValueError, match="exceeding the limit of 1"):
+            FileSystemSkillRepository(skills_zip, limits=limits)
+        # Control: the same zip loads with the default limits.
+        assert FileSystemSkillRepository(skills_zip).get_skills()
+
+    def test_directory_ignores_limits(self) -> None:
+        skills_dir = Path(__file__).parent / "resources" / "skills"
+        limits = MaterializerLimits(
+            max_download_bytes=1,
+            max_extract_entry_bytes=1,
+            max_extract_total_bytes=1,
+            max_extract_entries=1,
+        )
+        repo = FileSystemSkillRepository(skills_dir, limits=limits)
+        assert repo.get_skills()

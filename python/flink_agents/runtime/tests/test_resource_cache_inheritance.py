@@ -22,6 +22,7 @@ from unittest.mock import Mock
 import pytest
 
 from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.resource_provider import ResourceProvider
 from flink_agents.runtime.resource_cache import ResourceCache
 
@@ -142,3 +143,15 @@ def test_child_provider_failure_does_not_silently_fall_back() -> None:
     root_provider.provide.assert_not_called()
     child.close()
     root.close()
+
+
+def test_get_config_returns_own_config_else_parents() -> None:
+    root_config = AgentConfiguration({"k": "root"})
+    child_config = AgentConfiguration({"k": "child"})
+    root = ResourceCache({}, root_config)
+    assert root.get_config() is root_config
+    assert ResourceCache({}, parent=root).get_config() is root_config
+    assert ResourceCache({}, child_config, parent=root).get_config() is child_config
+    grandchild = ResourceCache({}, parent=ResourceCache({}, parent=root))
+    assert grandchild.get_config() is root_config
+    assert ResourceCache({}).get_config() is None
