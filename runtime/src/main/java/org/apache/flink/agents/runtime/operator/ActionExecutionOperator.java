@@ -136,9 +136,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     /** Idle time after which a surplus parallel-execution worker thread retires (min pool is 1). */
     private static final long WORKER_IDLE_TIMEOUT_MS = 60_000L;
 
-    /** How often a pre-barrier quiesce that has not finished repeats its warning. */
-    private static final long QUIESCE_WARN_INTERVAL_MS = 30_000L;
-
     private static final String INTERNAL_NOOP_INPUT_ACTION_NAME =
             "__flink_agents_internal_noop_input_action";
 
@@ -244,17 +241,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Nullable private transient ParallelExecutionLock parallelExecutionLock;
 
     @Nullable private transient ParallelExecutionCoordinator executionCoordinator;
-
-    /**
-     * Checkpoint whose pre-barrier quiesce is in progress, or {@code null}. Lets an abort recognize
-     * the drain it belongs to, so one for an older checkpoint cannot end a later drain. This and
-     * {@link #drainAborted} are mailbox-thread state: Flink delivers checkpoint notifications as
-     * mails.
-     */
-    @Nullable private transient Long drainingCheckpointId;
-
-    /** Set by an abort for {@link #drainingCheckpointId}; ends that drain's quiesce wait. */
-    private transient boolean drainAborted;
 
     /**
      * Number of admitted input records not yet retired, including pending inputs for busy keys,
@@ -1306,69 +1292,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     @Override
-    public void prepareSnapshotPreBarrier(long checkpointId) throws Exception {
-        if (!parallelExecutionWithoutCoroutineEnabled) {
-            super.prepareSnapshotPreBarrier(checkpointId);
-            return;
-        }
-        // Quiesce pulled-but-uncommitted tasks before the barrier (their results only live in
-        // memory and would be lost on restore): pause dispatch, then yield without the lock
-        // until everything in flight has committed.
-        try {
-            drainingCheckpointId = checkpointId;
-            drainAborted = false;
-            executionCoordinator.startDraining();
-            awaitQuiesce(checkpointId);
-            super.prepareSnapshotPreBarrier(checkpointId);
-        } catch (Exception e) {
-            // A failed pre-barrier never reaches snapshotState's stopDraining; resume dispatch.
-            try {
-                executionCoordinator.stopDraining();
-            } catch (Exception resumeFailure) {
-                e.addSuppressed(resumeFailure);
-            }
-            throw e;
-        } finally {
-            // No quiesce is in progress after this point, so an abort for this checkpoint arriving
-            // during the capture finds nothing to end.
-            drainingCheckpointId = null;
-        }
-    }
-
-    /**
-     * Waits, without the execution lock, until every pulled task has committed. Dispatch stays
-     * paused for the whole wait, so one action blocked in an async call that never returns holds it
-     * open until the checkpoint itself dies. That death reaches the operator as an abort mail,
-     * which this loop yields, so an aborted drain fails here naming the pool state instead of
-     * leaving the mailbox spinning silently.
-     */
-    private void awaitQuiesce(long checkpointId) throws Exception {
-        long lastWarnMillis = System.currentTimeMillis();
-        while (!executionCoordinator.isQuiesced()) {
-            if (drainAborted) {
-                throw new IllegalStateException(
-                        String.format(
-                                "Checkpoint %d was aborted while the parallel execution engine was"
-                                        + " still waiting for in-flight actions to commit before the"
-                                        + " barrier. Dispatch stays paused during that wait, so an"
-                                        + " action blocked in an async call that never returns holds"
-                                        + " it open until the checkpoint dies. Pool state: %s",
-                                checkpointId, executionCoordinator.diagnostics()));
-            }
-            long nowMillis = System.currentTimeMillis();
-            if (nowMillis - lastWarnMillis >= QUIESCE_WARN_INTERVAL_MS) {
-                lastWarnMillis = nowMillis;
-                LOG.warn(
-                        "Checkpoint {} is still waiting for in-flight actions to commit before the"
-                                + " barrier. Pool state: {}",
-                        checkpointId,
-                        executionCoordinator.diagnostics());
-            }
-            mailboxExecutor.yield();
-        }
-    }
-
-    @Override
     public OperatorSnapshotFutures snapshotState(
             long checkpointId,
             long timestamp,
@@ -1378,18 +1301,21 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (!parallelExecutionWithoutCoroutineEnabled) {
             return super.snapshotState(checkpointId, timestamp, checkpointOptions, storageLocation);
         }
+        // Protect the entire synchronous backend capture, not just snapshotState(context).
+        // Workers could otherwise mutate keyed state between that callback and the backend's
+        // snapshot. Async calls release this lock and remain represented by in-flight state.
+        parallelExecutionLock.acquireByMain();
         try {
             return super.snapshotState(checkpointId, timestamp, checkpointOptions, storageLocation);
         } finally {
-            // Resume dispatch only after the synchronous snapshot capture: a worker woken any
-            // earlier could pull a queued task out of keyed state before it is captured.
-            executionCoordinator.stopDraining();
+            parallelExecutionLock.release();
         }
     }
 
     @Override
     public void snapshotState(StateSnapshotContext context) throws Exception {
-        if (parallelExecutionWithoutCoroutineEnabled) {
+        if (parallelExecutionWithoutCoroutineEnabled
+                && !parallelExecutionLock.isHeldByCurrentThread()) {
             runWithParallelExecutionLock(() -> snapshotStateInternal(context));
         } else {
             snapshotStateInternal(context);
@@ -1419,13 +1345,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void notifyCheckpointAborted(long checkpointId) throws Exception {
         if (parallelExecutionWithoutCoroutineEnabled) {
-            Long draining = drainingCheckpointId;
-            if (draining != null && draining.longValue() == checkpointId) {
-                // This notification is one of the mails the quiesce loop yields, so flagging it
-                // here is what lets that loop stop waiting for a checkpoint that will never be
-                // taken. The loop's failure path resumes dispatch.
-                drainAborted = true;
-            }
             runWithParallelExecutionLock(() -> notifyCheckpointAbortedInternal(checkpointId));
         } else {
             notifyCheckpointAbortedInternal(checkpointId);
@@ -1701,6 +1620,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void tryResumeProcessActionTasks() throws Exception {
+        // Merge before enumerating pending tasks, including keys with only in-flight work.
+        // Run for both engines so a checkpoint can also be restored after upgrading to JDK 21.
+        stateManager.restoreInFlightActionTasks(getKeyedStateBackend());
         stateManager.forEachActionTaskKey(
                 getKeyedStateBackend(),
                 (key, state) -> {
@@ -1954,6 +1876,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 checkState(task != null, "Action task queue was empty.");
                 this.actionTask = task;
 
+                // Child graphs are regenerated by their root's replay, just as on the
+                // continuation engine. Only root FIFO indices are unique within this key.
+                if (submittedTask == null) {
+                    stateManager.addInFlightActionTask(taskIndex, task);
+                }
+
                 contextManager.createAndSetRunnerContext(
                         task,
                         contextKey,
@@ -2020,6 +1948,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 } else {
                     if (lifecyclePrepared) {
                         notifyActionStarted(task);
+                        if (submittedTask == null) {
+                            // RocksDB serializes on put: persist the started flag before an async
+                            // handoff, rather than relying on the heap backend's live reference.
+                            stateManager.addInFlightActionTask(taskIndex, task);
+                        }
                     }
                     try {
                         if (task instanceof JavaActionTask) {
@@ -2197,6 +2130,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         .markActionExecuted(actionTask.action.getName());
             }
             actionTask.getRunnerContext().persistMemory();
+            if (submittedTask == null) {
+                stateManager.removeInFlightActionTask(taskIndex);
+            }
         }
 
         @Override

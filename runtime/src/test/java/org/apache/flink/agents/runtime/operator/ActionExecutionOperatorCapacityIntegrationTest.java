@@ -33,6 +33,7 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
+import org.apache.flink.streaming.runtime.tasks.mailbox.TaskMailbox;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -120,7 +121,6 @@ class ActionExecutionOperatorCapacityIntegrationTest {
 
         OperatorSubtaskState snapshot;
         List<Object> beforeRestore;
-        Thread firstBatchReleaser = null;
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
                         new ActionExecutionOperatorFactory<>(
@@ -135,37 +135,26 @@ class ActionExecutionOperatorCapacityIntegrationTest {
             assertThat(CapacityAgent.FIRST_BATCH_STARTED.await(5, TimeUnit.SECONDS)).isTrue();
             assertThat(testHarness.getRecordOutput()).isEmpty();
 
-            firstBatchReleaser =
-                    new Thread(
-                            () -> {
-                                try {
-                                    Thread.sleep(300L);
-                                } catch (InterruptedException e) {
-                                    Thread.currentThread().interrupt();
-                                }
-                                CapacityAgent.ALLOW_FIRST_BATCH.countDown();
-                            });
-            firstBatchReleaser.setDaemon(true);
-            firstBatchReleaser.start();
-
-            operator.prepareSnapshotPreBarrier(1L);
-            snapshot = testHarness.snapshot(1L, 1L);
+            // Commit the first batch explicitly: checkpoints no longer drain workers or run
+            // their completion mails. Keep the remaining actions blocked across the snapshot.
+            CapacityAgent.ALLOW_FIRST_BATCH.countDown();
+            for (int i = 0; i < WORKERS; i++) {
+                testHarness.getTaskMailbox().take(TaskMailbox.MIN_PRIORITY).run();
+            }
             assertThat(CapacityAgent.REMAINING_ACTION_STARTED.await(5, TimeUnit.SECONDS))
-                    .as(
-                            "at least one post-checkpoint callable attempt should start before failover")
+                    .as("at least one uncommitted callable attempt should start before checkpoint")
                     .isTrue();
 
             beforeRestore = outputValues(testHarness);
             assertThat(beforeRestore).containsExactlyInAnyOrderElementsOf(firstBatchActions());
+            operator.prepareSnapshotPreBarrier(1L);
+            snapshot = testHarness.snapshot(1L, 1L);
 
             CapacityAgent.ALLOW_REMAINING_ACTIONS.countDown();
             operator.waitInFlightEventsFinished();
         } finally {
             CapacityAgent.ALLOW_FIRST_BATCH.countDown();
             CapacityAgent.ALLOW_REMAINING_ACTIONS.countDown();
-            if (firstBatchReleaser != null) {
-                firstBatchReleaser.join();
-            }
         }
 
         CapacityAgent.allowActionsAfterFirstBatch();
@@ -216,11 +205,7 @@ class ActionExecutionOperatorCapacityIntegrationTest {
         return actionNames(1, NUM_ACTIONS);
     }
 
-    /**
-     * The actions whose output the snapshot already contains. They were in flight when the drain
-     * started, so quiesce waits for them; the backlog's permits are handed back instead, leaving
-     * those actions pending in the snapshot for the restore to run.
-     */
+    /** Actions committed before the snapshot; recovery must not emit their outputs again. */
     private static Set<String> firstBatchActions() {
         return actionNames(1, WORKERS);
     }

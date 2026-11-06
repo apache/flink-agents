@@ -191,7 +191,11 @@ under the License.
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
                             <!-- Add JVM args for JDK 21+ Continuation API access -->
-                            <argLine>--add-exports java.base/jdk.internal.vm=ALL-UNNAMED</argLine>
+                            <argLine>
+                                --add-opens=java.base/java.util=ALL-UNNAMED
+                                --add-opens=java.base/java.nio=ALL-UNNAMED
+                                --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED
+                            </argLine>
                         </configuration>
                     </plugin>
                 </plugins>
