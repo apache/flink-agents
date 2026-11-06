@@ -48,6 +48,8 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.time.Duration;
+
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -195,7 +197,7 @@ public class SubgraphTimeoutTest {
                 SubgraphTimeoutTest.class.getMethod("leaked", Event.class, RunnerContext.class));
         AgentPlan plan = new AgentPlan(parent);
         plan.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 10);
-        plan.getConfig().set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS, 1000L);
+        plan.getConfig().set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(1000));
         try (KeyedOneInputStreamOperatorTestHarness<String, String, Object> harness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
                         new ActionExecutionOperatorFactory<>(plan, true),

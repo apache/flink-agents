@@ -58,6 +58,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
+import java.time.Duration;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -516,7 +518,7 @@ class MixedFutureGatherTest {
         AssertionError fatal = new AssertionError("fatal tool failure");
         try (Fixture f = new Fixture()) {
             ((Configuration) f.runner.getConfig())
-                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS, 250L);
+                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(250));
             var tool =
                     f.runner.durableExecuteAsync(
                             call(
@@ -583,7 +585,7 @@ class MixedFutureGatherTest {
         byte[] snapshot;
         try (Fixture f = new Fixture()) {
             ((Configuration) f.runner.getConfig())
-                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS, 250L);
+                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(250));
             var graph =
                     chat
                             ? AsyncFutureImpl.map(
