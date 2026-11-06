@@ -79,7 +79,7 @@ request is sent.
 | [OpenAI Responses](#responses-api) | The media accepted in user messages, sent as `function_call_output` output items in block order. The tool result's error flag is not sent, because the API has no field for it. |
 | [Anthropic](#anthropic) | The media accepted in user messages, sent in the `tool_result` content in block order. |
 | [Ollama](#ollama) | Not supported |
-| [Gemini](#gemini) | Not supported |
+| [Gemini](#gemini) | The media accepted in user messages, sent as the `parts` of the `functionResponse` in block order, with the tool result's text in its `response`. Google documents media in function responses for Gemini 3 models. |
 | [Amazon Bedrock](#amazon-bedrock) | Not supported |
 | [IBM watsonx.ai](#watsonx-ibm-watsonxai) | Not supported |
 
@@ -557,7 +557,7 @@ Model availability depends on your Azure region and subscription. Always check t
 
 ### Gemini
 
-Google Gemini provides cloud-based chat models through the Gemini Developer API and Vertex AI. The Flink Agents Gemini integration uses the official Google Gen AI SDK and supports text conversations, system instructions, tool calling, and media in user messages.
+Google Gemini provides cloud-based chat models through the Gemini Developer API and Vertex AI. The Flink Agents Gemini integration uses the official Google Gen AI SDK and supports text conversations, system instructions, tool calling, and media in user messages and tool results.
 
 {{< hint warning >}}
 Vertex AI support is experimental. The connection path has been smoke-tested during construction but has not yet been verified end to end.
@@ -640,14 +640,14 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
-**Multimodal input.** The media blocks of a user message are sent as Gemini parts, in block order, next to its text parts:
+**Multimodal input.** The media blocks of a user message are sent as Gemini parts, in block order, next to its text parts. The media blocks of a tool result are sent the same way, in block order, as the `parts` of its `functionResponse`; its text blocks are sent in the `response`:
 
 | Block | Sent as |
 |---|---|
 | `TextBlock` | a `text` part |
 | `ImageBlock`, `AudioBlock`, `VideoBlock`, `DocumentBlock` | Base64 data as an `inlineData` part, or a URL as a `fileData` part with `fileUri`; both carry the block's media type as `mimeType` |
 
-The integration does not restrict media types or URLs: the model must accept the media type, and the endpoint must be able to fetch the URL, which differs between the Gemini Developer API and Vertex AI. Media in assistant messages or tool results raises `UnsupportedContentBlockException` before the request is sent.
+The integration does not restrict media types or URLs: the model must accept the media type, and the endpoint must be able to fetch the URL, which differs between the Gemini Developer API and Vertex AI. Media in assistant messages raises `UnsupportedContentBlockException` before the request is sent.
 
 #### Available Models
 
