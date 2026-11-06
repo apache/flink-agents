@@ -37,7 +37,9 @@ default model.
 
 Use the router's resource name in a `ChatRequestEvent` or a Java `ctx.chat` call.
 The selected model uses its own prompt, tools, skills, and generation settings.
-Routing can also try another candidate if the initial model call fails.
+Routing can also try another candidate if the initial model call fails, and can
+[escalate](#quality-triggered-escalation) a request to a stronger model when the
+answer it received does not pass a quality check.
 
 {{< hint info >}}
 Routers currently support the Java Programmatic API: register them on an Agent or
@@ -354,12 +356,114 @@ For `ctx.chat`, awaiting a failed call throws. See
 [Handle Success and Failure]({{< ref "docs/development/calling-llms/chat#handle-success-and-failure" >}})
 for handling either case.
 
+<span id="quality-triggered-escalation"></span>
+
+## Quality-Triggered Escalation
+
+Routing selects a model before it answers; fallback replaces a model that
+failed to answer. **Escalation** covers the third case: the selected model
+answered, but the answer is not good enough. An escalation policy declares
+**tiers**, cheapest first, and **quality signals**. After each model round the
+router checks the answer; when a signal rejects it, the same request is sent to
+the next tier, and the rejected answer is discarded. The checks run before the
+round's tool calls are dispatched, so a model that calls a tool it does not have
+is replaced before anything runs.
+
+```java
+agentsEnv.addResource(
+        "router",
+        ResourceType.MODEL_ROUTER,
+        ModelRouter.of("small", "medium", "big")
+                .escalation(
+                        Escalation.tiers("small", "medium", "big")
+                                .when(QualitySignals.decision("verifier", 0.7))
+                                .when(QualitySignals.custom(SqlAnswerSignal.class))
+                                .maxEscalations(2))
+                .fallback(true)
+                .build());
+```
+
+Tiers must be candidates, listed cheapest first; two or three tiers are typical.
+A router with tiers needs no routing strategy: each request then starts on the
+first tier (or on `defaultModel`, when set). With a strategy, the strategy picks
+the starting model and escalation moves up from there; a model that is not a
+tier is never escalated. `maxEscalations` caps the hops per request and defaults
+to the number of tiers minus one. Once a request has escalated it stays on the
+stronger tier for the rest of its tool-call loop; a later round on that tier is
+checked again and can escalate further while tiers remain.
+
+### Quality signals
+
+The **structural checks** are always on for a tiered router and need no
+configuration. They reject an answer that has no content and no tool call, a
+call to a tool the model does not have, tool arguments that fail the tool's JSON
+schema, and a tool call repeated with identical arguments in consecutive rounds.
+For a candidate declared in Python the two tool checks are skipped, because its
+tools are bound on the Python side and not visible to the router.
+
+A **decision model signal** asks a registered
+[decision model]({{< ref "docs/development/decision_models" >}})
+a yes/no question about the conversation and the answer, and rejects the answer
+when the probability of "yes" is below `minProbability`. The default question is
+whether the answer correctly and completely addresses the request; pass your
+own with `QualitySignals.decision(name, minProbability, instructions)`. The
+verifier sees the rendered conversation and the candidate's answer; a refusal or
+a non-predicate answer counts as acceptance, and a verifier that exhausts its
+retries fails the request.
+
+A **custom signal** implements `QualitySignal`. It receives a `QualityContext`
+with the request id, router, current tier, the conversation, the answer and the
+model's tools, and returns `QualityVerdict.accept()` or
+`QualityVerdict.escalate(reason)`, optionally with a score. Signals are created
+by class name on the task managers, through a public no-argument constructor or
+a constructor taking the `Map` passed to `QualitySignals.custom(className,
+args)`. Keep signals cheap and deterministic: they run on every model round of a
+tiered request, and their verdicts are recorded for replay.
+
+```java
+public class SqlAnswerSignal implements QualitySignal {
+    @Override
+    public QualityVerdict evaluate(QualityContext context, RunnerContext ctx) {
+        String answer = context.getResponse().getText();
+        boolean sqlRequest = context.lastUserMessage().toLowerCase().contains("sql");
+        if (sqlRequest && !answer.toLowerCase().contains("select")) {
+            return QualityVerdict.escalate("a SQL request was answered without a statement");
+        }
+        return QualityVerdict.accept();
+    }
+}
+```
+
+Signals run in declaration order after the structural checks, and the first
+rejection decides. The declaration is validated when the plan is built: tiers
+must be candidates, a decision signal's model must be registered, and a custom
+signal class must load and implement `QualitySignal`.
+
+### Escalation and fallback
+
+Escalation and fallback stay separate. A tier that answered and was rejected is
+not tried again by fallback. When the last tier's answer is rejected it is
+returned as is: the request is never failed for quality alone. When an escalation
+target fails and fallback has no untried candidate left, the request fails with
+that candidate's error.
+
+| Situation | Result |
+|-----------|--------|
+| A signal rejects an answer and a higher tier remains within `maxEscalations` | Discard the answer and send the request to the next tier; nothing from the rejected round is dispatched. |
+| A signal rejects the last tier's answer, or the hop limit is reached | Keep the answer. |
+| A decision model signal's call exhausts retries | Fail the request. |
+| A custom signal throws | Fail the request. |
+| The escalation target fails and fallback is enabled | Try the remaining candidates that have not answered this request, in declaration order. |
+| The escalation target fails and no candidate is left | Fail the request with that candidate's error. |
+
 ## Observability
 
 The router emits a `ModelRoutingEvent` after selecting a model, including when
 abstention selects the default. If a later candidate successfully answers the
-initial call, it emits another event with `decision_source: fallback`. Failed
-candidate attempts do not each emit a routing event.
+initial call, it emits another event with `decision_source: fallback`. Each
+escalation emits an event with `decision_source: escalation` whose
+`selected_model` is the tier the request moved to. Failed candidate attempts do
+not each emit a routing event.
 
 For event-based requests, subscribe with `@Action(EventType.ModelRoutingEvent)`
 or inspect [Trace Log]({{< ref "docs/operations/monitoring#trace-log" >}}).
@@ -370,9 +474,9 @@ In Trace Log, these Events have `entityType: event` and
 |-------------|-------------|
 | `request_id`, `router`, `candidates` | Request identity, router resource name, and candidate names. |
 | `selected_model` | Selected chat model resource name. On a fallback event, the candidate that successfully answered. |
-| `decision_source` | `strategy` for rules/custom selection, `llm_judge` for a judge selection, `decision_model` for a decision model selection, `default` for abstention, or `fallback`. |
+| `decision_source` | `strategy` for rules/custom selection, `llm_judge` for a judge selection, `decision_model` for a decision model selection, `default` for abstention, `fallback`, or `escalation`. |
 | `fallback_enabled` | Whether fallback is configured, not whether it happened. |
-| `reason`, `score`, `metadata` | Strategy diagnostics. Judge metadata can include `judge_model`, token counts, and `judge_context_truncated`. Decision model metadata includes `decision_model`, and can include `decision_probabilities` and `provider_confidence` when the answer was a choice, token counts, `decision_context_truncated`, `decision_media_dropped`, and, when the strategy abstained on a choice, `decision_choice`. For a decision model selection, `score` is the chosen candidate's probability. |
+| `reason`, `score`, `metadata` | Strategy diagnostics. Judge metadata can include `judge_model`, token counts, and `judge_context_truncated`. Decision model metadata includes `decision_model`, and can include `decision_probabilities` and `provider_confidence` when the answer was a choice, token counts, `decision_context_truncated`, `decision_media_dropped`, and, when the strategy abstained on a choice, `decision_choice`. For a decision model selection, `score` is the chosen candidate's probability. On an escalation event, `reason` is the signal's reason, `score` is the signal's score when it reported one (the verifier's probability for a decision model signal), and metadata carries `signal` (`structural`, `decision_model:<name>` or `custom:<class>`), `escalated_from` and `discarded_tokens`. |
 | `decision_ms` | Decision latency, including judge or decision model calls and retries. Absent on the fallback event. |
 
 When a custom or replayed decision selects a non-candidate, normalization records
@@ -382,9 +486,17 @@ An unrecognized fresh judge verdict instead reports the reason
 the refusal, the non-choice answer, or the probability below the minimum.
 
 A **successful** final `ChatResponseEvent` for a routed request carries a `model_routing` attribute
-with `selected_model`, `final_model`, `fallback_attempted`, and
-`fallback_models_tried`, plus the router and decision details. Failed responses
-do not carry this attribute. For example, in a response Action:
+with `selected_model`, `final_model`, `fallback_attempted`,
+`fallback_models_tried`, `escalation_attempted`, `escalations` and
+`escalated_tokens`, plus the router and decision details. `escalations` lists
+the hops of the whole request, tool rounds included, each with `from`, `to`,
+`signal`, `reason`, `score` when reported and `discarded_tokens`;
+`escalated_tokens` is the token usage of all discarded answers, as far as the
+providers reported it. `decision_source` names the last step that changed the
+model: `escalation` when the model that answered was reached by escalation, and
+`fallback` when an escalation target failed and another candidate answered
+(`escalation_attempted` stays `true`). Failed responses do not carry this
+attribute. For example, in a response Action:
 
 ```java
 if (event.isFailed()) {
@@ -401,17 +513,22 @@ if (routing != null) {
 attributes. Its internal routing events do not trigger the caller's Action
 listeners.
 
-Routing decision latency and model token metrics are described in
-[Monitoring]({{< ref "docs/operations/monitoring" >}}). Judge and candidate calls
-sharing the same provider model ID share token counters; use the judge event
-metadata when distinguishing their usage.
+Routing decision latency, escalation counts and model token metrics are
+described in [Monitoring]({{< ref "docs/operations/monitoring" >}}). Judge and
+candidate calls sharing the same provider model ID share token counters; use the
+judge event metadata when distinguishing their usage. A discarded answer's
+tokens are still billed and still counted against its model; the
+`routingEscalatedTokens` counter and `escalated_tokens` attribute report them
+separately.
 
 <span id="advanced"></span>
 
 ## Recovery
 
-With durable execution enabled, completed routing decisions and model calls can
-be reused after recovery. Without it, a request may be routed again and select a
+With durable execution enabled, completed routing decisions, model calls and
+quality verdicts can be reused after recovery: a verifier call or custom signal
+that already ran is not repeated, and a request that had escalated resumes on
+the stronger tier. Without it, a request may be routed again and select a
 different model. See
 [Consistency]({{< ref "docs/operations/consistency#recovery-guarantees-and-user-responsibilities" >}})
 for the persistence and replay guarantees.
@@ -420,7 +537,8 @@ for the persistence and replay guarantees.
 
 - {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/ModelRoutingExample.java" name="`ModelRoutingExample`" >}}: rule-based routing between two Ollama models.
 - {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/ModelRoutingJudgeExample.java" name="`ModelRoutingJudgeExample`" >}}: the same two models with an LLM judge and candidate descriptions.
+- {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/ModelRoutingEscalationExample.java" name="`ModelRoutingEscalationExample`" >}}: two Ollama tiers with no strategy, a custom quality signal and the structural checks, with an agent that reports the tier that answered and the hops.
 - {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/openai/OpenAiModelRoutingExample.java" name="`OpenAiModelRoutingExample`" >}}: rule-based routing between `gpt-4o-mini` and `gpt-4o` over one OpenAI connection.
 - {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/openai/OpenAiDecisionRoutingExample.java" name="`OpenAiDecisionRoutingExample`" >}}: the same two OpenAI models routed by a decision model (the built-in Python OpenAI decision model, used through the cross-language API), with an agent that reports the selected model, decision source and score.
 
-All of them register their resources on the execution environment. The first three use the {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/agents/ModelRoutingAgent.java" name="`ModelRoutingAgent`" >}} to send requests and handle responses.
+All of them register their resources on the execution environment. The first two and the OpenAI rules example use the {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/agents/ModelRoutingAgent.java" name="`ModelRoutingAgent`" >}} to send requests and handle responses.
