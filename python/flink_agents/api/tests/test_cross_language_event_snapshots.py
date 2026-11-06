@@ -359,7 +359,7 @@ def _build_chat_request_event_with_context() -> ChatRequestEvent:
     event = ChatRequestEvent(
         model="test-model",
         messages=[ChatMessage.of(MessageRole.USER, "hello world")],
-        context=dict(_SNAPSHOT_CONTEXT),
+        user_context=dict(_SNAPSHOT_CONTEXT),
     )
     return _force_id(event, _FIXED_EVENT_ID)
 
@@ -389,7 +389,7 @@ def test_python_can_deserialize_chat_request_event_with_context_from_java_snapsh
     assert typed.id == _FIXED_EVENT_ID
     assert typed.model == "test-model"
     assert typed.messages[0].text == "hello world"
-    assert typed.context == _SNAPSHOT_CONTEXT
+    assert typed.user_context == _SNAPSHOT_CONTEXT
 
 
 def _build_chat_response_event_with_context() -> ChatResponseEvent:
@@ -398,7 +398,7 @@ def _build_chat_response_event_with_context() -> ChatResponseEvent:
         response=ChatResult(
             message=ChatMessage.assistant([TextBlock(text="hi there")])
         ),
-        context=dict(_SNAPSHOT_CONTEXT),
+        user_context=dict(_SNAPSHOT_CONTEXT),
     )
     return _force_id(event, _FIXED_EVENT_ID)
 
@@ -428,7 +428,7 @@ def test_python_can_deserialize_chat_response_event_with_context_from_java_snaps
     assert typed.id == _FIXED_EVENT_ID
     assert typed.request_id == _FIXED_REQUEST_ID
     assert typed.response.text == "hi there"
-    assert typed.context == _SNAPSHOT_CONTEXT
+    assert typed.user_context == _SNAPSHOT_CONTEXT
 
 
 # ── ToolRequestEvent ────────────────────────────────────────────────────

@@ -103,7 +103,7 @@ public class ToolCallAction {
 
         ctx.sendEvent(
                 new ToolResponseEvent(toolRequest.getId(), responses, success, error)
-                        .withContext(toolRequest.getContext()));
+                        .withUserContext(toolRequest.getUserContext()));
     }
 
     @SuppressWarnings("unchecked")

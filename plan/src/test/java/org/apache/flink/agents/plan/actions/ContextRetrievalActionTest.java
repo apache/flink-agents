@@ -66,7 +66,7 @@ class ContextRetrievalActionTest {
         assertThat(response.getRequestId()).isEqualTo(request.getId());
         assertThat(response.getQuery()).isEqualTo("what is flink");
         assertThat(response.getDocuments()).hasSize(1);
-        assertThat(response.getContext()).isEqualTo(context);
+        assertThat(response.getUserContext()).isEqualTo(context);
         assertThat(response.getAttachments()).isEmpty();
         verify(harness.store)
                 .query(
@@ -86,8 +86,8 @@ class ContextRetrievalActionTest {
 
         ContextRetrievalResponseEvent response =
                 ContextRetrievalResponseEvent.fromEvent(harness.sent.get(0));
-        assertThat(response.getContext()).isNull();
-        assertThat(response.getAttributes()).doesNotContainKey("context");
+        assertThat(response.getUserContext()).isNull();
+        assertThat(response.getAttributes()).doesNotContainKey("user_context");
     }
 
     @Test
@@ -105,7 +105,7 @@ class ContextRetrievalActionTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("store down");
         assertThat(harness.sent).isEmpty();
-        assertThat(request.getContext()).isEqualTo(context);
+        assertThat(request.getUserContext()).isEqualTo(context);
     }
 
     private static final class Harness {

@@ -44,7 +44,7 @@ public class ToolResponseEvent extends Event {
                     BuiltInAttribute.optional("success", Map.class),
                     BuiltInAttribute.optional("error", Map.class),
                     BuiltInAttribute.optional("timestamp", Number.class),
-                    BuiltInAttribute.optionalUntyped(UserDefinedContext.ATTRIBUTE));
+                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -149,18 +149,21 @@ public class ToolResponseEvent extends Event {
     }
 
     /**
-     * Attaches opaque application data echoed from the originating tool request. {@code null} omits
-     * it. Per-call success and error maps are independent of this value.
+     * Attaches application-defined data from the originating tool request. {@code null} omits it.
+     * Per-call success and error maps are independent of this value.
      */
-    public ToolResponseEvent withContext(@Nullable Object context) {
-        UserDefinedContext.set(this, context);
+    public ToolResponseEvent withUserContext(@Nullable Map<String, Object> userContext) {
+        UserDefinedContext.set(this, userContext);
         return this;
     }
 
-    /** Returns the originating request's opaque context, or {@code null} when it was omitted. */
+    /**
+     * Returns the originating request's application-defined data, or {@code null} when it was
+     * omitted.
+     */
     @JsonIgnore
     @Nullable
-    public Object getContext() {
+    public Map<String, Object> getUserContext() {
         return UserDefinedContext.get(this);
     }
 

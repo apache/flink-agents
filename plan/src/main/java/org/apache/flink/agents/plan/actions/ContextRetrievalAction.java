@@ -100,7 +100,7 @@ public class ContextRetrievalAction {
                                     contextRetrievalRequestEvent.getId(),
                                     contextRetrievalRequestEvent.getQuery(),
                                     result.getDocuments())
-                            .withContext(contextRetrievalRequestEvent.getContext()));
+                            .withUserContext(contextRetrievalRequestEvent.getUserContext()));
         }
     }
 }

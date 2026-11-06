@@ -17,7 +17,7 @@
     ],
     "prompt_args": {},
     "output_schema": null,
-    "context": {
+    "user_context": {
       "task": "summary",
       "item_id": "42",
       "n": 1,

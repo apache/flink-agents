@@ -56,23 +56,23 @@ _CONTEXT = {
 
 def test_omitted_context_is_absent_from_the_serialized_event() -> None:
     request = ChatRequestEvent(model="model", messages=[ChatMessage.user("hi")])
-    assert request.context is None
-    assert "context" not in request.attributes
-    assert "context" not in request.model_dump_json()
+    assert request.user_context is None
+    assert "user_context" not in request.attributes
+    assert "user_context" not in request.model_dump_json()
 
     response = ChatResponseEvent.success(
         uuid4(), ChatResult(message=ChatMessage.assistant("ok"))
     )
-    assert response.context is None
-    assert "context" not in response.model_dump_json()
+    assert response.user_context is None
+    assert "user_context" not in response.model_dump_json()
 
 
 def test_empty_context_is_kept() -> None:
     request = ChatRequestEvent(
-        model="model", messages=[ChatMessage.user("hi")], context={}
+        model="model", messages=[ChatMessage.user("hi")], user_context={}
     )
-    assert "context" in request.attributes
-    assert request.context == {}
+    assert "user_context" in request.attributes
+    assert request.user_context == {}
 
 
 def test_each_request_and_response_round_trips_its_own_context() -> None:
@@ -89,50 +89,52 @@ def test_each_request_and_response_round_trips_its_own_context() -> None:
             model="model",
             messages=[ChatMessage.user("hi")],
             prompt_args={"tone": "brief"},
-            context=_CONTEXT,
+            user_context=_CONTEXT,
         ),
         ChatRequestEvent(
-            model="model", messages=[ChatMessage.user("hi")], context="summary-42"
+            model="model",
+            messages=[ChatMessage.user("hi")],
+            user_context={"label": "summary-42"},
         ),
         ChatResponseEvent.success(
             request_id,
             ChatResult(message=ChatMessage.assistant("ok")),
-            context=_CONTEXT,
+            user_context=_CONTEXT,
         ),
         ChatResponseEvent.failed(
-            request_id, "TimeoutError: timed out", 1, 2, context=_CONTEXT
+            request_id, "TimeoutError: timed out", 1, 2, user_context=_CONTEXT
         ),
         ToolRequestEvent(
             model="model",
             tool_calls=[ToolCallBlock(call_id="call-1", name="lookup", input={"x": 1})],
-            context=_CONTEXT,
+            user_context=_CONTEXT,
         ),
         ToolResponseEvent(
             request_id=request_id,
             responses={"call-1": ToolResponse.text("ok")},
-            context=_CONTEXT,
+            user_context=_CONTEXT,
         ),
         ContextRetrievalRequestEvent(
-            query="what is flink", vector_store="store", max_results=2, context=_CONTEXT
+            query="what is flink", vector_store="store", max_results=2, user_context=_CONTEXT
         ),
         ContextRetrievalResponseEvent(
             request_id=request_id,
             query="what is flink",
             documents=[Document(content="body", id="d1")],
-            context=_CONTEXT,
+            user_context=_CONTEXT,
         ),
         DecisionRequestEvent(
-            model="decision", request=decision_request, context=_CONTEXT
+            model="decision", request=decision_request, user_context=_CONTEXT
         ),
-        DecisionResponseEvent.success(request_id, decision_result, context=_CONTEXT),
+        DecisionResponseEvent.success(request_id, decision_result, user_context=_CONTEXT),
         DecisionResponseEvent.failed(
-            request_id, "provider down", 2, 3, context=_CONTEXT
+            request_id, "provider down", 2, 3, user_context=_CONTEXT
         ),
     ]
     for event in events:
         restored = Event.from_json(event.model_dump_json())
         assert type(restored) is type(event)
-        assert restored.context == event.context
+        assert restored.user_context == event.user_context
         assert restored.id == event.id
 
 
@@ -146,7 +148,7 @@ def test_foreign_json_context_survives_the_cross_language_boundary() -> None:
         "messages": [
           {"role": "user", "blocks": [{"type": "text", "text": "hi"}], "metadata": {}}
         ],
-        "context": {"task": "summary", "item_id": "42", "n": 1, "ok": true, "tags": ["a"]}
+        "user_context": {"task": "summary", "item_id": "42", "n": 1, "ok": true, "tags": ["a"]}
       },
       "attachments": {"trace": "keep"}
     }
@@ -154,7 +156,7 @@ def test_foreign_json_context_survives_the_cross_language_boundary() -> None:
     request = ChatRequestEvent.from_event(Event.from_json(request_json))
     assert request.model == "test-model"
     assert request.messages[0].text == "hi"
-    assert request.context == _CONTEXT
+    assert request.user_context == _CONTEXT
     assert request.get_attachment("trace") == "keep"
     assert request.id == UUID("00000000-0000-0000-0000-000000000001")
 
@@ -169,7 +171,7 @@ def test_foreign_json_context_survives_the_cross_language_boundary() -> None:
         "error": "TimeoutError: timed out",
         "retry_count": 2,
         "total_retry_wait_sec": 3,
-        "context": {"task": "summary", "item_id": "42"}
+        "user_context": {"task": "summary", "item_id": "42"}
       },
       "attachments": {}
     }
@@ -177,7 +179,7 @@ def test_foreign_json_context_survives_the_cross_language_boundary() -> None:
     failed = ChatResponseEvent.from_event(Event.from_json(failed_json))
     assert failed.is_failed
     assert failed.error == "TimeoutError: timed out"
-    assert failed.context == {"task": "summary", "item_id": "42"}
+    assert failed.user_context == {"task": "summary", "item_id": "42"}
 
 
 def test_unknown_attribute_is_still_rejected_when_context_is_present() -> None:
@@ -186,7 +188,7 @@ def test_unknown_attribute_is_still_rejected_when_context_is_present() -> None:
         attributes={
             "model": "m",
             "messages": [ChatMessage.user("hi")],
-            "context": {"task": "summary"},
+            "user_context": {"task": "summary"},
             "extra": 1,
         },
     )
@@ -196,11 +198,11 @@ def test_unknown_attribute_is_still_rejected_when_context_is_present() -> None:
 
 def test_serialized_context_is_json_compatible() -> None:
     event = ChatRequestEvent(
-        model="model", messages=[ChatMessage.user("hi")], context=_CONTEXT
+        model="model", messages=[ChatMessage.user("hi")], user_context=_CONTEXT
     )
     payload = json.loads(event.model_dump_json())
-    assert payload["attributes"]["context"] == _CONTEXT
-    assert "context" not in payload["attributes"]["messages"][0]
+    assert payload["attributes"]["user_context"] == _CONTEXT
+    assert "user_context" not in payload["attributes"]["messages"][0]
 
 
 def test_reused_context_mapping_is_copied_including_nested_values() -> None:
@@ -210,102 +212,61 @@ def test_reused_context_mapping_is_copied_including_nested_values() -> None:
         "meta": {"label": "keep"},
     }
     request_a = ChatRequestEvent(
-        model="model", messages=[ChatMessage.user("a")], context=shared
+        model="model", messages=[ChatMessage.user("a")], user_context=shared
     )
     shared["task"] = "risk"
     shared["tags"].append("changed")
     shared["meta"]["label"] = "changed"
     request_b = ChatRequestEvent(
-        model="model", messages=[ChatMessage.user("b")], context=shared
+        model="model", messages=[ChatMessage.user("b")], user_context=shared
     )
 
-    assert request_a.context == {
+    assert request_a.user_context == {
         "task": "summary",
         "tags": ["keep"],
         "meta": {"label": "keep"},
     }
-    assert request_b.context == {
+    assert request_b.user_context == {
         "task": "risk",
         "tags": ["keep", "changed"],
         "meta": {"label": "changed"},
     }
-    assert request_a.context is not shared
-    assert request_a.context["tags"] is not shared["tags"]
-    assert request_a.context["meta"] is not shared["meta"]
+    assert request_a.user_context is not shared
+    assert request_a.user_context["tags"] is not shared["tags"]
+    assert request_a.user_context["meta"] is not shared["meta"]
 
 
 _ROW_SHAPED_CONTEXT = {"type": "Row", "values": [1], "label": "keep"}
 
 
-def _events_carrying(context: dict) -> list[Event]:
-    request_id = uuid4()
-    decision_request = DecisionRequest(
-        input="evidence",
-        questions={"urgent": PredicateQuestion(instructions="Needs attention?")},
-    )
-    decision_result = DecisionResult(
-        answers={"urgent": PredicateAnswer(probability_true=0.8)}
-    )
-    return [
-        ChatRequestEvent(
-            model="model", messages=[ChatMessage.user("hi")], context=context
-        ),
-        ChatResponseEvent.success(
-            request_id,
-            ChatResult(message=ChatMessage.assistant("ok")),
-            context=context,
-        ),
-        ChatResponseEvent.failed(
-            request_id, "TimeoutError: timed out", 1, 2, context=context
-        ),
-        ToolRequestEvent(
-            model="model",
-            tool_calls=[ToolCallBlock(call_id="call-1", name="lookup", input={"x": 1})],
-            context=context,
-        ),
-        ToolResponseEvent(
-            request_id=request_id,
-            responses={"call-1": ToolResponse.text("ok")},
-            context=context,
-        ),
-        ContextRetrievalRequestEvent(
-            query="what is flink",
-            vector_store="store",
-            max_results=2,
-            context=context,
-        ),
-        ContextRetrievalResponseEvent(
-            request_id=request_id,
-            query="what is flink",
-            documents=[Document(content="body", id="d1")],
-            context=context,
-        ),
-        DecisionRequestEvent(
-            model="decision", request=decision_request, context=context
-        ),
-        DecisionResponseEvent.success(request_id, decision_result, context=context),
-        DecisionResponseEvent.failed(
-            request_id, "provider down", 2, 3, context=context
-        ),
-    ]
+def test_row_shaped_user_context_follows_ordinary_attribute_decoding() -> None:
+    """A Row-shaped value is reconstructed like any other event attribute.
 
-
-def test_row_shaped_context_stays_json_on_builtin_request_and_response_events() -> None:
-    for event in _events_carrying(_ROW_SHAPED_CONTEXT):
-        restored = Event.from_json(event.model_dump_json())
-        assert type(restored.context) is dict
-        assert restored.context == _ROW_SHAPED_CONTEXT
-        assert restored.context["label"] == "keep"
-
+    Construction leaves the supplied map alone. JSON decoding then applies the
+    shared row reconstruction, so a nested object becomes a Row and a top-level
+    Row-shaped map is no longer a dict.
+    """
     nested = {"note": dict(_ROW_SHAPED_CONTEXT)}
-    restored = Event.from_json(
-        ChatRequestEvent(
-            model="model", messages=[ChatMessage.user("hi")], context=nested
-        ).model_dump_json()
+    request = ChatRequestEvent(
+        model="model", messages=[ChatMessage.user("hi")], user_context=nested
     )
-    assert restored.context == nested
-    assert type(restored.context["note"]) is dict
-    assert not isinstance(restored.context["note"], Row)
+    assert request.user_context == nested
+    assert type(request.user_context["note"]) is dict
+
+    restored = Event.from_json(request.model_dump_json())
+    assert isinstance(restored.user_context, dict)
+    assert restored.user_context["note"] == Row(1)
+
+    raw = {
+        "type": ChatRequestEvent.EVENT_TYPE,
+        "attributes": {
+            "model": "model",
+            "messages": [ChatMessage.user("hi").model_dump(mode="json")],
+            "user_context": dict(_ROW_SHAPED_CONTEXT),
+        },
+    }
+    with pytest.raises(ValueError, match="Malformed built-in event"):
+        Event.from_json(json.dumps(raw))
 
 
 def test_non_context_row_values_are_still_reconstructed() -> None:

@@ -38,9 +38,9 @@ class ToolRequestEvent(Event):
         name of the model that generated the tool request.
     tool_calls : List[ToolCallBlock]
         tool calls that should be executed in batch.
-    context : Any | None
-        Opaque application data echoed on the matching response. Not added to
-        tool-call arguments. Omitted when unset.
+    user_context : dict[str, Any] | None
+        Application-defined data propagated to the matching response. Not added
+        to tool-call arguments. Omitted when unset.
     """
 
     EVENT_TYPE: ClassVar[str] = "_tool_request_event"
@@ -50,14 +50,14 @@ class ToolRequestEvent(Event):
         BuiltInAttribute.required_list(
             "tool_calls", "a tool call", (dict, ToolCallBlock)
         ),
-        BuiltInAttribute.optional_untyped("context"),
+        BuiltInAttribute.optional("user_context", dict),
     )
 
     def __init__(
         self,
         model: str,
         tool_calls: List[ToolCallBlock],
-        context: Any | None = None,
+        user_context: dict[str, Any] | None = None,
     ) -> None:
         """Create a ToolRequestEvent."""
         tool_calls = [ToolCallBlock.model_validate(c) for c in tool_calls]
@@ -68,8 +68,8 @@ class ToolRequestEvent(Event):
             "model": model,
             "tool_calls": tool_calls,
         }
-        if context is not None:
-            attributes["context"] = copy_user_context(context)
+        if user_context is not None:
+            attributes["user_context"] = copy_user_context(user_context)
         super().__init__(
             type=ToolRequestEvent.EVENT_TYPE,
             attributes=attributes,
@@ -84,7 +84,7 @@ class ToolRequestEvent(Event):
         result = ToolRequestEvent(
             model=event.attributes["model"],
             tool_calls=event.attributes["tool_calls"],
-            context=event.attributes.get("context"),
+            user_context=event.attributes.get("user_context"),
         )
         return result.reconstruct_from(event)
 
@@ -99,9 +99,9 @@ class ToolRequestEvent(Event):
         return self.get_attr("tool_calls")
 
     @property
-    def context(self) -> Any | None:
-        """Return opaque application data to echo on the response, if set."""
-        return self.get_attr("context")
+    def user_context(self) -> dict[str, Any] | None:
+        """Return application-defined data to propagate to the response, if set."""
+        return self.get_attr("user_context")
 
 
 class ToolResponseEvent(Event):
@@ -113,8 +113,8 @@ class ToolResponseEvent(Event):
         The id of the request event.
     responses : Dict[str, Any]
         The dict maps tool call id to result.
-    context : Any | None
-        Opaque application data from the originating request. Omitted when unset.
+    user_context : dict[str, Any] | None
+        Application-defined data from the originating request. Omitted when unset.
     """
 
     EVENT_TYPE: ClassVar[str] = "_tool_response_event"
@@ -128,7 +128,7 @@ class ToolResponseEvent(Event):
         # Java-produced events restore, then drop it (Python does not carry it)
         # to stay consistent with the Python snapshot shape.
         BuiltInAttribute.optional("timestamp", int),
-        BuiltInAttribute.optional_untyped("context"),
+        BuiltInAttribute.optional("user_context", dict),
     )
 
     def __init__(
@@ -137,7 +137,7 @@ class ToolResponseEvent(Event):
         responses: Dict[str, Any],
         success: Dict[str, bool] | None = None,
         error: Dict[str, str] | None = None,
-        context: Any | None = None,
+        user_context: dict[str, Any] | None = None,
     ) -> None:
         """Create a ToolResponseEvent."""
         responses = {
@@ -162,8 +162,8 @@ class ToolResponseEvent(Event):
             "success": success,
             "error": error if error is not None else {},
         }
-        if context is not None:
-            attributes["context"] = copy_user_context(context)
+        if user_context is not None:
+            attributes["user_context"] = copy_user_context(user_context)
         super().__init__(
             type=ToolResponseEvent.EVENT_TYPE,
             attributes=attributes,
@@ -181,7 +181,7 @@ class ToolResponseEvent(Event):
             responses=responses,
             success=event.attributes.get("success", dict.fromkeys(responses, True)),
             error=event.attributes.get("error", {}),
-            context=event.attributes.get("context"),
+            user_context=event.attributes.get("user_context"),
         )
         return result.reconstruct_from(event)
 
@@ -207,6 +207,6 @@ class ToolResponseEvent(Event):
         return self.get_attr("error")
 
     @property
-    def context(self) -> Any | None:
-        """Return the originating request's opaque context, if set."""
-        return self.get_attr("context")
+    def user_context(self) -> dict[str, Any] | None:
+        """Return the originating request's application-defined data, if set."""
+        return self.get_attr("user_context")

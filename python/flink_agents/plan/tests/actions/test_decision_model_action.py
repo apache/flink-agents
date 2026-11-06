@@ -150,7 +150,7 @@ def test_success_and_failure_echo_context_without_changing_the_provider_request(
             questions={"urgent": PredicateQuestion(instructions="Needs attention?")},
         ),
         request_params={"safety_identifier": "review-user", "timeout": 4.0},
-        context=context,
+        user_context=context,
     )
     event.set_attachment("trace", "keep-on-request")
     model = _Model([_result()])
@@ -158,7 +158,7 @@ def test_success_and_failure_echo_context_without_changing_the_provider_request(
     asyncio.run(process_decision_request(event, ctx))
     response = _response(ctx)
     assert response.is_success
-    assert response.context == context
+    assert response.user_context == context
     assert response.attachments == {}
     model.decide.assert_called_once_with(
         event.request, request_params=event.request_params
@@ -168,7 +168,7 @@ def test_success_and_failure_echo_context_without_changing_the_provider_request(
         model="review-decision",
         request=event.request,
         request_params=event.request_params,
-        context=context,
+        user_context=context,
     )
     failed_model = _Model([RuntimeError("provider down")])
     failed_ctx, _ = _context(failed_model, decision_async=False, retries=0, interval=0)
@@ -176,14 +176,14 @@ def test_success_and_failure_echo_context_without_changing_the_provider_request(
     failed = _response(failed_ctx)
     assert failed.is_failed
     assert "provider down" in failed.error
-    assert failed.context == context
+    assert failed.user_context == context
 
     omitted = _request()
     omitted_model = _Model([_result()])
     omitted_ctx, _ = _context(omitted_model, decision_async=False, interval=0)
     asyncio.run(process_decision_request(omitted, omitted_ctx))
-    assert _response(omitted_ctx).context is None
-    assert "context" not in _response(omitted_ctx).attributes
+    assert _response(omitted_ctx).user_context is None
+    assert "user_context" not in _response(omitted_ctx).attributes
 
 
 @pytest.mark.parametrize("decision_async", [False, True])

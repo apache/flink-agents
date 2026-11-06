@@ -78,7 +78,7 @@ class DecisionModelActionTest {
         ok.run();
 
         assertThat(ok.response().isSuccess()).isTrue();
-        assertThat(ok.response().getContext()).isEqualTo(context);
+        assertThat(ok.response().getUserContext()).isEqualTo(context);
         assertThat(ok.response().getAttachments()).isEmpty();
         verify(ok.model).decide(ok.request.getRequest(), ok.request.getRequestParams());
 
@@ -88,13 +88,13 @@ class DecisionModelActionTest {
         failed.run();
         assertThat(failed.response().isFailed()).isTrue();
         assertThat(failed.response().getError()).contains("provider down");
-        assertThat(failed.response().getContext()).isEqualTo(context);
+        assertThat(failed.response().getUserContext()).isEqualTo(context);
 
         Harness omitted = new Harness(false, 0);
         when(omitted.model.decide(any(), anyMap())).thenReturn(result(null, null));
         omitted.run();
-        assertThat(omitted.response().getContext()).isNull();
-        assertThat(omitted.response().getAttributes()).doesNotContainKey("context");
+        assertThat(omitted.response().getUserContext()).isNull();
+        assertThat(omitted.response().getAttributes()).doesNotContainKey("user_context");
     }
 
     @ParameterizedTest
@@ -544,7 +544,8 @@ class DecisionModelActionTest {
             this(async, retries, null);
         }
 
-        private Harness(boolean async, int retries, @Nullable Object context) throws Exception {
+        private Harness(boolean async, int retries, @Nullable Map<String, Object> userContext)
+                throws Exception {
             request =
                     new DecisionRequestEvent(
                             MODEL,
@@ -554,7 +555,7 @@ class DecisionModelActionTest {
                                             "damaged",
                                             DecisionRequest.Question.predicate("Is it damaged?"))),
                             Map.of("safety_identifier", "review-user", "timeout", 4.0),
-                            context);
+                            userContext);
             ReadableConfiguration config = mock(ReadableConfiguration.class);
             when(config.get(AgentExecutionOptions.DECISION_ASYNC)).thenReturn(async);
             when(config.get(AgentExecutionOptions.MAX_RETRIES)).thenReturn(retries);

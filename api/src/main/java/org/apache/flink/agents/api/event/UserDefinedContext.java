@@ -22,38 +22,41 @@ import org.apache.flink.agents.api.Event;
 
 import javax.annotation.Nullable;
 
+import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Optional opaque application data carried on a built-in request and echoed on its response.
+ * Optional application-defined data carried on a built-in request and propagated to its response.
  *
- * <p>The value is not interpreted, not injected into prompts or tool arguments, and omitted
- * entirely when absent so existing events keep their serialized shape.
+ * <p>The map is not interpreted and is not injected into prompts, tool arguments, or queries. It is
+ * omitted when absent so existing events keep their serialized shape. The attribute follows the
+ * same JSON rules as other event attributes; this class only detaches mutable inputs.
  *
- * <p>Maps and lists, including nested ones, are copied when attached. A later change to the
- * caller's object does not change an event that already holds the value. Other values are stored as
- * given.
+ * <p>Maps, lists, and arrays, including nested ones, are copied when attached. A later change to
+ * the caller's object does not change an event that already holds the value. Other values are
+ * stored as given.
  */
 final class UserDefinedContext {
 
-    static final String ATTRIBUTE = "context";
+    static final String ATTRIBUTE = "user_context";
 
     private UserDefinedContext() {}
 
-    static void set(Event event, @Nullable Object context) {
-        if (context == null) {
+    @SuppressWarnings("unchecked")
+    static void set(Event event, @Nullable Map<String, Object> userContext) {
+        if (userContext == null) {
             event.getAttributes().remove(ATTRIBUTE);
         } else {
-            event.setAttr(ATTRIBUTE, snapshot(context));
+            event.setAttr(ATTRIBUTE, snapshot(userContext));
         }
     }
 
     /**
-     * Returns a detached copy of {@code value}. Maps and lists are copied recursively so the event
-     * does not share the caller's mutable structure.
+     * Returns a detached copy of {@code value}. Maps, lists, and arrays are copied recursively so
+     * the event does not share the caller's mutable structure.
      */
     static Object snapshot(Object value) {
         if (value instanceof Map) {
@@ -72,11 +75,20 @@ final class UserDefinedContext {
             }
             return copy;
         }
+        if (value != null && value.getClass().isArray()) {
+            int length = Array.getLength(value);
+            Object copy = Array.newInstance(value.getClass().getComponentType(), length);
+            for (int i = 0; i < length; i++) {
+                Array.set(copy, i, snapshot(Array.get(value, i)));
+            }
+            return copy;
+        }
         return value;
     }
 
     @Nullable
-    static Object get(Event event) {
-        return event.getAttr(ATTRIBUTE);
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> get(Event event) {
+        return (Map<String, Object>) event.getAttr(ATTRIBUTE);
     }
 }

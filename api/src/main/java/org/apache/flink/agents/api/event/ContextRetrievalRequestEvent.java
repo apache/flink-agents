@@ -41,7 +41,7 @@ public class ContextRetrievalRequestEvent extends Event {
                     BuiltInAttribute.required("query", String.class),
                     BuiltInAttribute.required("vector_store", String.class),
                     BuiltInAttribute.optional("max_results", Number.class),
-                    BuiltInAttribute.optionalUntyped(UserDefinedContext.ATTRIBUTE));
+                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
 
     public ContextRetrievalRequestEvent(String query, String vectorStore) {
         this(query, vectorStore, DEFAULT_MAX_RESULTS);
@@ -53,17 +53,20 @@ public class ContextRetrievalRequestEvent extends Event {
      * @param query the search query text
      * @param vectorStore the name of the vector store to query
      * @param maxResults the maximum number of results to return; must be positive
-     * @param context opaque application data echoed on the response; {@code null} omits it
+     * @param userContext application-defined data propagated to the response; {@code null} omits it
      * @throws IllegalArgumentException if {@code maxResults} is non-positive
      */
     public ContextRetrievalRequestEvent(
-            String query, String vectorStore, int maxResults, @Nullable Object context) {
+            String query,
+            String vectorStore,
+            int maxResults,
+            @Nullable Map<String, Object> userContext) {
         super(EVENT_TYPE);
         validateMaxResults(maxResults);
         setAttr("query", query);
         setAttr("vector_store", vectorStore);
         setAttr("max_results", maxResults);
-        UserDefinedContext.set(this, context);
+        UserDefinedContext.set(this, userContext);
     }
 
     /**
@@ -111,8 +114,8 @@ public class ContextRetrievalRequestEvent extends Event {
      * Reconstructs a typed ContextRetrievalRequestEvent from a base Event.
      *
      * <p>Enforces the fixed cross-language schema: {@code query} and {@code vector_store} are
-     * required strings, {@code max_results} is an optional positive number, {@code context} is
-     * optional opaque application data, and no other attribute is allowed.
+     * required strings, {@code max_results} is an optional positive number, {@code user_context} is
+     * an optional map, and no other attribute is allowed.
      *
      * @param event the base event containing context retrieval request data in attributes
      * @return a typed ContextRetrievalRequestEvent
@@ -144,18 +147,12 @@ public class ContextRetrievalRequestEvent extends Event {
     }
 
     /**
-     * Attaches opaque application data to echo unchanged on the matching response. The value is not
-     * added to the vector-store query. {@code null} omits it.
+     * Returns application-defined data to propagate to the matching response, or {@code null} when
+     * this request omitted it. The map is not added to the vector-store query.
      */
-    public ContextRetrievalRequestEvent withContext(@Nullable Object context) {
-        UserDefinedContext.set(this, context);
-        return this;
-    }
-
-    /** Returns the opaque application context, or {@code null} when this request omitted it. */
     @JsonIgnore
     @Nullable
-    public Object getContext() {
+    public Map<String, Object> getUserContext() {
         return UserDefinedContext.get(this);
     }
 

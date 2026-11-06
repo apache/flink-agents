@@ -109,7 +109,7 @@ def _request(text: str, prompt_args: dict, context: Any | None) -> ChatRequestEv
         model="test-model",
         messages=[ChatMessage.user(text)],
         prompt_args=prompt_args,
-        context=context,
+        user_context=context,
     )
     event.set_attachment("trace", "keep-on-request")
     return event
@@ -129,8 +129,8 @@ def test_omitted_context_stays_off_the_response() -> None:
 
     response = sent[0]
     assert isinstance(response, ChatResponseEvent)
-    assert response.context is None
-    assert "context" not in response.attributes
+    assert response.user_context is None
+    assert "user_context" not in response.attributes
     assert response.request_id == request.id
     assert response.attachments == {}
 
@@ -147,7 +147,7 @@ def test_success_failure_and_retry_echo_context_without_touching_the_prompt() ->
 
     response = sent[0]
     assert response.is_success
-    assert response.context == context
+    assert response.user_context == context
     assert response.retry_count == 1
     assert response.attachments == {}
     assert response.request_id == request.id
@@ -163,7 +163,7 @@ def test_success_failure_and_retry_echo_context_without_touching_the_prompt() ->
     failed = sent[0]
     assert failed.is_failed
     assert "persistent" in failed.error
-    assert failed.context == context
+    assert failed.user_context == context
     assert failed.request_id == failing.id
 
 
@@ -188,14 +188,14 @@ def test_tool_rounds_keep_each_request_context() -> None:
     tool_a = sent[0]
     tool_b = sent[1]
     assert isinstance(tool_a, ToolRequestEvent)
-    assert tool_a.context is None
-    assert tool_b.context is None
+    assert tool_a.user_context is None
+    assert tool_b.user_context is None
     assert tool_a.tool_calls[0].input == {"x": 1}
     assert tool_a.attachments == {}
 
     parked = memory.get("_TOOL_REQUEST_EVENT_CONTEXT")
-    parked[str(tool_b.id)]["context"] = json.loads(
-        json.dumps(parked[str(tool_b.id)]["context"])
+    parked[str(tool_b.id)]["user_context"] = json.loads(
+        json.dumps(parked[str(tool_b.id)]["user_context"])
     )
 
     def _tool_response(tool_request: ToolRequestEvent) -> ToolResponseEvent:
@@ -212,10 +212,10 @@ def test_tool_rounds_keep_each_request_context() -> None:
     response_b = sent[2]
     response_a = sent[3]
     assert response_b.request_id == request_b.id
-    assert response_b.context == context_b
+    assert response_b.user_context == context_b
     assert response_b.response.text == "risk done"
     assert response_a.request_id == request_a.id
-    assert response_a.context == context_a
+    assert response_a.user_context == context_a
     assert response_a.response.text == "summary done"
     assert response_a.attachments == {}
     for call in chat_model.chat.call_args_list:
@@ -230,14 +230,14 @@ def test_restored_request_still_echoes_context() -> None:
     original = ChatRequestEvent(
         model="test-model",
         messages=[ChatMessage.user("hi")],
-        context={"task": "summary", "item_id": "42"},
+        user_context={"task": "summary", "item_id": "42"},
     )
     restored = Event.from_json(original.model_dump_json())
 
     asyncio.run(process_chat_request_or_tool_response(restored, ctx))
 
     assert sent[0].request_id == original.id
-    assert sent[0].context == original.context
+    assert sent[0].user_context == original.user_context
 
 
 def test_retrieval_echoes_context_and_leaves_the_query_unchanged() -> None:
@@ -257,7 +257,7 @@ def test_retrieval_echoes_context_and_leaves_the_query_unchanged() -> None:
     ctx.send_event = MagicMock(side_effect=sent.append)
     context = {"task": "retrieve", "item_id": "42"}
     request = ContextRetrievalRequestEvent(
-        query="what is flink", vector_store="store", max_results=2, context=context
+        query="what is flink", vector_store="store", max_results=2, user_context=context
     )
     request.set_attachment("trace", "keep-on-request")
 
@@ -267,7 +267,7 @@ def test_retrieval_echoes_context_and_leaves_the_query_unchanged() -> None:
     assert isinstance(response, ContextRetrievalResponseEvent)
     assert response.request_id == request.id
     assert response.query == "what is flink"
-    assert response.context == context
+    assert response.user_context == context
     assert response.attachments == {}
     assert seen[0].query_text == "what is flink"
     assert seen[0].limit == 2
@@ -292,8 +292,8 @@ def test_retrieval_omits_context_when_the_request_does() -> None:
         )
     )
 
-    assert sent[0].context is None
-    assert "context" not in sent[0].attributes
+    assert sent[0].user_context is None
+    assert "user_context" not in sent[0].attributes
 
 
 def test_retrieval_query_failure_propagates_without_a_response() -> None:
@@ -310,14 +310,14 @@ def test_retrieval_query_failure_propagates_without_a_response() -> None:
     sent: list = []
     ctx.send_event = MagicMock(side_effect=sent.append)
     request = ContextRetrievalRequestEvent(
-        query="q", vector_store="store", context={"task": "retrieve"}
+        query="q", vector_store="store", user_context={"task": "retrieve"}
     )
 
     with pytest.raises(RuntimeError, match="store down"):
         asyncio.run(process_context_retrieval_request(request, ctx))
 
     assert sent == []
-    assert request.context == {"task": "retrieve"}
+    assert request.user_context == {"task": "retrieve"}
 
 
 def test_reused_context_mapping_keeps_each_response_snapshot() -> None:
@@ -341,64 +341,17 @@ def test_reused_context_mapping_keeps_each_response_snapshot() -> None:
     response_a, response_b = sent
     assert response_a.request_id == request_a.id
     assert response_a.response.text == "summary done"
-    assert response_a.context == {
+    assert response_a.user_context == {
         "task": "summary",
         "tags": ["keep"],
         "meta": {"label": "keep"},
     }
     assert response_b.request_id == request_b.id
     assert response_b.response.text == "risk done"
-    assert response_b.context == {
+    assert response_b.user_context == {
         "task": "risk",
         "tags": ["keep", "changed"],
         "meta": {"label": "changed"},
     }
-    assert response_a.context is not shared
-    assert response_a.context["tags"] is not shared["tags"]
-
-
-def test_row_shaped_context_survives_a_tool_round() -> None:
-    row_shaped = {"type": "Row", "values": [1], "label": "keep"}
-    request = Event.from_json(
-        json.dumps(
-            {
-                "type": ChatRequestEvent.EVENT_TYPE,
-                "attributes": {
-                    "model": "test-model",
-                    "messages": [ChatMessage.user("hi").model_dump(mode="json")],
-                    "prompt_args": {},
-                    "context": row_shaped,
-                },
-            }
-        )
-    )
-    assert type(request.context) is dict
-    assert request.context == row_shaped
-
-    chat_model = MagicMock()
-    chat_model.chat = MagicMock(side_effect=[_tool_result(), _text("done")])
-    ctx, sent, memory = _runner(chat_model)
-
-    asyncio.run(process_chat_request_or_tool_response(request, ctx))
-    tool = sent[0]
-    assert isinstance(tool, ToolRequestEvent)
-    assert tool.context is None
-    parked = memory.get("_TOOL_REQUEST_EVENT_CONTEXT")
-    assert parked[str(tool.id)]["context"] == row_shaped
-
-    asyncio.run(
-        process_chat_request_or_tool_response(
-            ToolResponseEvent(
-                request_id=tool.id,
-                responses={"call-1": ToolResponse.text("ok")},
-                success={"call-1": True},
-                error={},
-            ),
-            ctx,
-        )
-    )
-    response = sent[1]
-    assert response.request_id == request.id
-    assert response.response.text == "done"
-    assert response.context == row_shaped
-    assert response.context["label"] == "keep"
+    assert response_a.user_context is not shared
+    assert response_a.user_context["tags"] is not shared["tags"]

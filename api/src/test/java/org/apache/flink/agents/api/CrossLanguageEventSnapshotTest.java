@@ -429,7 +429,7 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(FIXED_EVENT_ID, typed.getId());
         assertEquals("test-model", typed.getModel());
         assertEquals("hello world", typed.getMessages().get(0).getText());
-        assertSnapshotContext(typed.getContext());
+        assertSnapshotContext(typed.getUserContext());
     }
 
     private static ChatResponseEvent buildChatResponseEventWithContext() {
@@ -438,7 +438,7 @@ class CrossLanguageEventSnapshotTest {
                                 FIXED_REQUEST_ID,
                                 new ChatResult(
                                         ChatMessage.assistant(List.of(new TextBlock("hi there")))))
-                        .withContext(snapshotContext());
+                        .withUserContext(snapshotContext());
         return new ChatResponseEvent(FIXED_EVENT_ID, event.getAttributes());
     }
 
@@ -463,7 +463,7 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(FIXED_EVENT_ID, typed.getId());
         assertEquals(FIXED_REQUEST_ID, typed.getRequestId());
         assertEquals("hi there", typed.getResponse().getText());
-        assertSnapshotContext(typed.getContext());
+        assertSnapshotContext(typed.getUserContext());
     }
 
     // ── ToolRequestEvent ───────────────────────────────────────────────────

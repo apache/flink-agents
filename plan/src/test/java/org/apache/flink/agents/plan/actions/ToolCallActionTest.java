@@ -432,13 +432,13 @@ public class ToolCallActionTest {
     void processToolRequestEchoesContextOnSuccessAndFailureWithoutInjectingIt() throws Exception {
         Map<String, Object> context = Map.of("task", "lookup", "item_id", "42");
         FakeRunnerContext success = new FakeRunnerContext();
-        ToolRequestEvent request = toolRequest("queryOrder").withContext(context);
+        ToolRequestEvent request = toolRequest("queryOrder", context);
         request.setAttachment("trace", "keep-on-request");
 
         ToolCallAction.processToolRequest(request, success);
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(success.sentEvents.get(0));
-        assertThat(response.getContext()).isEqualTo(context);
+        assertThat(response.getUserContext()).isEqualTo(context);
         assertThat(response.getRequestId()).isEqualTo(request.getId());
         assertThat(response.getResponses().get("call-1").getText()).isEqualTo("tenant-1:order-1");
         assertThat(response.getAttachments()).isEmpty();
@@ -451,12 +451,12 @@ public class ToolCallActionTest {
                         return new FailingTool();
                     }
                 };
-        ToolRequestEvent failing = toolRequest("queryOrder").withContext(context);
+        ToolRequestEvent failing = toolRequest("queryOrder", context);
         ToolCallAction.processToolRequest(failing, failed);
         ToolResponseEvent failure = ToolResponseEvent.fromEvent(failed.sentEvents.get(0));
         assertThat(failure.getSuccess()).containsEntry("call-1", false);
         assertThat(failure.getError()).containsEntry("call-1", "database timeout");
-        assertThat(failure.getContext()).isEqualTo(context);
+        assertThat(failure.getUserContext()).isEqualTo(context);
         assertThat(failure.getAttachments()).isEmpty();
     }
 
@@ -465,8 +465,8 @@ public class ToolCallActionTest {
         FakeRunnerContext ctx = new FakeRunnerContext();
         ToolCallAction.processToolRequest(toolRequest("queryOrder"), ctx);
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
-        assertThat(response.getContext()).isNull();
-        assertThat(response.getAttributes()).doesNotContainKey("context");
+        assertThat(response.getUserContext()).isNull();
+        assertThat(response.getAttributes()).doesNotContainKey("user_context");
     }
 
     @Test
@@ -790,6 +790,11 @@ public class ToolCallActionTest {
 
     private static ToolRequestEvent toolRequest(String toolName) {
         return ChatFixtures.request("model", List.of(toolCall(toolName, "call-1", "order-1")));
+    }
+
+    private static ToolRequestEvent toolRequest(String toolName, Map<String, Object> userContext) {
+        ToolRequestEvent base = toolRequest(toolName);
+        return new ToolRequestEvent(base.getModel(), base.getToolCalls(), userContext);
     }
 
     private static ToolRequestEvent toolRequest(String toolName, String... ids) {

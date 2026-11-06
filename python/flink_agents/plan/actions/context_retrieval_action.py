@@ -62,7 +62,7 @@ async def process_context_retrieval_request(event: Event, ctx: RunnerContext) ->
             request_id=event.id,
             query=event.query,
             documents=result.documents,
-            context=event.context,
+            user_context=event.user_context,
         )
     )
 

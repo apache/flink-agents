@@ -48,7 +48,7 @@ public class ContextRetrievalResponseEvent extends Event {
                             "a Document or its serialized map",
                             Document.class,
                             Map.class),
-                    BuiltInAttribute.optionalUntyped(UserDefinedContext.ATTRIBUTE));
+                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
 
     public ContextRetrievalResponseEvent(UUID requestId, String query, List<Document> documents) {
         super(EVENT_TYPE);
@@ -91,7 +91,8 @@ public class ContextRetrievalResponseEvent extends Event {
      * types.
      *
      * <p>Enforces the fixed cross-language schema: {@code request_id}, {@code query}, and {@code
-     * documents} are required, {@code context} is optional, and no other attribute is allowed;
+     * documents} are required, {@code user_context} is an optional map, and no other attribute is
+     * allowed;
      * {@code query} must be a string and every {@code documents} element must be a {@link Document}
      * or its serialized map.
      *
@@ -125,18 +126,22 @@ public class ContextRetrievalResponseEvent extends Event {
     }
 
     /**
-     * Attaches opaque application data echoed from the originating retrieval request. {@code null}
-     * omits it.
+     * Attaches application-defined data from the originating retrieval request. {@code null} omits
+     * it.
      */
-    public ContextRetrievalResponseEvent withContext(@Nullable Object context) {
-        UserDefinedContext.set(this, context);
+    public ContextRetrievalResponseEvent withUserContext(
+            @Nullable Map<String, Object> userContext) {
+        UserDefinedContext.set(this, userContext);
         return this;
     }
 
-    /** Returns the originating request's opaque context, or {@code null} when it was omitted. */
+    /**
+     * Returns the originating request's application-defined data, or {@code null} when it was
+     * omitted.
+     */
     @JsonIgnore
     @Nullable
-    public Object getContext() {
+    public Map<String, Object> getUserContext() {
         return UserDefinedContext.get(this);
     }
 

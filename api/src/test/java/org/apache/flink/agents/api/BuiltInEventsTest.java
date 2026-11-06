@@ -621,22 +621,28 @@ class BuiltInEventsTest {
                 Arguments.of(ChatRequestEvent.EVENT_TYPE, "model", 0),
                 Arguments.of(ChatRequestEvent.EVENT_TYPE, "messages", List.of(0)),
                 Arguments.of(ChatRequestEvent.EVENT_TYPE, "prompt_args", "not-a-map"),
+                Arguments.of(ChatRequestEvent.EVENT_TYPE, "user_context", "not-a-map"),
                 // ChatResponseEvent
                 Arguments.of(ChatResponseEvent.EVENT_TYPE, "retry_count", "not-a-number"),
                 Arguments.of(ChatResponseEvent.EVENT_TYPE, "total_retry_wait_sec", "not-a-number"),
+                Arguments.of(ChatResponseEvent.EVENT_TYPE, "user_context", "not-a-map"),
                 // Decision events
                 Arguments.of(DecisionRequestEvent.EVENT_TYPE, "model", 0),
+                Arguments.of(DecisionRequestEvent.EVENT_TYPE, "user_context", "not-a-map"),
                 Arguments.of(DecisionResponseEvent.EVENT_TYPE, "retry_count", "not-a-number"),
                 Arguments.of(
                         DecisionResponseEvent.EVENT_TYPE, "total_retry_wait_sec", "not-a-number"),
+                Arguments.of(DecisionResponseEvent.EVENT_TYPE, "user_context", "not-a-map"),
                 // ToolRequestEvent
                 Arguments.of(ToolRequestEvent.EVENT_TYPE, "model", 0),
                 Arguments.of(ToolRequestEvent.EVENT_TYPE, "tool_calls", List.of(0)),
+                Arguments.of(ToolRequestEvent.EVENT_TYPE, "user_context", "not-a-map"),
                 // ToolResponseEvent
                 Arguments.of(ToolResponseEvent.EVENT_TYPE, "request_id", "not-a-uuid"),
                 Arguments.of(ToolResponseEvent.EVENT_TYPE, "responses", "not-a-map"),
                 Arguments.of(ToolResponseEvent.EVENT_TYPE, "success", "not-a-map"),
                 Arguments.of(ToolResponseEvent.EVENT_TYPE, "error", "not-a-map"),
+                Arguments.of(ToolResponseEvent.EVENT_TYPE, "user_context", "not-a-map"),
                 Arguments.of(ChatResponseEvent.EVENT_TYPE, "model_routing", "not-a-map"),
                 Arguments.of(ToolResponseEvent.EVENT_TYPE, "timestamp", "not-a-number"),
                 // ContextRetrievalRequestEvent
@@ -644,10 +650,13 @@ class BuiltInEventsTest {
                 Arguments.of(ContextRetrievalRequestEvent.EVENT_TYPE, "vector_store", 0),
                 Arguments.of(
                         ContextRetrievalRequestEvent.EVENT_TYPE, "max_results", "not-a-number"),
+                Arguments.of(ContextRetrievalRequestEvent.EVENT_TYPE, "user_context", "not-a-map"),
                 // ContextRetrievalResponseEvent
                 Arguments.of(ContextRetrievalResponseEvent.EVENT_TYPE, "request_id", "not-a-uuid"),
                 Arguments.of(ContextRetrievalResponseEvent.EVENT_TYPE, "query", 0),
                 Arguments.of(ContextRetrievalResponseEvent.EVENT_TYPE, "documents", List.of(0)),
+                Arguments.of(
+                        ContextRetrievalResponseEvent.EVENT_TYPE, "user_context", "not-a-map"),
                 // ModelRoutingEvent (Java-only)
                 Arguments.of(ModelRoutingEvent.EVENT_TYPE, "request_id", "not-a-uuid"),
                 Arguments.of(ModelRoutingEvent.EVENT_TYPE, "router", 0),

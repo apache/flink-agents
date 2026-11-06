@@ -54,7 +54,7 @@ public class DecisionResponseEvent extends Event {
                     BuiltInAttribute.optionalUntyped(ERROR),
                     BuiltInAttribute.optional(RETRY_COUNT, Number.class),
                     BuiltInAttribute.optional(TOTAL_RETRY_WAIT_SEC, Number.class),
-                    BuiltInAttribute.optionalUntyped(UserDefinedContext.ATTRIBUTE));
+                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -211,18 +211,21 @@ public class DecisionResponseEvent extends Event {
     }
 
     /**
-     * Attaches opaque application data echoed from the originating decision request. {@code null}
-     * omits it. Present on both successful and failed responses.
+     * Attaches application-defined data from the originating decision request. {@code null} omits
+     * it. Present on both successful and failed responses.
      */
-    public DecisionResponseEvent withContext(@Nullable Object context) {
-        UserDefinedContext.set(this, context);
+    public DecisionResponseEvent withUserContext(@Nullable Map<String, Object> userContext) {
+        UserDefinedContext.set(this, userContext);
         return this;
     }
 
-    /** Returns the originating request's opaque context, or {@code null} when it was omitted. */
+    /**
+     * Returns the originating request's application-defined data, or {@code null} when it was
+     * omitted.
+     */
     @JsonIgnore
     @Nullable
-    public Object getContext() {
+    public Map<String, Object> getUserContext() {
         return UserDefinedContext.get(this);
     }
 }

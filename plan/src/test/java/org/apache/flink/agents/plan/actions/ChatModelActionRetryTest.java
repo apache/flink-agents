@@ -1295,8 +1295,8 @@ class ChatModelActionRetryTest {
         ChatModelAction.processChatRequestOrToolResponse(request, mockCtx);
 
         ChatResponseEvent response = ChatResponseEvent.fromEvent(sentEvents.get(0));
-        assertThat(response.getContext()).isNull();
-        assertThat(response.getAttributes()).doesNotContainKey("context");
+        assertThat(response.getUserContext()).isNull();
+        assertThat(response.getAttributes()).doesNotContainKey("user_context");
         assertThat(response.getRequestId()).isEqualTo(request.getId());
         assertThat(response.getAttachments()).isEmpty();
     }
@@ -1318,13 +1318,13 @@ class ChatModelActionRetryTest {
                 .thenThrow(new IllegalStateException("transient"))
                 .thenReturn(ChatFixtures.response("done"));
         ChatRequestEvent request =
-                new ChatRequestEvent("test-model", messages, promptArgs, null).withContext(context);
+                new ChatRequestEvent("test-model", messages, promptArgs, null, context);
         request.setAttachment("trace", "keep-on-request");
         ChatModelAction.processChatRequestOrToolResponse(request, mockCtx);
 
         ChatResponseEvent response = ChatResponseEvent.fromEvent(sentEvents.get(0));
         assertThat(response.isSuccess()).isTrue();
-        assertThat(response.getContext()).isEqualTo(context);
+        assertThat(response.getUserContext()).isEqualTo(context);
         assertThat(response.getRetryCount()).isEqualTo(1);
         assertThat(response.getAttachments()).isEmpty();
         assertThat(response.getRequestId()).isEqualTo(request.getId());
@@ -1341,12 +1341,12 @@ class ChatModelActionRetryTest {
         when(mockChatModel.chat(any(), any(), any()))
                 .thenThrow(new IllegalStateException("persistent"));
         ChatRequestEvent failing =
-                new ChatRequestEvent("test-model", messages, promptArgs, null).withContext(context);
+                new ChatRequestEvent("test-model", messages, promptArgs, null, context);
         ChatModelAction.processChatRequestOrToolResponse(failing, mockCtx);
         ChatResponseEvent failed = ChatResponseEvent.fromEvent(sentEvents.get(0));
         assertThat(failed.isFailed()).isTrue();
         assertThat(failed.getError()).contains("persistent");
-        assertThat(failed.getContext()).isEqualTo(context);
+        assertThat(failed.getUserContext()).isEqualTo(context);
         assertThat(failed.getRequestId()).isEqualTo(failing.getId());
     }
 
@@ -1374,22 +1374,22 @@ class ChatModelActionRetryTest {
                                 "test-model",
                                 List.of(ChatMessage.user("a")),
                                 Map.of("who", "a"),
-                                null)
-                        .withContext(contextA);
+                                null,
+                                contextA);
         ChatRequestEvent requestB =
                 new ChatRequestEvent(
                                 "test-model",
                                 List.of(ChatMessage.user("b")),
                                 Map.of("who", "b"),
-                                null)
-                        .withContext(contextB);
+                                null,
+                                contextB);
         ChatModelAction.processChatRequestOrToolResponse(requestA, mockCtx);
         ChatModelAction.processChatRequestOrToolResponse(requestB, mockCtx);
 
         ToolRequestEvent toolA = ToolRequestEvent.fromEvent(sentEvents.get(0));
         ToolRequestEvent toolB = ToolRequestEvent.fromEvent(sentEvents.get(1));
-        assertThat(toolA.getContext()).isNull();
-        assertThat(toolB.getContext()).isNull();
+        assertThat(toolA.getUserContext()).isNull();
+        assertThat(toolB.getUserContext()).isNull();
         assertThat(toolA.getToolCalls().get(0).getInput()).containsExactly(Map.entry("x", 1));
         assertThat(toolA.getAttachments()).isEmpty();
 
@@ -1402,9 +1402,9 @@ class ChatModelActionRetryTest {
                         .readValue(
                                 new ObjectMapper()
                                         .writeValueAsBytes(
-                                                parked.get(toolB.getId()).get("context")),
+                                                parked.get(toolB.getId()).get("user_context")),
                                 Object.class);
-        parked.get(toolB.getId()).put("context", checkpointed);
+        parked.get(toolB.getId()).put("user_context", checkpointed);
 
         // Finish B before A. Each final response keeps its own request context.
         ChatModelAction.processChatRequestOrToolResponse(
@@ -1425,10 +1425,10 @@ class ChatModelActionRetryTest {
         ChatResponseEvent responseB = ChatResponseEvent.fromEvent(sentEvents.get(2));
         ChatResponseEvent responseA = ChatResponseEvent.fromEvent(sentEvents.get(3));
         assertThat(responseB.getRequestId()).isEqualTo(requestB.getId());
-        assertThat(responseB.getContext()).isEqualTo(contextB);
+        assertThat(responseB.getUserContext()).isEqualTo(contextB);
         assertThat(responseB.getResponse().getText()).isEqualTo("risk done");
         assertThat(responseA.getRequestId()).isEqualTo(requestA.getId());
-        assertThat(responseA.getContext()).isEqualTo(contextA);
+        assertThat(responseA.getUserContext()).isEqualTo(contextA);
         assertThat(responseA.getResponse().getText()).isEqualTo("summary done");
         assertThat(responseA.getAttachments()).isEmpty();
     }
@@ -1439,8 +1439,8 @@ class ChatModelActionRetryTest {
         when(mockChatModel.chat(any(), any(), any())).thenReturn(ChatFixtures.response("ok"));
         Map<String, Object> context = Map.of("task", "summary", "item_id", "42");
         ChatRequestEvent original =
-                new ChatRequestEvent("test-model", List.of(ChatMessage.user("hi")))
-                        .withContext(context);
+                new ChatRequestEvent(
+                        "test-model", List.of(ChatMessage.user("hi")), null, null, context);
         ChatRequestEvent restored =
                 ChatRequestEvent.fromEvent(
                         Event.fromJson(new ObjectMapper().writeValueAsString(original)));
@@ -1449,7 +1449,7 @@ class ChatModelActionRetryTest {
 
         ChatResponseEvent response = ChatResponseEvent.fromEvent(sentEvents.get(0));
         assertThat(response.getRequestId()).isEqualTo(original.getId());
-        assertThat(response.getContext()).isEqualTo(context);
+        assertThat(response.getUserContext()).isEqualTo(context);
     }
 
     @Test
@@ -1470,14 +1470,14 @@ class ChatModelActionRetryTest {
         shared.put("meta", nested);
 
         ChatRequestEvent requestA =
-                new ChatRequestEvent("test-model", List.of(ChatMessage.user("a")))
-                        .withContext(shared);
+                new ChatRequestEvent(
+                        "test-model", List.of(ChatMessage.user("a")), null, null, shared);
         shared.put("task", "risk");
         tags.add("changed");
         nested.put("label", "changed");
         ChatRequestEvent requestB =
-                new ChatRequestEvent("test-model", List.of(ChatMessage.user("b")))
-                        .withContext(shared);
+                new ChatRequestEvent(
+                        "test-model", List.of(ChatMessage.user("b")), null, null, shared);
 
         ChatModelAction.processChatRequestOrToolResponse(requestA, mockCtx);
         ChatModelAction.processChatRequestOrToolResponse(requestB, mockCtx);
@@ -1486,7 +1486,7 @@ class ChatModelActionRetryTest {
         ChatResponseEvent responseB = ChatResponseEvent.fromEvent(sentEvents.get(1));
         assertThat(responseA.getRequestId()).isEqualTo(requestA.getId());
         assertThat(responseA.getResponse().getText()).isEqualTo("summary done");
-        assertThat(responseA.getContext())
+        assertThat(responseA.getUserContext())
                 .isEqualTo(
                         Map.of(
                                 "task",
@@ -1497,7 +1497,7 @@ class ChatModelActionRetryTest {
                                 Map.of("label", "keep")));
         assertThat(responseB.getRequestId()).isEqualTo(requestB.getId());
         assertThat(responseB.getResponse().getText()).isEqualTo("risk done");
-        assertThat(responseB.getContext())
+        assertThat(responseB.getUserContext())
                 .isEqualTo(
                         Map.of(
                                 "task",
@@ -1506,7 +1506,7 @@ class ChatModelActionRetryTest {
                                 List.of("keep", "changed"),
                                 "meta",
                                 Map.of("label", "changed")));
-        Map<String, Object> storedA = (Map<String, Object>) responseA.getContext();
+        Map<String, Object> storedA = (Map<String, Object>) responseA.getUserContext();
         assertThat(storedA).isNotSameAs(shared);
         assertThat(storedA.get("tags")).isNotSameAs(tags);
     }

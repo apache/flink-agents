@@ -24,7 +24,7 @@
     "error": null,
     "retry_count": 0,
     "total_retry_wait_sec": 0,
-    "context": {
+    "user_context": {
       "task": "summary",
       "item_id": "42",
       "n": 1,

@@ -1,7 +1,7 @@
 {
   "id" : "00000000-0000-0000-0000-000000000001",
   "attributes" : {
-    "context" : {
+    "user_context" : {
       "task" : "summary",
       "item_id" : "42",
       "n" : 1,

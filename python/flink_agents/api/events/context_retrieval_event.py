@@ -38,9 +38,9 @@ class ContextRetrievalRequestEvent(Event):
         Name of the vector store setup resource to use
     max_results : int
         Maximum number of results to return (default: 3)
-    context : Any | None
-        Opaque application data echoed on the matching response. Not added to
-        the vector-store query. Omitted when unset.
+    user_context : dict[str, Any] | None
+        Application-defined data propagated to the matching response. Not added
+        to the vector-store query. Omitted when unset.
     """
 
     EVENT_TYPE: ClassVar[str] = "_context_retrieval_request_event"
@@ -49,7 +49,7 @@ class ContextRetrievalRequestEvent(Event):
         BuiltInAttribute.required("query", str),
         BuiltInAttribute.required("vector_store", str),
         BuiltInAttribute.optional("max_results", int),
-        BuiltInAttribute.optional_untyped("context"),
+        BuiltInAttribute.optional("user_context", dict),
     )
 
     def __init__(
@@ -57,7 +57,7 @@ class ContextRetrievalRequestEvent(Event):
         query: str,
         vector_store: str,
         max_results: int = 3,
-        context: Any | None = None,
+        user_context: dict[str, Any] | None = None,
     ) -> None:
         """Create a ContextRetrievalRequestEvent.
 
@@ -66,7 +66,8 @@ class ContextRetrievalRequestEvent(Event):
         query: The search query text to find relevant context for.
         vector_store: Name of the vector store setup resource to use.
         max_results: Maximum number of results to return (default: 3). Must be positive.
-        context: Opaque application data echoed on the response. Omitted when unset.
+        user_context: Application-defined data propagated to the response.
+            Omitted when unset.
 
         Raises:
         ------
@@ -80,8 +81,8 @@ class ContextRetrievalRequestEvent(Event):
             "vector_store": vector_store,
             "max_results": max_results,
         }
-        if context is not None:
-            attributes["context"] = copy_user_context(context)
+        if user_context is not None:
+            attributes["user_context"] = copy_user_context(user_context)
         super().__init__(
             type=ContextRetrievalRequestEvent.EVENT_TYPE,
             attributes=attributes,
@@ -98,7 +99,7 @@ class ContextRetrievalRequestEvent(Event):
             query=attributes["query"],
             vector_store=attributes["vector_store"],
             max_results=attributes.get("max_results", 3),
-            context=attributes.get("context"),
+            user_context=attributes.get("user_context"),
         )
         return result.reconstruct_from(event)
 
@@ -118,9 +119,9 @@ class ContextRetrievalRequestEvent(Event):
         return self.get_attr("max_results")
 
     @property
-    def context(self) -> Any | None:
-        """Return opaque application data to echo on the response, if set."""
-        return self.get_attr("context")
+    def user_context(self) -> dict[str, Any] | None:
+        """Return application-defined data to propagate to the response, if set."""
+        return self.get_attr("user_context")
 
 
 class ContextRetrievalResponseEvent(Event):
@@ -134,8 +135,8 @@ class ContextRetrievalResponseEvent(Event):
         The original search query from the request
     documents : List[Document]
         List of retrieved documents from the vector store
-    context : Any | None
-        Opaque application data from the originating request. Omitted when unset.
+    user_context : dict[str, Any] | None
+        Application-defined data from the originating request. Omitted when unset.
     """
 
     EVENT_TYPE: ClassVar[str] = "_context_retrieval_response_event"
@@ -146,7 +147,7 @@ class ContextRetrievalResponseEvent(Event):
         BuiltInAttribute.required_list(
             "documents", "a Document or its serialized dict", (Document, dict)
         ),
-        BuiltInAttribute.optional_untyped("context"),
+        BuiltInAttribute.optional("user_context", dict),
     )
 
     def __init__(
@@ -154,7 +155,7 @@ class ContextRetrievalResponseEvent(Event):
         request_id: UUID,
         query: str,
         documents: List[Document],
-        context: Any | None = None,
+        user_context: dict[str, Any] | None = None,
     ) -> None:
         """Create a ContextRetrievalResponseEvent."""
         attributes: dict[str, Any] = {
@@ -162,8 +163,8 @@ class ContextRetrievalResponseEvent(Event):
             "query": query,
             "documents": documents,
         }
-        if context is not None:
-            attributes["context"] = copy_user_context(context)
+        if user_context is not None:
+            attributes["user_context"] = copy_user_context(user_context)
         super().__init__(
             type=ContextRetrievalResponseEvent.EVENT_TYPE,
             attributes=attributes,
@@ -184,7 +185,7 @@ class ContextRetrievalResponseEvent(Event):
             request_id=attributes["request_id"],
             query=attributes["query"],
             documents=documents,
-            context=attributes.get("context"),
+            user_context=attributes.get("user_context"),
         )
         return result.reconstruct_from(event)
 
@@ -205,6 +206,6 @@ class ContextRetrievalResponseEvent(Event):
         return self.get_attr("documents")
 
     @property
-    def context(self) -> Any | None:
-        """Return the originating request's opaque context, if set."""
-        return self.get_attr("context")
+    def user_context(self) -> dict[str, Any] | None:
+        """Return the originating request's application-defined data, if set."""
+        return self.get_attr("user_context")

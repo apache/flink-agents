@@ -42,10 +42,10 @@ public class ChatRequestEvent extends Event {
 
     /**
      * The fixed cross-language attribute schema for this event: {@code model} and {@code messages}
-     * are required, {@code prompt_args}, {@code output_schema}, and {@code context} are optional,
-     * and no other attribute is allowed. {@link #fromEvent} enforces it at the JSON boundary.
-     * {@code context} is opaque application data echoed on the response; it is not part of the
-     * prompt.
+     * are required, {@code prompt_args}, {@code output_schema}, and {@code user_context} are
+     * optional, and no other attribute is allowed. {@link #fromEvent} enforces it at the JSON
+     * boundary. {@code user_context} is application-defined data propagated to the response; it is
+     * not part of the prompt.
      */
     private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
             List.of(
@@ -57,14 +57,14 @@ public class ChatRequestEvent extends Event {
                             Map.class),
                     BuiltInAttribute.optional("prompt_args", Map.class),
                     BuiltInAttribute.optionalUntyped("output_schema"),
-                    BuiltInAttribute.optionalUntyped(UserDefinedContext.ATTRIBUTE));
+                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
 
     public ChatRequestEvent(
             String model,
             List<ChatMessage> messages,
             @Nullable Map<String, Object> promptArgs,
             @Nullable Object outputSchema,
-            @Nullable Object context) {
+            @Nullable Map<String, Object> userContext) {
         super(EVENT_TYPE);
         setAttr("model", model);
         setAttr("messages", new ArrayList<>(messages));
@@ -72,7 +72,7 @@ public class ChatRequestEvent extends Event {
         if (outputSchema != null) {
             setAttr("output_schema", outputSchema);
         }
-        UserDefinedContext.set(this, context);
+        UserDefinedContext.set(this, userContext);
     }
 
     public ChatRequestEvent(
@@ -121,8 +121,8 @@ public class ChatRequestEvent extends Event {
      * Reconstructs a typed ChatRequestEvent from a base Event, deserializing nested types.
      *
      * <p>Enforces the fixed cross-language attribute schema: {@code model} and {@code messages} are
-     * required, {@code prompt_args}, {@code output_schema}, and {@code context} are optional, no
-     * other attribute is allowed, {@code model} must be a string, and every {@code messages}
+     * required, {@code prompt_args}, {@code output_schema}, and {@code user_context} are optional,
+     * no other attribute is allowed, {@code model} must be a string, and every {@code messages}
      * element must be a {@link ChatMessage} or its serialized map — an element such as a bare
      * number is rejected rather than silently dropped.
      *
@@ -160,18 +160,13 @@ public class ChatRequestEvent extends Event {
     }
 
     /**
-     * Attaches opaque application data to echo unchanged on the matching {@link ChatResponseEvent}.
-     * The value is not added to messages or prompt arguments. {@code null} omits it.
+     * Returns application-defined data to propagate to the matching {@link ChatResponseEvent}, or
+     * {@code null} when this request omitted it. The map is not added to messages or prompt
+     * arguments.
      */
-    public ChatRequestEvent withContext(@Nullable Object context) {
-        UserDefinedContext.set(this, context);
-        return this;
-    }
-
-    /** Returns the opaque application context, or {@code null} when this request omitted it. */
     @JsonIgnore
     @Nullable
-    public Object getContext() {
+    public Map<String, Object> getUserContext() {
         return UserDefinedContext.get(this);
     }
 }

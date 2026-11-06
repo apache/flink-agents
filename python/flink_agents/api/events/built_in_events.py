@@ -92,28 +92,6 @@ REGISTRY: Dict[str, type[Event]] = {
     LongTermSearchEvent.EVENT_TYPE: MemoryEvent,
 }
 
-# Request and response types whose ``context`` is opaque application data. Decoding
-# must keep the JSON value as supplied instead of turning a Row-shaped object into
-# a native PyFlink Row.
-_OPAQUE_CONTEXT_EVENT_TYPES = frozenset(
-    {
-        ChatRequestEvent.EVENT_TYPE,
-        ChatResponseEvent.EVENT_TYPE,
-        DecisionRequestEvent.EVENT_TYPE,
-        DecisionResponseEvent.EVENT_TYPE,
-        ToolRequestEvent.EVENT_TYPE,
-        ToolResponseEvent.EVENT_TYPE,
-        ContextRetrievalRequestEvent.EVENT_TYPE,
-        ContextRetrievalResponseEvent.EVENT_TYPE,
-    }
-)
-
-
-def context_is_preserved_json(event_type: str) -> bool:
-    """Return whether ``context`` on this event type stays parsed JSON."""
-    return event_type in _OPAQUE_CONTEXT_EVENT_TYPES
-
-
 def restore(event: Event) -> Event:
     """Restore a registered built-in event; unknown types stay generic.
 

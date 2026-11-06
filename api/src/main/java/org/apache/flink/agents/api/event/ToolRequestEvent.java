@@ -44,15 +44,16 @@ public class ToolRequestEvent extends Event {
                     BuiltInAttribute.required("model", String.class),
                     BuiltInAttribute.requiredList(
                             "tool_calls", "a tool call", Map.class, ToolCallBlock.class),
-                    BuiltInAttribute.optionalUntyped(UserDefinedContext.ATTRIBUTE));
+                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    public ToolRequestEvent(String model, List<ToolCallBlock> toolCalls, @Nullable Object context) {
+    public ToolRequestEvent(
+            String model, List<ToolCallBlock> toolCalls, @Nullable Map<String, Object> userContext) {
         super(EVENT_TYPE);
         setAttr("model", model);
         setAttr("tool_calls", validate(toolCalls));
-        UserDefinedContext.set(this, context);
+        UserDefinedContext.set(this, userContext);
     }
 
     public ToolRequestEvent(String model, List<ToolCallBlock> toolCalls) {
@@ -90,18 +91,12 @@ public class ToolRequestEvent extends Event {
     }
 
     /**
-     * Attaches opaque application data to echo unchanged on the matching {@link ToolResponseEvent}.
-     * The value is not added to tool-call arguments. {@code null} omits it.
+     * Returns application-defined data to propagate to the matching {@link ToolResponseEvent}, or
+     * {@code null} when this request omitted it. The map is not added to tool-call arguments.
      */
-    public ToolRequestEvent withContext(@Nullable Object context) {
-        UserDefinedContext.set(this, context);
-        return this;
-    }
-
-    /** Returns the opaque application context, or {@code null} when this request omitted it. */
     @JsonIgnore
     @Nullable
-    public Object getContext() {
+    public Map<String, Object> getUserContext() {
         return UserDefinedContext.get(this);
     }
 

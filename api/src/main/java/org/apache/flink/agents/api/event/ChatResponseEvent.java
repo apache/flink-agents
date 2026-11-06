@@ -57,7 +57,7 @@ public class ChatResponseEvent extends Event {
                     BuiltInAttribute.optional(TOTAL_RETRY_WAIT_SEC, Number.class),
                     BuiltInAttribute.optionalUntyped(STRUCTURED_OUTPUT),
                     BuiltInAttribute.optional(MODEL_ROUTING, Map.class),
-                    BuiltInAttribute.optionalUntyped(UserDefinedContext.ATTRIBUTE));
+                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -147,18 +147,21 @@ public class ChatResponseEvent extends Event {
     }
 
     /**
-     * Attaches opaque application data echoed from the originating chat request. {@code null} omits
-     * it. The value is not derived from event attachments.
+     * Attaches application-defined data from the originating chat request. {@code null} omits it.
+     * The value is not derived from event attachments.
      */
-    public ChatResponseEvent withContext(@Nullable Object context) {
-        UserDefinedContext.set(this, context);
+    public ChatResponseEvent withUserContext(@Nullable Map<String, Object> userContext) {
+        UserDefinedContext.set(this, userContext);
         return this;
     }
 
-    /** Returns the originating request's opaque context, or {@code null} when it was omitted. */
+    /**
+     * Returns the originating request's application-defined data, or {@code null} when it was
+     * omitted.
+     */
     @JsonIgnore
     @Nullable
-    public Object getContext() {
+    public Map<String, Object> getUserContext() {
         return UserDefinedContext.get(this);
     }
 

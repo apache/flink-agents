@@ -91,12 +91,12 @@ class ChatModelActionContextRecoveryTest {
                 .thenReturn(new ChatResult(ChatMessage.assistant("done")));
 
         ChatRequestEvent request =
-                new ChatRequestEvent("test-model", List.of(ChatMessage.user("hi")))
-                        .withContext(context);
+                new ChatRequestEvent(
+                        "test-model", List.of(ChatMessage.user("hi")), null, null, context);
         ChatModelAction.processChatRequestOrToolResponse(request, ctx);
 
         ToolRequestEvent toolRequest = ToolRequestEvent.fromEvent(sentEvents.get(0));
-        assertThat(toolRequest.getContext()).isNull();
+        assertThat(toolRequest.getUserContext()).isNull();
         Object liveParked = sensory.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
 
         ActionState state = new ActionState(request);
@@ -133,8 +133,8 @@ class ChatModelActionContextRecoveryTest {
         ChatResponseEvent response = ChatResponseEvent.fromEvent(sentEvents.get(0));
         assertThat(response.getRequestId()).isEqualTo(request.getId());
         assertThat(response.getResponse().getText()).isEqualTo("done");
-        assertThat(response.getContext()).isEqualTo(context);
-        assertThat(response.getContext()).isNotSameAs(context);
+        assertThat(response.getUserContext()).isEqualTo(context);
+        assertThat(response.getUserContext()).isNotSameAs(context);
     }
 
     private static MemoryObject newMemory(List<MemoryUpdate> updates) throws Exception {

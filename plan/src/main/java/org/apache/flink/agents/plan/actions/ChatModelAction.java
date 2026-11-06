@@ -98,8 +98,8 @@ public class ChatModelAction {
     private static final String TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT";
     private static final String INITIAL_REQUEST_ID = "initialRequestId";
     private static final String MODEL = "model";
-    /** Sensory-memory key for the chat request's opaque user context. Matches the event field. */
-    private static final String USER_CONTEXT = "context";
+    /** Sensory-memory key for the chat request's user context. Matches the event attribute. */
+    private static final String USER_CONTEXT = "user_context";
 
     private static final String ROUTING_METADATA_CONTEXT = "_ROUTING_METADATA_CONTEXT";
     private static final String OUTPUT_SCHEMA = "outputSchema";
@@ -157,7 +157,7 @@ public class ChatModelAction {
             String model,
             Map<String, Object> promptArgs,
             Object outputSchema,
-            @Nullable Object userContext)
+            @Nullable Map<String, Object> userContext)
             throws Exception {
         Map<UUID, Object> toolRequestEventContext;
         if (sensoryMem.isExist(TOOL_REQUEST_EVENT_CONTEXT)) {
@@ -245,7 +245,7 @@ public class ChatModelAction {
             List<ChatMessage> messages,
             Map<String, Object> promptArgs,
             Object outputSchema,
-            @Nullable Object userContext,
+            @Nullable Map<String, Object> userContext,
             RunnerContext ctx)
             throws Exception {
         updateToolCallContext(
@@ -361,7 +361,7 @@ public class ChatModelAction {
             List<ChatMessage> messages,
             Map<String, Object> promptArgs,
             @Nullable Object outputSchema,
-            @Nullable Object userContext,
+            @Nullable Map<String, Object> userContext,
             RunnerContext ctx)
             throws Exception {
         int numRetries = ChatModelInvoker.configuredRetries(ctx);
@@ -449,7 +449,7 @@ public class ChatModelAction {
                                             result.response,
                                             totalRetryCount,
                                             totalRetryWaitSec)
-                                    .withContext(userContext);
+                                    .withUserContext(userContext);
                     completed.setStructuredOutput(result.structuredOutput);
                     if (routingMetadata != null) completed.setRoutingMetadata(routingMetadata);
                     ctx.sendEvent(completed);
@@ -489,7 +489,7 @@ public class ChatModelAction {
     }
 
     private static void sendFailure(
-            UUID requestId, Exception error, @Nullable Object userContext, RunnerContext ctx)
+            UUID requestId, Exception error, @Nullable Map<String, Object> userContext, RunnerContext ctx)
             throws Exception {
         LOG.warn("Chat request {} failed", requestId, error);
         Map<String, Long> stats = getRetryStats(ctx.getSensoryMemory(), requestId);
@@ -500,7 +500,7 @@ public class ChatModelAction {
                                 ChatModelInvoker.errorText(error),
                                 stats.get(TOTAL_RETRY_COUNT).intValue(),
                                 stats.get(TOTAL_RETRY_WAIT_SEC).intValue())
-                        .withContext(userContext));
+                        .withUserContext(userContext));
     }
 
     @SuppressWarnings("unchecked")
@@ -633,7 +633,7 @@ public class ChatModelAction {
                             event.getPromptArgs(),
                             ctx);
         } catch (ModelRoutingResolver.RoutingFailure e) {
-            sendFailure(event.getId(), e, event.getContext(), ctx);
+            sendFailure(event.getId(), e, event.getUserContext(), ctx);
             return;
         }
         chat(
@@ -642,7 +642,7 @@ public class ChatModelAction {
                 event.getMessages(),
                 event.getPromptArgs(),
                 event.getOutputSchema(),
-                event.getContext(),
+                event.getUserContext(),
                 ctx);
     }
 
@@ -659,7 +659,7 @@ public class ChatModelAction {
         Map<String, Object> promptArgs =
                 (Map<String, Object>) context.getOrDefault(PROMPT_ARGS, Map.of());
         Object outputSchema = context.get(OUTPUT_SCHEMA);
-        Object userContext = context.get(USER_CONTEXT);
+        Map<String, Object> userContext = (Map<String, Object>) context.get(USER_CONTEXT);
 
         Map<String, ToolResponse> responses = event.getResponses();
         Map<String, Boolean> success = event.getSuccess();

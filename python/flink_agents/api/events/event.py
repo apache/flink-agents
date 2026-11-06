@@ -59,18 +59,32 @@ def _reconstruct_row_if_needed(data: Any) -> Any:
     return data
 
 
-def copy_user_context(context: Any) -> Any:
-    """Detach maps and lists from a caller-supplied context value.
+def copy_user_context(user_context: dict[str, Any]) -> dict[str, Any]:
+    """Detach a caller-supplied ``user_context`` map from the event that stores it.
 
     Built-in request and response events store this copy so a later mutation of
     the caller's object does not change an event that already holds the value.
     Nested maps and lists are copied. Other values are returned as given.
+    Copying does not restore or rewrite application types.
+
+    Raises:
+        TypeError: If ``user_context`` is not a dict.
     """
-    if isinstance(context, dict):
-        return {key: copy_user_context(value) for key, value in context.items()}
-    if isinstance(context, list):
-        return [copy_user_context(item) for item in context]
-    return context
+    if not isinstance(user_context, dict):
+        msg = "user_context must be a dict"
+        raise TypeError(msg)
+    return {
+        key: _copy_user_context_value(value) for key, value in user_context.items()
+    }
+
+
+def _copy_user_context_value(value: Any) -> Any:
+    """Copy nested maps and lists inside a user-context value."""
+    if isinstance(value, dict):
+        return {key: _copy_user_context_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_user_context_value(item) for item in value]
+    return value
 
 
 class _AttrKind(Enum):
@@ -459,11 +473,6 @@ class Event(BaseModel, extra="allow"):
         nested typed values survive the cross-language boundary; unknown or
         user-defined types are returned as a generic ``Event``.
 
-        ``context`` on the built-in request and response events is left as the
-        parsed JSON. An object shaped like a PyFlink ``Row`` is not reconstructed,
-        so every field on that object stays. Other attributes still reconstruct
-        native rows.
-
         Parameters
         ----------
         json_str : str
@@ -487,14 +496,9 @@ class Event(BaseModel, extra="allow"):
         event = cls.model_validate(data)
         # Imported lazily: built_in_events imports the concrete subclasses, which
         # import this module, so a top-level import here would be circular.
-        from flink_agents.api.events.built_in_events import (
-            context_is_preserved_json,
-            restore,
-        )
+        from flink_agents.api.events.built_in_events import restore
 
         for key in list(event.attributes):
-            if key == "context" and context_is_preserved_json(event.type):
-                continue
             event.attributes[key] = _reconstruct_row_if_needed(event.attributes[key])
         return restore(event)
 

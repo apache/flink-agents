@@ -162,7 +162,7 @@ async def process_decision_request(
                 failure,
                 retry_count,
                 total_retry_wait_sec,
-                context=event.context,
+                user_context=event.user_context,
             )
         )
     else:
@@ -172,7 +172,7 @@ async def process_decision_request(
                 response,
                 retry_count,
                 total_retry_wait_sec,
-                context=event.context,
+                user_context=event.user_context,
             )
         )
 

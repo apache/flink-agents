@@ -1152,12 +1152,12 @@ public class ChatModelActionRoutingTest {
                         .register(
                                 "small", new FakeChatModel(ChatFixtures.response("ok from small")));
         ChatRequestEvent request =
-                new ChatRequestEvent("router", List.of(ChatMessage.user("write sql")))
-                        .withContext(context);
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("write sql")), null, null, context);
         request.setAttachment("trace", "stay-on-request");
         ChatModelAction.processChatRequestOrToolResponse(request, succeeded);
         assertThat(succeeded.chatResponse().isSuccess()).isTrue();
-        assertThat(succeeded.chatResponse().getContext()).isEqualTo(context);
+        assertThat(succeeded.chatResponse().getUserContext()).isEqualTo(context);
         assertThat(succeeded.chatResponse().getAttachments()).isEmpty();
         assertThat(succeeded.resolvedChatModels).containsExactly("big", "small");
 
@@ -1167,11 +1167,11 @@ public class ChatModelActionRoutingTest {
                         .register(
                                 "small", new FakeChatModel(new RuntimeException("small-exploded")));
         ChatModelAction.processChatRequestOrToolResponse(
-                new ChatRequestEvent("router", List.of(ChatMessage.user("write sql")))
-                        .withContext(context),
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("write sql")), null, null, context),
                 exhausted);
         assertThat(exhausted.chatResponse().isFailed()).isTrue();
-        assertThat(exhausted.chatResponse().getContext()).isEqualTo(context);
+        assertThat(exhausted.chatResponse().getUserContext()).isEqualTo(context);
     }
 
     @Test
@@ -1203,11 +1203,11 @@ public class ChatModelActionRoutingTest {
                                         ChatFixtures.response("", toolCall),
                                         ChatFixtures.response("final from small")));
         ChatModelAction.processChatRequestOrToolResponse(
-                new ChatRequestEvent("router", List.of(ChatMessage.user("write sql")))
-                        .withContext(context),
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("write sql")), null, null, context),
                 ctx);
         ToolRequestEvent toolRequest = ctx.toolRequestEvent();
-        assertThat(toolRequest.getContext()).isNull();
+        assertThat(toolRequest.getUserContext()).isNull();
         assertThat(toolRequest.getToolCalls().get(0).getInput())
                 .containsExactly(Map.entry("q", "sql"));
 
@@ -1219,7 +1219,7 @@ public class ChatModelActionRoutingTest {
                         Map.of()),
                 ctx);
         assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("final from small");
-        assertThat(ctx.chatResponse().getContext()).isEqualTo(context);
+        assertThat(ctx.chatResponse().getUserContext()).isEqualTo(context);
         assertThat(ctx.resolvedChatModels).containsExactly("big", "small", "small");
     }
 
