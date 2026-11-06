@@ -126,6 +126,9 @@ export FLINK_CONF_DIR="/path/to/flink/conf"
 
 Python reads `flink-conf.yaml` if it exists, otherwise `config.yaml`.
 
+Agent settings can be declared in a nested `agent` mapping or as flat
+`agent.`-prefixed keys. A flat key wins when both forms set the same option.
+
 If `FLINK_CONF_DIR` is unset, no YAML configuration file is loaded. Configuration
 through `AgentsExecutionEnvironment` still works and overrides values loaded from
 the file.

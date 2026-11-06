@@ -29,6 +29,8 @@ from flink_agents.api.configuration import (
 from flink_agents.api.trace_log import _parse_targets, _serialize_targets
 
 _TRACE_LOG_TARGETS_KEY = "trace-log.targets"
+_AGENT_CONFIG_SECTION = "agent"
+_AGENT_CONFIG_PREFIX = "agent."
 
 
 def _normalize_trace_log_targets(conf_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -38,6 +40,49 @@ def _normalize_trace_log_targets(conf_data: Dict[str, Any]) -> Dict[str, Any]:
         **conf_data,
         _TRACE_LOG_TARGETS_KEY: _serialize_targets(conf_data[_TRACE_LOG_TARGETS_KEY]),
     }
+
+
+def _extract_agent_config(raw_config: Any, config_path: str) -> Dict[str, Any]:
+    """Select agent settings from a parsed YAML configuration file.
+
+    Flink configuration files can declare agent settings either in a nested
+    ``agent`` mapping or as flat ``agent.<key>`` entries. Flat entries take
+    precedence over nested ones when the same key is declared in both forms,
+    matching the Java loader.
+
+    Args:
+        raw_config: The document returned by ``yaml.safe_load``.
+        config_path: Path of the configuration file, used in error messages.
+
+    Returns:
+        Dict[str, Any]: The agent configuration with the ``agent.`` prefix removed.
+    """
+    if raw_config is None:
+        return {}
+    if not isinstance(raw_config, dict):
+        msg = (
+            f"Invalid agent configuration file {config_path}: "
+            "expected a YAML mapping at the top level"
+        )
+        raise TypeError(msg)
+
+    nested = raw_config.get(_AGENT_CONFIG_SECTION, {})
+    if nested is None:
+        nested = {}
+    if not isinstance(nested, dict):
+        msg = (
+            f"Invalid agent configuration file {config_path}: "
+            f"'{_AGENT_CONFIG_SECTION}' must be a mapping"
+        )
+        raise TypeError(msg)
+
+    agent_config = dict(nested)
+    for key, value in raw_config.items():
+        if isinstance(key, str) and key.startswith(_AGENT_CONFIG_PREFIX):
+            flat_key = key[len(_AGENT_CONFIG_PREFIX) :]
+            if flat_key:
+                agent_config[flat_key] = value
+    return agent_config
 
 
 def flatten_dict(d: Dict, parent_key: str = "", sep: str = ".") -> Dict[str, Any]:
@@ -168,7 +213,7 @@ class AgentConfiguration(BaseModel, Configuration):
                 raw_config = yaml.safe_load(f)
                 self.conf_data.update(
                     _normalize_trace_log_targets(
-                        flatten_dict(raw_config.get("agent", {}))
+                        flatten_dict(_extract_agent_config(raw_config, str(path)))
                     )
                 )
 
