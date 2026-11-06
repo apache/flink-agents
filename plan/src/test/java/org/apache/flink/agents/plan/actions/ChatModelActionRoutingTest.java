@@ -1136,6 +1136,94 @@ public class ChatModelActionRoutingTest {
     }
 
     @Test
+    void fallbackSuccessAndExhaustionRetainRequestContext() throws Exception {
+        Map<String, Object> context = Map.of("task", "summary", "item_id", "42");
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
+                                .defaultModel("small")
+                                .fallback(true)
+                                .build(),
+                        null);
+        FakeRunnerContext succeeded =
+                new FakeRunnerContext(router)
+                        .register("big", new FakeChatModel(new RuntimeException("big is down")))
+                        .register(
+                                "small", new FakeChatModel(ChatFixtures.response("ok from small")));
+        ChatRequestEvent request =
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("write sql")), null, null, context);
+        request.setAttachment("trace", "stay-on-request");
+        ChatModelAction.processChatRequestOrToolResponse(request, succeeded);
+        assertThat(succeeded.chatResponse().isSuccess()).isTrue();
+        assertThat(succeeded.chatResponse().getUserContext()).isEqualTo(context);
+        assertThat(succeeded.chatResponse().getAttachments()).isEmpty();
+        assertThat(succeeded.resolvedChatModels).containsExactly("big", "small");
+
+        FakeRunnerContext exhausted =
+                new FakeRunnerContext(router)
+                        .register("big", new FakeChatModel(new RuntimeException("big-exploded")))
+                        .register(
+                                "small", new FakeChatModel(new RuntimeException("small-exploded")));
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("write sql")), null, null, context),
+                exhausted);
+        assertThat(exhausted.chatResponse().isFailed()).isTrue();
+        assertThat(exhausted.chatResponse().getUserContext()).isEqualTo(context);
+    }
+
+    @Test
+    void fallbackThenToolRoundRetainsInitialContext() throws Exception {
+        Map<String, Object> context = Map.of("task", "summary", "item_id", "42");
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
+                                .defaultModel("small")
+                                .fallback(true)
+                                .build(),
+                        null);
+        List<Map<String, Object>> toolCall =
+                List.of(
+                        Map.of(
+                                "id",
+                                "call-1",
+                                "type",
+                                "function",
+                                "function",
+                                Map.of("name", "lookup", "arguments", Map.of("q", "sql"))));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .register("big", new FakeChatModel(new RuntimeException("big is down")))
+                        .register(
+                                "small",
+                                new FakeChatModel(
+                                        ChatFixtures.response("", toolCall),
+                                        ChatFixtures.response("final from small")));
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("write sql")), null, null, context),
+                ctx);
+        ToolRequestEvent toolRequest = ctx.toolRequestEvent();
+        assertThat(toolRequest.getUserContext()).isNull();
+        assertThat(toolRequest.getToolCalls().get(0).getInput())
+                .containsExactly(Map.entry("q", "sql"));
+
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ToolResponseEvent(
+                        toolRequest.getId(),
+                        Map.of("call-1", ToolResponse.text("42")),
+                        Map.of("call-1", true),
+                        Map.of()),
+                ctx);
+        assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("final from small");
+        assertThat(ctx.chatResponse().getUserContext()).isEqualTo(context);
+        assertThat(ctx.resolvedChatModels).containsExactly("big", "small", "small");
+    }
+
+    @Test
     void unresolvableCandidateCountsAsFailedAttemptAndFallsBack() throws Exception {
         // "big" is selected by the rule but its resource lookup fails (typo'd candidate); the
         // failure must stay inside the fallback loop so "small" still answers.

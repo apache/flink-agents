@@ -92,7 +92,6 @@ REGISTRY: Dict[str, type[Event]] = {
     LongTermSearchEvent.EVENT_TYPE: MemoryEvent,
 }
 
-
 def restore(event: Event) -> Event:
     """Restore a registered built-in event; unknown types stay generic.
 

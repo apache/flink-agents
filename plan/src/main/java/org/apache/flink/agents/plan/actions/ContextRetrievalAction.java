@@ -97,9 +97,10 @@ public class ContextRetrievalAction {
 
             ctx.sendEvent(
                     new ContextRetrievalResponseEvent(
-                            contextRetrievalRequestEvent.getId(),
-                            contextRetrievalRequestEvent.getQuery(),
-                            result.getDocuments()));
+                                    contextRetrievalRequestEvent.getId(),
+                                    contextRetrievalRequestEvent.getQuery(),
+                                    result.getDocuments())
+                            .withUserContext(contextRetrievalRequestEvent.getUserContext()));
         }
     }
 }

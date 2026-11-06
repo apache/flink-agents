@@ -278,3 +278,58 @@ Event that your Actions can handle to continue the workflow:
 | Call tools | `ToolRequestEvent`, `ToolResponseEvent` | [Tool Use]({{< ref "docs/development/calling-llms/tool_use#built-in-events-and-actions" >}}) |
 | Retrieve context | `ContextRetrievalRequestEvent`, `ContextRetrievalResponseEvent` | [Vector Stores]({{< ref "docs/development/vector-search/vector_stores#built-in-events-and-actions" >}}) |
 | Call a decision model | `DecisionRequestEvent`, `DecisionResponseEvent` | [Decision Models]({{< ref "docs/development/decision_models#event-driven-calls" >}}) |
+
+### User context
+
+Chat, tool, context-retrieval, and decision requests can carry an optional map of
+application-defined data from a request to its corresponding response. Telling
+responses apart is one use. Requests may come from one Action or from several. The
+built-in Action propagates that map onto the matching response and does not add it to
+the prompt, tool arguments, or vector-store query. Omitting it leaves the response
+without a `user_context` attribute.
+
+Pass the map to the request constructor. The value is copied when the event is created,
+including nested maps, lists, and arrays, so a later change to the object you passed in
+does not change the event. `user_context` follows the same rules as other Event
+attributes; see [Serialization and Typed Values](#json-serialization). JSON transfer or
+replay may change runtime types, and callers restore application types when needed.
+Copying the mutable input and restoring types are separate: construction copies the
+structure and does not normalize values.
+
+A chat response keeps the user context from the original `ChatRequestEvent` after
+tool-call rounds, retries, and model fallback. Tool responses keep it from the
+`ToolRequestEvent` that asked for those calls, including when a call in the batch
+fails. Decision responses keep it on both success and failure. Context retrieval has
+no failure event; a query error propagates and the request still holds its user context.
+
+{{< tabs "User Context" >}}
+{{< tab "Python" >}}
+```python
+ctx.send_event(ChatRequestEvent(
+    model="review_model",
+    messages=[ChatMessage.user(text)],
+    user_context={"task": "summary", "item_id": "42"},
+))
+```
+
+```python
+response = ChatResponseEvent.from_event(event)
+task = response.user_context["task"]
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+ctx.sendEvent(new ChatRequestEvent(
+        "reviewModel",
+        List.of(ChatMessage.user(text)),
+        null,
+        null,
+        Map.of("task", "summary", "item_id", "42")));
+```
+
+```java
+ChatResponseEvent response = ChatResponseEvent.fromEvent(event);
+String task = String.valueOf(response.getUserContext().get("task"));
+```
+{{< /tab >}}
+{{< /tabs >}}

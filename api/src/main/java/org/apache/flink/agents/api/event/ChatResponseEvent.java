@@ -25,6 +25,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 
+import javax.annotation.Nullable;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -54,7 +56,8 @@ public class ChatResponseEvent extends Event {
                     BuiltInAttribute.optional(RETRY_COUNT, Number.class),
                     BuiltInAttribute.optional(TOTAL_RETRY_WAIT_SEC, Number.class),
                     BuiltInAttribute.optionalUntyped(STRUCTURED_OUTPUT),
-                    BuiltInAttribute.optional(MODEL_ROUTING, Map.class));
+                    BuiltInAttribute.optional(MODEL_ROUTING, Map.class),
+                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -141,6 +144,25 @@ public class ChatResponseEvent extends Event {
 
     public void setRoutingMetadata(Map<String, Object> value) {
         setAttr(MODEL_ROUTING, value);
+    }
+
+    /**
+     * Attaches application-defined data from the originating chat request. {@code null} omits it.
+     * The value is not derived from event attachments.
+     */
+    public ChatResponseEvent withUserContext(@Nullable Map<String, Object> userContext) {
+        UserDefinedContext.set(this, userContext);
+        return this;
+    }
+
+    /**
+     * Returns the originating request's application-defined data, or {@code null} when it was
+     * omitted.
+     */
+    @JsonIgnore
+    @Nullable
+    public Map<String, Object> getUserContext() {
+        return UserDefinedContext.get(this);
     }
 
     @JsonIgnore
