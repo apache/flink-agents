@@ -72,8 +72,7 @@ class RequestContextTest {
     void emptyUserContextIsKeptAndNullClearsAResponse() {
         Map<String, Object> empty = new HashMap<>();
         ChatRequestEvent request =
-                new ChatRequestEvent(
-                        "model", List.of(ChatMessage.user("hi")), null, null, empty);
+                new ChatRequestEvent("model", List.of(ChatMessage.user("hi")), null, null, empty);
         assertThat(request.getAttributes()).containsKey("user_context");
         assertThat(request.getUserContext()).isEqualTo(empty);
 
@@ -105,11 +104,11 @@ class RequestContextTest {
         List<Event> events =
                 List.of(
                         new ChatRequestEvent(
-                                        "model",
-                                        List.of(ChatMessage.user("hi")),
-                                        Map.of("tone", "brief"),
-                                        null,
-                                        context),
+                                "model",
+                                List.of(ChatMessage.user("hi")),
+                                Map.of("tone", "brief"),
+                                null,
+                                context),
                         new ChatRequestEvent(
                                 "model",
                                 List.of(ChatMessage.user("hi")),
@@ -190,8 +189,7 @@ class RequestContextTest {
         ChatResponseEvent failed = ChatResponseEvent.fromEvent(Event.fromJson(failedJson));
         assertThat(failed.isFailed()).isTrue();
         assertThat(failed.getError()).isEqualTo("TimeoutError: timed out");
-        assertThat(failed.getUserContext())
-                .isEqualTo(Map.of("task", "summary", "item_id", "42"));
+        assertThat(failed.getUserContext()).isEqualTo(Map.of("task", "summary", "item_id", "42"));
     }
 
     @Test

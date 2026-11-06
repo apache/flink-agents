@@ -49,7 +49,9 @@ public class ToolRequestEvent extends Event {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     public ToolRequestEvent(
-            String model, List<ToolCallBlock> toolCalls, @Nullable Map<String, Object> userContext) {
+            String model,
+            List<ToolCallBlock> toolCalls,
+            @Nullable Map<String, Object> userContext) {
         super(EVENT_TYPE);
         setAttr("model", model);
         setAttr("tool_calls", validate(toolCalls));

@@ -92,9 +92,8 @@ public class ContextRetrievalResponseEvent extends Event {
      *
      * <p>Enforces the fixed cross-language schema: {@code request_id}, {@code query}, and {@code
      * documents} are required, {@code user_context} is an optional map, and no other attribute is
-     * allowed;
-     * {@code query} must be a string and every {@code documents} element must be a {@link Document}
-     * or its serialized map.
+     * allowed; {@code query} must be a string and every {@code documents} element must be a {@link
+     * Document} or its serialized map.
      *
      * @param event the base event containing context retrieval response data in attributes
      * @return a typed ContextRetrievalResponseEvent

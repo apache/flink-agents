@@ -655,8 +655,7 @@ class BuiltInEventsTest {
                 Arguments.of(ContextRetrievalResponseEvent.EVENT_TYPE, "request_id", "not-a-uuid"),
                 Arguments.of(ContextRetrievalResponseEvent.EVENT_TYPE, "query", 0),
                 Arguments.of(ContextRetrievalResponseEvent.EVENT_TYPE, "documents", List.of(0)),
-                Arguments.of(
-                        ContextRetrievalResponseEvent.EVENT_TYPE, "user_context", "not-a-map"),
+                Arguments.of(ContextRetrievalResponseEvent.EVENT_TYPE, "user_context", "not-a-map"),
                 // ModelRoutingEvent (Java-only)
                 Arguments.of(ModelRoutingEvent.EVENT_TYPE, "request_id", "not-a-uuid"),
                 Arguments.of(ModelRoutingEvent.EVENT_TYPE, "router", 0),
