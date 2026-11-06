@@ -66,6 +66,11 @@ _RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT"
 # position in the action's durable call sequence.
 _CHAT_DURABLE_ID = "chat"
 _PROMPT_ARGS = "prompt_args"
+# Sensory-memory key. Matches the event attribute name.
+_USER_CONTEXT = "user_context"
+# Not a built-in event type. A carrier of this type runs Event JSON encode and
+# decode, including Row reconstruction, for the stored map.
+_USER_CONTEXT_CARRIER = "_user_context_memory"
 _FINISH_REASON = "finish_reason"
 _TRUNCATED_FINISH_REASON = "length"
 _CONTENT_FILTERED_FINISH_REASON = "content_filter"
@@ -258,6 +263,41 @@ def _update_tool_call_context(
     return _deserialize_messages(tool_call_context[key])
 
 
+def _serialize_user_context(user_context: dict[str, Any]) -> dict[str, Any]:
+    """Encode ``user_context`` with the JSON rules used for Event attributes.
+
+    Sensory memory accepts only checkpoint-stable values. An Event attribute
+    also accepts UUIDs, datetimes, Pydantic models, tuples, and ``Row``, so the
+    value written here is that Event JSON form.
+    """
+    encoded = json.loads(
+        Event(
+            type=_USER_CONTEXT_CARRIER,
+            attributes={_USER_CONTEXT: user_context},
+        ).model_dump_json()
+    )["attributes"][_USER_CONTEXT]
+    if not isinstance(encoded, dict):
+        msg = "user_context must serialize to a JSON object"
+        raise TypeError(msg)
+    return encoded
+
+
+def _deserialize_user_context(stored: dict[str, Any]) -> dict[str, Any]:
+    """Restore stored ``user_context`` the way ``Event.from_json`` decodes it."""
+    restored = Event.from_json(
+        json.dumps(
+            {
+                "type": _USER_CONTEXT_CARRIER,
+                "attributes": {_USER_CONTEXT: stored},
+            }
+        )
+    ).attributes[_USER_CONTEXT]
+    if not isinstance(restored, dict):
+        msg = "user_context must deserialize to a dict"
+        raise TypeError(msg)
+    return restored
+
+
 def _save_tool_request_event_context(
     sensory_memory: MemoryObject,
     tool_request_event_id: UUID,
@@ -277,10 +317,11 @@ def _save_tool_request_event_context(
         if output_schema is not None
         else None,
     }
-    # Same attribute name as the event field. Absent when the request omitted it,
-    # so a checkpoint from before this field still resumes with no user context.
+    # Absent when the request omitted it, so a checkpoint from before this field
+    # still resumes with no user context. Present values are Event JSON: memory
+    # rejects objects an Event attribute can already carry.
     if user_context is not None:
-        entry["user_context"] = user_context
+        entry[_USER_CONTEXT] = _serialize_user_context(user_context)
     stored[str(tool_request_event_id)] = entry
     sensory_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, stored)
 
@@ -302,6 +343,10 @@ def _get_tool_request_event_context(
             if output_schema is not None
             else None
         )
+        if _USER_CONTEXT in removed_context:
+            removed_context[_USER_CONTEXT] = _deserialize_user_context(
+                removed_context[_USER_CONTEXT]
+            )
     return removed_context
 
 
@@ -870,7 +915,7 @@ async def _process_tool_response(event: ToolResponseEvent, ctx: RunnerContext) -
         prompt_args=tool_request_event_context.get(_PROMPT_ARGS, {}),
         output_schema=tool_request_event_context["output_schema"],
         ctx=ctx,
-        user_context=tool_request_event_context.get("user_context"),
+        user_context=tool_request_event_context.get(_USER_CONTEXT),
     )
 
 

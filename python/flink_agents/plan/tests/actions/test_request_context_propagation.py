@@ -19,10 +19,14 @@
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import pytest
+from pydantic import BaseModel
+from pyflink.common import Row
 
 from flink_agents.api.chat_message import ChatMessage, ToolCallBlock
 from flink_agents.api.chat_result import ChatResult
@@ -221,6 +225,72 @@ def test_tool_rounds_keep_each_request_context() -> None:
     for call in chat_model.chat.call_args_list:
         assert "context" not in call.kwargs
         assert set(call.kwargs) == {"prompt_args"}
+
+
+class _Note(BaseModel):
+    label: str
+    n: int
+
+
+def test_tool_round_restores_event_serializable_user_context() -> None:
+    """A tool round stores user context as Event JSON and restores it.
+
+    UUIDs, datetimes, Pydantic models, tuples, and Row are valid Event
+    attributes and are rejected by sensory memory. The final response carries
+    the same value ``Event.from_json`` would restore.
+    """
+    context = {
+        "request_id": UUID("12345678-1234-5678-1234-567812345678"),
+        "when": datetime(2026, 11, 6, 8, 46, 54, tzinfo=timezone.utc),
+        "note": _Note(label="keep", n=1),
+        "pair": ("left", 2),
+        "payload": {"row": Row(1, "x"), "tags": ("a", "b")},
+    }
+    chat_model = MagicMock()
+    chat_model.chat = MagicMock(side_effect=[_tool_result(), _text("done")])
+    ctx, sent, memory = _runner(chat_model)
+    request = _request("hi", {"tone": "brief"}, context)
+
+    asyncio.run(process_chat_request_or_tool_response(request, ctx))
+
+    tool_request = sent[0]
+    assert isinstance(tool_request, ToolRequestEvent)
+    assert tool_request.user_context is None
+    stored = memory.get("_TOOL_REQUEST_EVENT_CONTEXT")[str(tool_request.id)][
+        "user_context"
+    ]
+    validate_memory_value("user_context", stored)
+    assert type(stored["request_id"]) is str
+    assert type(stored["when"]) is str
+    assert stored["note"] == {"label": "keep", "n": 1}
+    assert stored["pair"] == ["left", 2]
+    assert stored["payload"]["row"]["type"] == "Row"
+    assert type(stored["payload"]["tags"]) is list
+    # Checkpoint restore returns the JSON form sensory memory persisted.
+    parked = memory.get("_TOOL_REQUEST_EVENT_CONTEXT")
+    parked[str(tool_request.id)]["user_context"] = json.loads(json.dumps(stored))
+
+    asyncio.run(
+        process_chat_request_or_tool_response(
+            ToolResponseEvent(
+                request_id=tool_request.id,
+                responses={"call-1": ToolResponse.text("ok")},
+                success={"call-1": True},
+                error={},
+            ),
+            ctx,
+        )
+    )
+
+    response = sent[1]
+    assert isinstance(response, ChatResponseEvent)
+    assert response.request_id == request.id
+    assert response.response.text == "done"
+    assert (
+        response.user_context == Event.from_json(request.model_dump_json()).user_context
+    )
+    assert isinstance(response.user_context["payload"]["row"], Row)
+    assert response.user_context["payload"]["row"] == Row(1, "x")
 
 
 def test_restored_request_still_echoes_context() -> None:
