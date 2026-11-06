@@ -517,9 +517,9 @@ the model receives the error description as the tool result.
 ### Representing media returned by tools
 
 {{< hint warning >}}
-Only the Anthropic integration sends media returned by tools to the model. With any
-other integration, a tool response containing media causes the chat request to fail
-before it is sent, even if the model supports media in user messages. See
+Only some integrations send media returned by tools to the model. With any other
+integration, a tool response containing media causes the chat request to fail before
+it is sent, even if the model supports media in user messages. See
 [Provider Capabilities]({{< ref "docs/development/calling-llms/chat-models/providers#provider-capabilities" >}})
 for the media each integration accepts.
 {{< /hint >}}
