@@ -543,14 +543,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         processElementInternal(record);
                     });
         } else {
-            if (ContinuationActionExecutor.isContinuationSupported()) {
-                // Mails run while yielding can change the current key, so set the record's key
-                // after the last yield.
-                while (inFlightInputRecords >= maxInFlightInputRecords) {
-                    mailboxExecutor.yield();
-                }
-                super.setKeyContextElement1(record);
+            // Mails run while yielding can change the current key, so set the record's key
+            // after the last yield.
+            while (inFlightInputRecords >= maxInFlightInputRecords) {
+                mailboxExecutor.yield();
             }
+            super.setKeyContextElement1(record);
             processElementInternal(record);
         }
     }
