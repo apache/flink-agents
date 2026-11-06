@@ -60,6 +60,9 @@ public class ModelRoutingEvent extends Event {
     public static final String SOURCE_DEFAULT = "default";
     public static final String SOURCE_FALLBACK = "fallback";
 
+    /** The model answered because a quality signal escalated the request to it. */
+    public static final String SOURCE_ESCALATION = "escalation";
+
     private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
             List.of(
                     BuiltInAttribute.requiredUuid("request_id"),
