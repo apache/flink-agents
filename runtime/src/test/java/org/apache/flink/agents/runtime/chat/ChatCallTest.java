@@ -40,6 +40,7 @@ import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 import org.apache.flink.agents.runtime.utils.IdAllocatorSource;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledForJreRange;
@@ -69,13 +70,14 @@ class ChatCallTest {
      */
     private static void bindChatIds(RunnerContextImpl context, Object key, Event event) {
         Map<String, DeterministicIdAllocator> byTarget = new HashMap<>();
+        context.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         context.setIdAllocatorSource(
                 name ->
                         byTarget.computeIfAbsent(
                                 name,
                                 target ->
                                         new DeterministicIdAllocator(
-                                                key, 1, "action", event, target)));
+                                                key.toString() + ":action", target)));
     }
 
     /**
@@ -277,6 +279,7 @@ class ChatCallTest {
         context.sendEvent(new ChatRequestEvent("model", List.of()));
         assertThat(context.getPendingEvents()).singleElement().isInstanceOf(SubgraphEvent.class);
         context.getPendingEvents().clear();
+        context.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         context.setIdAllocatorSource(callerIds);
         context.setSubgraphInvocation(null);
         ChatRequestEvent ordinary = new ChatRequestEvent("model", List.of());

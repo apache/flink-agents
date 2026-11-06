@@ -37,6 +37,7 @@ import org.apache.flink.agents.runtime.subgraph.SubgraphCallManager;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -100,6 +101,8 @@ class ChatDurableFutureTest {
             assertThatThrownBy(() -> chatCall(context, call.getId()))
                     .hasMessageContaining("Missing subgraph call");
 
+            Event afterCall = new Event("after-call");
+            context.sendEvent(afterCall);
             JavaRunnerContextImpl restored =
                     context(
                             executor,
@@ -108,12 +111,16 @@ class ChatDurableFutureTest {
                                 throw new AssertionError("Replay must not persist again");
                             });
             DurableFuture<ChatResult> replay = restored.chat("model", List.of());
+            restored.sendEvent(new Event("ordinary"));
             assertThat(
                             executor.executeAction(
                                     restored.getContinuationContext(),
                                     () -> awaitTwice(replay, failed)))
                     .isTrue();
-            assertThat(restored.getPendingEvents()).isEmpty();
+            Event replayedAfterCall = new Event("after-call");
+            restored.sendEvent(replayedAfterCall);
+            assertThat(replayedAfterCall.getOccurrenceId()).isEqualTo(afterCall.getOccurrenceId());
+            assertThat(restored.getPendingEvents()).hasSize(2);
             assertThat(executor.submissions).isZero();
             assertThat(restored.getDurableExecutionContext().getCurrentCallIndex()).isEqualTo(1);
         } finally {
@@ -232,13 +239,12 @@ class ChatDurableFutureTest {
         context.setContinuationContext(new ContinuationContext());
         context.setSubgraphCalls(calls);
         Map<String, DeterministicIdAllocator> byTarget = new HashMap<>();
+        context.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         context.setIdAllocatorSource(
                 name ->
                         byTarget.computeIfAbsent(
                                 name,
-                                target ->
-                                        new DeterministicIdAllocator(
-                                                "key", 1, "action", input, target)));
+                                target -> new DeterministicIdAllocator("key:action", target)));
         context.setDurableExecutionContext(
                 new RunnerContextImpl.DurableExecutionContext(
                         "key", 1, mock(Action.class), input, state, persister));

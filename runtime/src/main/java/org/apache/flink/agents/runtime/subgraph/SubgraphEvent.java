@@ -29,12 +29,8 @@ import java.util.UUID;
  * Private event envelope shared by all internal graph calls. Only bootstraps can be dispatched
  * while their producing action is suspended. The delegate is what a business action receives.
  *
- * <p>The envelope's attributes are what a child action's state is keyed on, and they carry the
- * invocation id and the delegate's type and attributes — all reproducible after a failover, because
- * the invocation id comes from the deterministic id tooling. The delegate's own id is not among
- * them and is not replay-stable; nothing may key persisted state on it. Graph outputs keep their
- * ids in completed ActionState. This does not resolve the caller-identity collision tracked by
- * issue 1084.
+ * <p>Its occurrence identity identifies the child action's trigger. Attributes preserve the
+ * invocation ID and delegate data for replay validation; the delegate's random ID is not used.
  */
 public final class SubgraphEvent extends Event {
     public static final String EVENT_TYPE = "_internal_subgraph";

@@ -28,6 +28,7 @@ import org.apache.flink.agents.runtime.memory.ForTestMemoryMapState;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryEventSettings;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.Test;
 
@@ -72,6 +73,7 @@ class TestMemoryObservationFlush {
                         plan,
                         null,
                         "job");
+        context.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         if (ltm != null) {
             MemoryEventSettings settings = MemoryEventSettings.from(plan.getConfigData());
             ltm.configureObservation(

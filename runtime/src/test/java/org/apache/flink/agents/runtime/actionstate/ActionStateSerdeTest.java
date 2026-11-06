@@ -52,6 +52,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -67,12 +68,12 @@ public class ActionStateSerdeTest {
     @Test
     public void testActionStateSerializationDeserialization() throws Exception {
         // Create test data
-        InputEvent inputEvent = new InputEvent("test input");
+        InputEvent inputEvent = occurrence(new InputEvent("test input"));
         inputEvent.setAttr("testAttr", "testValue");
         MemoryRef reference = MemoryRef.create(MemoryObject.MemoryType.SENSORY, "attachment.path");
         inputEvent.setAttachment("payload", reference);
 
-        OutputEvent outputEvent = new OutputEvent("test output");
+        OutputEvent outputEvent = occurrence(new OutputEvent("test output"));
         outputEvent.setAttr("outputAttr", 123);
 
         MemoryUpdate sensoryMemoryUpdate = new MemoryUpdate("sm.test.path", "sm test value");
@@ -100,6 +101,10 @@ public class ActionStateSerdeTest {
         assertEquals(InputEvent.class, deserializedState.getTaskEvent().getClass());
         InputEvent deserializedInputEvent = (InputEvent) deserializedState.getTaskEvent();
         assertEquals("test input", deserializedInputEvent.getInput());
+        assertEquals(inputEvent.getOccurrenceId(), deserializedInputEvent.getOccurrenceId());
+        assertEquals(
+                outputEvent.getOccurrenceId(),
+                deserializedState.getOutputEvents().get(0).getOccurrenceId());
         assertEquals("testValue", deserializedInputEvent.getAttr("testAttr"));
         Object restoredAttachment = deserializedInputEvent.getAttachment("payload");
         assertInstanceOf(MemoryRef.class, restoredAttachment);
@@ -139,7 +144,7 @@ public class ActionStateSerdeTest {
         // Records written before the objectCreation field existed must keep their original
         // replay semantics (value writes). Simulate a legacy record by stripping the field from
         // the serialized JSON before deserializing.
-        ActionState originalState = new ActionState(new InputEvent("legacy input"));
+        ActionState originalState = new ActionState(occurrence(new InputEvent("legacy input")));
         originalState.addShortTermMemoryUpdate(new MemoryUpdate("legacy.path", "legacy value"));
 
         ObjectMapper plainMapper = new ObjectMapper();
@@ -181,7 +186,7 @@ public class ActionStateSerdeTest {
     @Test
     public void testActionStateWithComplexAttributes() throws Exception {
         // Create InputEvent with complex attributes
-        InputEvent inputEvent = new InputEvent("test input");
+        InputEvent inputEvent = occurrence(new InputEvent("test input"));
         Map<String, Object> complexMap = new HashMap<>();
         complexMap.put("nested", "value");
         complexMap.put("number", 42);
@@ -206,7 +211,7 @@ public class ActionStateSerdeTest {
     @Test
     public void testActionStateWithCallResults() throws Exception {
         // Create ActionState with call results
-        InputEvent inputEvent = new InputEvent("test input");
+        InputEvent inputEvent = occurrence(new InputEvent("test input"));
         ActionState originalState = new ActionState(inputEvent);
 
         // Add call results
@@ -237,7 +242,7 @@ public class ActionStateSerdeTest {
 
     @Test
     public void testActionStateWithPendingCallResult() throws Exception {
-        InputEvent inputEvent = new InputEvent("test input");
+        InputEvent inputEvent = occurrence(new InputEvent("test input"));
         ActionState originalState = new ActionState(inputEvent);
         originalState.addCallResult(CallResult.pending("module.func"));
 
@@ -254,13 +259,13 @@ public class ActionStateSerdeTest {
     @Test
     public void testActionStateWithCompletedFlag() throws Exception {
         // Create completed ActionState
-        InputEvent inputEvent = new InputEvent("test input");
+        InputEvent inputEvent = occurrence(new InputEvent("test input"));
         List<MemoryUpdate> sensoryUpdates = new ArrayList<>();
         sensoryUpdates.add(new MemoryUpdate("sm.path", "value"));
         List<MemoryUpdate> shortTermUpdates = new ArrayList<>();
         shortTermUpdates.add(new MemoryUpdate("stm.path", "value"));
         List<Event> outputEvents = new ArrayList<>();
-        outputEvents.add(new OutputEvent("output"));
+        outputEvents.add(occurrence(new OutputEvent("output")));
 
         // Create with completed = true and empty callResults (simulating markCompleted)
         ActionState originalState =
@@ -284,7 +289,7 @@ public class ActionStateSerdeTest {
     @Test
     public void testActionStateInProgressWithCallResults() throws Exception {
         // Create in-progress ActionState with call results (simulating partial execution)
-        InputEvent inputEvent = new InputEvent("test input");
+        InputEvent inputEvent = occurrence(new InputEvent("test input"));
         List<CallResult> callResults = new ArrayList<>();
         callResults.add(new CallResult("func1", "result1".getBytes()));
         callResults.add(new CallResult("func2", "result2".getBytes()));
@@ -306,7 +311,7 @@ public class ActionStateSerdeTest {
     @Test
     public void testCallResultWithNullPayloads() throws Exception {
         // Test CallResult with null payloads
-        InputEvent inputEvent = new InputEvent("test");
+        InputEvent inputEvent = occurrence(new InputEvent("test"));
         ActionState originalState = new ActionState(inputEvent);
         originalState.addCallResult(new CallResult("func", null, null));
 
@@ -373,7 +378,7 @@ public class ActionStateSerdeTest {
     @Test
     public void testByteArrayMemoryValuePreserved() throws Exception {
         byte[] value = new byte[] {1, 2, 3, 4, 5};
-        ActionState originalState = new ActionState(new InputEvent("in"));
+        ActionState originalState = new ActionState(occurrence(new InputEvent("in")));
         originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.bytes", value));
 
         ActionState deserializedState =
@@ -387,7 +392,7 @@ public class ActionStateSerdeTest {
     @Test
     public void testLongMemoryValuePreserved() throws Exception {
         Long value = 42L;
-        ActionState originalState = new ActionState(new InputEvent("in"));
+        ActionState originalState = new ActionState(occurrence(new InputEvent("in")));
         originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.long", value));
 
         ActionState deserializedState =
@@ -407,7 +412,7 @@ public class ActionStateSerdeTest {
         Map<String, Object> value = new HashMap<>();
         value.put("items", innerList);
 
-        ActionState originalState = new ActionState(new InputEvent("in"));
+        ActionState originalState = new ActionState(occurrence(new InputEvent("in")));
         originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.nested", value));
 
         ActionState deserializedState =
@@ -426,7 +431,7 @@ public class ActionStateSerdeTest {
     @Test
     public void testPojoMemoryValuePreserved() throws Exception {
         MemoryValuePojo value = new MemoryValuePojo("hello", 99);
-        ActionState originalState = new ActionState(new InputEvent("in"));
+        ActionState originalState = new ActionState(occurrence(new InputEvent("in")));
         originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.pojo", value));
 
         ActionState deserializedState =
@@ -439,7 +444,7 @@ public class ActionStateSerdeTest {
 
     @Test
     public void testNullMemoryValuePreserved() throws Exception {
-        ActionState originalState = new ActionState(new InputEvent("in"));
+        ActionState originalState = new ActionState(occurrence(new InputEvent("in")));
         originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.null", null));
 
         ActionState deserializedState =
@@ -451,7 +456,7 @@ public class ActionStateSerdeTest {
 
     @Test
     public void testNonEnvelopeMemoryValueRejected() throws Exception {
-        ActionState originalState = new ActionState(new InputEvent("in"));
+        ActionState originalState = new ActionState(occurrence(new InputEvent("in")));
         originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.raw", "some value"));
 
         byte[] serialized = ActionStateSerde.serialize(originalState);
@@ -469,7 +474,7 @@ public class ActionStateSerdeTest {
 
     @Test
     public void testUnknownEnvelopeVersionRejected() throws Exception {
-        ActionState originalState = new ActionState(new InputEvent("in"));
+        ActionState originalState = new ActionState(occurrence(new InputEvent("in")));
         originalState.addShortTermMemoryUpdate(new MemoryUpdate("stm.version", "some value"));
 
         byte[] serialized = ActionStateSerde.serialize(originalState);
@@ -483,7 +488,7 @@ public class ActionStateSerdeTest {
 
     @Test
     public void testMemoryEventsSurviveActionStateRoundTrip() throws Exception {
-        ActionState state = new ActionState(new InputEvent("test input"));
+        ActionState state = new ActionState(occurrence(new InputEvent("test input")));
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("bytes", new byte[] {1, 2, 3});
         value.put("pojo", new ObservationValuePojo("hello", 7));
@@ -557,7 +562,7 @@ public class ActionStateSerdeTest {
 
     @Test
     public void testKafkaSederDelegatesToActionStateSerde() throws Exception {
-        InputEvent inputEvent = new InputEvent("test delegation");
+        InputEvent inputEvent = occurrence(new InputEvent("test delegation"));
         ActionState originalState = new ActionState(inputEvent);
 
         // Serialize via ActionStateSerde, deserialize via Kafka seder (and vice versa)

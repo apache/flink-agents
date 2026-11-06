@@ -50,6 +50,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -87,7 +88,7 @@ class DurableExecutionManagerTest {
             assertThat(stores.constructed()).hasSize(1);
             assertThat(manager.getActionStateStore()).isSameAs(stores.constructed().get(0));
             Action action = TestActions.noopAction();
-            Event event = new InputEvent(1L);
+            Event event = occurrence(new InputEvent(1L));
             String actual = capturedEncoder.get().generateKey(1L, 0L, action, event);
             String expected =
                     new ActionStateKeyEncoder(maxParallelism, LongSerializer.INSTANCE)
@@ -108,7 +109,7 @@ class DurableExecutionManagerTest {
         assertThat(dem.getActionStateStore()).isNull();
 
         Action action = TestActions.noopAction();
-        Event event = new InputEvent(0L);
+        Event event = occurrence(new InputEvent(0L));
 
         // Every maybe* method must be a silent no-op.
         assertThat(dem.maybeGetActionState("k", 0L, action, event)).isNull();
@@ -123,7 +124,7 @@ class DurableExecutionManagerTest {
         InMemoryActionStateStore store = new InMemoryActionStateStore(false);
         DurableExecutionManager manager = new DurableExecutionManager(store);
         Action action = TestActions.noopAction();
-        Event event = new InputEvent(1L);
+        Event event = occurrence(new InputEvent(1L));
         ActionTask task = new JavaActionTask("key", event, action, 1L);
         RunnerContextImpl runnerContext =
                 new RunnerContextImpl(
@@ -173,7 +174,7 @@ class DurableExecutionManagerTest {
         assertThat(dem.getActionStateStore()).isSameAs(store);
 
         Action action = TestActions.noopAction();
-        Event event = new InputEvent(42L);
+        Event event = occurrence(new InputEvent(42L));
         String key = "key-1";
         long seq = 0L;
 
@@ -183,7 +184,7 @@ class DurableExecutionManagerTest {
         assertThat(dem.maybeGetActionState(key, seq, action, event)).isNotNull();
 
         // Build a finished task result with one output event; verify persist folds it into state.
-        Event outEvent = new OutputEvent(99L);
+        Event outEvent = occurrence(new OutputEvent(99L));
         RunnerContextImpl context = mock(RunnerContextImpl.class);
         when(context.getSensoryMemoryUpdates()).thenReturn(List.of());
         when(context.getShortTermMemoryUpdates()).thenReturn(List.of());
@@ -310,9 +311,9 @@ class DurableExecutionManagerTest {
 
         Action action = TestActions.noopAction();
         // Seed the store with state for three keys.
-        dem.maybeInitActionState("k1", 10L, action, new InputEvent(1L));
-        dem.maybeInitActionState("k2", 20L, action, new InputEvent(2L));
-        dem.maybeInitActionState("k3", 30L, action, new InputEvent(3L));
+        dem.maybeInitActionState("k1", 10L, action, occurrence(new InputEvent(1L)));
+        dem.maybeInitActionState("k2", 20L, action, occurrence(new InputEvent(2L)));
+        dem.maybeInitActionState("k3", 30L, action, occurrence(new InputEvent(3L)));
         assertThat(store.getKeyedActionStates()).containsKeys("k1", "k2", "k3");
 
         // Record captured sequence numbers: checkpoint 1000 covers {k1, k2}, checkpoint 1001
@@ -373,7 +374,7 @@ class DurableExecutionManagerTest {
         DurableExecutionManager dem = new DurableExecutionManager(store);
 
         Action action = TestActions.noopAction();
-        Event event = new InputEvent(1L);
+        Event event = occurrence(new InputEvent(1L));
         String key = "key-a";
         long seq = 7L;
         long checkpointId = 1L;
@@ -410,9 +411,9 @@ class DurableExecutionManagerTest {
         DurableExecutionManager dem = new DurableExecutionManager(store);
 
         Action action = TestActions.noopAction();
-        Event eventA = new InputEvent(1L);
-        Event eventB = new InputEvent(2L);
-        Event eventC = new InputEvent(3L);
+        Event eventA = occurrence(new InputEvent(1L));
+        Event eventB = occurrence(new InputEvent(2L));
+        Event eventC = occurrence(new InputEvent(3L));
         String keyA = "key-a";
         String keyB = "key-b";
         String keyC = "key-c";

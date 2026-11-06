@@ -45,6 +45,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Checks action-state compatibility with the serializer returned by a real keyed-state restore. */
@@ -62,7 +63,7 @@ class ActionStateSerializerRestoreTest {
         byte[] initialSnapshot = snapshotBytes(previous);
         ActionStateKeyEncoder writer = new ActionStateKeyEncoder(MAX_PARALLELISM, previous);
         NoOpAction action = new NoOpAction("action");
-        InputEvent event = new InputEvent("input");
+        InputEvent event = occurrence(new InputEvent("input"));
         String stateKey = writer.generateKey(key, 1, action, event);
         ActionState completed = new ActionState(event);
         completed.markCompleted();

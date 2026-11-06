@@ -190,11 +190,11 @@ class EventTest {
     }
 
     @Test
-    void testEventOmitsLineageFieldsFromJson() throws Exception {
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(new InputEvent(1L)));
-
-        assertFalse(node.has("upstreamEventId"));
-        assertFalse(node.has("upstreamActionName"));
+    void testEventOmitsOccurrenceIdFromJson() throws Exception {
+        InputEvent event = new InputEvent(1L);
+        event.setOccurrenceId("runtime-occurrence");
+        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(event));
+        assertFalse(node.has("occurrenceId"));
     }
 
     // ── fromJson ───────────────────────────────────────────────────────────
