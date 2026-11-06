@@ -22,6 +22,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
@@ -78,12 +79,18 @@ import javax.annotation.Nullable;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * The implementation class of {@link RunnerContext}, which serves as the execution context for
@@ -943,7 +950,22 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     @Override
     public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
-        return new SingleDurableFuture<>(this, Preconditions.checkNotNull(callable));
+        Preconditions.checkNotNull(callable);
+        return durableExecuteAsync(callable.getId(), callable.getResultClass(), () -> callable);
+    }
+
+    /**
+     * Reserves a durable call before invoking user preparation on the mailbox. Terminal replay
+     * skips preparation; ordinary preparation failures are recorded in the same slot as execution.
+     * The prepared callable must use the supplied id and result class.
+     */
+    public <T> DurableFuture<T> durableExecuteAsync(
+            String id, Class<T> resultClass, Callable<DurableCallable<T>> preparation) {
+        return new SingleDurableFuture<>(
+                this,
+                Preconditions.checkNotNull(id),
+                Preconditions.checkNotNull(resultClass),
+                Preconditions.checkNotNull(preparation));
     }
 
     @Override
@@ -951,34 +973,184 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         return new GatherAsyncFuture<>(this, futures);
     }
 
-    /**
-     * Resolves one deferred durable call. Java contexts override this with Continuation support.
-     */
-    protected <T> T resolveDurableAsync(DurableCallable<T> callable) throws Exception {
-        LOG.debug(
-                "Async durable execution is not supported in RunnerContextImpl; falling back to durableExecute for {}",
-                callable.getId());
-        return durableExecute(callable);
+    /** Launches work without waiting. Java contexts use their managed worker pool. */
+    public <T> CompletableFuture<T> submitAsync(Callable<T> callable) {
+        CompletableFuture<T> result = new CompletableFuture<>();
+        try {
+            result.complete(callable.call());
+        } catch (Throwable e) {
+            result.completeExceptionally(e);
+        }
+        return result;
     }
 
-    /** Resolves a mixed batch. Java contexts override this with Continuation support. */
-    protected <T> List<Outcome<T>> resolveAsyncBatch(List<SingleAsyncFuture<T>> futures)
+    public void awaitCompletion(CompletableFuture<?> future) throws Exception {
+        try {
+            future.get();
+        } catch (ExecutionException e) {
+            AsyncFutureImpl.rethrowFatal(e.getCause());
+            throw (Exception) e.getCause();
+        }
+    }
+
+    /** Resolves one call through the shared lifecycle, without applying batch timeout settings. */
+    public <T> T resolveAsyncFuture(SchedulableFuture<T> future) throws Exception {
+        Outcome<T> result = resolveAsyncCalls(List.of(future), 1, null).get(0);
+        if (result.isFailure()) {
+            throw result.getError();
+        }
+        return result.getValue();
+    }
+
+    /** Resolves a batch using the configured concurrency and timeout. */
+    protected <T> List<Outcome<T>> resolveAsyncBatch(List<SchedulableFuture<T>> futures)
             throws Exception {
-        List<Outcome<T>> outcomes = new ArrayList<>(futures.size());
-        for (SingleAsyncFuture<T> future : futures) {
-            try {
-                outcomes.add(Outcome.success(future.resolveValue()));
-            } catch (Exception e) {
-                if (CancellationUtils.isCancellation(e)) {
-                    if (CancellationUtils.isInterruption(e)) {
-                        Thread.currentThread().interrupt();
-                    }
-                    throw e;
+        int parallelism =
+                Math.max(1, getConfig().get(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM));
+        Long timeoutMs = getConfig().get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS);
+        return resolveAsyncCalls(futures, parallelism, timeoutMs);
+    }
+
+    /** Common lifecycle scheduler for both individual calls and batches. */
+    private <T> List<Outcome<T>> resolveAsyncCalls(
+            List<SchedulableFuture<T>> futures, int parallelism, @Nullable Long timeoutMs)
+            throws Exception {
+        long deadline =
+                timeoutMs == null || timeoutMs <= 0
+                        ? Long.MAX_VALUE
+                        : System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        Map<SchedulableFuture<T>, CompletableFuture<?>> running = new LinkedHashMap<>();
+        Map<SchedulableFuture<T>, Outcome<T>> completed = new IdentityHashMap<>();
+        Throwable failure = null;
+        try {
+            for (SchedulableFuture<T> future : futures) {
+                future.validate(this);
+            }
+            List<SchedulableFuture<T>> pending = new ArrayList<>();
+            for (SchedulableFuture<T> future : futures) {
+                Outcome<T> saved = future.prepare(this);
+                if (saved == null) {
+                    pending.add(future);
+                } else {
+                    completed.put(future, saved);
                 }
-                outcomes.add(Outcome.failure(e));
+            }
+            int next = 0;
+            while (next < pending.size() || !running.isEmpty()) {
+                // Preserve completions already available when the action resumes at the deadline.
+                for (var iterator = running.entrySet().iterator(); iterator.hasNext(); ) {
+                    var entry = iterator.next();
+                    if (entry.getValue().isDone()) {
+                        completed.put(entry.getKey(), entry.getKey().finish(null));
+                        iterator.remove();
+                    }
+                }
+                if (System.nanoTime() >= deadline) {
+                    TimeoutException timeout =
+                            new TimeoutException(
+                                    "Async batch execution timed out after " + timeoutMs + " ms");
+                    // Fence all queued suppliers before any cancellation can free a worker.
+                    for (SchedulableFuture<T> future : futures) {
+                        if (!completed.containsKey(future)) {
+                            future.preventStart();
+                        }
+                    }
+                    for (SchedulableFuture<T> future : futures) {
+                        if (!completed.containsKey(future)) {
+                            future.cancel();
+                        }
+                    }
+                    for (SchedulableFuture<T> future : futures) {
+                        if (!completed.containsKey(future)) {
+                            // Completion may win the race with cancellation after the sweep.
+                            // A cancelled signal is also done, but has no result to preserve.
+                            CompletableFuture<?> signal = running.get(future);
+                            boolean finished =
+                                    signal != null && signal.isDone() && !signal.isCancelled();
+                            completed.put(future, future.finish(finished ? null : timeout));
+                        }
+                    }
+                    break;
+                }
+                while (next < pending.size() && running.size() < parallelism) {
+                    SchedulableFuture<T> future = pending.get(next++);
+                    CompletableFuture<?> signal = future.start();
+                    if (signal.isDone()) {
+                        // Completed/replayed calls neither use workers nor occupy batch capacity.
+                        completed.put(future, future.finish(null));
+                    } else {
+                        running.put(future, signal);
+                    }
+                }
+                if (!running.isEmpty()) {
+                    CompletableFuture<Object> progress =
+                            CompletableFuture.anyOf(
+                                    running.values().toArray(new CompletableFuture<?>[0]));
+                    CompletableFuture<Void> signal = progress.handle((value, error) -> null);
+                    if (deadline != Long.MAX_VALUE) {
+                        signal.orTimeout(
+                                Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                    }
+                    try {
+                        awaitCompletion(signal);
+                    } catch (TimeoutException ignored) {
+                        /* handled above */
+                    } catch (Exception e) {
+                        // Call failures are collected by finish(); this signal only reports
+                        // progress, so other wait failures belong to the runtime protocol.
+                        AsyncFutureImpl.rethrowFatal(e);
+                        throw UncapturableException.wrap(e);
+                    }
+                }
+            }
+            List<Outcome<T>> outcomes = new ArrayList<>();
+            for (SchedulableFuture<T> future : futures) {
+                outcomes.add(completed.get(future));
+            }
+            return outcomes;
+        } catch (Exception | Error e) {
+            failure = e;
+            for (SchedulableFuture<T> future : futures) {
+                if (!completed.containsKey(future)) {
+                    try {
+                        future.preventStart();
+                    } catch (RuntimeException | Error stop) {
+                        e.addSuppressed(stop);
+                    }
+                }
+            }
+            for (SchedulableFuture<T> future : futures) {
+                if (!completed.containsKey(future)) {
+                    try {
+                        future.cancel();
+                    } catch (RuntimeException | Error abort) {
+                        e.addSuppressed(abort);
+                    }
+                }
+            }
+            throw e;
+        } finally {
+            Throwable cleanupFailure = null;
+            for (SchedulableFuture<T> future : futures) {
+                try {
+                    future.close();
+                } catch (RuntimeException | Error e) {
+                    if (failure != null) {
+                        failure.addSuppressed(e);
+                    } else if (cleanupFailure == null) {
+                        cleanupFailure = e;
+                    } else {
+                        cleanupFailure.addSuppressed(e);
+                    }
+                }
+            }
+            if (cleanupFailure instanceof Error) {
+                throw (Error) cleanupFailure;
+            }
+            if (cleanupFailure != null) {
+                throw (RuntimeException) cleanupFailure;
             }
         }
-        return outcomes;
     }
 
     /**

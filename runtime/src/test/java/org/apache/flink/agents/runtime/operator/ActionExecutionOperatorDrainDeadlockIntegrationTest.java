@@ -584,6 +584,9 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
                 CountDownLatch release)
                 throws Exception {
             Long input = (Long) InputEvent.fromEvent(event).getInput();
+            // Count occupied action workers, including those whose callable is queued in the
+            // smaller async pool. The execution lock is handed off by the following await.
+            started.countDown();
             context.durableExecuteAsync(
                             new DurableCallable<String>() {
                                 @Override
@@ -598,7 +601,6 @@ class ActionExecutionOperatorDrainDeadlockIntegrationTest {
 
                                 @Override
                                 public String call() throws Exception {
-                                    started.countDown();
                                     if (release != null
                                             && !release.await(
                                                     SETUP_TIMEOUT_SECONDS * 6, TimeUnit.SECONDS)) {

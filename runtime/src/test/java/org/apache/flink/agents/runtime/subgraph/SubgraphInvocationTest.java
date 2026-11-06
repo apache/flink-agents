@@ -211,6 +211,24 @@ class SubgraphInvocationTest {
     }
 
     @Test
+    void cancellationDiscardsLateEventsButStillRetiresScheduledActions() {
+        SubgraphInvocation<List<Event>> call = call("cancelled", "key");
+        assertThat(call.dispatch(new Event("fanout"))).containsExactly(first, second);
+        call.cancel();
+        assertThat(call.isCancelled()).isTrue();
+        assertThatThrownBy(call::awaitResult).isInstanceOf(CancellationException.class);
+
+        assertThat(call.dispatch(new Event("result"))).isEmpty();
+        assertThat(call.dispatch(new Event("next"))).isEmpty();
+        call.completeAction();
+        assertThat(call.dispatch(new SubgraphFailureEvent(new IllegalArgumentException("late"))))
+                .isEmpty();
+        call.completeAction();
+        assertThat(call.isCancelled()).isTrue();
+        assertThatThrownBy(call::completeAction).hasMessageContaining("Unbalanced");
+    }
+
+    @Test
     void registryIsolatesNestedCallsAndCleansUpOnlyTheFinishedRecord() {
         SubgraphCallManager calls = new SubgraphCallManager();
         SubgraphInvocation<List<Event>> outer = call("outer", "one");

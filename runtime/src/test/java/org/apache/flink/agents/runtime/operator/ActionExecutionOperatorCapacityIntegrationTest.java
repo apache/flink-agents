@@ -87,11 +87,13 @@ class ActionExecutionOperatorCapacityIntegrationTest {
 
             testHarness.processElement(new StreamRecord<>(0L));
             // Workers pull and start the tasks on their own once the input is admitted, but only
-            // WORKERS of them can be in the async stage at once: a call there keeps its worker
-            // and only hands off the execution lock.
+            // WORKERS actions can wait in the async stage at once, retaining their action workers
+            // but releasing the execution lock. Only NUM_ASYNC_THREADS callable bodies run.
 
-            assertThat(CapacityAgent.FIRST_BATCH_STARTED.await(5, TimeUnit.SECONDS)).isTrue();
-            assertThat(CapacityAgent.STARTED_COUNT).hasValue(WORKERS);
+            assertThat(CapacityAgent.FIRST_BATCH_WAITING.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(CapacityAgent.WAITING_COUNT).hasValue(WORKERS);
+            assertThat(CapacityAgent.ASYNC_POOL_STARTED.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(CapacityAgent.TOTAL_STARTED_COUNT).hasValue(NUM_ASYNC_THREADS);
             assertThat(testHarness.getRecordOutput()).isEmpty();
 
             CapacityAgent.ALLOW_FIRST_BATCH.countDown();
@@ -132,7 +134,7 @@ class ActionExecutionOperatorCapacityIntegrationTest {
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
             testHarness.processElement(new StreamRecord<>(0L));
-            assertThat(CapacityAgent.FIRST_BATCH_STARTED.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(CapacityAgent.FIRST_BATCH_WAITING.await(5, TimeUnit.SECONDS)).isTrue();
             assertThat(testHarness.getRecordOutput()).isEmpty();
 
             firstBatchReleaser =
@@ -235,12 +237,13 @@ class ActionExecutionOperatorCapacityIntegrationTest {
 
     public static class CapacityAgent {
 
-        private static volatile CountDownLatch FIRST_BATCH_STARTED = new CountDownLatch(0);
+        private static volatile CountDownLatch FIRST_BATCH_WAITING = new CountDownLatch(0);
+        private static volatile CountDownLatch ASYNC_POOL_STARTED = new CountDownLatch(0);
         private static volatile CountDownLatch ALLOW_FIRST_BATCH = new CountDownLatch(0);
         private static volatile CountDownLatch REMAINING_ACTION_STARTED = new CountDownLatch(0);
         private static volatile CountDownLatch ALLOW_REMAINING_ACTIONS = new CountDownLatch(0);
         private static volatile boolean blockActionsAfterFirstBatch;
-        private static final AtomicInteger STARTED_COUNT = new AtomicInteger();
+        private static final AtomicInteger WAITING_COUNT = new AtomicInteger();
         private static final AtomicInteger TOTAL_STARTED_COUNT = new AtomicInteger();
         private static final Map<String, AtomicInteger> CALL_COUNTS = new ConcurrentHashMap<>();
 
@@ -254,9 +257,10 @@ class ActionExecutionOperatorCapacityIntegrationTest {
         }
 
         private static void resetFirstBatchGate() {
-            FIRST_BATCH_STARTED = new CountDownLatch(WORKERS);
+            FIRST_BATCH_WAITING = new CountDownLatch(WORKERS);
+            ASYNC_POOL_STARTED = new CountDownLatch(NUM_ASYNC_THREADS);
             ALLOW_FIRST_BATCH = new CountDownLatch(1);
-            STARTED_COUNT.set(0);
+            WAITING_COUNT.set(0);
         }
 
         private static void blockActionsAfterFirstBatch() {
@@ -274,6 +278,10 @@ class ActionExecutionOperatorCapacityIntegrationTest {
                 throws Exception {
             Long input = (Long) InputEvent.fromEvent(event).getInput();
             String actionId = "capacity-action-" + actionNumber;
+            WAITING_COUNT.incrementAndGet();
+            if (actionNumber <= WORKERS) {
+                FIRST_BATCH_WAITING.countDown();
+            }
             context.durableExecuteAsync(
                             new DurableCallable<String>() {
                                 @Override
@@ -288,14 +296,13 @@ class ActionExecutionOperatorCapacityIntegrationTest {
 
                                 @Override
                                 public String call() throws Exception {
-                                    STARTED_COUNT.incrementAndGet();
                                     TOTAL_STARTED_COUNT.incrementAndGet();
+                                    ASYNC_POOL_STARTED.countDown();
                                     CALL_COUNTS
                                             .computeIfAbsent(
                                                     actionId, ignored -> new AtomicInteger())
                                             .incrementAndGet();
                                     if (actionNumber <= WORKERS) {
-                                        FIRST_BATCH_STARTED.countDown();
                                         if (!ALLOW_FIRST_BATCH.await(5, TimeUnit.SECONDS)) {
                                             throw new IllegalStateException(
                                                     "Timed out waiting for first capacity batch");

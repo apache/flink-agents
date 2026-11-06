@@ -34,8 +34,10 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
+import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -78,6 +80,8 @@ public class SubagentAwaitCleanupTest {
                 ResourceDescriptor.Builder.newBuilder(
                                 (mode.equals("deferred") ? DeferredSetup.class : AsyncSetup.class)
                                         .getName())
+                        .addInitialArgument(
+                                SubagentSetup.FIELD_INPUT_SCHEMA, "{\"type\":\"object\"}")
                         .addInitialArgument("stage", stage)
                         .build());
         agent.addAction(
@@ -93,8 +97,7 @@ public class SubagentAwaitCleanupTest {
         config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, parallel);
         config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
         AgentPlan compiled = new AgentPlan(agent, config);
-        Map<String, org.apache.flink.agents.plan.actions.Action> actions =
-                new LinkedHashMap<>(compiled.getActions());
+        Map<String, Action> actions = new LinkedHashMap<>(compiled.getActions());
         actions.remove("chat_model_action");
         AgentPlan plan = new AgentPlan(actions, compiled.getResourceProviders(), config);
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
@@ -144,17 +147,20 @@ public class SubagentAwaitCleanupTest {
                         .addInitialArgument("stage", "result")
                         .build();
         SubagentFuture future =
-                mode.equals("deferred")
-                        ? new DeferredSubagentFuture(
-                                "s",
-                                "c",
-                                ctx,
-                                registry,
-                                () ->
-                                        new DeferredSetup(descriptor, null)
-                                                .prepare(ctx, "hello", "s", "c"))
-                        : new AsyncSubagentFuture(
-                                new AsyncSetup(descriptor, null), ctx, "s", "c", registry);
+                new SubagentFutureImpl(
+                        "s",
+                        "c",
+                        ctx,
+                        () ->
+                                ctx.durableExecuteAsync(
+                                        mode.equals("deferred")
+                                                ? new DeferredSetup(descriptor, null)
+                                                        .prepare(ctx, "hello", "s", "c")
+                                                : new AsyncSetup(descriptor, null)
+                                                        .awaitResult(ctx, "s", "c")),
+                        registry,
+                        () -> false,
+                        () -> {});
         assertThatThrownBy(future::await).isSameAs(failure);
         registry.checkEmpty();
     }

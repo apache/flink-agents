@@ -131,7 +131,7 @@ class DecisionModelActionRecoveryTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void asyncCancellationDoesNotPersistAndRecoveryInvokesProviderAgain(boolean interruption)
+    void asyncCancellationLeavesPendingAndRecoveryInvokesProviderAgain(boolean interruption)
             throws Exception {
         BaseDecisionModelSetup model = mock(BaseDecisionModelSetup.class);
         when(model.supportsAsyncExecution()).thenReturn(true);
@@ -157,11 +157,12 @@ class DecisionModelActionRecoveryTest {
         assertThat(Thread.interrupted()).isEqualTo(interruption);
         assertThat(calls).hasValue(1);
         assertThat(interrupted.getPendingEvents()).isEmpty();
-        assertThat(state.getCallResultCount()).isZero();
-        assertThat(persisted.get()).isNull();
+        assertThat(state.getCallResultCount()).isEqualTo(1);
+        assertThat(state.getCallResults().get(0).isPending()).isTrue();
+        assertThat(persisted.get()).isNotNull();
         assertProviderThreads(true);
 
-        ActionState restored = ActionStateSerde.deserialize(ActionStateSerde.serialize(state));
+        ActionState restored = ActionStateSerde.deserialize(persisted.get());
         RunnerContextImpl replay = context(restored, model, true, false);
         runAction(restored.getTaskEvent(), replay);
 
@@ -228,7 +229,9 @@ class DecisionModelActionRecoveryTest {
                         state,
                         (key, sequence, action, event, current) -> {
                             persisted.set(ActionStateSerde.serialize(current));
-                            if (failAfterPersist) {
+                            if (failAfterPersist
+                                    && current.getCallResults().stream()
+                                            .anyMatch(r -> !r.isPending())) {
                                 throw new IllegalStateException(
                                         "simulated worker failure after persistence");
                             }

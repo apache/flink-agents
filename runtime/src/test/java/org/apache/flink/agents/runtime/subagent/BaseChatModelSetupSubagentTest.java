@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.api.chat.model;
+package org.apache.flink.agents.runtime.subagent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,6 +24,8 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -36,6 +38,9 @@ import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
+import org.apache.flink.agents.plan.tools.AsyncTool;
+import org.apache.flink.agents.runtime.ResourceCache;
+import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -66,19 +71,17 @@ class BaseChatModelSetupSubagentTest {
             new StubConnection(new ResourceDescriptor("X", Map.of()), null);
 
     private final ResourceContext resourceContext =
-            new ResourceContext() {
-                @Override
-                public Resource getResource(String name, ResourceType type) {
-                    Resource resource =
-                            type == ResourceType.AGENT
-                                    ? agentStore.getOrDefault(name, store.get(name))
-                                    : store.get(name);
-                    if (resource == null) {
-                        throw new IllegalArgumentException("No such resource: " + name);
-                    }
-                    return resource;
-                }
-
+            new ResourceContextImpl(
+                    (name, type) -> {
+                        Resource resource =
+                                type == ResourceType.AGENT
+                                        ? agentStore.getOrDefault(name, store.get(name))
+                                        : store.get(name);
+                        if (resource == null) {
+                            throw new IllegalArgumentException("No such resource: " + name);
+                        }
+                        return resource;
+                    }) {
                 @Override
                 public String generateAvailableSkillsPrompt(List<String> skillNames) {
                     return "<available_skills>" + skillNames + "</available_skills>";
@@ -213,6 +216,55 @@ class BaseChatModelSetupSubagentTest {
         args.put("connection", "conn");
         args.putAll(extraArgs);
         return new StubChatSetup(new ResourceDescriptor("X", args), resourceContext);
+    }
+
+    @Test
+    void toolLookupUsesTheSameScopedFactoryAsModelBinding() throws Exception {
+        try (ResourceCache parent = new ResourceCache(Map.of());
+                ResourceCache child =
+                        new ResourceCache(
+                                Map.of(), Thread.currentThread().getContextClassLoader(), parent)) {
+            parent.put(
+                    "reviewer",
+                    ResourceType.AGENT,
+                    new StubSubagentSetup("Parent reviewer.", CUSTOM_SCHEMA));
+            child.put(
+                    "reviewer",
+                    ResourceType.AGENT,
+                    new StubSubagentSetup("Child reviewer.", CUSTOM_SCHEMA));
+            StubTool ordinary = new StubTool("reviewer");
+            child.put("reviewer", ResourceType.TOOL, ordinary);
+
+            Tool resolved = (Tool) child.getResource("_subagent_reviewer", ResourceType.TOOL);
+            Tool bound = child.getResourceContext().getSubagentTool("reviewer");
+
+            assertThat(resolved).isInstanceOf(AsyncTool.class);
+            assertThat(resolved.getResourceContext()).isSameAs(child.getResourceContext());
+            assertThat(resolved.getDescription()).isEqualTo("Child reviewer. This is subagent.");
+            assertThat(bound.getDescription()).isEqualTo(resolved.getDescription());
+            assertThat(child.getResource("reviewer", ResourceType.TOOL)).isSameAs(ordinary);
+            assertThat(child.hasResource("_subagent_reviewer", ResourceType.TOOL)).isTrue();
+        }
+    }
+
+    @Test
+    void toolLookupCanUseAnInheritedSubagent() throws Exception {
+        try (ResourceCache parent = new ResourceCache(Map.of());
+                ResourceCache child =
+                        new ResourceCache(
+                                Map.of(), Thread.currentThread().getContextClassLoader(), parent)) {
+            parent.put(
+                    "reviewer",
+                    ResourceType.AGENT,
+                    new StubSubagentSetup("Parent reviewer.", CUSTOM_SCHEMA));
+
+            Tool tool = (Tool) child.getResource("_subagent_reviewer", ResourceType.TOOL);
+
+            assertThat(tool.getDescription()).isEqualTo("Parent reviewer. This is subagent.");
+            assertThat(tool.getResourceContext()).isSameAs(child.getResourceContext());
+            assertThat(child.hasResourceInHierarchy("_subagent_reviewer", ResourceType.TOOL))
+                    .isTrue();
+        }
     }
 
     @Test

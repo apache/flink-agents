@@ -290,11 +290,20 @@ class RunnerContextImplDurableExecuteTest {
         assertEquals(1, first.getCallCount());
         assertEquals(1, second.getCallCount());
         assertEquals(0, third.getCallCount(), "callables after the interrupted one must not run");
-        // batch-call-1 genuinely completed before the interruption, so it's correctly persisted;
-        // batch-call-2's interruption must not be recorded as a failed Outcome, though — it
-        // should propagate out of gather instead, same as any other
-        // durableExecute call, leaving nothing persisted for it.
-        assertEquals(1, context.getDurableExecutionContext().getActionState().getCallResultCount());
+        // The completed call is finalized; the interrupted and unstarted calls remain pending.
+        assertEquals(3, context.getDurableExecutionContext().getActionState().getCallResultCount());
+        assertTrue(
+                context.getDurableExecutionContext()
+                        .getActionState()
+                        .getCallResults()
+                        .get(1)
+                        .isPending());
+        assertTrue(
+                context.getDurableExecutionContext()
+                        .getActionState()
+                        .getCallResults()
+                        .get(2)
+                        .isPending());
         CallResult persisted =
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
         assertEquals("batch-call-1", persisted.getFunctionId());

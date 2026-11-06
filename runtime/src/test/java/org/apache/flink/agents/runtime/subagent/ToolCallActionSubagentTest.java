@@ -15,10 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.flink.agents.plan.actions;
+package org.apache.flink.agents.runtime.subagent;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
@@ -45,8 +46,11 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.plan.AgentConfiguration;
-import org.apache.flink.agents.plan.ChatFixtures;
+import org.apache.flink.agents.plan.actions.ToolCallAction;
 import org.apache.flink.agents.plan.exceptions.UncapturableException;
+import org.apache.flink.agents.plan.subagent.SubagentConstants;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
+import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 import org.apache.flink.util.ExceptionUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -54,15 +58,19 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 /** Tests for dispatching a tool call to an {@code AGENT} resource. */
 class ToolCallActionSubagentTest {
@@ -138,6 +146,23 @@ class ToolCallActionSubagentTest {
     }
 
     @Test
+    void bindsTheCurrentActionMetricsToTheUnderlyingSetup() throws Exception {
+        FlinkAgentsMetricGroup metrics = mock(FlinkAgentsMetricGroup.class);
+        RecordingSubagentSetup agent = new RecordingSubagentSetup(SubagentResult.ok("done"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext() {
+                    @Override
+                    public FlinkAgentsMetricGroup getActionMetricGroup() {
+                        return metrics;
+                    }
+                }.withAgent("reviewer", agent);
+
+        ToolCallAction.processToolRequest(toolRequest("_subagent_reviewer"), ctx);
+
+        assertThat(agent.boundMetricGroup()).isSameAs(metrics);
+    }
+
+    @Test
     void handsTheModelArgumentsToTheSubagentAsThePrompt() throws Exception {
         RecordingSubagentSetup agent = new RecordingSubagentSetup(SubagentResult.ok("done"));
         FakeRunnerContext ctx = new FakeRunnerContext().withAgent("reviewer", agent);
@@ -160,7 +185,7 @@ class ToolCallActionSubagentTest {
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", false);
         assertThat(response.getResponses().get("call-1").getError())
-                .isEqualTo("Sub-agent _subagent_reviewer execute failed: upstream refused");
+                .isEqualTo("Tool _subagent_reviewer execution failed: upstream refused");
         assertThat(response.getError()).containsEntry("call-1", "upstream refused");
     }
 
@@ -175,7 +200,7 @@ class ToolCallActionSubagentTest {
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", false);
         assertThat(response.getResponses().get("call-1").getError())
-                .isEqualTo("Sub-agent _subagent_reviewer execute failed: mailbox is full");
+                .isEqualTo("Tool _subagent_reviewer execution failed: mailbox is full");
         assertThat(response.getError()).containsEntry("call-1", "mailbox is full");
     }
 
@@ -190,7 +215,7 @@ class ToolCallActionSubagentTest {
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", false);
         assertThat(response.getResponses().get("call-1").getError())
-                .startsWith("Sub-agent _subagent_reviewer execute failed")
+                .startsWith("Tool _subagent_reviewer execution failed")
                 .contains("result.handle");
         assertThat(response.getError().get("call-1")).contains("result.handle");
     }
@@ -245,11 +270,7 @@ class ToolCallActionSubagentTest {
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", false);
         assertThat(response.getResponses().get("call-1").getError())
-                .isEqualTo(
-                        "Sub-agent _subagent_reviewer execute failed: Sub-agent reviewer must"
-                                + " resolve to a SubagentSetup, but was "
-                                + StubTool.class.getName()
-                                + ".");
+                .isEqualTo("Failed to resolve tool _subagent_reviewer.");
         assertThat(response.getError().get("call-1"))
                 .isEqualTo(
                         "Sub-agent reviewer must resolve to a SubagentSetup, but was "
@@ -347,14 +368,7 @@ class ToolCallActionSubagentTest {
         assertThat(ops).containsExactly("submit:a", "submit:b", "await:a", "cancel:a", "cancel:b");
     }
 
-    /**
-     * Under the batched path, sub-agent calls split off from the tool batch and run on their own
-     * track, then the tool batch runs through {@code gather} against a list built alongside {@code
-     * toolExecutions}. Each call id must land on its own result: if the two lists drift against
-     * each other, one call's response ends up under another call's id, and neither a sub-agent-only
-     * nor a tool-only case can see it. Two tools keep the reverse-index shape of the drift
-     * observable.
-     */
+    /** Mixed calls retain their own IDs when all futures run through the same gather. */
     @Test
     void parallelDispatchKeepsToolAndSubagentResultsOnTheirOwnIds() throws Exception {
         FakeRunnerContext ctx =
@@ -397,7 +411,7 @@ class ToolCallActionSubagentTest {
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", false);
         assertThat(response.getResponses().get("call-1").getError())
-                .startsWith("Sub-agent _subagent_reviewer execute failed")
+                .startsWith("Tool _subagent_reviewer execution failed")
                 .contains("cycle detected");
         assertThat(response.getError().get("call-1")).contains("cycle detected");
     }
@@ -419,7 +433,7 @@ class ToolCallActionSubagentTest {
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", false);
         assertThat(response.getResponses().get("call-1").getError())
-                .startsWith("Sub-agent _subagent_reviewer execute failed");
+                .startsWith("Tool _subagent_reviewer execution failed");
     }
 
     /**
@@ -442,9 +456,9 @@ class ToolCallActionSubagentTest {
                 .containsEntry("call-1", false)
                 .containsEntry("call-2", false);
         assertThat(response.getResponses().get("call-1").getError())
-                .startsWith("Sub-agent _subagent_a execute failed");
+                .startsWith("Tool _subagent_a execution failed");
         assertThat(response.getResponses().get("call-2").getError())
-                .startsWith("Sub-agent _subagent_b execute failed");
+                .startsWith("Tool _subagent_b execution failed");
     }
 
     /**
@@ -490,7 +504,9 @@ class ToolCallActionSubagentTest {
                         });
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", false);
-        assertThat(response.getResponses().get("call-1").isError()).isTrue();
+        assertThat(response.getResponses().get("call-1").getError())
+                .isEqualTo("Failed to resolve tool _subagent_missing.");
+        assertThat(response.getError()).containsEntry("call-1", "Resource does not exist: missing");
     }
 
     private static void assertSubagentReports(
@@ -518,7 +534,7 @@ class ToolCallActionSubagentTest {
     }
 
     private static ToolRequestEvent toolRequest(String callableName) {
-        return ChatFixtures.request(
+        return request(
                 "model",
                 List.of(
                         Map.of(
@@ -535,8 +551,22 @@ class ToolCallActionSubagentTest {
     }
 
     /** One request carrying two sub-agent calls, so the batched path has more than one to run. */
+    @SuppressWarnings("unchecked")
+    private static ToolRequestEvent request(String model, List<Map<String, Object>> calls) {
+        List<ToolCallBlock> blocks = new ArrayList<>();
+        for (Map<String, Object> call : calls) {
+            Map<String, Object> function = (Map<String, Object>) call.get("function");
+            blocks.add(
+                    new ToolCallBlock(
+                            (String) call.get("id"),
+                            (String) function.get("name"),
+                            (Map<String, Object>) function.get("arguments")));
+        }
+        return new ToolRequestEvent(model, blocks);
+    }
+
     private static ToolRequestEvent twoSubagentRequest(String first, String second) {
-        return ChatFixtures.request(
+        return request(
                 "model",
                 List.of(
                         Map.of(
@@ -547,7 +577,7 @@ class ToolCallActionSubagentTest {
                                 "function",
                                 Map.of(
                                         "name",
-                                        SubagentSetup.CALLABLE_NAME_PREFIX + first,
+                                        SubagentConstants.TOOL_NAME_PREFIX + first,
                                         "arguments",
                                         Map.of("prompt", "review the diff"))),
                         Map.of(
@@ -558,19 +588,18 @@ class ToolCallActionSubagentTest {
                                 "function",
                                 Map.of(
                                         "name",
-                                        SubagentSetup.CALLABLE_NAME_PREFIX + second,
+                                        SubagentConstants.TOOL_NAME_PREFIX + second,
                                         "arguments",
                                         Map.of("prompt", "review the diff")))));
     }
 
     /**
-     * One request carrying a sub-agent call and two plain tool calls, so the batched path splits
-     * into a single-entry agent track and a two-entry tool track, and the tool track has more than
-     * one entry to keep in order against the outcomes list.
+     * One mixed batch carrying a sub-agent call and two plain tool calls, whose outcomes must
+     * retain their original call IDs and order.
      */
     private static ToolRequestEvent mixedRequest(
             String subagentName, String firstTool, String secondTool) {
-        return ChatFixtures.request(
+        return request(
                 "model",
                 List.of(
                         Map.of(
@@ -581,7 +610,7 @@ class ToolCallActionSubagentTest {
                                 "function",
                                 Map.of(
                                         "name",
-                                        SubagentSetup.CALLABLE_NAME_PREFIX + subagentName,
+                                        SubagentConstants.TOOL_NAME_PREFIX + subagentName,
                                         "arguments",
                                         Map.of("prompt", "review the diff"))),
                         Map.of(
@@ -607,6 +636,7 @@ class ToolCallActionSubagentTest {
     private static ResourceDescriptor subagentDescriptor(
             Class<?> concreteClass, String description) {
         return ResourceDescriptor.Builder.newBuilder(concreteClass.getName())
+                .addInitialArgument(SubagentSetup.FIELD_INPUT_SCHEMA, "{\"type\":\"object\"}")
                 .addInitialArgument(SubagentSetup.FIELD_DESCRIPTION, description)
                 .build();
     }
@@ -616,6 +646,10 @@ class ToolCallActionSubagentTest {
         private final SubagentResult outcome;
         private final List<Object> prompts = new ArrayList<>();
         private Exception submitFailure;
+
+        FlinkAgentsMetricGroup boundMetricGroup() {
+            return getMetricGroup();
+        }
 
         RecordingSubagentSetup(SubagentResult outcome) {
             this(subagentDescriptor(RecordingSubagentSetup.class, "Reviews a diff."), outcome);
@@ -866,9 +900,8 @@ class ToolCallActionSubagentTest {
     }
 
     /**
-     * Reports an overflow instead of resolving. A {@link StackOverflowError} is an {@link Error},
-     * so {@code await} needs no throws clause to raise it, and it stands in for an overflow the
-     * result walk reaches on a result nested deeper than the stack allows.
+     * Returns a payload whose traversal overflows, so the test exercises result normalization
+     * rather than swallowing an unrelated fatal error from the execution itself.
      */
     private static class OverflowingFuture extends SubagentFuture {
         OverflowingFuture() {
@@ -882,7 +915,14 @@ class ToolCallActionSubagentTest {
 
         @Override
         public SubagentResult await() {
-            throw new StackOverflowError("result normalization recursed without end");
+            return SubagentResult.ok(
+                    new AbstractMap<String, Object>() {
+                        @Override
+                        public Set<Entry<String, Object>> entrySet() {
+                            throw new StackOverflowError(
+                                    "result normalization recursed without end");
+                        }
+                    });
         }
 
         @Override
@@ -904,6 +944,31 @@ class ToolCallActionSubagentTest {
         @Override
         public ToolResponse call(ToolParameters parameters) {
             return ToolResponse.text(getMetadata().getName() + " called");
+        }
+    }
+
+    /** Cold, locally memoized future for the fake context below. */
+    private static class TestDurableFuture<T> implements DurableFuture<T> {
+        private final Callable<T> callable;
+        private Outcome<T> outcome;
+
+        TestDurableFuture(Callable<T> callable) {
+            this.callable = callable;
+        }
+
+        @Override
+        public T await() throws Exception {
+            if (outcome == null) {
+                try {
+                    outcome = Outcome.success(callable.call());
+                } catch (Exception e) {
+                    outcome = Outcome.failure(e);
+                }
+            }
+            if (outcome.isFailure()) {
+                throw outcome.getError();
+            }
+            return outcome.getValue();
         }
     }
 
@@ -964,6 +1029,19 @@ class ToolCallActionSubagentTest {
 
         @Override
         public Resource getResource(String name, ResourceType type) throws Exception {
+            if (type == ResourceType.TOOL && name.startsWith(SubagentConstants.TOOL_NAME_PREFIX)) {
+                return new ResourceContextImpl(
+                                (agentName, ignored) -> {
+                                    Resource agent = agents.get(agentName);
+                                    if (agent == null) {
+                                        throw new IllegalArgumentException(
+                                                "Resource does not exist: " + agentName);
+                                    }
+                                    return agent;
+                                })
+                        .getSubagentTool(
+                                name.substring(SubagentConstants.TOOL_NAME_PREFIX.length()));
+            }
             Map<String, Resource> registry = type == ResourceType.AGENT ? agents : tools;
             Resource resource = registry.get(name);
             if (resource == null) {
@@ -994,7 +1072,7 @@ class ToolCallActionSubagentTest {
         }
 
         @Override
-        public <T> AsyncFuture<T> executeAsync(java.util.concurrent.Callable<T> callable) {
+        public <T> AsyncFuture<T> executeAsync(Callable<T> callable) {
             throw new UnsupportedOperationException();
         }
 
@@ -1003,7 +1081,6 @@ class ToolCallActionSubagentTest {
             // A deferred handle: the callable runs only when the future is awaited, directly
             // or as part of gather, so the count reflects executions, not handle creations.
             return new TestDurableFuture<>(
-                    callable.getId(),
                     () -> {
                         durableExecutions++;
                         return callable.call();
@@ -1013,13 +1090,15 @@ class ToolCallActionSubagentTest {
         @Override
         public <T> AsyncFuture<List<Outcome<T>>> gather(List<? extends AsyncFuture<T>> futures) {
             return new TestDurableFuture<>(
-                    "gather",
                     () -> {
                         List<Outcome<T>> outcomes = new ArrayList<>(futures.size());
                         for (AsyncFuture<T> future : futures) {
                             try {
                                 outcomes.add(Outcome.success(future.await()));
                             } catch (Exception e) {
+                                if (CancellationUtils.isCancellation(e)) {
+                                    throw e;
+                                }
                                 outcomes.add(Outcome.failure(e));
                             }
                         }
