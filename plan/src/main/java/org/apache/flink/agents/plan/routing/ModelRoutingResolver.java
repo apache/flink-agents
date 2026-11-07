@@ -327,6 +327,8 @@ public final class ModelRoutingResolver {
                 decisionSource,
                 decision.getReason(),
                 decision.getScore(),
-                decision.getMetadata());
+                decision.getMetadata(),
+                router.getEscalation().orElse(null),
+                0);
     }
 }

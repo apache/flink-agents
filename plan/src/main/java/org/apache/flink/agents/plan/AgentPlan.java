@@ -33,10 +33,13 @@ import org.apache.flink.agents.api.annotation.Prompt;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.VectorStore;
 import org.apache.flink.agents.api.chat.model.routing.CustomRoutingExecutor;
+import org.apache.flink.agents.api.chat.model.routing.Escalation;
 import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
+import org.apache.flink.agents.api.chat.model.routing.QualitySignal;
 import org.apache.flink.agents.api.chat.model.routing.RoutingCandidateValidator;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategyType;
+import org.apache.flink.agents.api.chat.model.routing.Strategies;
 import org.apache.flink.agents.api.function.JavaFunctionUtils;
 import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.Resource;
@@ -870,25 +873,35 @@ public class AgentPlan implements Serializable {
                                 typeTagValue.getClass().getSimpleName()));
             }
             String typeTag = (String) typeTagValue;
-            if (typeTag == null) {
+            String subject = String.format("Model router '%s'", provider.getName());
+            // The escalation policy, if any: same parser as the constructor, so a hand-built
+            // descriptor fails here with the router named rather than per routed request.
+            Escalation escalation =
+                    Escalation.fromArguments(subject, descriptor.getInitialArguments())
+                            .orElse(null);
+            if (typeTag == null && escalation == null) {
                 // Fail here, not per record on the TaskManager: ModelRouter's constructor
-                // unconditionally rejects a descriptor without a strategy, and a throwing
-                // construction is never cached, so it would re-throw on every routed request.
+                // rejects a descriptor with neither a strategy nor escalation tiers, and a
+                // throwing construction is never cached, so it would re-throw on every request.
                 throw new IllegalArgumentException(
                         String.format(
                                 "Model router '%s' declares no routing strategy ('%s' missing"
-                                        + " from its descriptor).",
+                                        + " from its descriptor) and no escalation tiers.",
                                 provider.getName(), ModelRouter.STRATEGY_TYPE_KEY));
             }
             // The declaration constructor re-validates the per-type argument rules, so a
             // structurally invalid configuration (e.g. a judge without a judge model) fails
-            // plan construction with the same message as build().
+            // plan construction with the same message as build(). Tiers without a strategy
+            // start every request on the first tier (see ModelRouter).
             RoutingStrategy strategy =
-                    new RoutingStrategy(
-                            RoutingStrategyType.fromTag(typeTag),
-                            descriptor.getArgument(
-                                    ModelRouter.STRATEGY_ARGS_KEY, Collections.emptyMap()),
-                            descriptor.getArgument(ModelRouter.STRATEGY_EXECUTOR_CLASS_KEY));
+                    typeTag == null
+                            ? Strategies.rules(Collections.emptyMap())
+                            : new RoutingStrategy(
+                                    RoutingStrategyType.fromTag(typeTag),
+                                    descriptor.getArgument(
+                                            ModelRouter.STRATEGY_ARGS_KEY, Collections.emptyMap()),
+                                    descriptor.getArgument(
+                                            ModelRouter.STRATEGY_EXECUTOR_CLASS_KEY));
             // Every strategy reads 'candidates' through ModelRouter's unchecked cast, so the
             // shape guard applies to all of them — not only where the rule keys are checked.
             Object candidates = descriptor.getArgument(ModelRouter.CANDIDATES_KEY);
@@ -911,6 +924,9 @@ public class AgentPlan implements Serializable {
                     String.format("Model router '%s'", provider.getName()),
                     (List<?>) candidates,
                     descriptor.getArgument(ModelRouter.DEFAULT_MODEL_KEY));
+            if (escalation != null) {
+                validateEscalation(subject, escalation, (List<?>) candidates, decisionModels);
+            }
             if (candidateDescriptions != null) {
                 @SuppressWarnings("unchecked")
                 List<String> candidateNames = (List<String>) candidates;
@@ -940,6 +956,84 @@ public class AgentPlan implements Serializable {
                     break;
                 default:
                     break;
+            }
+        }
+    }
+
+    /**
+     * The escalation policy's static constraints: every tier is a candidate, every decision-model
+     * signal names a registered decision model, every custom signal names a loadable {@link
+     * QualitySignal} with a public {@code (Map)} or no-arg constructor, the two the gate can call.
+     * The policy's own argument rules already ran in the parser.
+     */
+    @SuppressWarnings("unchecked")
+    private static void validateEscalation(
+            String subject,
+            Escalation escalation,
+            List<?> candidates,
+            Map<String, ResourceProvider> decisionModels) {
+        escalation.requireTiersAreCandidates(subject, (List<String>) candidates);
+        for (Escalation.Signal signal : escalation.getSignals()) {
+            if (Escalation.Signal.TYPE_DECISION_MODEL.equals(signal.getType())) {
+                if (!decisionModels.containsKey(signal.decisionModel())) {
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "%s escalation signal uses decision model '%s', but no"
+                                            + " DECISION_MODEL resource with that name is"
+                                            + " registered.",
+                                    subject, signal.decisionModel()));
+                }
+            } else {
+                Class<?> clazz;
+                try {
+                    clazz =
+                            Class.forName(
+                                    signal.signalClass(),
+                                    false,
+                                    Thread.currentThread().getContextClassLoader());
+                } catch (ClassNotFoundException | LinkageError e) {
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "%s escalation signal class '%s' cannot be loaded.",
+                                    subject, signal.signalClass()),
+                            e);
+                }
+                if (!QualitySignal.class.isAssignableFrom(clazz)) {
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "%s escalation signal class '%s' does not implement"
+                                            + " QualitySignal.",
+                                    subject, signal.signalClass()));
+                }
+                if (!hasMapOrNoArgConstructor(clazz)) {
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "%s escalation signal class '%s' must be a public class"
+                                            + " with a (Map<String,Object>) or no-arg public"
+                                            + " constructor.",
+                                    subject, signal.signalClass()));
+                }
+            }
+        }
+    }
+
+    private static boolean hasMapOrNoArgConstructor(Class<?> clazz) {
+        int modifiers = clazz.getModifiers();
+        // The gate creates the signal from another package, so the class itself has to be public
+        // and concrete, not only its constructor.
+        if (java.lang.reflect.Modifier.isAbstract(modifiers)
+                || !java.lang.reflect.Modifier.isPublic(modifiers)) {
+            return false;
+        }
+        try {
+            clazz.getConstructor(Map.class);
+            return true;
+        } catch (NoSuchMethodException noMapCtor) {
+            try {
+                clazz.getConstructor();
+                return true;
+            } catch (NoSuchMethodException noArgCtor) {
+                return false;
             }
         }
     }
