@@ -18,13 +18,15 @@
 package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.model.routing.Escalation;
 import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
 import org.apache.flink.agents.api.chat.model.routing.QualityContext;
 import org.apache.flink.agents.api.chat.model.routing.QualitySignal;
 import org.apache.flink.agents.api.chat.model.routing.QualitySignals;
 import org.apache.flink.agents.api.chat.model.routing.QualityVerdict;
-import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.decision.DecisionResult;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
@@ -32,6 +34,7 @@ import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
+import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
@@ -41,15 +44,20 @@ import org.apache.flink.agents.plan.ChatFixtures;
 import org.apache.flink.agents.plan.actions.ChatModelActionRoutingTest.FakeChatModel;
 import org.apache.flink.agents.plan.actions.ChatModelActionRoutingTest.FakeDecisionModel;
 import org.apache.flink.agents.plan.actions.ChatModelActionRoutingTest.FakeRunnerContext;
+import org.apache.flink.agents.plan.routing.EscalationGate;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -98,7 +106,7 @@ class ChatModelActionEscalationTest {
     /** Escalates an answer whose text is exactly "weak". */
     public static final class WeakAnswerSignal implements QualitySignal {
         @Override
-        public QualityVerdict evaluate(QualityContext context, RunnerContext runnerContext) {
+        public QualityVerdict evaluate(QualityContext context) {
             return "weak".equals(context.getResponse().getText())
                     ? QualityVerdict.escalate("answer flagged weak")
                     : QualityVerdict.accept();
@@ -516,7 +524,7 @@ class ChatModelActionEscalationTest {
     /** Throws only when the answer has text, so a tool-call round passes. */
     public static final class ThrowOnText implements QualitySignal {
         @Override
-        public QualityVerdict evaluate(QualityContext context, RunnerContext runnerContext) {
+        public QualityVerdict evaluate(QualityContext context) {
             if (!context.getResponse().getText().isEmpty()) {
                 throw new IllegalStateException("signal exploded");
             }
@@ -595,7 +603,8 @@ class ChatModelActionEscalationTest {
                         .register("big", new FakeChatModel(ChatFixtures.response("final")))
                         .seedDurable(
                                 "escalate:router:small:0",
-                                QualityVerdict.escalate("stored verdict"));
+                                new EscalationGate.SignalOutcome(
+                                        QualityVerdict.escalate("stored verdict"), null));
         send(custom, "hello");
         assertThat(custom.chatResponse().getResponse().getText()).isEqualTo("final");
         assertThat(
@@ -656,5 +665,108 @@ class ChatModelActionEscalationTest {
         verify(escalationCount).inc();
         verify(escalatedTokens).inc(7L);
         assertThat(routing(ctx.chatResponse())).containsEntry("escalated_tokens", 7L);
+    }
+
+    @Test
+    void aDurableStorageFailureInACustomSignalEscapesTheChatAction() throws Exception {
+        IOException storageError = new IOException("action-state backend unavailable");
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(
+                        tiered(
+                                Escalation.tiers("small", "big")
+                                        .when(QualitySignals.custom(WeakAnswerSignal.class)),
+                                false)) {
+                    @Override
+                    public <T> T durableExecute(DurableCallable<T> callable) throws Exception {
+                        if (callable.getId().startsWith("escalate:")) {
+                            throw storageError;
+                        }
+                        return super.durableExecute(callable);
+                    }
+                };
+        ctx.register("small", new FakeChatModel(ChatFixtures.response("fine")));
+        // Not a failed response: the runtime must see the storage fault and recover the job.
+        assertThatThrownBy(() -> send(ctx, "find it")).isSameAs(storageError);
+        assertThat(ctx.hasChatResponse()).isFalse();
+    }
+
+    @Test
+    void theVerifierSeesTheRenderedPromptTheCandidateReceived() throws Exception {
+        FakeDecisionModel dm = new FakeDecisionModel(verdict(0.99));
+        List<List<ChatMessage>> received = new ArrayList<>();
+        FakeChatModel small =
+                new FakeChatModel() {
+                    @Override
+                    public Object getPrompt() {
+                        return new Prompt.LocalPrompt("Translate this into French: {input}");
+                    }
+
+                    @Override
+                    public ChatResult chat(
+                            List<ChatMessage> messages,
+                            Map<String, Object> promptArgs,
+                            Map<String, Object> modelParams) {
+                        received.add(prepareRequestMessages(messages, promptArgs));
+                        return ChatFixtures.response("Bonjour");
+                    }
+                };
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", dm)
+                        .register("small", small)
+                        .register("big", new FakeChatModel(ChatFixtures.response("unused")));
+        // The task arrives as prompt arguments only; the candidate's bound prompt renders it.
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(), Map.of("input", "Hello"), null), ctx);
+        assertThat(received.get(0).get(0).getText()).isEqualTo("Translate this into French: Hello");
+        assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("Bonjour");
+        assertThat(String.valueOf(dm.requests.get(0).getInput()))
+                .contains("REQUEST:\nUSER: Translate this into French: Hello")
+                .contains("ANSWER:\nBonjour");
+    }
+
+    @Test
+    void aToolCallRepeatedWithReorderedArgumentsEscalatesInTheToolRound() throws Exception {
+        Map<String, Object> first = new LinkedHashMap<>();
+        first.put("q", "x");
+        first.put("limit", 5);
+        Map<String, Object> reordered = new LinkedHashMap<>();
+        reordered.put("limit", 5);
+        reordered.put("q", "x");
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(tiered(Escalation.tiers("small", "big"), false))
+                        .register(
+                                "small",
+                                new ToolingChatModel(
+                                        new ChatResult(
+                                                ChatMessage.assistant(
+                                                        List.of(
+                                                                new ToolCallBlock(
+                                                                        "call-1", "lookup",
+                                                                        first)))),
+                                        new ChatResult(
+                                                ChatMessage.assistant(
+                                                        List.of(
+                                                                new ToolCallBlock(
+                                                                        "call-2", "lookup",
+                                                                        reordered))))))
+                        .register("big", new FakeChatModel(ChatFixtures.response("final")));
+        send(ctx, "find it");
+        ToolRequestEvent tool = ctx.toolRequestEvent();
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ToolResponseEvent(
+                        tool.getId(),
+                        Map.of("call-1", ToolResponse.text("42")),
+                        Map.of("call-1", true),
+                        Map.of()),
+                ctx);
+        assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("final");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> hops =
+                (List<Map<String, Object>>) routing(ctx.chatResponse()).get("escalations");
+        assertThat(hops).hasSize(1);
+        assertThat(hops.get(0)).containsEntry("signal", "structural");
+        assertThat((String) hops.get(0).get("reason"))
+                .contains("repeated with identical arguments");
     }
 }

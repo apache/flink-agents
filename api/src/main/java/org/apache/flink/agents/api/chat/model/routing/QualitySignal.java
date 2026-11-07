@@ -17,19 +17,21 @@
  */
 package org.apache.flink.agents.api.chat.model.routing;
 
-import org.apache.flink.agents.api.context.RunnerContext;
-
 /**
  * A user-defined quality signal for {@link Escalation}: judges one model round and decides whether
  * the request should move to the next tier.
  *
  * <p>Implementations are declared by class name ({@link QualitySignals#custom(Class)}), must have a
- * public no-argument constructor, and are instantiated by the engine. The engine calls {@link
- * #evaluate} after each model round of a tiered request and before any tool call from that round is
- * dispatched; the signal sees the request, the response and the candidate's tools through {@link
- * QualityContext}. A verdict is persisted as a durable record, so on recovery a completed
- * evaluation is replayed rather than re-run. Throwing fails the request; a signal that cannot judge
- * an answer should accept it.
+ * public no-argument or {@code (Map)} constructor, and are instantiated by the engine. The engine
+ * calls {@link #evaluate} after each model round of a tiered request and before any tool call from
+ * that round is dispatched; the signal sees the request, the response and the candidate's tools
+ * through {@link QualityContext}, and judges from that alone. The call runs inside the engine's
+ * durable record for the round, so a completed evaluation is replayed on recovery rather than
+ * re-run; this is also why a signal gets no runner context: a durable call, an event or a memory
+ * write of its own would not be replayed with it. A judgment that needs a model is declared as a
+ * decision-model signal ({@link QualitySignals#decision}), which the engine runs durably with
+ * retries and metrics. Throwing fails the request; a signal that cannot judge an answer should
+ * accept it.
  *
  * <p>Structural checks (an empty answer, a call to a tool the candidate does not have, arguments
  * that fail the tool's schema, a tool call repeated with identical arguments) run before custom
@@ -41,9 +43,8 @@ public interface QualitySignal {
      * Judge one model round.
      *
      * @param context the request, the candidate's response, its tools and the tier position
-     * @param runnerContext the runner context, for resource access
      * @return {@link QualityVerdict#accept()} to keep the answer, or an escalating verdict
      * @throws Exception when the signal cannot run; the request fails
      */
-    QualityVerdict evaluate(QualityContext context, RunnerContext runnerContext) throws Exception;
+    QualityVerdict evaluate(QualityContext context) throws Exception;
 }

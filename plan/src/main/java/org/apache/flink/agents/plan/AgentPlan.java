@@ -963,7 +963,8 @@ public class AgentPlan implements Serializable {
     /**
      * The escalation policy's static constraints: every tier is a candidate, every decision-model
      * signal names a registered decision model, every custom signal names a loadable {@link
-     * QualitySignal}. Instantiation and the policy's own argument rules already ran in the parser.
+     * QualitySignal} with a public {@code (Map)} or no-arg constructor, the two the gate can call.
+     * The policy's own argument rules already ran in the parser.
      */
     @SuppressWarnings("unchecked")
     private static void validateEscalation(
@@ -1004,6 +1005,35 @@ public class AgentPlan implements Serializable {
                                             + " QualitySignal.",
                                     subject, signal.signalClass()));
                 }
+                if (!hasMapOrNoArgConstructor(clazz)) {
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "%s escalation signal class '%s' must be a public class"
+                                            + " with a (Map<String,Object>) or no-arg public"
+                                            + " constructor.",
+                                    subject, signal.signalClass()));
+                }
+            }
+        }
+    }
+
+    private static boolean hasMapOrNoArgConstructor(Class<?> clazz) {
+        int modifiers = clazz.getModifiers();
+        // The gate creates the signal from another package, so the class itself has to be public
+        // and concrete, not only its constructor.
+        if (java.lang.reflect.Modifier.isAbstract(modifiers)
+                || !java.lang.reflect.Modifier.isPublic(modifiers)) {
+            return false;
+        }
+        try {
+            clazz.getConstructor(Map.class);
+            return true;
+        } catch (NoSuchMethodException noMapCtor) {
+            try {
+                clazz.getConstructor();
+                return true;
+            } catch (NoSuchMethodException noArgCtor) {
+                return false;
             }
         }
     }

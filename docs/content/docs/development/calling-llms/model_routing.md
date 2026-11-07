@@ -395,9 +395,10 @@ checked again and can escalate further while tiers remain.
 ### Quality signals
 
 The **structural checks** are always on for a tiered router and need no
-configuration. They reject an answer that has no content and no tool call, a
-call to a tool the model does not have, tool arguments that fail the tool's JSON
-schema, and a tool call repeated with identical arguments in consecutive rounds.
+configuration. They reject an answer with no text, media or tool call, a call to
+a tool the model does not have, tool arguments that fail the tool's JSON schema,
+and a tool call repeated with identical arguments (whatever the order of their
+keys) in consecutive rounds.
 For a candidate declared in Python the two tool checks are skipped, because its
 tools are bound on the Python side and not visible to the router.
 
@@ -407,23 +408,30 @@ a yes/no question about the conversation and the answer, and rejects the answer
 when the probability of "yes" is below `minProbability`. The default question is
 whether the answer correctly and completely addresses the request; pass your
 own with `QualitySignals.decision(name, minProbability, instructions)`. The
-verifier sees the rendered conversation and the candidate's answer; a refusal or
-a non-predicate answer counts as acceptance, and a verifier that exhausts its
+verifier sees the conversation as the candidate received it, with the
+candidate's bound prompt rendered, and the candidate's answer; when no user
+message carries text, the prompt arguments are listed instead. A refusal or a
+non-predicate answer counts as acceptance, and a verifier that exhausts its
 retries fails the request.
 
 A **custom signal** implements `QualitySignal`. It receives a `QualityContext`
-with the request id, router, current tier, the conversation, the answer and the
-model's tools, and returns `QualityVerdict.accept()` or
+with the request id, router, current tier, the conversation as the candidate
+received it (its bound prompt rendered), the answer and the model's tools, and
+returns `QualityVerdict.accept()` or
 `QualityVerdict.escalate(reason)`, optionally with a score. Signals are created
 by class name on the task managers, through a public no-argument constructor or
 a constructor taking the `Map` passed to `QualitySignals.custom(className,
-args)`. Keep signals cheap and deterministic: they run on every model round of a
-tiered request, and their verdicts are recorded for replay.
+args)`. A signal judges from the context alone: it runs inside the engine's
+durable record for the round, so it gets no runner context and must not make
+durable calls, send events or write memory of its own, none of which would be
+replayed with it. A judgment that needs a model is a decision model signal.
+Keep signals cheap and deterministic: they run on every model round of a tiered
+request, and their verdicts are recorded for replay.
 
 ```java
 public class SqlAnswerSignal implements QualitySignal {
     @Override
-    public QualityVerdict evaluate(QualityContext context, RunnerContext ctx) {
+    public QualityVerdict evaluate(QualityContext context) {
         String answer = context.getResponse().getText();
         boolean sqlRequest = context.lastUserMessage().toLowerCase().contains("sql");
         if (sqlRequest && !answer.toLowerCase().contains("select")) {
@@ -437,7 +445,8 @@ public class SqlAnswerSignal implements QualitySignal {
 Signals run in declaration order after the structural checks, and the first
 rejection decides. The declaration is validated when the plan is built: tiers
 must be candidates, a decision signal's model must be registered, and a custom
-signal class must load and implement `QualitySignal`.
+signal class must load, implement `QualitySignal` and have a public no-argument
+constructor or a public constructor taking a `Map`.
 
 ### Escalation and fallback
 
@@ -453,7 +462,7 @@ that candidate's error.
 | A signal rejects the last tier's answer, or the hop limit is reached | Keep the answer. |
 | A decision model signal's call exhausts retries | Fail the request. |
 | A custom signal throws | Fail the request. |
-| The escalation target fails and fallback is enabled | Try the remaining candidates that have not answered this request, in declaration order. |
+| The escalation target fails and fallback is enabled | In the initial round, try the remaining candidates that have not answered this request, in declaration order. Once the tool-call loop has started, a failed escalation target fails the request, as any tool-round failure does. |
 | The escalation target fails and no candidate is left | Fail the request with that candidate's error. |
 
 ## Observability

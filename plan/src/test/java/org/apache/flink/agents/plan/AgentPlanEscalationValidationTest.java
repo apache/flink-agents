@@ -24,7 +24,6 @@ import org.apache.flink.agents.api.chat.model.routing.QualitySignal;
 import org.apache.flink.agents.api.chat.model.routing.QualitySignals;
 import org.apache.flink.agents.api.chat.model.routing.QualityVerdict;
 import org.apache.flink.agents.api.chat.model.routing.Strategies;
-import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
@@ -43,7 +42,7 @@ class AgentPlanEscalationValidationTest {
 
     public static final class AcceptAll implements QualitySignal {
         @Override
-        public QualityVerdict evaluate(QualityContext context, RunnerContext runnerContext) {
+        public QualityVerdict evaluate(QualityContext context) {
             return QualityVerdict.accept();
         }
     }
@@ -147,6 +146,54 @@ class AgentPlanEscalationValidationTest {
         assertThatThrownBy(() -> new AgentPlan(Map.of(), providers(wrongType, false)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("does not implement QualitySignal");
+    }
+
+    /** A signal the gate could never create: its only constructor takes a String. */
+    public static final class NeedsAString implements QualitySignal {
+        public NeedsAString(String unused) {}
+
+        @Override
+        public QualityVerdict evaluate(QualityContext context) {
+            return QualityVerdict.accept();
+        }
+    }
+
+    /** Public no-arg constructor, but the class itself is package-private. */
+    static final class HiddenSignal implements QualitySignal {
+        public HiddenSignal() {}
+
+        @Override
+        public QualityVerdict evaluate(QualityContext context) {
+            return QualityVerdict.accept();
+        }
+    }
+
+    @Test
+    void aNonPublicCustomSignalClassFailsAtPlanConstruction() {
+        ResourceDescriptor router =
+                ModelRouter.of("small", "big")
+                        .escalation(
+                                Escalation.tiers("small", "big")
+                                        .when(
+                                                QualitySignals.custom(
+                                                        HiddenSignal.class.getName(), Map.of())))
+                        .build();
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers(router, false)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must be a public class");
+    }
+
+    @Test
+    void aCustomSignalWithoutAUsableConstructorFailsAtPlanConstruction() {
+        ResourceDescriptor router =
+                ModelRouter.of("small", "big")
+                        .escalation(
+                                Escalation.tiers("small", "big")
+                                        .when(QualitySignals.custom(NeedsAString.class)))
+                        .build();
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers(router, false)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no-arg public constructor");
     }
 
     /** A hand-built descriptor skipped the builder; the plan applies the same tier rule. */

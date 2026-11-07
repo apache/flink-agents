@@ -142,14 +142,17 @@ public final class ResolvedModelRoute {
     }
 
     /**
-     * A tool round of a tiered request: no routing decision and no fallback, as for any tool round,
-     * but the escalation policy stays in force so a weak round can still move the request up a
-     * tier. {@code model} is the tier the request currently sits on.
+     * A tool round of a tiered request: no routing decision and no candidate fallback, as for any
+     * tool round (the attempt order is the current tier alone), but the escalation policy stays in
+     * force so a weak round can still move the request up a tier. {@code model} is the tier the
+     * request currently sits on; {@code fallbackEnabled} is the router's setting, carried for the
+     * routing events this round may emit.
      */
     public static ResolvedModelRoute continued(
             String router,
             String model,
             List<String> candidates,
+            boolean fallbackEnabled,
             Escalation escalation,
             int escalationsSoFar) {
         return new ResolvedModelRoute(
@@ -157,7 +160,7 @@ public final class ResolvedModelRoute {
                 model,
                 candidates,
                 false,
-                false,
+                fallbackEnabled,
                 "direct",
                 null,
                 null,

@@ -19,12 +19,15 @@ package org.apache.flink.agents.plan.routing;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.model.routing.QualityContext;
 import org.apache.flink.agents.api.chat.model.routing.QualitySignal;
 import org.apache.flink.agents.api.chat.model.routing.QualitySignals;
 import org.apache.flink.agents.api.chat.model.routing.QualityVerdict;
-import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
@@ -32,6 +35,7 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -73,7 +77,7 @@ class EscalationGateTest {
         }
 
         @Override
-        public QualityVerdict evaluate(QualityContext context, RunnerContext runnerContext) {
+        public QualityVerdict evaluate(QualityContext context) {
             return context.getResponse().getText().length() < minChars
                     ? QualityVerdict.escalate("too short")
                     : QualityVerdict.accept();
@@ -83,7 +87,7 @@ class EscalationGateTest {
     /** A custom signal with only the no-argument constructor. */
     public static final class AcceptAll implements QualitySignal {
         @Override
-        public QualityVerdict evaluate(QualityContext context, RunnerContext runnerContext) {
+        public QualityVerdict evaluate(QualityContext context) {
             return QualityVerdict.accept();
         }
     }
@@ -254,6 +258,27 @@ class EscalationGateTest {
     }
 
     @Test
+    void aStoredSignalOutcomeSurvivesJsonWithOrWithoutAVerdict() throws Exception {
+        com.fasterxml.jackson.databind.ObjectMapper mapper =
+                new com.fasterxml.jackson.databind.ObjectMapper();
+        EscalationGate.SignalOutcome escalated =
+                new EscalationGate.SignalOutcome(QualityVerdict.escalate("too short", 0.2), null);
+        String json = mapper.writeValueAsString(escalated);
+        EscalationGate.SignalOutcome back =
+                mapper.readValue(json, EscalationGate.SignalOutcome.class);
+        assertThat(mapper.writeValueAsString(back)).isEqualTo(json);
+        assertThat(json).contains("\"too short\"").contains("0.2");
+
+        EscalationGate.SignalOutcome failed = new EscalationGate.SignalOutcome(null, "exploded");
+        String failedJson = mapper.writeValueAsString(failed);
+        assertThat(
+                        mapper.writeValueAsString(
+                                mapper.readValue(failedJson, EscalationGate.SignalOutcome.class)))
+                .isEqualTo(failedJson);
+        assertThat(failedJson).contains("\"exploded\"");
+    }
+
+    @Test
     void customSignalsAreInstantiatedWithTheirArgumentsOrTheNoArgConstructor() throws Exception {
         QualitySignal withArgs =
                 EscalationGate.instantiate(
@@ -268,5 +293,93 @@ class EscalationGateTest {
                                         QualitySignals.custom(String.class.getName(), Map.of())))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("does not implement QualitySignal");
+    }
+
+    @Test
+    void theRepeatCheckIgnoresTheOrderOfArgumentKeys() {
+        Map<String, Object> firstFilter = new LinkedHashMap<>();
+        firstFilter.put("a", 1);
+        firstFilter.put("b", 2);
+        Map<String, Object> first = new LinkedHashMap<>();
+        first.put("q", "x");
+        first.put("filter", firstFilter);
+        Map<String, Object> reorderedFilter = new LinkedHashMap<>();
+        reorderedFilter.put("b", 2);
+        reorderedFilter.put("a", 1);
+        Map<String, Object> reordered = new LinkedHashMap<>();
+        reordered.put("filter", reorderedFilter);
+        reordered.put("q", "x");
+        List<ChatMessage> messages =
+                List.of(
+                        ChatMessage.user("find it"),
+                        ChatMessage.assistant(
+                                List.of(new ToolCallBlock("call-0", "lookup", first))),
+                        ChatMessage.tool(
+                                new ToolResultBlock(
+                                        "call-0", List.of(new TextBlock("nothing")), false)));
+        // The tool checks are off here, so the verdict comes from the repeat check alone.
+        QualityVerdict verdict =
+                EscalationGate.structural(
+                        context(messages, toolCall("lookup", reordered), List.of()), false);
+        assertThat(verdict.isEscalate()).isTrue();
+        assertThat(verdict.getReason()).contains("repeated with identical arguments");
+        Map<String, Object> changed = new LinkedHashMap<>(reordered);
+        changed.put("q", "y");
+        assertThat(
+                        EscalationGate.structural(
+                                        context(messages, toolCall("lookup", changed), List.of()),
+                                        false)
+                                .isEscalate())
+                .isFalse();
+    }
+
+    @Test
+    void anAnswerMadeOfMediaIsNotEmptyButReasoningAloneIs() {
+        List<ChatMessage> messages = List.of(ChatMessage.user("draw it"));
+        ChatResult picture =
+                new ChatResult(
+                        ChatMessage.assistant(List.of(ImageBlock.fromBase64("image/png", "aGk="))));
+        assertThat(EscalationGate.structural(context(messages, picture, List.of())).isEscalate())
+                .isFalse();
+        assertThat(EscalationGate.renderForVerifier(context(messages, picture, List.of())))
+                .contains("\nANSWER:\n")
+                .contains("[image attached]");
+        ChatResult thinking =
+                new ChatResult(ChatMessage.assistant(List.of(new ReasoningBlock("let me see"))));
+        QualityVerdict verdict = EscalationGate.structural(context(messages, thinking, List.of()));
+        assertThat(verdict.isEscalate()).isTrue();
+        assertThat(verdict.getReason()).contains("empty response");
+    }
+
+    @Test
+    void theVerifierInputFallsBackToThePromptArgumentsWhenTheRequestHasNoText() {
+        QualityContext context =
+                new QualityContext(
+                        UUID.randomUUID(),
+                        "router",
+                        "small",
+                        0,
+                        List.of("small", "big"),
+                        List.of(),
+                        Map.of("input", "Hello"),
+                        new ChatResult(ChatMessage.assistant("Bonjour")),
+                        List.of());
+        assertThat(EscalationGate.renderForVerifier(context))
+                .startsWith("REQUEST:\nRequest arguments:\ninput: Hello")
+                .contains("\nANSWER:\nBonjour");
+        // System text alone is not the request either; the arguments follow it on their own line.
+        QualityContext withSystem =
+                new QualityContext(
+                        UUID.randomUUID(),
+                        "router",
+                        "small",
+                        0,
+                        List.of("small", "big"),
+                        List.of(ChatMessage.system("You translate.")),
+                        Map.of("input", "Hello"),
+                        new ChatResult(ChatMessage.assistant("Bonjour")),
+                        List.of());
+        assertThat(EscalationGate.renderForVerifier(withSystem))
+                .contains("SYSTEM: You translate.\nRequest arguments:\ninput: Hello");
     }
 }

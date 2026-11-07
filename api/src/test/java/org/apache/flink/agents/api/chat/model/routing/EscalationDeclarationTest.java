@@ -17,7 +17,6 @@
  */
 package org.apache.flink.agents.api.chat.model.routing;
 
-import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.Test;
 
@@ -34,7 +33,7 @@ class EscalationDeclarationTest {
     /** A signal class for the declaration tests; never evaluated here. */
     public static final class AlwaysAccept implements QualitySignal {
         @Override
-        public QualityVerdict evaluate(QualityContext context, RunnerContext runnerContext) {
+        public QualityVerdict evaluate(QualityContext context) {
             return QualityVerdict.accept();
         }
     }
