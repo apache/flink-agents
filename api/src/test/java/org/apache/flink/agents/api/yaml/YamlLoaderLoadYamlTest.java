@@ -101,6 +101,57 @@ class YamlLoaderLoadYamlTest {
     }
 
     @Test
+    void duplicateSharedResourceLeavesFailedFileUnregisteredAndAllowsRetry(@TempDir Path tmp)
+            throws Exception {
+        AgentsExecutionEnvironment env = new TestEnv();
+        Path existing =
+                Files.writeString(
+                        tmp.resolve("existing.yaml"),
+                        "agents: [{name: existing}]\n"
+                                + "tools: [{name: demo, function: example:demo}]\n");
+        Path candidate = tmp.resolve("candidate.yaml");
+        String config =
+                "agents: [{name: candidate}]\n"
+                        + "prompts: [{name: fresh, text: hello}]\n"
+                        + "tools: [{name: %s, function: example:other}]\n";
+        Files.writeString(candidate, String.format(config, "demo"));
+
+        assertThatThrownBy(() -> env.loadYaml(List.of(existing, candidate)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("TOOL demo already defined");
+        assertThat(env.getAgents()).containsOnlyKeys("existing");
+        assertThat(env.getResources().get(ResourceType.TOOL)).containsOnlyKeys("demo");
+        assertThat(env.getResources().get(ResourceType.PROMPT)).isEmpty();
+
+        Files.writeString(candidate, String.format(config, "other"));
+        env.loadYaml(candidate);
+        assertThat(env.getAgents()).containsOnlyKeys("existing", "candidate");
+        assertThat(env.getResources().get(ResourceType.TOOL)).containsOnlyKeys("demo", "other");
+        assertThat(env.getResources().get(ResourceType.PROMPT)).containsOnlyKeys("fresh");
+    }
+
+    @Test
+    void sharedChatModelNameClashWithRouterLeavesFailedFileUnregistered(@TempDir Path tmp)
+            throws Exception {
+        AgentsExecutionEnvironment env = new TestEnv();
+        ResourceDescriptor router = new ResourceDescriptor("example.Router", Map.of());
+        env.addResource("router", ResourceType.MODEL_ROUTER, router);
+        Path candidate =
+                Files.writeString(
+                        tmp.resolve("candidate.yaml"),
+                        "chat_model_setups:\n"
+                                + "  - {name: fresh, clazz: ollama}\n"
+                                + "  - {name: router, clazz: ollama}\n");
+
+        assertThatThrownBy(() -> env.loadYaml(candidate))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("'router' is already registered as MODEL_ROUTER");
+        assertThat(env.getResources().get(ResourceType.CHAT_MODEL)).isEmpty();
+        assertThat(env.getResources().get(ResourceType.MODEL_ROUTER))
+                .containsExactlyEntriesOf(Map.of("router", router));
+    }
+
+    @Test
     void missingSharedActionRejected(@TempDir Path tmp) throws Exception {
         Path bad = tmp.resolve("bad.yaml");
         Files.writeString(bad, "agents:\n  - name: a\n    actions:\n      - undefined_action\n");
