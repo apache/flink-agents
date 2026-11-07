@@ -114,7 +114,7 @@ public class QualityEscalationAgent extends Agent {
     /** Escalates the literal answer {@code weak}; a stand-in for a domain check. */
     public static class WeakAnswerSignal implements QualitySignal {
         @Override
-        public QualityVerdict evaluate(QualityContext context, RunnerContext runnerContext) {
+        public QualityVerdict evaluate(QualityContext context) {
             return "weak".equals(context.getResponse().getText())
                     ? QualityVerdict.escalate("answer flagged weak")
                     : QualityVerdict.accept();

@@ -741,6 +741,7 @@ public class ChatModelAction {
                 router,
                 model,
                 resolved.getCandidateNames(),
+                resolved.isFallbackEnabled(),
                 resolved.getEscalation().get(),
                 ResolvedModelRoute.recordedEscalations(parked));
     }

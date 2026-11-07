@@ -92,7 +92,11 @@ public final class QualityContext {
         return tiers;
     }
 
-    /** The messages the candidate received for this round. */
+    /**
+     * The messages the candidate received for this round: its bound prompt, rendered with the
+     * prompt arguments, followed by the conversation. For a candidate declared in Python the prompt
+     * is rendered on the Python side, so this is the conversation as sent.
+     */
     public List<ChatMessage> getMessages() {
         return messages;
     }

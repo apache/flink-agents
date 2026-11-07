@@ -81,7 +81,7 @@ public class ModelRoutingEscalationExample {
                         Pattern.CASE_INSENSITIVE);
 
         @Override
-        public QualityVerdict evaluate(QualityContext context, RunnerContext runnerContext) {
+        public QualityVerdict evaluate(QualityContext context) {
             String answer = context.getResponse().getText();
             if (HEDGE.matcher(answer).find()) {
                 return QualityVerdict.escalate("the answer hedges instead of answering");

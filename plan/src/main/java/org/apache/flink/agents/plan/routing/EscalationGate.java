@@ -17,14 +17,19 @@
  */
 package org.apache.flink.agents.plan.routing;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.networknt.schema.Schema;
 import com.networknt.schema.SchemaRegistry;
 import com.networknt.schema.SpecificationVersion;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.ContentBlock;
 import org.apache.flink.agents.api.chat.messages.DataContentBlock;
+import org.apache.flink.agents.api.chat.messages.MediaBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
@@ -54,6 +59,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -68,14 +74,18 @@ import java.util.UUID;
  *
  * <p>Structural checks are pure functions of the response and recomputed on replay. A
  * decision-model signal runs through {@link DecisionModelInvoker} under {@code
- * escalate:<router>:<candidate>}; a custom signal's verdict is persisted under {@code
- * escalate:<router>:<candidate>:<n>}. Both are reused on replay, so a recovered request reaches the
- * same tier without re-judging.
+ * escalate:<router>:<candidate>}; a custom signal's outcome (verdict or failure) is persisted under
+ * {@code escalate:<router>:<candidate>:<n>}. Both are reused on replay, so a recovered request
+ * reaches the same tier without re-judging.
  */
 public final class EscalationGate {
 
     private static final Logger LOG = LoggerFactory.getLogger(EscalationGate.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    /** Serializes tool arguments with object keys sorted, so equal arguments render alike. */
+    private static final ObjectMapper CANONICAL =
+            new ObjectMapper().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
+
     private static final SchemaRegistry SCHEMAS =
             SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12);
 
@@ -154,7 +164,7 @@ public final class EscalationGate {
                         candidate,
                         tierIndex,
                         policy.getTiers(),
-                        messages,
+                        effectiveMessages(result.chatModel, messages, promptArgs),
                         promptArgs,
                         response,
                         tools);
@@ -206,9 +216,8 @@ public final class EscalationGate {
     static QualityVerdict structural(QualityContext context, boolean toolsKnown) {
         ChatResult response = context.getResponse();
         List<ToolCallBlock> calls = response.getToolCalls();
-        String text = response.getText();
-        if ((text == null || text.isBlank()) && calls.isEmpty()) {
-            return QualityVerdict.escalate("empty response: no content and no tool call");
+        if (!hasContent(response)) {
+            return QualityVerdict.escalate("empty response: no text, media or tool call");
         }
         if (toolsKnown) {
             Map<String, Tool> byName = new LinkedHashMap<>();
@@ -238,6 +247,46 @@ public final class EscalationGate {
                     "tool call repeated with identical arguments in consecutive rounds");
         }
         return QualityVerdict.accept();
+    }
+
+    /**
+     * True when the answer carries something a reader can use: non-blank text, a media block or a
+     * tool call. Reasoning alone is not an answer.
+     */
+    static boolean hasContent(ChatResult response) {
+        for (ContentBlock block : response.getBlocks()) {
+            if (block instanceof TextBlock) {
+                if (!((TextBlock) block).getText().isBlank()) {
+                    return true;
+                }
+            } else if (block instanceof ToolCallBlock || block instanceof MediaBlock) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The messages as the candidate received them: its bound prompt rendered with the prompt
+     * arguments and prepended to the conversation, exactly as {@code BaseChatModelSetup#chat}
+     * shapes the request. A Python-declared candidate renders its prompt on the Python side, and a
+     * setup whose rendering fails is judged on the raw conversation; cancellation propagates.
+     */
+    static List<ChatMessage> effectiveMessages(
+            @Nullable BaseChatModelSetup setup,
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs)
+            throws Exception {
+        if (setup == null || setup instanceof PythonChatModelSetup) {
+            return messages;
+        }
+        try {
+            return setup.prepareRequestMessages(messages, promptArgs);
+        } catch (Exception e) {
+            CancellationUtils.rethrowIfCancellation(e);
+            LOG.debug("Could not render the candidate's prompt for the quality checks", e);
+            return messages;
+        }
     }
 
     /**
@@ -282,11 +331,12 @@ public final class EscalationGate {
         return false;
     }
 
+    /** One entry per call, name plus arguments in canonical JSON (object keys sorted). */
     private static Set<String> callSet(List<ToolCallBlock> calls) {
         Set<String> set = new LinkedHashSet<>();
         for (ToolCallBlock call : calls) {
             try {
-                set.add(call.getName() + "(" + MAPPER.writeValueAsString(call.getInput()) + ")");
+                set.add(call.getName() + "(" + CANONICAL.writeValueAsString(call.getInput()) + ")");
             } catch (Exception e) {
                 set.add(call.getName() + "(" + call.getInput() + ")");
             }
@@ -374,12 +424,33 @@ public final class EscalationGate {
         return new QualityVerdict(false, null, probability);
     }
 
-    /** The verifier's input: the conversation as text, then the answer under judgment. */
+    /**
+     * The verifier's input: the conversation as the candidate received it, as text, then the answer
+     * under judgment. When no user message carries text (a request made of prompt arguments that a
+     * Python candidate renders on its side, or a media-only request), the prompt arguments are
+     * listed so the verifier still sees the task. Media in the answer is named, not forwarded:
+     * decision models take text.
+     */
     static String renderForVerifier(QualityContext context) {
         StringBuilder text = new StringBuilder("REQUEST:\n");
+        boolean requestHasText = false;
+        for (ChatMessage message : context.getMessages()) {
+            if (message.getRole() == MessageRole.USER && !message.getText().isBlank()) {
+                requestHasText = true;
+            }
+        }
         for (DataContentBlock block : RoutingInput.renderConversation(context.getMessages())) {
             if (block instanceof TextBlock) {
                 text.append(((TextBlock) block).getText());
+            }
+        }
+        if (!requestHasText && !context.getPromptArgs().isEmpty()) {
+            if (text.charAt(text.length() - 1) != '\n') {
+                text.append('\n');
+            }
+            text.append("Request arguments:");
+            for (Map.Entry<String, Object> arg : context.getPromptArgs().entrySet()) {
+                text.append('\n').append(arg.getKey()).append(": ").append(arg.getValue());
             }
         }
         text.append("\n\nANSWER:\n");
@@ -387,13 +458,44 @@ public final class EscalationGate {
         if (response.getText() != null && !response.getText().isBlank()) {
             text.append(response.getText());
         }
+        for (ContentBlock block : response.getBlocks()) {
+            if (block instanceof MediaBlock) {
+                text.append("\n[").append(mediaLabel(block)).append(" attached]");
+            }
+        }
         for (ToolCallBlock call : response.getToolCalls()) {
             text.append("\nTool call ").append(callSet(List.of(call)).iterator().next());
         }
         return text.toString();
     }
 
+    /** "image", "audio", "video" or "document", from the block type. */
+    private static String mediaLabel(ContentBlock block) {
+        String name = block.getClass().getSimpleName();
+        return name.endsWith("Block")
+                ? name.substring(0, name.length() - "Block".length()).toLowerCase(Locale.ROOT)
+                : name.toLowerCase(Locale.ROOT);
+    }
+
     // ---------------------------------------------------------------- custom signal
+
+    /**
+     * What a custom signal's durable call records: the verdict, or the text of the failure the
+     * signal threw. Only the signal's own {@code evaluate} is converted into an outcome; errors of
+     * the durable machinery (persistence, recovery) escape to the runtime.
+     */
+    public static final class SignalOutcome {
+        @JsonProperty @Nullable private final QualityVerdict verdict;
+        @JsonProperty @Nullable private final String error;
+
+        @JsonCreator
+        public SignalOutcome(
+                @JsonProperty("verdict") @Nullable QualityVerdict verdict,
+                @JsonProperty("error") @Nullable String error) {
+            this.verdict = verdict;
+            this.error = error;
+        }
+    }
 
     private static QualityVerdict customSignal(
             Escalation.Signal signal,
@@ -403,36 +505,55 @@ public final class EscalationGate {
             String candidate,
             RunnerContext ctx)
             throws Exception {
-        String id = "escalate:" + router + ":" + candidate + ":" + index;
+        QualitySignal instance;
         try {
-            QualitySignal instance = instantiate(signal);
-            return ctx.durableExecute(
-                    new DurableCallable<QualityVerdict>() {
-                        @Override
-                        public String getId() {
-                            return id;
-                        }
-
-                        @Override
-                        public Class<QualityVerdict> getResultClass() {
-                            return QualityVerdict.class;
-                        }
-
-                        @Override
-                        public QualityVerdict call() throws Exception {
-                            return Objects.requireNonNull(
-                                    instance.evaluate(context, ctx),
-                                    "QualitySignal returned a null verdict");
-                        }
-                    });
+            instance = instantiate(signal);
         } catch (Exception e) {
             CancellationUtils.rethrowIfCancellation(e);
             throw new ModelRoutingResolver.RoutingFailure(
                     "Escalation signal "
                             + signal.signalClass()
-                            + " failed: "
+                            + " could not be created: "
                             + ChatModelInvoker.errorText(e));
         }
+        String id = "escalate:" + router + ":" + candidate + ":" + index;
+        SignalOutcome outcome =
+                ctx.durableExecute(
+                        new DurableCallable<SignalOutcome>() {
+                            @Override
+                            public String getId() {
+                                return id;
+                            }
+
+                            @Override
+                            public Class<SignalOutcome> getResultClass() {
+                                return SignalOutcome.class;
+                            }
+
+                            @Override
+                            public SignalOutcome call() throws Exception {
+                                // Only the signal's own failure becomes an outcome; persistence
+                                // and recovery errors escape, and cancellation propagates.
+                                try {
+                                    return new SignalOutcome(
+                                            Objects.requireNonNull(
+                                                    instance.evaluate(context),
+                                                    "QualitySignal returned a null verdict"),
+                                            null);
+                                } catch (Exception e) {
+                                    CancellationUtils.rethrowIfCancellation(e);
+                                    return new SignalOutcome(null, ChatModelInvoker.errorText(e));
+                                }
+                            }
+                        });
+        if (outcome.verdict == null) {
+            throw new ModelRoutingResolver.RoutingFailure(
+                    "Escalation signal "
+                            + signal.signalClass()
+                            + " failed: "
+                            + (outcome.error == null ? "no verdict" : outcome.error));
+        }
+        return outcome.verdict;
     }
 
     /**
