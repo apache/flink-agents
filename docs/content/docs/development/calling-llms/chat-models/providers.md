@@ -55,7 +55,7 @@ model, deployment, and server must also support the requested input and tool cal
 | [Anthropic](#anthropic) | Java, Python | User messages: JPEG/PNG/GIF/WebP images and PDF documents by URL or Base64; plain-text documents by Base64. |
 | [Ollama](#ollama) | Java, Python | User messages: Base64 images, sent separately from text; requires a vision model. |
 | [Gemini](#gemini) | Java | User messages: images, audio, video and documents by URL or Base64. |
-| [Amazon Bedrock](#amazon-bedrock) | Java | No media input; media blocks are rejected. |
+| [Amazon Bedrock](#amazon-bedrock) | Java | User messages: images, documents, video and audio by Base64 or `s3://` URI, in the Converse formats listed below. |
 | [IBM watsonx.ai](#watsonx-ibm-watsonxai) | Java, Python | No media input; media blocks are rejected. |
 
 All listed integrations can send tool definitions and return tool calls when the
@@ -225,6 +225,18 @@ public class MyAgent extends Agent {
 {{< /tab >}}
 
 {{< /tabs >}}
+
+**Multimodal input.** The media blocks of a user message are sent as Converse content blocks, in block order, next to its text blocks. Media is sent as Base64 data or, for an `s3://` URI, as an S3 location; other URLs are not supported. The Converse API takes a format instead of a media type, so the integration maps media types (ignoring case and parameters such as `charset`):
+
+| Block | Sent as | Media types |
+|---|---|---|
+| `TextBlock` | a `text` block | |
+| `ImageBlock` | an `image` block | `image/png`, `image/jpeg`, `image/gif`, `image/webp` |
+| `DocumentBlock` | a `document` block named after the block's `name` (characters the Converse API does not allow become spaces; `document-<n>` when unnamed) | `application/pdf`, `text/csv`, `application/msword`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `application/vnd.ms-excel`, `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, `text/html`, `text/plain`, `text/markdown` |
+| `VideoBlock` | a `video` block | `video/x-matroska`, `video/quicktime`, `video/mp4`, `video/webm`, `video/x-flv`, `video/mpeg`, `video/x-ms-wmv`, `video/3gpp` |
+| `AudioBlock` | an `audio` block | `audio/mpeg`, `audio/opus`, `audio/wav`, `audio/x-wav`, `audio/aac`, `audio/x-aac`, `audio/flac`, `audio/mp4`, `audio/x-m4a`, `audio/ogg`, `audio/x-matroska`, `audio/webm` |
+
+Other media types, URLs other than `s3://`, and media in assistant messages or tool results raise `UnsupportedContentBlockException` before the request is sent. Which media a model accepts, and whether it can read from S3, varies by model; see [Supported models and model features](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html).
 
 #### Available Models
 
