@@ -52,6 +52,8 @@ import org.apache.flink.agents.runtime.skill.repository.FileSystemSkillRepositor
 import org.apache.flink.agents.runtime.subagent.BaseSubagentSetup;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.MockedConstruction;
 import pemja.core.object.PyObject;
 
@@ -64,10 +66,12 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** Tests for {@link ResourceCache}. */
@@ -389,6 +393,102 @@ public class ResourceCacheTest {
         assertThat(cache.hasResource("cachedOnly", ResourceType.CHAT_MODEL)).isFalse();
         cache.put("cachedOnly", ResourceType.CHAT_MODEL, cachedOnly);
         assertThat(cache.hasResource("cachedOnly", ResourceType.CHAT_MODEL)).isTrue();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "CHAT_MODEL, MODEL_ROUTER, false, true",
+        "CHAT_MODEL, MODEL_ROUTER, true, true",
+        "MODEL_ROUTER, CHAT_MODEL, false, true",
+        "MODEL_ROUTER, CHAT_MODEL, true, true",
+        "TOOL, PROMPT, false, false",
+        "TOOL, PROMPT, true, false",
+        "PROMPT, TOOL, false, false",
+        "PROMPT, TOOL, true, false"
+    })
+    void localModelsShadowBothModelTypesWhileOtherTypesInheritIndependently(
+            ResourceType localType,
+            ResourceType parentType,
+            boolean cachedOnly,
+            boolean shadowsParent)
+            throws Exception {
+        Resource ancestor = mock(Resource.class);
+        Resource local = mock(Resource.class);
+        ResourceProvider provider = mock(ResourceProvider.class);
+        when(provider.provide(any(ResourceContext.class))).thenReturn(local);
+        ResourceCache parent = new ResourceCache(Map.of());
+        parent.put("model", parentType, ancestor);
+        ResourceCache child =
+                new ResourceCache(
+                        cachedOnly ? Map.of() : Map.of(localType, Map.of("model", provider)),
+                        getClass().getClassLoader(),
+                        parent);
+        if (cachedOnly) {
+            child.put("model", localType, local);
+        }
+        ResourceCache grandchild = new ResourceCache(Map.of(), getClass().getClassLoader(), child);
+
+        for (ResourceCache scope : List.of(child, grandchild)) {
+            assertThat(scope.hasResource("model", localType)).isTrue();
+            assertThat(scope.hasResource("model", parentType)).isEqualTo(!shadowsParent);
+            if (shadowsParent) {
+                assertThatThrownBy(() -> scope.getResource("model", parentType))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("Resource not found: model");
+            } else {
+                assertThat(scope.getResource("model", parentType)).isSameAs(ancestor);
+            }
+        }
+        // Inspecting registrations does not construct a resource.
+        verifyNoInteractions(provider, local, ancestor);
+        assertThat(child.getResource("model", localType)).isSameAs(local);
+        assertThat(grandchild.getResource("model", localType)).isSameAs(local);
+        assertThat(parent.getResource("model", parentType)).isSameAs(ancestor);
+    }
+
+    @Test
+    void inheritedResourcesRemainOwnedByTheirDeclaringScope() throws Exception {
+        Resource router = mock(Resource.class);
+        ResourceProvider provider = mock(ResourceProvider.class);
+        when(provider.provide(any(ResourceContext.class))).thenReturn(router);
+        ResourceCache parent =
+                new ResourceCache(Map.of(ResourceType.MODEL_ROUTER, Map.of("model", provider)));
+        ResourceCache child = new ResourceCache(Map.of(), getClass().getClassLoader(), parent);
+        ResourceCache grandchild = new ResourceCache(Map.of(), getClass().getClassLoader(), child);
+        // An unrelated resource type does not shadow the inherited router.
+        child.put("model", ResourceType.TOOL, mock(Resource.class));
+
+        assertThat(grandchild.hasResource("model", ResourceType.MODEL_ROUTER)).isTrue();
+        verifyNoInteractions(provider, router);
+        assertThat(grandchild.getResource("model", ResourceType.MODEL_ROUTER)).isSameAs(router);
+        assertThat(parent.getResource("model", ResourceType.MODEL_ROUTER)).isSameAs(router);
+        verify(provider).provide(any(ResourceContext.class));
+        verify(router).open();
+        grandchild.close();
+        child.close();
+        verify(router, org.mockito.Mockito.never()).close();
+        parent.close();
+        verify(router).close();
+    }
+
+    @Test
+    void failingLocalProviderDoesNotFallBackToParent() throws Exception {
+        Resource inherited = mock(Resource.class);
+        ResourceProvider provider = mock(ResourceProvider.class);
+        IllegalStateException failure = new IllegalStateException("local model failed");
+        when(provider.provide(any(ResourceContext.class))).thenThrow(failure);
+        ResourceCache parent = new ResourceCache(Map.of());
+        parent.put("model", ResourceType.CHAT_MODEL, inherited);
+        ResourceCache child =
+                new ResourceCache(
+                        Map.of(ResourceType.CHAT_MODEL, Map.of("model", provider)),
+                        getClass().getClassLoader(),
+                        parent);
+
+        assertThat(child.hasResource("model", ResourceType.CHAT_MODEL)).isTrue();
+        assertThatThrownBy(() -> child.getResource("model", ResourceType.CHAT_MODEL))
+                .isSameAs(failure);
+        verifyNoInteractions(inherited);
     }
 
     @Test

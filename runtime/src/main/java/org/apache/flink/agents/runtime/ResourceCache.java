@@ -195,15 +195,17 @@ public class ResourceCache implements AutoCloseable {
     }
 
     /**
-     * Checks whether a resource of the given name and type is available, without creating it.
-     * Covers both registered providers and resources inserted directly into the cache via {@link
-     * #put} (which have no provider).
-     *
-     * @param name the resource name
-     * @param type the resource type
-     * @return true if such a resource has a registered provider or is already cached
+     * Checks whether a resource is available without creating it, matching {@link #getResource}.
      */
     public boolean hasResource(String name, ResourceType type) {
+        return hasLocalResource(name, type)
+                || (parent != null
+                        && canInheritResource(name, type)
+                        && parent.hasResource(name, type));
+    }
+
+    /** Includes registered providers and resources inserted directly via {@link #put}. */
+    private boolean hasLocalResource(String name, ResourceType type) {
         Map<String, Resource> cached = cache.get(type);
         if (cached != null && cached.containsKey(name)) {
             return true;
@@ -212,13 +214,13 @@ public class ResourceCache implements AutoCloseable {
         return providers != null && providers.containsKey(name);
     }
 
-    /**
-     * Checks registration along the same fallback chain as {@link #getResource}, without creating
-     * resources.
-     */
-    public boolean hasResourceInHierarchy(String name, ResourceType type) {
-        return hasResource(name, type)
-                || (parent != null && parent.hasResourceInHierarchy(name, type));
+    /** A local model or router hides both types with the same name in parent agents. */
+    private boolean canInheritResource(String name, ResourceType type) {
+        if (type == ResourceType.CHAT_MODEL || type == ResourceType.MODEL_ROUTER) {
+            return !hasLocalResource(name, ResourceType.CHAT_MODEL)
+                    && !hasLocalResource(name, ResourceType.MODEL_ROUTER);
+        }
+        return true;
     }
 
     /**
@@ -240,7 +242,7 @@ public class ResourceCache implements AutoCloseable {
 
         Map<String, ResourceProvider> providers = resourceProviders.get(type);
         if (providers == null || !providers.containsKey(name)) {
-            if (parent != null) {
+            if (parent != null && canInheritResource(name, type)) {
                 return parent.getResource(name, type);
             }
             throw new IllegalArgumentException("Resource not found: " + name + " of type " + type);

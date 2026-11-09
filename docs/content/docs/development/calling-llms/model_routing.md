@@ -117,10 +117,18 @@ environment.
 
 Python uses the same builder with `default_model(name)` and `fallback(enabled=...)`.
 
-Within one scope, a resource name cannot identify both a chat model and a router.
-Candidates and judges must be chat model setups; a router cannot serve as another router's
-candidate or judge, or as a chat model connection. In a Python sub-agent, a local chat
-model or router shadows an inherited resource with the same name of either type.
+A chat model and a model router registered on the same agent must have different
+names.
+
+An internal sub-agent inherits resources, including chat models and routers,
+from its parent agent (the agent that contains it). If the sub-agent registers
+its own chat model or router with the same name, that definition takes precedence.
+For example, if the parent agent registers a router named `assistant` and the
+sub-agent registers a chat model named `assistant`, a chat request to `assistant`
+inside the sub-agent calls its own chat model without using the parent's router.
+
+Candidates and judges must be chat model setups; a router cannot serve as another
+router's candidate or judge, or as a chat model connection.
 
 ## Routing Strategies
 
