@@ -64,6 +64,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -100,12 +102,16 @@ public class SubgraphParallelExecutionTest {
     private static final String PYTHON_CHILD_RESOURCE = "python-chat-model";
 
     private static final AtomicInteger MODEL_CALLS = new AtomicInteger();
+    private static volatile CountDownLatch modelEntered;
+    private static volatile CountDownLatch modelRelease;
     private static final Map<String, String> ACTION_THREADS = new ConcurrentHashMap<>();
 
     @BeforeEach
     void reset() {
         MODEL_CALLS.set(0);
         ACTION_THREADS.clear();
+        modelEntered = null;
+        modelRelease = null;
     }
 
     /** A model that answers synchronously, so no async-pool worker is needed beside the caller. */
@@ -127,6 +133,15 @@ public class SubgraphParallelExecutionTest {
                 List<ChatMessage> messages, Map<String, Object> args, Map<String, Object> params) {
             MODEL_CALLS.incrementAndGet();
             record("model");
+            if (modelEntered != null) {
+                modelEntered.countDown();
+                try {
+                    assertThat(modelRelease.await(30, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException(e);
+                }
+            }
             return new ChatResult(ChatMessage.assistant("answer:" + messages.get(0).getText()));
         }
     }
@@ -476,9 +491,8 @@ public class SubgraphParallelExecutionTest {
     }
 
     /**
-     * A snapshot taken on this engine drains in-flight work first, so the restored operator resumes
-     * from settled durable state: it must reopen cleanly, dispatch a further record, and keep graph
-     * events private across the restore.
+     * A snapshot after the input finishes must reopen cleanly, dispatch a further record, and keep
+     * graph events private across the restore.
      */
     @Test
     void restoresAndContinuesAfterCheckpoint() throws Exception {
@@ -507,14 +521,50 @@ public class SubgraphParallelExecutionTest {
         }
     }
 
+    @Test
+    void restoresRootWhileChildModelCallIsInFlight() throws Exception {
+        for (AgentPlan plan : List.of(chatPlan(), chatInsideSubagentPlan())) {
+            MODEL_CALLS.set(0);
+            modelEntered = new CountDownLatch(1);
+            modelRelease = new CountDownLatch(1);
+            org.apache.flink.runtime.checkpoint.OperatorSubtaskState checkpoint;
+            try (KeyedOneInputStreamOperatorTestHarness<String, String, Object> original =
+                    harness(plan)) {
+                original.open();
+                original.processElement(new StreamRecord<>("first"));
+                assertThat(modelEntered.await(5, TimeUnit.SECONDS)).isTrue();
+                checkpoint = original.snapshot(1, 1);
+                assertThat(original.getRecordOutput()).isEmpty();
+            } finally {
+                modelRelease.countDown();
+            }
+            modelEntered = new CountDownLatch(1);
+            modelRelease = new CountDownLatch(1);
+            try (KeyedOneInputStreamOperatorTestHarness<String, String, Object> restored =
+                    harness(plan)) {
+                restored.initializeState(checkpoint);
+                restored.open();
+                assertThat(modelEntered.await(5, TimeUnit.SECONDS)).isTrue();
+                restored.snapshot(2, 2);
+                modelRelease.countDown();
+                ((ActionExecutionOperator<?, ?>) restored.getOperator())
+                        .waitInFlightEventsFinished();
+                assertThat(values(restored)).hasSize(1);
+                // Once before failure and once on replay; no separately restored child task.
+                assertThat(MODEL_CALLS.get()).isEqualTo(2);
+            } finally {
+                modelRelease.countDown();
+            }
+        }
+    }
+
     /**
      * A caller's wait keeps its worker on this engine, so the pool has to hold the caller and the
      * graph it waits for at once. {@code num-async-threads} alone would not give that: at one
      * thread the caller blocks the only worker able to run the graph, and a pool that small can
-     * neither grow nor reject, so the job hangs until Flink's checkpoint timeout fails it without
-     * naming the cause. The worker ceiling lifts the pool above this configuration, and the
-     * smallest one still completes a call. The class-level timeout is what makes "does not hang" an
-     * assertion here.
+     * neither grow nor reject, so the call cannot progress. The worker ceiling lifts the pool above
+     * this configuration, and the smallest one still completes a call. The class-level timeout is
+     * what makes "does not hang" an assertion here.
      */
     @Test
     void singleAsyncThreadStillCompletesAGraphCall() throws Exception {
