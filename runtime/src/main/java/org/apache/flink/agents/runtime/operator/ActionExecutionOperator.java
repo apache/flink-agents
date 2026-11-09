@@ -38,7 +38,6 @@ import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
-import org.apache.flink.agents.runtime.actionstate.ActionStateUtil;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -65,6 +64,7 @@ import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.trace.TraceTaskLifecycleListener;
 import org.apache.flink.agents.runtime.tracelog.TraceLogWriter;
 import org.apache.flink.agents.runtime.utils.EventUtil;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -135,9 +135,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     /** Idle time after which a surplus parallel-execution worker thread retires (min pool is 1). */
     private static final long WORKER_IDLE_TIMEOUT_MS = 60_000L;
-
-    /** How often a pre-barrier quiesce that has not finished repeats its warning. */
-    private static final long QUIESCE_WARN_INTERVAL_MS = 30_000L;
 
     private static final String INTERNAL_NOOP_INPUT_ACTION_NAME =
             "__flink_agents_internal_noop_input_action";
@@ -246,17 +243,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Nullable private transient ParallelExecutionCoordinator executionCoordinator;
 
     /**
-     * Checkpoint whose pre-barrier quiesce is in progress, or {@code null}. Lets an abort recognize
-     * the drain it belongs to, so one for an older checkpoint cannot end a later drain. This and
-     * {@link #drainAborted} are mailbox-thread state: Flink delivers checkpoint notifications as
-     * mails.
-     */
-    @Nullable private transient Long drainingCheckpointId;
-
-    /** Set by an abort for {@link #drainingCheckpointId}; ends that drain's quiesce wait. */
-    private transient boolean drainAborted;
-
-    /**
      * Number of admitted input records not yet retired, including pending inputs for busy keys,
      * compared against {@link #maxInFlightInputRecords} to apply input backpressure. Maintained on
      * the mailbox thread and rebuilt from the recovered processing keys and pending input events.
@@ -303,6 +289,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private transient OperatorStateManager stateManager;
 
     private transient TypeSerializer<Event> eventSerializer;
+
+    private transient boolean usesBatchExecutionKeyedStateBackend;
 
     // Each job can only have one identifier and this identifier must be consistent across restarts.
     // We cannot use job id as the identifier here because user may change job id by
@@ -354,6 +342,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void open() throws Exception {
         super.open();
+
+        usesBatchExecutionKeyedStateBackend =
+                getKeyedStateBackend() instanceof BatchExecutionKeyedStateBackend;
 
         eventSerializer =
                 TypeInformation.of(Event.class)
@@ -543,16 +534,17 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         processElementInternal(record);
                     });
         } else {
-            if (ContinuationActionExecutor.isContinuationSupported()) {
-                // Mails run while yielding can change the current key, so set the record's key
-                // after the last yield.
-                while (inFlightInputRecords >= maxInFlightInputRecords) {
-                    mailboxExecutor.yield();
-                }
-                super.setKeyContextElement1(record);
+            // Mails run while yielding can change the current key, so set the record's key
+            // after the last yield.
+            while (inFlightInputRecords >= maxInFlightInputRecords) {
+                mailboxExecutor.yield();
             }
+            super.setKeyContextElement1(record);
             processElementInternal(record);
         }
+        // Drain only after releasing the parallel engine's lock: workers need it to
+        // complete Actions, and waitInFlightEventsFinished acquires it itself.
+        waitForCurrentInputInBatchMode();
     }
 
     private void processElementInternal(StreamRecord<IN> record) throws Exception {
@@ -598,6 +590,21 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         processInputEvent(key, inputEvent);
     }
 
+    /**
+     * Completes the current input before Flink's batch keyed-state backend advances to another key.
+     *
+     * <p>The batch backend clears keyed state on every key switch because it assumes that an
+     * operator fully processes one key before returning to its input loop. Action execution
+     * normally spans mailbox continuations, so streaming backends deliberately keep multiple keys
+     * in flight. Under the batch backend, drain those continuations here to honor its processing
+     * contract without changing streaming concurrency.
+     */
+    private void waitForCurrentInputInBatchMode() throws Exception {
+        if (usesBatchExecutionKeyedStateBackend) {
+            waitInFlightEventsFinished();
+        }
+    }
+
     /** Resolves one context key for an input and reuses it for the entire agent run. */
     private void processInputEvent(Object key, Event inputEvent) throws Exception {
         final String contextKey;
@@ -633,27 +640,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private void assignRootOccurrenceId(Object key, Event event) throws Exception {
         String businessKeyIdentity = occurrenceIdentityKeyEncoder.generateBusinessKeyIdentity(key);
         event.setOccurrenceId(
-                ActionStateUtil.deriveRootEventOccurrenceId(
+                RuntimeIdentity.deriveRootEventOccurrenceId(
                         businessKeyIdentity, stateManager.getSequenceNumber()));
-    }
-
-    /**
-     * Assigns each of an action execution's output events its lineage-based occurrence identity
-     * before dispatch, so that distinct event occurrences with identical attributes never collide
-     * in the durable action-state key. Derived purely from the triggering event's own occurrence
-     * identity and the action's identity, so it needs neither the business key nor a durable store.
-     */
-    private void assignOutputOccurrenceIds(ActionTask actionTask, List<Event> outputEvents)
-            throws Exception {
-        String producerExecutionId =
-                ActionStateUtil.deriveActionExecutionId(actionTask.event, actionTask.action);
-        for (int ordinal = 0; ordinal < outputEvents.size(); ordinal++) {
-            outputEvents
-                    .get(ordinal)
-                    .setOccurrenceId(
-                            ActionStateUtil.deriveOutputEventOccurrenceId(
-                                    producerExecutionId, ordinal));
-        }
     }
 
     /** Processes an Action's output Event with its producer and upstream references populated. */
@@ -816,6 +804,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (inputEvent.hasSourceTimestamp()) {
             beginEvent.setSourceTimestamp(inputEvent.getSourceTimestamp());
         }
+        beginEvent.setOccurrenceId(
+                RuntimeIdentity.deriveEmittedEventOccurrenceId(
+                        RuntimeIdentity.deriveActionExecutionId(
+                                inputEvent, AGENT_RUN_BEGIN_ACTION_NAME),
+                        0));
         TraceContext beginTraceContext =
                 TraceContext.forEvent(
                         inputEventTraceContext,
@@ -1057,6 +1050,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     // before its completion becomes durable.
                     notifyActionFinishing(actionTask);
                 }
+                for (Event emitted : actionTaskResult.getOutputEvents()) {
+                    if (emitted.getOccurrenceId() == null) {
+                        actionTask.getRunnerContext().assignOutputIdentity(emitted);
+                    }
+                }
                 durableExecManager.maybePersistTaskResult(
                         key,
                         sequenceNumber,
@@ -1078,7 +1076,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             }
         }
 
-        assignOutputOccurrenceIds(actionTask, outputEvents);
         for (Event actionOutputEvent : outputEvents) {
             processActionOutputEvent(key, contextKey, actionOutputEvent, actionTask);
         }
@@ -1254,15 +1251,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     public void initializeState(StateInitializationContext context) throws Exception {
         super.initializeState(context);
 
-        // Check the actual backend after Flink resolves AUTOMATIC and any configuration changes
-        // made after the Agent pipeline was built, before opening resources or recovering Actions.
-        checkState(
-                !(getKeyedStateBackend() instanceof BatchExecutionKeyedStateBackend),
-                "Flink Agents does not support Flink's batch keyed-state backend"
-                        + " (execution.batch-state-backend.enabled): switching keys can discard"
-                        + " unfinished Actions. Run this job with RuntimeExecutionMode.STREAMING,"
-                        + " or set execution.batch-state-backend.enabled to false.");
-
         int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
         occurrenceIdentityKeyEncoder =
                 new ActionStateKeyEncoder(maxParallelism, getActionStateKeySerializer());
@@ -1306,69 +1294,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     @Override
-    public void prepareSnapshotPreBarrier(long checkpointId) throws Exception {
-        if (!parallelExecutionWithoutCoroutineEnabled) {
-            super.prepareSnapshotPreBarrier(checkpointId);
-            return;
-        }
-        // Quiesce pulled-but-uncommitted tasks before the barrier (their results only live in
-        // memory and would be lost on restore): pause dispatch, then yield without the lock
-        // until everything in flight has committed.
-        try {
-            drainingCheckpointId = checkpointId;
-            drainAborted = false;
-            executionCoordinator.startDraining();
-            awaitQuiesce(checkpointId);
-            super.prepareSnapshotPreBarrier(checkpointId);
-        } catch (Exception e) {
-            // A failed pre-barrier never reaches snapshotState's stopDraining; resume dispatch.
-            try {
-                executionCoordinator.stopDraining();
-            } catch (Exception resumeFailure) {
-                e.addSuppressed(resumeFailure);
-            }
-            throw e;
-        } finally {
-            // No quiesce is in progress after this point, so an abort for this checkpoint arriving
-            // during the capture finds nothing to end.
-            drainingCheckpointId = null;
-        }
-    }
-
-    /**
-     * Waits, without the execution lock, until every pulled task has committed. Dispatch stays
-     * paused for the whole wait, so one action blocked in an async call that never returns holds it
-     * open until the checkpoint itself dies. That death reaches the operator as an abort mail,
-     * which this loop yields, so an aborted drain fails here naming the pool state instead of
-     * leaving the mailbox spinning silently.
-     */
-    private void awaitQuiesce(long checkpointId) throws Exception {
-        long lastWarnMillis = System.currentTimeMillis();
-        while (!executionCoordinator.isQuiesced()) {
-            if (drainAborted) {
-                throw new IllegalStateException(
-                        String.format(
-                                "Checkpoint %d was aborted while the parallel execution engine was"
-                                        + " still waiting for in-flight actions to commit before the"
-                                        + " barrier. Dispatch stays paused during that wait, so an"
-                                        + " action blocked in an async call that never returns holds"
-                                        + " it open until the checkpoint dies. Pool state: %s",
-                                checkpointId, executionCoordinator.diagnostics()));
-            }
-            long nowMillis = System.currentTimeMillis();
-            if (nowMillis - lastWarnMillis >= QUIESCE_WARN_INTERVAL_MS) {
-                lastWarnMillis = nowMillis;
-                LOG.warn(
-                        "Checkpoint {} is still waiting for in-flight actions to commit before the"
-                                + " barrier. Pool state: {}",
-                        checkpointId,
-                        executionCoordinator.diagnostics());
-            }
-            mailboxExecutor.yield();
-        }
-    }
-
-    @Override
     public OperatorSnapshotFutures snapshotState(
             long checkpointId,
             long timestamp,
@@ -1378,18 +1303,21 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (!parallelExecutionWithoutCoroutineEnabled) {
             return super.snapshotState(checkpointId, timestamp, checkpointOptions, storageLocation);
         }
+        // Protect the entire synchronous backend capture, not just snapshotState(context).
+        // Workers could otherwise mutate keyed state between that callback and the backend's
+        // snapshot. Async calls release this lock and remain represented by in-flight state.
+        parallelExecutionLock.acquireByMain();
         try {
             return super.snapshotState(checkpointId, timestamp, checkpointOptions, storageLocation);
         } finally {
-            // Resume dispatch only after the synchronous snapshot capture: a worker woken any
-            // earlier could pull a queued task out of keyed state before it is captured.
-            executionCoordinator.stopDraining();
+            parallelExecutionLock.release();
         }
     }
 
     @Override
     public void snapshotState(StateSnapshotContext context) throws Exception {
-        if (parallelExecutionWithoutCoroutineEnabled) {
+        if (parallelExecutionWithoutCoroutineEnabled
+                && !parallelExecutionLock.isHeldByCurrentThread()) {
             runWithParallelExecutionLock(() -> snapshotStateInternal(context));
         } else {
             snapshotStateInternal(context);
@@ -1419,13 +1347,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void notifyCheckpointAborted(long checkpointId) throws Exception {
         if (parallelExecutionWithoutCoroutineEnabled) {
-            Long draining = drainingCheckpointId;
-            if (draining != null && draining.longValue() == checkpointId) {
-                // This notification is one of the mails the quiesce loop yields, so flagging it
-                // here is what lets that loop stop waiting for a checkpoint that will never be
-                // taken. The loop's failure path resumes dispatch.
-                drainAborted = true;
-            }
             runWithParallelExecutionLock(() -> notifyCheckpointAbortedInternal(checkpointId));
         } else {
             notifyCheckpointAbortedInternal(checkpointId);
@@ -1701,6 +1622,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void tryResumeProcessActionTasks() throws Exception {
+        // Merge before enumerating pending tasks, including keys with only in-flight work.
+        // Run for both engines so a checkpoint can also be restored after upgrading to JDK 21.
+        stateManager.restoreInFlightActionTasks(getKeyedStateBackend());
         stateManager.forEachActionTaskKey(
                 getKeyedStateBackend(),
                 (key, state) -> {
@@ -1954,6 +1878,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 checkState(task != null, "Action task queue was empty.");
                 this.actionTask = task;
 
+                // Child graphs are regenerated by their root's replay, just as on the
+                // continuation engine. Only root FIFO indices are unique within this key.
+                if (submittedTask == null) {
+                    stateManager.addInFlightActionTask(taskIndex, task);
+                }
+
                 contextManager.createAndSetRunnerContext(
                         task,
                         contextKey,
@@ -2020,6 +1950,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 } else {
                     if (lifecyclePrepared) {
                         notifyActionStarted(task);
+                        if (submittedTask == null) {
+                            // RocksDB serializes on put: persist the started flag before an async
+                            // handoff, rather than relying on the heap backend's live reference.
+                            stateManager.addInFlightActionTask(taskIndex, task);
+                        }
                     }
                     try {
                         if (task instanceof JavaActionTask) {
@@ -2136,6 +2071,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     if (lifecyclePrepared) {
                         notifyActionFinishing(actionTask);
                     }
+                    for (Event emitted : result.getOutputEvents()) {
+                        if (emitted.getOccurrenceId() == null) {
+                            actionTask.getRunnerContext().assignOutputIdentity(emitted);
+                        }
+                    }
                     durableExecManager.maybePersistTaskResult(
                             key,
                             sequenceNumber,
@@ -2152,7 +2092,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     // callback belongs to, which would otherwise get none.
                     notifyActionReused(actionTask);
                 }
-                assignOutputOccurrenceIds(actionTask, result.getOutputEvents());
+
             } catch (Throwable t) {
                 if (lifecyclePrepared && actionTask != null) {
                     notifyActionFailed(actionTask, t);
@@ -2197,6 +2137,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         .markActionExecuted(actionTask.action.getName());
             }
             actionTask.getRunnerContext().persistMemory();
+            if (submittedTask == null) {
+                stateManager.removeInFlightActionTask(taskIndex);
+            }
         }
 
         @Override

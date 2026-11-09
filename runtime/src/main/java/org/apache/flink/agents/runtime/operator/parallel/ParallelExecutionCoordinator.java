@@ -62,9 +62,9 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
      * call it blocks on inline -- an async call, or a graph call whose lock handoff keeps the
      * worker -- while the work queued behind it draws from this same pool, so the pool has to hold
      * both. Too small a pool does not fail loudly: {@link DispatchQueue} is unbounded and the pool
-     * cannot grow past its maximum, so queued permits are never redeemed and the job hangs until
-     * Flink's checkpoint timeout fails it, naming no cause. The floor covers configurations the
-     * multiplier cannot reach.
+     * cannot grow past its maximum, so queued permits are never redeemed and graph calls cannot
+     * progress even though checkpoints can succeed. The floor covers configurations the multiplier
+     * cannot reach.
      */
     public static int workerCeiling(int numAsyncThreads) {
         return Math.max(MIN_WORKER_CEILING, WORKER_CEILING_MULTIPLIER * numAsyncThreads);
@@ -91,28 +91,8 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
      */
     private final Map<Object, Integer> dependentTasks = new ConcurrentHashMap<>();
 
-    /**
-     * Pulled root tasks and submitted dependent actions not yet committed; read by {@link
-     * #isQuiesced()} for checkpoint quiesce.
-     */
+    /** Pulled root tasks and submitted dependent actions not yet committed. */
     private final AtomicInteger inFlightExecuting = new AtomicInteger();
-
-    /**
-     * When {@code true}, workers finish in-flight tasks but pull no new nodes. Set before a
-     * checkpoint, cleared once the snapshot is taken. Read under {@link #drainLock} together with
-     * {@link #forfeitedPermits}, so a worker either observes the drain and hands its permit back
-     * for the resume to re-submit, or observes the resume and pulls normally.
-     */
-    private volatile boolean draining;
-
-    private final Object drainLock = new Object();
-
-    /**
-     * Root permits handed back by workers that found a drain in progress. {@link #stopDraining()}
-     * re-submits exactly this many, so a pending node never loses the permit that will eventually
-     * pull it.
-     */
-    private int forfeitedPermits;
 
     /**
      * Permits submitted and not yet fully redeemed; compared against the pool size by {@link
@@ -197,7 +177,6 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
                 return;
             }
             try {
-                // Dependencies of in-flight callers must progress even during checkpoint draining.
                 work.setup(key, recordIndex, taskIndex);
                 work.execute();
                 if (workerExecutor.isShutdown() && !parallelExecutionLock.isHeldByCurrentThread()) {
@@ -259,75 +238,15 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
         return schedule.hasOutstanding(key) || dependentTasks.containsKey(key);
     }
 
-    /**
-     * Pauses new task dispatch before a checkpoint: workers finish and commit in-flight tasks but
-     * pull no new nodes. Returns only after fencing in-progress pulls: a worker increments {@link
-     * #inFlightExecuting} before it first releases the lock, so after the acquire/release below
-     * {@link #isQuiesced()} can no longer miss a pulled task.
-     */
-    public void startDraining() throws InterruptedException {
-        synchronized (drainLock) {
-            draining = true;
-        }
-        parallelExecutionLock.acquireByMain();
-        parallelExecutionLock.release();
-    }
-
-    /**
-     * Resumes task dispatch after a checkpoint: re-submits one permit per worker that handed its
-     * permit back during the drain, then takes and releases the lock once as the mailbox. That
-     * consumes any reservation left to the mailbox, which workers always yield to, so the
-     * re-submitted permits are redeemed at once instead of stalling until the next mailbox action.
-     * Idempotent: a second call finds nothing forfeited and only repeats the fence.
-     */
-    public void stopDraining() throws InterruptedException {
-        int resubmit;
-        synchronized (drainLock) {
-            draining = false;
-            resubmit = forfeitedPermits;
-            forfeitedPermits = 0;
-        }
-        for (int i = 0; i < resubmit; i++) {
-            submittedPermits.incrementAndGet();
-            workerExecutor.execute(this::runOneTask);
-        }
-        parallelExecutionLock.acquireByMain();
-        parallelExecutionLock.release();
-    }
-
-    /** Whether no task is currently pulled-but-uncommitted, i.e. a safe point for a snapshot. */
+    /** Whether no pulled root or submitted dependent remains uncommitted. */
+    @VisibleForTesting
     public boolean isQuiesced() {
         return inFlightExecuting.get() == 0;
     }
 
     /**
-     * Reports the pool state that explains a checkpoint drain which is not quiescing: how many
-     * workers exist against the ceiling, how many are executing, and the permit counters behind
-     * them. Reads counters only, so the mailbox can call this while workers are running.
-     */
-    public String diagnostics() {
-        synchronized (drainLock) {
-            return "workers="
-                    + workerExecutor.getPoolSize()
-                    + '/'
-                    + workerExecutor.getMaximumPoolSize()
-                    + ", executing="
-                    + workerExecutor.getActiveCount()
-                    + ", inFlight="
-                    + inFlightExecuting.get()
-                    + ", queuedPermits="
-                    + workerExecutor.getQueue().size()
-                    + ", submittedPermits="
-                    + submittedPermits.get()
-                    + ", forfeitedPermits="
-                    + forfeitedPermits;
-        }
-    }
-
-    /**
      * Redeems one dispatch permit: under the lock, takes the highest-priority pending node, runs a
-     * fresh work, then hands the completion to the mailbox commit drain. A worker that finds a
-     * checkpoint drain in progress hands its permit back and exits instead of holding the thread.
+     * fresh work, then hands the completion to the mailbox commit drain.
      */
     private void runOneTask() {
         try {
@@ -339,17 +258,6 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
                 // treats every interrupt as the shutdown signal.
                 Thread.currentThread().interrupt();
                 return;
-            }
-            synchronized (drainLock) {
-                if (draining) {
-                    // Parking here would hold a worker out of the pool for the whole snapshot,
-                    // leaving everything queued behind it with no thread to run on. Forfeiting
-                    // costs nothing: the node is still pending and quiesce accounting starts after
-                    // the poll.
-                    forfeitedPermits++;
-                    parallelExecutionLock.release();
-                    return;
-                }
             }
 
             // Holding the lock from here on: every failure is funneled to the mailbox (an uncaught
@@ -455,14 +363,6 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
     @VisibleForTesting
     int getWorkerPoolSizeForTesting() {
         return workerExecutor.getPoolSize();
-    }
-
-    /** Root permits handed back by workers since the last resume; see {@link #runOneTask()}. */
-    @VisibleForTesting
-    public int getForfeitedPermitsForTesting() {
-        synchronized (drainLock) {
-            return forfeitedPermits;
-        }
     }
 
     /**

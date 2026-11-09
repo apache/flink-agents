@@ -24,6 +24,7 @@ import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.subgraph.SubgraphDefinition;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.Test;
 
@@ -116,12 +117,15 @@ class RunnerContextPendingEventsContractTest {
     }
 
     private static RunnerContextImpl newContext() {
-        return new RunnerContextImpl(
-                new FlinkAgentsMetricGroupImpl(
-                        UnregisteredMetricGroups.createUnregisteredOperatorMetricGroup()),
-                () -> {},
-                new AgentPlan(new HashMap<>(), new HashMap<>()),
-                null,
-                "job");
+        RunnerContextImpl context =
+                new RunnerContextImpl(
+                        new FlinkAgentsMetricGroupImpl(
+                                UnregisteredMetricGroups.createUnregisteredOperatorMetricGroup()),
+                        () -> {},
+                        new AgentPlan(new HashMap<>(), new HashMap<>()),
+                        null,
+                        "job");
+        context.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
+        return context;
     }
 }

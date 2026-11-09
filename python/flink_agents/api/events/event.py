@@ -59,6 +59,34 @@ def _reconstruct_row_if_needed(data: Any) -> Any:
     return data
 
 
+def copy_user_context(user_context: dict[str, Any]) -> dict[str, Any]:
+    """Detach a caller-supplied ``user_context`` map from the event that stores it.
+
+    Built-in request and response events store this copy so a later mutation of
+    the caller's object does not change an event that already holds the value.
+    Nested maps and lists are copied. Other values are returned as given.
+    Copying does not restore or rewrite application types.
+
+    Raises:
+        TypeError: If ``user_context`` is not a dict.
+    """
+    if not isinstance(user_context, dict):
+        msg = "user_context must be a dict"
+        raise TypeError(msg)
+    return {
+        key: _copy_user_context_value(value) for key, value in user_context.items()
+    }
+
+
+def _copy_user_context_value(value: Any) -> Any:
+    """Copy nested maps and lists inside a user-context value."""
+    if isinstance(value, dict):
+        return {key: _copy_user_context_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_user_context_value(item) for item in value]
+    return value
+
+
 class _AttrKind(Enum):
     """The shape a built-in attribute value takes at the JSON boundary."""
 
@@ -466,12 +494,12 @@ class Event(BaseModel, extra="allow"):
             msg = "Event JSON must contain a non-empty 'type' field."
             raise ValueError(msg)
         event = cls.model_validate(data)
-        for key in list(event.attributes):
-            event.attributes[key] = _reconstruct_row_if_needed(event.attributes[key])
         # Imported lazily: built_in_events imports the concrete subclasses, which
         # import this module, so a top-level import here would be circular.
         from flink_agents.api.events.built_in_events import restore
 
+        for key in list(event.attributes):
+            event.attributes[key] = _reconstruct_row_if_needed(event.attributes[key])
         return restore(event)
 
 

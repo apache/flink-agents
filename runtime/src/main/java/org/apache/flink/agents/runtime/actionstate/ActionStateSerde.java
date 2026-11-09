@@ -17,6 +17,8 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
@@ -140,7 +142,15 @@ public final class ActionStateSerde {
             use = JsonTypeInfo.Id.CLASS,
             include = JsonTypeInfo.As.PROPERTY,
             property = "@class")
-    abstract static class EventTypeInfoMixin {}
+    abstract static class EventTypeInfoMixin {
+        @JsonIgnore(false)
+        @JsonProperty("occurrenceId")
+        abstract String getOccurrenceId();
+
+        @JsonIgnore(false)
+        @JsonProperty("occurrenceId")
+        abstract void setOccurrenceId(String occurrenceId);
+    }
 
     /** Custom serializer for ActionTask that always serializes as null. */
     static class ActionTaskSerializer extends JsonSerializer<ActionTask> {

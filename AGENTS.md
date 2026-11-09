@@ -31,6 +31,8 @@ Use concise subjects with bracketed components, matching existing history, such 
 
 Start from `.github/CONTRIBUTING.md` for general contribution guidance, covering bug reports, feature proposals, code contribution, and design discussions. Before opening a pull request whose implementation is largely AI-assisted, also read `contribution-guides/ai-assisted-pr.md`. It defines the Implementation Description such a change owes its reviewer: runtime flow, key decisions, interaction decisions, behavioral contracts, failure behavior, compatibility impact, and a contracts-to-tests table, folded into the sections of `.github/PULL_REQUEST_TEMPLATE.md`. It does not apply to a change whose diff is already prose, such as documentation, comments, or site content.
 
-## Code Review
+## Development and Code Review
 
-Before reviewing a PR, read `code_review.md`. For GitHub PRs, read existing unresolved human review threads and include relevant already-raised issues in the local review conclusion, marked as human-raised. Apply its passes for runtime call paths, Java/Python parity, cross-language bridges, root-cause removal, and targeted verification.
+Before implementing changes or reviewing a PR, read `code_review.md`. Apply its relevant design, API, documentation, compatibility, and testing guidance during development, and consult the linked change-type guides as needed.
+
+For GitHub PR reviews, read existing unresolved human review threads and include relevant already-raised issues in the local review conclusion, marked as human-raised. Apply the review passes for runtime call paths, Java/Python parity, cross-language bridges, root-cause removal, and targeted verification.

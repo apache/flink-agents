@@ -43,6 +43,7 @@ import java.util.concurrent.CompletableFuture;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.KEY_SERIALIZER;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.createKeyEncoder;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.generateKey;
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
@@ -80,7 +81,7 @@ public class FlussActionStateStoreTest {
         store = createStore(MAX_PARALLELISM);
 
         testAction = new NoOpAction("test-action");
-        testEvent = new InputEvent("test data");
+        testEvent = occurrence(new InputEvent("test data"));
         testActionState = new ActionState(testEvent);
     }
 

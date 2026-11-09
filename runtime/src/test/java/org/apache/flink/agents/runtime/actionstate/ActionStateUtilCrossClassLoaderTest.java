@@ -29,6 +29,7 @@ import java.io.InputStream;
 import java.util.List;
 
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.generateKey;
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -69,7 +70,7 @@ public class ActionStateUtilCrossClassLoaderTest {
                 first.hashCode() != second.hashCode(),
                 "identity hashes of the two Class objects collided");
 
-        InputEvent event = new InputEvent("test-input");
+        InputEvent event = occurrence(new InputEvent("test-input"));
         assertEquals(
                 generateKey("test-key", 7, first, event, MAX_PARALLELISM),
                 generateKey("test-key", 7, second, event, MAX_PARALLELISM));

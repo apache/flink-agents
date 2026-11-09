@@ -49,28 +49,40 @@ in the other language, also install their dependencies.
 
 ### Execution mode
 
-Flink's default execution mode is `STREAMING`. Keep this mode for Flink Agents
-jobs, including jobs with bounded inputs; no additional configuration is needed
-unless the default has been overridden. To explicitly select it in Flink's
-`config.yaml`, set the following outside the `agent` section:
+Flink's default execution mode is `STREAMING`, which supports both bounded and
+unbounded Agent inputs. To explicitly select it in Flink's `config.yaml`, set the
+following outside the `agent` section:
 
 ```yaml
 execution:
   runtime-mode: STREAMING
 ```
 
-Flink Agents does not support Flink's batch keyed-state backend, which is enabled
-by default in `BATCH` mode through `execution.batch-state-backend.enabled`. This
-backend clears state when switching keys, while an Agent may still have unfinished
-Actions for a previous key. Flink Agents rejects this backend before processing
-Agent inputs.
+For bounded inputs, Agent workflows also support `BATCH` execution, including
+`AUTOMATIC` mode when Flink selects batch execution. With Flink's default batch
+keyed-state backend, each Agent operator subtask finishes the current input's
+entire workflow, including asynchronous Actions, before accepting the next input.
+Different subtasks can still run concurrently, and short-term memory is preserved
+across inputs of the same key. Flink discards that key's state when it advances to
+the next key.
 
-`AUTOMATIC` selects `BATCH` when all sources are bounded, so it can encounter the
-same restriction. This also applies if the execution mode is changed after the
-Agent pipeline is built. Ensure the final job configuration uses `STREAMING`.
+For workloads that spend time waiting for LLMs or remote tools, allowing workflows
+for different keys to overlap within a subtask can improve throughput. To retain
+that concurrency in `BATCH` mode, use a regular state backend:
 
-Setting `execution.batch-state-backend.enabled: false` avoids this particular
-backend restriction, but does not imply full support for every BATCH use case.
+```yaml
+execution:
+  runtime-mode: BATCH
+  batch-state-backend:
+    enabled: false
+```
+
+Keyed state remains available, but it may retain state for more keys and require
+more storage. If no other operator requires sorted input, also set
+`execution.sorted-inputs.enabled: false` to avoid input sorting overhead. Both
+options default to `true` and apply to the whole job; changing them can affect other
+keyed operators and timer behavior. They do not enable streaming checkpoints in
+`BATCH` mode.
 
 ### Submit to Flink Cluster
 

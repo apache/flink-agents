@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.generateKey;
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -42,11 +43,12 @@ class ActionStateCacheTest {
     @Test
     void genericInputEventsUseTheSameConflictRuleAsJavaInputEvents() throws Exception {
         ActionStateCache cache = new ActionStateCache();
-        Event input = new Event(InputEvent.EVENT_TYPE, Map.of("input", "value"));
+        Event input = occurrence(new Event(InputEvent.EVENT_TYPE, Map.of("input", "value")));
         String first = key("key", 0, action, input);
         cache.put(first, new ActionState(input));
-        assertThat(cache.lookup(first, new InputEvent("value"), ignored -> {})).isNotNull();
-        Event changed = new Event(InputEvent.EVENT_TYPE, Map.of("input", "changed"));
+        assertThat(cache.lookup(first, occurrence(new InputEvent("value")), ignored -> {}))
+                .isNotNull();
+        Event changed = occurrence(new Event(InputEvent.EVENT_TYPE, Map.of("input", "changed")));
         assertThat(cache.lookup(key("key", 0, action, changed), changed, ignored -> {})).isNull();
         assertThat(cache).isEmpty();
     }
@@ -54,11 +56,11 @@ class ActionStateCacheTest {
     @Test
     void multipleRootActionsShareAnInputFingerprintUntilTheLastIsRemoved() throws Exception {
         ActionStateCache cache = new ActionStateCache();
-        Event first = new InputEvent("first");
-        Event replacement = new InputEvent("replacement");
+        Event first = occurrence(new InputEvent("first"));
+        Event replacement = occurrence(new InputEvent("replacement"));
         String root1 = key("key", 1, action, first);
         String root2 = key("key", 1, new NoOpAction("second"), first);
-        Event child = new Event("step");
+        Event child = occurrence(new Event("step"));
         String childKey = key("key", 1, action, child);
         cache.put(root1, new ActionState(first));
         cache.put(root2, new ActionState(first));
@@ -73,15 +75,16 @@ class ActionStateCacheTest {
         // No obsolete fingerprint may survive invalidation and poison the replacement history.
         String newRoot = key("key", 1, action, replacement);
         cache.put(newRoot, new ActionState(replacement));
-        assertThat(cache.lookup(newRoot, new InputEvent("replacement"), removed::add)).isNotNull();
+        assertThat(cache.lookup(newRoot, occurrence(new InputEvent("replacement")), removed::add))
+                .isNotNull();
     }
 
     @Test
     void outputEvidenceTracksSuccessfulPutsEvenWhenStateIsMutatedInPlace() throws Exception {
         ActionStateCache cache = new ActionStateCache();
-        Event root = new InputEvent("root");
-        Event oldChild = new Event("step", Map.of("value", "same"));
-        Event newChild = new Event("step", Map.of("value", "same"));
+        Event root = occurrence(new InputEvent("root"));
+        Event oldChild = occurrence(new Event("step", Map.of("value", "same")));
+        Event newChild = occurrence(new Event("step", Map.of("value", "same")));
         String rootKey = key("key", 0, action, root);
         String childKey = key("key", 0, action, oldChild);
         ActionState producer = new ActionState(root);
@@ -104,9 +107,9 @@ class ActionStateCacheTest {
     @Test
     void removingOneProducerDoesNotRemoveAnotherProducersEvidence() throws Exception {
         ActionStateCache cache = new ActionStateCache();
-        Event input = new InputEvent("input");
-        Event oldChild = new Event("step");
-        Event currentChild = new Event("step");
+        Event input = occurrence(new InputEvent("input"));
+        Event oldChild = occurrence(new Event("step"));
+        Event currentChild = occurrence(new Event("step"));
         String first = key("key", 0, action, input);
         String second = key("key", 0, new NoOpAction("second"), input);
         ActionState producer = new ActionState(input);
@@ -126,8 +129,8 @@ class ActionStateCacheTest {
     @Test
     void clearAndTombstoneRemovalDiscardAllEvidence() throws Exception {
         ActionStateCache cache = new ActionStateCache();
-        Event old = new InputEvent("old");
-        Event current = new InputEvent("current");
+        Event old = occurrence(new InputEvent("old"));
+        Event current = occurrence(new InputEvent("current"));
         String oldKey = key("key", 0, action, old);
         String currentKey = key("key", 0, action, current);
         for (boolean clear : List.of(false, true)) {
@@ -149,7 +152,7 @@ class ActionStateCacheTest {
     @Test
     void prefixPruningAndSuffixInvalidationHandleSequenceBoundsAndKeepOtherKeys() throws Exception {
         ActionStateCache cache = new ActionStateCache();
-        Event event = new InputEvent("value");
+        Event event = occurrence(new InputEvent("value"));
         String zero = key("key", 0, action, event);
         String max = key("key", Long.MAX_VALUE, action, event);
         String other = key("other", Long.MAX_VALUE, action, event);
@@ -160,7 +163,7 @@ class ActionStateCacheTest {
         assertThat(cache.keysThrough(identity, 0)).containsExactly(zero);
         cache.keysThrough(identity, 0).forEach(cache::remove);
         assertThat(cache.keysThrough(identity, Long.MAX_VALUE)).containsExactly(max);
-        Event changed = new InputEvent("changed");
+        Event changed = occurrence(new InputEvent("changed"));
         List<String> removed = new ArrayList<>();
         cache.lookup(key("key", Long.MAX_VALUE, action, changed), changed, removed::add);
         assertThat(removed).containsExactly(max);
@@ -170,7 +173,7 @@ class ActionStateCacheTest {
     @Test
     void checkpointRefreshEnumeratesEachKeysRoundsInIncreasingOrder() throws Exception {
         ActionStateCache cache = new ActionStateCache();
-        Event event = new InputEvent("value");
+        Event event = occurrence(new InputEvent("value"));
         for (String key : List.of("first", "second")) {
             for (long seq : List.of(9L, 0L, 5L)) {
                 cache.put(key(key, seq, action, event), new ActionState(event));
@@ -187,7 +190,7 @@ class ActionStateCacheTest {
         NoScanMap states = new NoScanMap();
         ActionStateCache cache = ActionStateCache.wrap(states);
         states.forbidScan = true;
-        Event event = new InputEvent("value");
+        Event event = occurrence(new InputEvent("value"));
         for (int key = 0; key < 100; key++) {
             for (int seq = 0; seq < 30; seq++) {
                 cache.replay(
@@ -200,7 +203,7 @@ class ActionStateCacheTest {
         for (int i = 0; i < 100; i++) {
             assertThat(cache.lookup(hit, event, ignored -> {})).isNotNull();
         }
-        Event changed = new InputEvent("changed");
+        Event changed = occurrence(new InputEvent("changed"));
         List<String> removed = new ArrayList<>();
         cache.replay(key("key0", 10, action, changed), new ActionState(changed), removed::add);
         assertThat(removed).hasSize(20);
@@ -212,7 +215,7 @@ class ActionStateCacheTest {
     @Test
     void mapViewsCannotBypassIndexMaintenance() throws Exception {
         ActionStateCache cache = new ActionStateCache();
-        Event event = new InputEvent("value");
+        Event event = occurrence(new InputEvent("value"));
         String key = key("key", 0, action, event);
         cache.put(key, new ActionState(event));
         assertThatThrownBy(() -> cache.keySet().remove(key))

@@ -170,6 +170,7 @@ async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
             responses=responses,
             success=success,
             error=error,
+            user_context=event.user_context,
         )
     )
 

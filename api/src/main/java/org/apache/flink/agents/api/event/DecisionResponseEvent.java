@@ -25,6 +25,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.decision.DecisionResult;
 
+import javax.annotation.Nullable;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -51,7 +53,8 @@ public class DecisionResponseEvent extends Event {
                     BuiltInAttribute.optionalUntyped(RESPONSE),
                     BuiltInAttribute.optionalUntyped(ERROR),
                     BuiltInAttribute.optional(RETRY_COUNT, Number.class),
-                    BuiltInAttribute.optional(TOTAL_RETRY_WAIT_SEC, Number.class));
+                    BuiltInAttribute.optional(TOTAL_RETRY_WAIT_SEC, Number.class),
+                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -205,5 +208,24 @@ public class DecisionResponseEvent extends Event {
     @JsonIgnore
     public int getTotalRetryWaitSec() {
         return ((Number) getAttr(TOTAL_RETRY_WAIT_SEC)).intValue();
+    }
+
+    /**
+     * Attaches application-defined data from the originating decision request. {@code null} omits
+     * it. Present on both successful and failed responses.
+     */
+    public DecisionResponseEvent withUserContext(@Nullable Map<String, Object> userContext) {
+        UserDefinedContext.set(this, userContext);
+        return this;
+    }
+
+    /**
+     * Returns the originating request's application-defined data, or {@code null} when it was
+     * omitted.
+     */
+    @JsonIgnore
+    @Nullable
+    public Map<String, Object> getUserContext() {
+        return UserDefinedContext.get(this);
     }
 }
