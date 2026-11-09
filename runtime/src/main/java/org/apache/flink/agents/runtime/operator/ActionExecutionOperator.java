@@ -304,6 +304,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient TypeSerializer<Event> eventSerializer;
 
+    private transient boolean usesBatchExecutionKeyedStateBackend;
+
     // Each job can only have one identifier and this identifier must be consistent across restarts.
     // We cannot use job id as the identifier here because user may change job id by
     // creating a savepoint, stop the job and then resume from savepoint.
@@ -354,6 +356,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void open() throws Exception {
         super.open();
+
+        usesBatchExecutionKeyedStateBackend =
+                getKeyedStateBackend() instanceof BatchExecutionKeyedStateBackend;
 
         eventSerializer =
                 TypeInformation.of(Event.class)
@@ -551,6 +556,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             super.setKeyContextElement1(record);
             processElementInternal(record);
         }
+        // Drain only after releasing the parallel engine's lock: workers need it to
+        // complete Actions, and waitInFlightEventsFinished acquires it itself.
+        waitForCurrentInputInBatchMode();
     }
 
     private void processElementInternal(StreamRecord<IN> record) throws Exception {
@@ -594,6 +602,21 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // Otherwise, the new event is processed immediately. Its failures are attributed to the
         // input run created by processInputEvent.
         processInputEvent(key, inputEvent);
+    }
+
+    /**
+     * Completes the current input before Flink's batch keyed-state backend advances to another key.
+     *
+     * <p>The batch backend clears keyed state on every key switch because it assumes that an
+     * operator fully processes one key before returning to its input loop. Action execution
+     * normally spans mailbox continuations, so streaming backends deliberately keep multiple keys
+     * in flight. Under the batch backend, drain those continuations here to honor its processing
+     * contract without changing streaming concurrency.
+     */
+    private void waitForCurrentInputInBatchMode() throws Exception {
+        if (usesBatchExecutionKeyedStateBackend) {
+            waitInFlightEventsFinished();
+        }
     }
 
     /** Resolves one context key for an input and reuses it for the entire agent run. */
@@ -1241,15 +1264,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void initializeState(StateInitializationContext context) throws Exception {
         super.initializeState(context);
-
-        // Check the actual backend after Flink resolves AUTOMATIC and any configuration changes
-        // made after the Agent pipeline was built, before opening resources or recovering Actions.
-        checkState(
-                !(getKeyedStateBackend() instanceof BatchExecutionKeyedStateBackend),
-                "Flink Agents does not support Flink's batch keyed-state backend"
-                        + " (execution.batch-state-backend.enabled): switching keys can discard"
-                        + " unfinished Actions. Run this job with RuntimeExecutionMode.STREAMING,"
-                        + " or set execution.batch-state-backend.enabled to false.");
 
         int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
         occurrenceIdentityKeyEncoder =
