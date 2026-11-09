@@ -42,6 +42,7 @@ import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.ForTestMemoryMapState;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -251,6 +252,7 @@ class DecisionRoutingRecoveryTest {
         } else {
             context = new RunnerContextImpl(metrics, () -> {}, plan, resources, "test-job");
         }
+        context.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         context.actionName = "chat_model_action";
         // The chat action reads and writes sensory memory; back it with in-memory stores.
         context.memoryContext =
