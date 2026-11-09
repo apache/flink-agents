@@ -217,9 +217,12 @@ public interface RunnerContext {
      * unsupported and is not checked at runtime. Suspending and resuming the creating action is
      * still the same execution. Repeated awaits within that execution reuse the terminal response;
      * a failed response throws {@link
-     * org.apache.flink.agents.api.event.ChatResponseEvent.ChatResponseException}. Chat handles are
-     * not supported by {@link #gather} yet. Java chat awaits require the JDK 21 continuation
-     * runtime and reject unsupported runtimes before dispatching a request.
+     * org.apache.flink.agents.api.event.ChatResponseEvent.ChatResponseException}.
+     *
+     * <p>On JDK 21+, the default continuation execution engine supports waiting for chat calls. On
+     * JDK 11/17, waiting requires the parallel execution engine. Both allow other actions to run
+     * while the calling action waits. The serial execution engine rejects the call with {@link
+     * UnsupportedOperationException} before starting the child graph to avoid deadlock.
      */
     default DurableFuture<ChatResult> chat(ChatRequestEvent request) {
         throw new UnsupportedOperationException("Chat calls require an event-backed runtime");

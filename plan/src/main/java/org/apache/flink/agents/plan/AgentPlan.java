@@ -45,7 +45,6 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
-import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameterInjectionValidator;
@@ -62,6 +61,7 @@ import org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
 import org.apache.flink.agents.plan.subagent.InternalSubagentCompilationHelper;
 import org.apache.flink.agents.plan.subagent.InternalSubagentPlans;
+import org.apache.flink.agents.plan.subagent.SubagentConstants;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.plan.tools.bash.BashTool;
 import org.slf4j.Logger;
@@ -772,12 +772,12 @@ public class AgentPlan implements Serializable {
      */
     private void checkToolNameNotReserved(ResourceProvider provider) {
         if (provider.getType() == TOOL
-                && provider.getName().startsWith(SubagentSetup.CALLABLE_NAME_PREFIX)) {
+                && provider.getName().startsWith(SubagentConstants.TOOL_NAME_PREFIX)) {
             throw new IllegalArgumentException(
                     String.format(
                             "Tool name '%s' must not start with the reserved prefix '%s',"
                                     + " which identifies sub-agent callables.",
-                            provider.getName(), SubagentSetup.CALLABLE_NAME_PREFIX));
+                            provider.getName(), SubagentConstants.TOOL_NAME_PREFIX));
         }
     }
 

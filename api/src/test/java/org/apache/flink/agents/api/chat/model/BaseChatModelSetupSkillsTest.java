@@ -110,6 +110,12 @@ class BaseChatModelSetupSkillsTest {
                     }
 
                     @Override
+                    public Tool getSubagentTool(String subagentName) {
+                        throw new UnsupportedOperationException(
+                                "Subagent tools are not used in this test.");
+                    }
+
+                    @Override
                     public String generateAvailableSkillsPrompt(List<String> skillNames) {
                         return "<available_skills>\n<skill>\n<name>"
                                 + skillNames.get(0)
@@ -148,6 +154,12 @@ class BaseChatModelSetupSkillsTest {
                     @Override
                     public Resource getResource(String name, ResourceType type) {
                         return store.get(name);
+                    }
+
+                    @Override
+                    public Tool getSubagentTool(String subagentName) {
+                        throw new UnsupportedOperationException(
+                                "Subagent tools are not used in this test.");
                     }
 
                     @Override
@@ -204,6 +216,12 @@ class BaseChatModelSetupSkillsTest {
                     @Override
                     public Resource getResource(String name, ResourceType type) {
                         return store.get(name);
+                    }
+
+                    @Override
+                    public Tool getSubagentTool(String subagentName) {
+                        throw new UnsupportedOperationException(
+                                "Subagent tools are not used in this test.");
                     }
 
                     @Override

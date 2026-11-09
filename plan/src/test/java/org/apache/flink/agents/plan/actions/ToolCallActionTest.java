@@ -44,7 +44,9 @@ import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.ChatFixtures;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.agents.plan.tools.AsyncTool;
 import org.apache.flink.agents.plan.tools.FunctionTool;
+import org.apache.flink.agents.plan.tools.ToolCallContext;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -484,7 +486,7 @@ public class ToolCallActionTest {
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", false);
         assertThat(response.getResponses().get("call-1").getError())
-                .isEqualTo("Tool queryOrder execute failed.");
+                .isEqualTo("Tool queryOrder execution failed: database timeout");
         assertThat(response.getError()).containsEntry("call-1", "database timeout");
     }
 
@@ -503,7 +505,7 @@ public class ToolCallActionTest {
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", false);
         assertThat(response.getResponses().get("call-1").getError())
-                .isEqualTo("Tool queryOrder does not exist.");
+                .isEqualTo("Failed to resolve tool queryOrder.");
         assertThat(response.getError()).containsEntry("call-1", "missing resource");
     }
 
@@ -536,6 +538,72 @@ public class ToolCallActionTest {
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getResponses().get("call-1").getText()).isEqualTo("tenant-1:order-1");
         assertThat(response.getResponses().get("call-2").getText()).isEqualTo("tenant-1:order-2");
+    }
+
+    /** An async-capable tool with an ordinary name: dispatch must not depend on subagent names. */
+    private static class AsyncEchoTool extends Tool implements AsyncTool {
+        AsyncEchoTool() {
+            super(new ToolMetadata("queryOrder", "Echo asynchronously.", "{}"));
+        }
+
+        @Override
+        public ToolType getToolType() {
+            return ToolType.FUNCTION;
+        }
+
+        @Override
+        public ToolResponse call(ToolParameters parameters) {
+            throw new AssertionError("AsyncTool must be called through callAsync.");
+        }
+
+        @Override
+        public AsyncFuture<ToolResponse> callAsync(
+                RunnerContext ctx, ToolParameters parameters, ToolCallContext callContext) {
+            return new TestDurableFuture<>(
+                    "async:" + callContext.getCallId(), () -> ToolResponse.text("async-result"));
+        }
+    }
+
+    @Test
+    void processToolRequestMixesAsyncCapabilityWithOrdinaryToolWithoutExtraDurableCall()
+            throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext() {
+                    private int lookups;
+
+                    @Override
+                    public Resource getResource(String name, ResourceType type) throws Exception {
+                        return lookups++ == 0 ? new AsyncEchoTool() : super.getResource(name, type);
+                    }
+                }.withToolCallParallelism(2);
+
+        ToolCallAction.processToolRequest(toolRequest("queryOrder", "call-1", "call-2"), ctx);
+
+        assertThat(ctx.gatherIds).containsExactly(List.of("async:call-1", "tool-call:call-2"));
+        assertThat(ctx.durableExecuteAsyncIds).containsExactly("tool-call:call-2");
+        assertThat(ctx.durableExecuteIds).isEmpty();
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getResponses().get("call-1").getText()).isEqualTo("async-result");
+        assertThat(response.getResponses().get("call-2").getText()).isEqualTo("tenant-1:order-2");
+    }
+
+    @Test
+    void processToolRequestAwaitsAsyncCapabilityEvenWhenAsyncConfigIsDisabled() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext() {
+                    @Override
+                    public Resource getResource(String name, ResourceType type) {
+                        return new AsyncEchoTool();
+                    }
+                }.withToolCallAsync(false);
+
+        ToolCallAction.processToolRequest(toolRequest("queryOrder"), ctx);
+
+        assertThat(ctx.durableExecuteIds).isEmpty();
+        assertThat(ctx.durableExecuteAsyncIds).isEmpty();
+        assertThat(ctx.gatherIds).isEmpty();
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getResponses().get("call-1").getText()).isEqualTo("async-result");
     }
 
     @Test
@@ -616,7 +684,7 @@ public class ToolCallActionTest {
         assertThat(response.getResponses().get("call-1").getText()).isEqualTo("ok");
         assertThat(response.getSuccess()).containsEntry("call-2", false);
         assertThat(response.getResponses().get("call-2").getError())
-                .isEqualTo("Tool queryOrder execute failed.");
+                .isEqualTo("Tool queryOrder execution failed: boom");
         assertThat(response.getError()).containsEntry("call-2", "boom");
     }
 

@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 
 /**
  * Framework-level deferred execution mode for sub-agent setups: {@code submit} registers the
@@ -43,25 +44,32 @@ public abstract class BaseDeferredSubagentSetup extends BaseSubagentSetup {
     @Override
     public SubagentFuture submit(RunnerContext ctx, Object prompt, String sessionId, String callId)
             throws Exception {
-        return new DeferredSubagentFuture(
+        return new SubagentFutureImpl(
                 sessionId,
                 callId,
                 ctx,
+                () ->
+                        ((RunnerContextImpl) ctx)
+                                .durableExecuteAsync(
+                                        sessionId + "#" + callId,
+                                        SubagentResult.class,
+                                        () -> prepare(ctx, prompt, sessionId, callId)),
                 currentTaskRegistry(),
-                () -> prepare(ctx, prompt, sessionId, callId));
+                () -> false,
+                () -> {});
     }
 
     /**
      * Prepares one invocation and returns the {@link DurableCallable} running it. Both ids are
-     * already assigned; the durable id MUST be derived solely from the {@code (sessionId, callId)}
-     * pair so it is reproducible after failover.
+     * already assigned; the callable must use {@code sessionId + "#" + callId} as its durable id
+     * and {@code SubagentResult.class} as its result class.
      *
-     * <p>Called exactly once per invocation, when the deferred handle is first resolved, on the
-     * mailbox thread. Implementations may therefore perform the mailbox-confined part of issuing
-     * the request here; the returned callable's {@link DurableCallable#call()} then carries the
-     * wait, normally on an async-pool worker off the mailbox thread. A callable marked {@link
-     * org.apache.flink.agents.runtime.async.ContinuationNativeCallable} instead runs inline on the
-     * mailbox thread and releases it by suspending the caller's continuation.
+     * <p>Called on the mailbox thread when the handle is first resolved, after reserving its
+     * durable slot. Terminal replay skips this method; recovery of a pending call may invoke it
+     * again. Ordinary preparation exceptions are recorded as the call's failure. Implementations
+     * may therefore perform the mailbox-confined part of issuing the request here; the returned
+     * callable's {@link DurableCallable#call()} then carries the wait on an async-pool worker off
+     * the mailbox thread.
      *
      * <p>The callable folds its own comprehensible failures into the returned {@link
      * SubagentResult}; an exception escaping {@link DurableCallable#call()} is a system-level

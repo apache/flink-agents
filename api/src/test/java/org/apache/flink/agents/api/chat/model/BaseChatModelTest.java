@@ -29,6 +29,10 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameters;
+import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
@@ -64,6 +68,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * response generation.
  */
 class BaseChatModelTest {
+    private static class StubTool extends Tool {
+        StubTool(String name, String description, String inputSchema) {
+            super(new ToolMetadata("_subagent_" + name, description, inputSchema));
+        }
+
+        @Override
+        public ToolType getToolType() {
+            return ToolType.FUNCTION;
+        }
+
+        @Override
+        public ToolResponse call(ToolParameters parameters) {
+            throw new UnsupportedOperationException();
+        }
+    }
 
     private TestChatModel chatModel;
     private Prompt simplePrompt;
@@ -410,7 +429,7 @@ class BaseChatModelTest {
         StructuredRecordingConnection connection = new StructuredRecordingConnection(support);
         RecordingChatModelSetup setup =
                 new RecordingChatModelSetup(connection, null, strategy, SETUP_PARAMS);
-        setup.getTools().add(new SubagentTool("helper", "help", "{\"type\":\"object\"}"));
+        setup.getTools().add(new StubTool("helper", "help", "{\"type\":\"object\"}"));
 
         if (expected == null) {
             assertThrows(
@@ -532,8 +551,8 @@ class BaseChatModelTest {
                         StructuredOutputStrategy.AUTO,
                         SETUP_PARAMS);
         setup.skillDiscoveryPrompt = "Available skills";
-        setup.getTools().add(new SubagentTool("bound", "help", "{\"type\":\"object\"}"));
-        Tool given = new SubagentTool("given", "help", "{\"type\":\"object\"}");
+        setup.getTools().add(new StubTool("bound", "help", "{\"type\":\"object\"}"));
+        Tool given = new StubTool("given", "help", "{\"type\":\"object\"}");
         List<ChatMessage> messages = List.of(new ChatMessage(MessageRole.USER, "hi"));
 
         setup.chat(messages, List.of(given), Map.of(), String.class);
@@ -636,7 +655,7 @@ class BaseChatModelTest {
         RecordingChatModelSetup setup =
                 new RecordingChatModelSetup(
                         connection, null, StructuredOutputStrategy.AUTO, paramsWithToolChoice());
-        Tool tool = new SubagentTool("given", "help", "{\"type\":\"object\"}");
+        Tool tool = new StubTool("given", "help", "{\"type\":\"object\"}");
 
         setup.chat(
                 List.of(new ChatMessage(MessageRole.USER, "hi")),
@@ -690,7 +709,7 @@ class BaseChatModelTest {
                     }
                 };
         setup.skillDiscoveryPrompt = "Available skills";
-        Tool bound = new SubagentTool("bound", "help", "{\"type\":\"object\"}");
+        Tool bound = new StubTool("bound", "help", "{\"type\":\"object\"}");
         setup.getTools().add(bound);
         Map<String, Object> modelParams = Map.of("temperature", 0.9);
 

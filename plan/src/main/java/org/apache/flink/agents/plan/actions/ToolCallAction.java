@@ -21,18 +21,14 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.configuration.ConfigOption;
+import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
-import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
-import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.subagent.SubagentFuture;
-import org.apache.flink.agents.api.subagent.SubagentResult;
-import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolExecutionMetadataProvider;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
@@ -45,13 +41,13 @@ import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.exceptions.UncapturableException;
+import org.apache.flink.agents.plan.subagent.SubagentConstants;
+import org.apache.flink.agents.plan.tools.AsyncTool;
 import org.apache.flink.agents.plan.tools.FunctionTool;
+import org.apache.flink.agents.plan.tools.ToolCallContext;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
-import org.apache.flink.agents.plan.utils.ToolResultUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import javax.annotation.Nullable;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -98,7 +94,7 @@ public class ToolCallAction {
         if (toolCallAsync && toolCallParallelism > 1 && executions.size() > 1) {
             executeParallel(executions, ctx, success, error, responses);
         } else {
-            executeSequentially(executions, toolCallAsync, ctx, success, error, responses);
+            executeSequentially(executions, ctx, success, error, responses);
         }
 
         ctx.sendEvent(
@@ -122,23 +118,9 @@ public class ToolCallAction {
             Map<String, Object> mergedArguments = new HashMap<>(arguments);
 
             Tool tool = null;
-            SubagentSetup agent = null;
             Exception preparationError = null;
-            // The reserved _subagent_ prefix separates the two namespaces: tool
-            // registration rejects the prefix, so a prefixed callable name can only
-            // address a sub-agent. Matched once here and carried down, because resolving
-            // the AGENT resource throws when the name is absent and would otherwise have
-            // to be attempted for every plain tool call.
-            boolean delegated = name.startsWith(SubagentSetup.CALLABLE_NAME_PREFIX);
             try {
-                if (delegated) {
-                    agent =
-                            resolveSubagent(
-                                    name.substring(SubagentSetup.CALLABLE_NAME_PREFIX.length()),
-                                    ctx);
-                } else {
-                    tool = (Tool) ctx.getResource(name, ResourceType.TOOL);
-                }
+                tool = (Tool) ctx.getResource(name, ResourceType.TOOL);
             } catch (Exception e) {
                 rethrowFrameworkFaultOrCancellation(e);
                 preparationError = e;
@@ -158,22 +140,18 @@ public class ToolCallAction {
             ToolParameters metadataParameters = new ToolParameters(mergedArguments);
             Map<String, Object> entityMetadata =
                     toolEntityMetadata(toolRequest.getId(), id, name, tool, metadataParameters);
-            // A resolved delegation is reported under the sub-agent scope keyed by the registered
-            // agent name, so the runtime attributes its outcome and latency to that sub-agent
-            // instead of bucketing the reserved callable name as an unknown tool. An unresolved
-            // _subagent_ name keeps the tool scope and lands in tool=unknown.
+            // Only resolved calls in the reserved namespace use the subagent reporting scope.
+            boolean subagent = tool != null && name.startsWith(SubagentConstants.TOOL_NAME_PREFIX);
             String reportEntityType =
-                    agent != null
+                    subagent
                             ? ExecutionReporter.EntityTypes.SUBAGENT
                             : ExecutionReporter.EntityTypes.TOOL;
             String reportEntityName =
-                    agent != null
-                            ? name.substring(SubagentSetup.CALLABLE_NAME_PREFIX.length())
-                            : name;
+                    subagent ? name.substring(SubagentConstants.TOOL_NAME_PREFIX.length()) : name;
             String traceExecutionId =
                     ExecutionReporters.created(
                             ctx, reportEntityType, reportEntityName, entityMetadata);
-            boolean unresolved = tool == null && agent == null;
+            boolean unresolved = tool == null;
             if (unresolved || preparationError != null) {
                 Exception failure =
                         preparationError != null
@@ -186,7 +164,9 @@ public class ToolCallAction {
                 recordInlineResponse(
                         id,
                         ToolResponse.error(
-                                prepFailureMessage(name, delegated, unresolved, failure)),
+                                tool == null
+                                        ? String.format("Failed to resolve tool %s.", name)
+                                        : failureMessage(name, failure)),
                         diagnosticError,
                         success,
                         error,
@@ -202,43 +182,54 @@ public class ToolCallAction {
                 continue;
             }
 
-            final Tool toolRef = tool;
-            final Map<String, Object> callArguments = mergedArguments;
-            ToolCallOccurrence occurrence = new ToolCallOccurrence();
-            DurableCallable<ToolResponse> callable =
-                    new DurableCallable<>() {
-                        @Override
-                        public String getId() {
-                            return TOOL_CALL_DURABLE_ID + id;
-                        }
-
-                        @Override
-                        public Class<ToolResponse> getResultClass() {
-                            return ToolResponse.class;
-                        }
-
-                        @Override
-                        public ToolResponse call() throws Exception {
-                            occurrence.markStarted();
-                            try {
-                                return toolRef.call(new ToolParameters(callArguments));
-                            } finally {
-                                occurrence.markFinished();
-                            }
-                        }
-                    };
             executions.add(
                     new ToolCallExecution(
                             id,
                             traceExecutionId,
+                            reportEntityType,
+                            reportEntityName,
                             name,
-                            callable,
+                            tool,
+                            new ToolParameters(mergedArguments),
                             entityMetadata,
-                            occurrence,
-                            agent,
-                            callArguments));
+                            new ToolCallContext(
+                                    id,
+                                    ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_ASYNC))));
         }
         return executions;
+    }
+
+    private static AsyncFuture<ToolResponse> createCallFuture(
+            ToolCallExecution execution, RunnerContext ctx) throws Exception {
+        if (execution.tool instanceof AsyncTool) {
+            return ((AsyncTool) execution.tool)
+                    .callAsync(ctx, execution.parameters, execution.callContext);
+        }
+        DurableCallable<ToolResponse> call =
+                new DurableCallable<>() {
+                    @Override
+                    public String getId() {
+                        return TOOL_CALL_DURABLE_ID + execution.callContext.getCallId();
+                    }
+
+                    @Override
+                    public Class<ToolResponse> getResultClass() {
+                        return ToolResponse.class;
+                    }
+
+                    @Override
+                    public ToolResponse call() {
+                        execution.callContext.started();
+                        try {
+                            return execution.tool.call(execution.parameters);
+                        } finally {
+                            execution.callContext.finished();
+                        }
+                    }
+                };
+        return execution.callContext.isAsync()
+                ? ctx.durableExecuteAsync(call)
+                : () -> ctx.durableExecute(call);
     }
 
     private static void executeParallel(
@@ -248,24 +239,24 @@ public class ToolCallAction {
             Map<String, String> error,
             Map<String, ToolResponse> responses)
             throws Exception {
-        // Sub-agent calls run through durable execution inside the setup, so they cannot join the
-        // tool batch below; they are dispatched concurrently on their own (submit every call, then
-        // await each) so that, like the batched tool calls, they overlap instead of running one by
-        // one. The agent phase completes before the tool batch, so a sub-agent handle is never left
-        // submitted-but-unawaited if the batch below rethrows.
-        List<ToolCallExecution> agentExecutions = new ArrayList<>();
-        List<ToolCallExecution> toolExecutions = new ArrayList<>();
+        List<ToolCallExecution> prepared = new ArrayList<>();
+        List<AsyncFuture<ToolResponse>> futures = new ArrayList<>();
         for (ToolCallExecution execution : executions) {
-            if (execution.agent != null) {
-                agentExecutions.add(execution);
-            } else {
-                toolExecutions.add(execution);
+            try {
+                futures.add(createCallFuture(execution, ctx));
+                prepared.add(execution);
+            } catch (Exception e) {
+                if (CancellationUtils.isCancellation(e)
+                        || UncapturableException.isUncapturable(e)) {
+                    cancelPrepared(prepared, e);
+                }
+                rethrowFrameworkFaultOrCancellation(e);
+                recordExecutionException(execution, e, success, error, responses);
+                reportExecution(execution, ctx, Outcome.failure(e), null, Instant.now());
+            } catch (Error e) {
+                cancelPrepared(prepared, e);
+                throw e;
             }
-        }
-        dispatchAgentExecutions(agentExecutions, ctx, success, error, responses);
-        List<DurableFuture<ToolResponse>> futures = new ArrayList<>(toolExecutions.size());
-        for (ToolCallExecution execution : toolExecutions) {
-            futures.add(ctx.durableExecuteAsync(execution.callable));
         }
         List<Outcome<ToolResponse>> outcomes = List.of();
         Instant resultObservedAt = null;
@@ -274,9 +265,10 @@ public class ToolCallAction {
             outcomes = ctx.gather(futures).await();
             resultObservedAt = Instant.now();
             for (int i = 0; i < outcomes.size(); i++) {
-                recordOutcome(toolExecutions.get(i), outcomes.get(i), success, error, responses);
+                recordOutcome(prepared.get(i), outcomes.get(i), success, error, responses);
             }
         } catch (Exception e) {
+            cancelPrepared(prepared, e);
             rethrowFrameworkFaultOrCancellation(e);
             if (resultObservedAt == null) {
                 resultObservedAt = Instant.now();
@@ -285,19 +277,20 @@ public class ToolCallAction {
                 fatalError = (Error) e.getCause();
                 throw fatalError;
             }
-            for (ToolCallExecution execution : toolExecutions) {
+            for (ToolCallExecution execution : prepared) {
                 recordExecutionException(execution, e, success, error, responses);
             }
         } catch (Error e) {
+            cancelPrepared(prepared, e);
             if (resultObservedAt == null) {
                 resultObservedAt = Instant.now();
             }
             fatalError = e;
             throw e;
         } finally {
-            for (int i = 0; i < toolExecutions.size(); i++) {
+            for (int i = 0; i < prepared.size(); i++) {
                 reportExecution(
-                        toolExecutions.get(i),
+                        prepared.get(i),
                         ctx,
                         i < outcomes.size() ? outcomes.get(i) : null,
                         fatalError,
@@ -306,27 +299,29 @@ public class ToolCallAction {
         }
     }
 
+    private static void cancelPrepared(List<ToolCallExecution> prepared, Throwable failure) {
+        for (ToolCallExecution active : prepared) {
+            try {
+                active.callContext.cancel();
+            } catch (RuntimeException | Error cleanup) {
+                failure.addSuppressed(cleanup);
+            }
+        }
+    }
+
     private static void executeSequentially(
             List<ToolCallExecution> executions,
-            boolean toolCallAsync,
             RunnerContext ctx,
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses)
             throws Exception {
         for (ToolCallExecution execution : executions) {
-            if (execution.agent != null) {
-                dispatchAgentExecution(execution, ctx, success, error, responses);
-                continue;
-            }
             Outcome<ToolResponse> outcome = null;
             Instant resultObservedAt = null;
             Error fatalError = null;
             try {
-                ToolResponse response =
-                        toolCallAsync
-                                ? ctx.durableExecuteAsync(execution.callable).await()
-                                : ctx.durableExecute(execution.callable);
+                ToolResponse response = createCallFuture(execution, ctx).await();
                 resultObservedAt = Instant.now();
                 outcome = Outcome.success(response);
                 recordToolResponse(execution.id, response, success, error, responses);
@@ -380,14 +375,14 @@ public class ToolCallAction {
             Outcome<ToolResponse> outcome,
             Error fatalError,
             Instant resultObservedAt) {
-        Instant finishedAt = execution.occurrence.finishedAt;
-        Instant startedAt = execution.occurrence.startedAt;
+        Instant finishedAt = execution.callContext.getFinishedAt();
+        Instant startedAt = execution.callContext.getStartedAt();
         if (startedAt != null && (outcome == null || !startedAt.isAfter(resultObservedAt))) {
             ExecutionReporters.startedAt(
                     ctx,
                     execution.traceExecutionId,
-                    ExecutionReporter.EntityTypes.TOOL,
-                    execution.name,
+                    execution.reportEntityType,
+                    execution.reportEntityName,
                     execution.entityMetadata,
                     startedAt.toString());
         }
@@ -409,16 +404,16 @@ public class ToolCallAction {
             ExecutionReporters.succeededAt(
                     ctx,
                     execution.traceExecutionId,
-                    ExecutionReporter.EntityTypes.TOOL,
-                    execution.name,
+                    execution.reportEntityType,
+                    execution.reportEntityName,
                     execution.entityMetadata,
                     finishedAt.toString());
         } else {
             ExecutionReporters.failedAt(
                     ctx,
                     execution.traceExecutionId,
-                    ExecutionReporter.EntityTypes.TOOL,
-                    execution.name,
+                    execution.reportEntityType,
+                    execution.reportEntityName,
                     execution.entityMetadata,
                     failure,
                     ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED,
@@ -446,221 +441,6 @@ public class ToolCallAction {
         }
     }
 
-    private static void dispatchAgentExecution(
-            ToolCallExecution execution,
-            RunnerContext ctx,
-            Map<String, Boolean> success,
-            Map<String, String> error,
-            Map<String, ToolResponse> responses)
-            throws Exception {
-        try {
-            // The start occurrence is reported once here, before the hand-off, so a failure while
-            // normalizing the result -- which re-enters recordAgentFailure below -- still yields a
-            // single started/terminal pair rather than a duplicate start.
-            execution.occurrence.markStarted();
-            reportSubagentStarted(execution, ctx);
-            // submit() and await() already run through durable execution inside the setup, so
-            // wrapping the call again here would nest durable cursors.
-            SubagentResult result = execution.agent.submit(ctx, execution.agentArguments).await();
-            recordAgentResult(execution, result, ctx, success, error, responses);
-        } catch (Exception e) {
-            rethrowFrameworkFaultOrCancellation(e);
-            recordAgentFailure(execution, e, ctx, success, error, responses);
-        } catch (StackOverflowError e) {
-            // Normalizing a result nested deeper than the stack allows overflows it; the cycle
-            // guard reports a plain cycle earlier, so what reaches here is a result too deep to
-            // walk. A StackOverflowError is an Error, so it would escape the catch above and fail
-            // the job; fold it into the same failed delegation the model can read and correct.
-            recordAgentFailure(
-                    execution,
-                    new RuntimeException(
-                            "Sub-agent result is cyclic or too deeply nested to normalize as"
-                                    + " JSON",
-                            e),
-                    ctx,
-                    success,
-                    error,
-                    responses);
-        }
-    }
-
-    /**
-     * Runs the sub-agent calls concurrently rather than one by one: every {@code submit} is issued
-     * first, so the async setups start their remote runs together, and each future is then awaited.
-     * Submitting and awaiting both follow {@code agentExecutions} order, which is the deterministic
-     * tool-call order, so the setup's id allocator hands out the same ids on every replay and the
-     * durable keys stay stable. The per-call try/catch keeps the isolation the serial path had: one
-     * sub-agent failing, at submit or at await, is recorded and reported without stopping the rest.
-     *
-     * <p>A cancellation is the one thing that is not isolated: like the tool batch (#1111),
-     * cancellation propagates so the caller skips sendEvent, and every handle submitted but no
-     * longer going to be awaited is cancelled first, so the concurrent dispatch leaves no in-flight
-     * remote run dangling on the way out.
-     */
-    private static void dispatchAgentExecutions(
-            List<ToolCallExecution> agentExecutions,
-            RunnerContext ctx,
-            Map<String, Boolean> success,
-            Map<String, String> error,
-            Map<String, ToolResponse> responses)
-            throws Exception {
-        // submit() runs through durable execution inside the setup, so it is not wrapped here.
-        List<ToolCallExecution> submitted = new ArrayList<>(agentExecutions.size());
-        List<SubagentFuture> futures = new ArrayList<>(agentExecutions.size());
-        for (ToolCallExecution execution : agentExecutions) {
-            try {
-                // As in the serial path: report the start once, before the hand-off, so a later
-                // normalization failure still yields a single started/terminal pair.
-                execution.occurrence.markStarted();
-                reportSubagentStarted(execution, ctx);
-                futures.add(execution.agent.submit(ctx, execution.agentArguments));
-                submitted.add(execution);
-            } catch (Exception e) {
-                if (CancellationUtils.isCancellation(e)) {
-                    cancelFrom(futures, 0);
-                    if (CancellationUtils.isInterruption(e)) {
-                        Thread.currentThread().interrupt();
-                    }
-                    throw e;
-                }
-                recordAgentFailure(execution, e, ctx, success, error, responses);
-            }
-        }
-        for (int i = 0; i < futures.size(); i++) {
-            ToolCallExecution execution = submitted.get(i);
-            try {
-                SubagentResult result = futures.get(i).await();
-                recordAgentResult(execution, result, ctx, success, error, responses);
-            } catch (Exception e) {
-                if (CancellationUtils.isCancellation(e)) {
-                    cancelFrom(futures, i);
-                    if (CancellationUtils.isInterruption(e)) {
-                        Thread.currentThread().interrupt();
-                    }
-                    throw e;
-                }
-                recordAgentFailure(execution, e, ctx, success, error, responses);
-            } catch (StackOverflowError e) {
-                // As in the serial path: an overflow while normalizing one result is an Error that
-                // would otherwise escape and fail the job mid-batch, so it is folded into that
-                // call's failed delegation and the remaining handles are still awaited.
-                recordAgentFailure(
-                        execution,
-                        new RuntimeException(
-                                "Sub-agent result is cyclic or too deeply nested to normalize"
-                                        + " as JSON",
-                                e),
-                        ctx,
-                        success,
-                        error,
-                        responses);
-            }
-        }
-    }
-
-    /**
-     * Requests cancellation of every handle from {@code from} onward, e.g. on a mid-batch cancel.
-     */
-    private static void cancelFrom(List<SubagentFuture> futures, int from) {
-        for (int i = from; i < futures.size(); i++) {
-            futures.get(i).cancel();
-        }
-    }
-
-    private static void recordAgentFailure(
-            ToolCallExecution execution,
-            Exception e,
-            RunnerContext ctx,
-            Map<String, Boolean> success,
-            Map<String, String> error,
-            Map<String, ToolResponse> responses) {
-        recordExecutionException(execution, e, success, error, responses);
-        execution.occurrence.markFinished();
-        ExecutionReporters.failedAt(
-                ctx,
-                execution.traceExecutionId,
-                ExecutionReporter.EntityTypes.SUBAGENT,
-                subagentReportName(execution),
-                execution.entityMetadata,
-                e,
-                ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED,
-                execution.occurrence.finishedAt.toString());
-    }
-
-    private static void recordAgentResult(
-            ToolCallExecution execution,
-            SubagentResult result,
-            RunnerContext ctx,
-            Map<String, Boolean> success,
-            Map<String, String> error,
-            Map<String, ToolResponse> responses)
-            throws Exception {
-        if (result.isSuccess()) {
-            success.put(execution.id, true);
-            responses.put(
-                    execution.id,
-                    ToolResponse.text(
-                            ToolResultUtils.toChatMessageContent(
-                                    ToolResultUtils.normalizeAgentResult(
-                                            result.getResult(), execution.agent.getResultType()))));
-            execution.occurrence.markFinished();
-            ExecutionReporters.succeededAt(
-                    ctx,
-                    execution.traceExecutionId,
-                    ExecutionReporter.EntityTypes.SUBAGENT,
-                    subagentReportName(execution),
-                    execution.entityMetadata,
-                    execution.occurrence.finishedAt.toString());
-        } else {
-            // The model sees why the delegation failed, so it can correct the call instead of
-            // repeating it blindly; the error map keeps the same detail for observability.
-            success.put(execution.id, false);
-            responses.put(
-                    execution.id,
-                    ToolResponse.error(
-                            withReason(
-                                    String.format("Sub-agent %s execute failed", execution.name),
-                                    result.getErrorMessage())));
-            error.put(execution.id, result.getErrorMessage());
-            execution.occurrence.markFinished();
-            ExecutionReporters.failedAt(
-                    ctx,
-                    execution.traceExecutionId,
-                    ExecutionReporter.EntityTypes.SUBAGENT,
-                    subagentReportName(execution),
-                    execution.entityMetadata,
-                    result.getException(),
-                    ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED,
-                    execution.occurrence.finishedAt.toString());
-        }
-    }
-
-    /**
-     * Reports the single start occurrence for a resolved delegation. The start is emitted before
-     * the hand-off rather than alongside the terminal report, so a failure while normalizing the
-     * result -- which re-enters {@link #recordAgentFailure} -- cannot produce a second start.
-     */
-    private static void reportSubagentStarted(ToolCallExecution execution, RunnerContext ctx) {
-        Instant startedAt = execution.occurrence.startedAt;
-        if (startedAt != null) {
-            ExecutionReporters.startedAt(
-                    ctx,
-                    execution.traceExecutionId,
-                    ExecutionReporter.EntityTypes.SUBAGENT,
-                    subagentReportName(execution),
-                    execution.entityMetadata,
-                    startedAt.toString());
-        }
-    }
-
-    /**
-     * The registered sub-agent name, derived by dropping the reserved callable prefix from the name
-     * the model emitted, so the metric scope is keyed by the agent and bounded by the plan.
-     */
-    private static String subagentReportName(ToolCallExecution execution) {
-        return execution.name.substring(SubagentSetup.CALLABLE_NAME_PREFIX.length());
-    }
-
     private static void recordExecutionException(
             ToolCallExecution execution,
             Exception exception,
@@ -669,37 +449,14 @@ public class ToolCallAction {
             Map<String, ToolResponse> responses) {
         UncapturableException.rethrowIfPresent(exception);
         success.put(execution.id, false);
-        responses.put(
-                execution.id,
-                ToolResponse.error(
-                        execution.agent != null
-                                ? withReason(
-                                        String.format(
-                                                "Sub-agent %s execute failed", execution.name),
-                                        exception.getMessage())
-                                : String.format("Tool %s execute failed.", execution.name)));
+        responses.put(execution.id, ToolResponse.error(failureMessage(execution.name, exception)));
         error.put(execution.id, exception.getMessage());
     }
 
-    /**
-     * The message the model sees when a call could not even be prepared. A rejected sub-agent call
-     * carries the reason, so the model can correct the call instead of repeating it blindly.
-     *
-     * @param delegated whether the callable name addressed a sub-agent, decided once by the caller
-     *     rather than matched again here
-     */
-    private static String prepFailureMessage(
-            String name, boolean delegated, boolean unresolved, Exception failure) {
-        if (delegated) {
-            return withReason(
-                    String.format("Sub-agent %s execute failed", name), failure.getMessage());
-        }
-        return String.format(
-                unresolved ? "Tool %s does not exist." : "Tool %s execute failed.", name);
-    }
-
-    private static String withReason(String message, @Nullable String reason) {
-        return reason == null || reason.isBlank() ? message + "." : message + ": " + reason;
+    private static String failureMessage(String name, Exception failure) {
+        String prefix = "Tool " + name + " execution failed";
+        String reason = failure.getMessage();
+        return reason == null || reason.isBlank() ? prefix + "." : prefix + ": " + reason;
     }
 
     private static void recordToolResponse(
@@ -718,61 +475,34 @@ public class ToolCallAction {
     private static final class ToolCallExecution {
         private final String id;
         private final String traceExecutionId;
+        private final String reportEntityType;
+        private final String reportEntityName;
         private final String name;
-        private final DurableCallable<ToolResponse> callable;
+        private final Tool tool;
+        private final ToolParameters parameters;
         private final Map<String, Object> entityMetadata;
-        private final ToolCallOccurrence occurrence;
-        private final SubagentSetup agent;
-        private final Map<String, Object> agentArguments;
+        private final ToolCallContext callContext;
 
         private ToolCallExecution(
                 String id,
                 String traceExecutionId,
+                String reportEntityType,
+                String reportEntityName,
                 String name,
-                DurableCallable<ToolResponse> callable,
+                Tool tool,
+                ToolParameters parameters,
                 Map<String, Object> entityMetadata,
-                ToolCallOccurrence occurrence,
-                SubagentSetup agent,
-                Map<String, Object> agentArguments) {
+                ToolCallContext callContext) {
             this.id = id;
             this.traceExecutionId = traceExecutionId;
+            this.reportEntityType = reportEntityType;
+            this.reportEntityName = reportEntityName;
             this.name = name;
-            this.callable = callable;
+            this.tool = tool;
+            this.parameters = parameters;
             this.entityMetadata = entityMetadata;
-            this.occurrence = occurrence;
-            this.agent = agent;
-            this.agentArguments = agentArguments;
+            this.callContext = callContext;
         }
-    }
-
-    private static final class ToolCallOccurrence {
-        private volatile Instant startedAt;
-        private volatile Instant finishedAt;
-
-        private void markStarted() {
-            startedAt = Instant.now();
-        }
-
-        private void markFinished() {
-            finishedAt = Instant.now();
-        }
-    }
-
-    /**
-     * Resolves a sub-agent, in one lookup: the {@code AGENT} resource is fetched once and checked
-     * once here, and the caller carries the setup from then on.
-     */
-    private static SubagentSetup resolveSubagent(String name, RunnerContext ctx) throws Exception {
-        Resource resource = ctx.getResource(name, ResourceType.AGENT);
-        if (!(resource instanceof SubagentSetup)) {
-            // A sub-agent owned by the other language resolves to a bridge handle here, which
-            // cannot be called through this path.
-            throw new IllegalArgumentException(
-                    String.format(
-                            "Sub-agent %s must resolve to a SubagentSetup, but was %s.",
-                            name, resource == null ? "null" : resource.getClass().getName()));
-        }
-        return (SubagentSetup) resource;
     }
 
     private static Map<String, Object> toolEntityMetadata(

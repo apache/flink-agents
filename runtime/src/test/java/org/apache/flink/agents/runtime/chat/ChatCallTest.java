@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
@@ -37,6 +38,7 @@ import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.subgraph.SubgraphCallManager;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
+import org.apache.flink.agents.runtime.subgraph.SubgraphFuture;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 import org.apache.flink.agents.runtime.utils.IdAllocatorSource;
@@ -255,13 +257,11 @@ class ChatCallTest {
     }
 
     @Test
-    void chatHandleRejectsGatherWithoutStartingCall() {
+    void chatHandleCanBeGatheredWithoutStartingCall() {
         JavaRunnerContextImpl context = javaContext();
         DurableFuture<ChatResult> future = context.chat("model", List.of());
-        assertThat(future).isInstanceOf(ChatDurableFuture.class);
-        assertThatThrownBy(() -> context.gather(List.of(future)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("gather only accepts");
+        assertThat(future).isInstanceOf(SubgraphFuture.class);
+        assertThat(context.gather(List.of(future))).isNotNull();
         assertThat(context.getPendingEvents()).isEmpty();
     }
 
@@ -313,7 +313,8 @@ class ChatCallTest {
                             executor);
             context.setContinuationContext(new ContinuationContext());
             assertThatThrownBy(() -> context.chat("model", List.of()).await())
-                    .isInstanceOf(UnsupportedOperationException.class)
+                    .isInstanceOf(UncapturableException.class)
+                    .hasCauseInstanceOf(UnsupportedOperationException.class)
                     .hasMessageContaining("JDK 21");
             assertThat(context.getPendingEvents()).isEmpty();
         } finally {

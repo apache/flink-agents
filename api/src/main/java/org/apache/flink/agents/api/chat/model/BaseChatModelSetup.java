@@ -31,7 +31,6 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
-import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.util.Preconditions;
@@ -145,34 +144,12 @@ public abstract class BaseChatModelSetup extends Resource {
             }
         }
         for (String name : this.subagentNames) {
-            // Tools are forbidden to carry the reserved prefix at registration, so a prefixed
-            // callable name can only come from this loop and a clash with a tool is impossible.
-            // Checked before the schema below, because a name declared twice is a mistake in the
-            // declaration whether or not it ends up registered.
+            Tool tool = this.resourceContext.getSubagentTool(name);
             Preconditions.checkState(
-                    callableNames.add(SubagentSetup.CALLABLE_NAME_PREFIX + name),
+                    callableNames.add(tool.getName()),
                     "Duplicate callable name: %s",
-                    SubagentSetup.CALLABLE_NAME_PREFIX + name);
-            Resource resource = this.resourceContext.getResource(name, ResourceType.AGENT);
-            // A sub-agent owned by the other language resolves to a bridge handle here, which
-            // carries no schema to declare, so it is rejected instead of silently dropped.
-            Preconditions.checkState(
-                    resource instanceof SubagentSetup,
-                    "Sub-agent %s must resolve to a SubagentSetup, but was %s",
-                    name,
-                    resource.getClass().getName());
-            SubagentSetup setup = (SubagentSetup) resource;
-            String inputSchema = setup.getInputSchema();
-            // A sub-agent that declares neither an input schema nor an input type gives the model
-            // no arguments to build a call from, so the declaration is a mistake rather than
-            // something to skip: fail the job at setup time, consistent with the duplicate-name and
-            // bridge-handle checks above.
-            Preconditions.checkState(
-                    inputSchema != null,
-                    "Sub-agent %s declares neither an input schema nor an input type, so there are"
-                            + " no arguments for the model to build a call from.",
-                    name);
-            this.tools.add(new SubagentTool(name, setup.getDescription(), inputSchema));
+                    tool.getName());
+            this.tools.add(tool);
         }
     }
 

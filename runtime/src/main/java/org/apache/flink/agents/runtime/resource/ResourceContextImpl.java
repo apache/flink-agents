@@ -23,8 +23,12 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
+import org.apache.flink.agents.api.subagent.SubagentSetup;
+import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.agents.runtime.skill.SkillManager;
+import org.apache.flink.agents.runtime.subagent.SubagentTool;
+import org.apache.flink.util.Preconditions;
 
 import javax.annotation.Nullable;
 
@@ -85,6 +89,24 @@ public class ResourceContextImpl implements ResourceContext, AutoCloseable {
             }
             throw e;
         }
+    }
+
+    @Override
+    public Tool getSubagentTool(String subagentName) throws Exception {
+        Resource resource = getResource(subagentName, ResourceType.AGENT);
+        // Cross-language bridge handles do not expose a callable setup and schema here.
+        Preconditions.checkState(
+                resource instanceof SubagentSetup,
+                "Sub-agent %s must resolve to a SubagentSetup, but was %s.",
+                subagentName,
+                resource == null ? "null" : resource.getClass().getName());
+        SubagentSetup setup = (SubagentSetup) resource;
+        Preconditions.checkState(
+                setup.getInputSchema() != null,
+                "Sub-agent %s declares neither an input schema nor an input type, so there are"
+                        + " no arguments for the model to build a call from.",
+                subagentName);
+        return new SubagentTool(subagentName, setup, this);
     }
 
     @Override

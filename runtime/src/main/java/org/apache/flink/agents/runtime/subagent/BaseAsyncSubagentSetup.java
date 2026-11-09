@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 
 import javax.annotation.Nullable;
 
@@ -76,15 +77,41 @@ public abstract class BaseAsyncSubagentSetup extends BaseSubagentSetup {
     @Override
     public final SubagentFuture submit(
             RunnerContext ctx, Object prompt, String sessionId, String callId) throws Exception {
-        ctx.durableExecuteAsync(submitRequest(ctx, sessionId, callId, prompt)).await();
-        return new AsyncSubagentFuture(this, ctx, sessionId, callId, currentTaskRegistry());
+        ((RunnerContextImpl) ctx)
+                .durableExecuteAsync(
+                        sessionId + "#" + callId,
+                        Void.class,
+                        () -> submitRequest(ctx, sessionId, callId, prompt))
+                .await();
+        return new SubagentFutureImpl(
+                sessionId,
+                callId,
+                ctx,
+                () ->
+                        ((RunnerContextImpl) ctx)
+                                .durableExecuteAsync(
+                                        sessionId + "#" + callId + "#await",
+                                        SubagentResult.class,
+                                        () -> awaitResult(ctx, sessionId, callId)),
+                currentTaskRegistry(),
+                () -> {
+                    RunStatus status = queryStatus(sessionId, callId);
+                    return status.getState() == RunStatus.State.COMPLETED
+                            || status.getState() == RunStatus.State.FAILED;
+                },
+                () -> cancelRequest(ctx, sessionId, callId));
     }
 
     // ------------------------------------------------------------------------------------------
     // Framework wrappers: defaults composing the primitives, overridable
     // ------------------------------------------------------------------------------------------
 
-    /** The durable POST of one invocation. It is the only wrapper wired to a reconciler. */
+    /**
+     * Prepares the durable POST on the mailbox after its slot has been reserved. The callable must
+     * use {@code sessionId + "#" + callId} as its id and {@code Void.class} as its result class.
+     * Ordinary preparation failures are recorded; terminal replay skips this method. It is the only
+     * default wrapper wired to a reconciler.
+     */
     protected DurableCallable<Void> submitRequest(
             RunnerContext ctx, String sessionId, String callId, Object prompt) {
         return new DurableCallable<Void>() {
@@ -125,10 +152,12 @@ public abstract class BaseAsyncSubagentSetup extends BaseSubagentSetup {
     }
 
     /**
-     * The durable wait of one resolve: poll the status until the run reaches a terminal state, then
-     * fetch the result. Keyed by {@code sessionId#callId#await}. A probe or fetch failure that
-     * escapes the body is a system-level failure: it propagates instead of being folded into an
-     * error result.
+     * Prepares the durable wait on the mailbox after reserving its slot: poll the status until the
+     * run reaches a terminal state, then fetch the result. The callable must use {@code sessionId +
+     * "#" + callId + "#await"} as its id and {@code SubagentResult.class} as its result class.
+     * Ordinary preparation failures are recorded; terminal replay skips this method. A probe or
+     * fetch failure that escapes the body is a system-level failure: it propagates instead of being
+     * folded into an error result.
      */
     protected DurableCallable<SubagentResult> awaitResult(
             RunnerContext ctx, String sessionId, String callId) {

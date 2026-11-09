@@ -552,6 +552,11 @@ public class RemoteReviewSetup extends BaseDeferredSubagentSetup {
 
 {{< /tabs >}}
 
+In Java, the returned callable must use `sessionId + "#" + callId` as its ID and
+`SubagentResult.class` as its result class. Recovery reuses a recorded success or
+failure without calling `prepare` again. If the call has no recorded final outcome,
+recovery may repeat `prepare`, so any request it sends must be safe to repeat.
+
 Register the external sub-agent using a `ResourceDescriptor` that names its setup
 class. Both Java and Python require this form; passing a setup instance directly
 is not supported. Give the resource the name the parent will use to call it.

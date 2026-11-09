@@ -68,7 +68,7 @@ class ParallelExecutionPythonResourceTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     @Timeout(15)
-    void pythonObjectsReturnedToJavaAreConsumedAndClosedOnTheirOwningWorker(boolean batch)
+    void pythonObjectsReturnedToJavaAreConsumedAndClosedOnTheirOwningWorker(boolean asyncWorker)
             throws Exception {
         PythonInterpreter ownerInterpreter = mockInterpreter();
         PythonInterpreter actionInterpreter = mockInterpreter();
@@ -132,7 +132,7 @@ class ParallelExecutionPythonResourceTest {
                                     "test.module", "TestVectorStore", Map.of()),
                             mock(ResourceContext.class));
 
-            if (batch) {
+            if (asyncWorker) {
                 ContinuationActionExecutor executor =
                         new ContinuationActionExecutor(
                                 1, interpreterManager::releaseCurrentThreadInterpreter, null, null);
@@ -141,24 +141,14 @@ class ParallelExecutionPythonResourceTest {
                     Runnable action =
                             () -> {
                                 try {
-                                    assertThat(
-                                                    executor.executeAllAsync(
-                                                                    context,
-                                                                    List.of(
-                                                                            () ->
-                                                                                    vectorStore.get(
-                                                                                            null,
-                                                                                            null,
-                                                                                            null,
-                                                                                            null,
-                                                                                            Map
-                                                                                                    .of())),
-                                                                    null,
-                                                                    1)
-                                                            .getOutcomes()
-                                                            .get(0)
-                                                            .isSuccess())
-                                            .isTrue();
+                                    executor.awaitFuture(
+                                            context,
+                                            executor.submitAsync(
+                                                    context,
+                                                    () ->
+                                                            vectorStore.get(
+                                                                    null, null, null, null,
+                                                                    Map.of())));
                                 } catch (Exception e) {
                                     throw new AssertionError(e);
                                 }

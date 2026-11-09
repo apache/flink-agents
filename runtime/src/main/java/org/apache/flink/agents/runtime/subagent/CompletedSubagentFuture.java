@@ -18,14 +18,45 @@
 
 package org.apache.flink.agents.runtime.subagent;
 
+import org.apache.flink.agents.api.context.Outcome;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentFutures;
 import org.apache.flink.agents.api.subagent.SubagentResult;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.context.SchedulableFuture;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 
 /** A handle for an invocation that has already produced its value. */
-public final class CompletedSubagentFuture extends SubagentFuture {
+public final class CompletedSubagentFuture extends SubagentFuture
+        implements SchedulableFuture<SubagentResult> {
 
     private final SubagentResult value;
+
+    @Override
+    public RunnerContext getOwnerContext() {
+        return null;
+    }
+
+    @Override
+    public Outcome<SubagentResult> prepare(RunnerContextImpl owner) {
+        return Outcome.success(value);
+    }
+
+    @Override
+    public CompletableFuture<?> start() {
+        return CompletableFuture.completedFuture(null);
+    }
+
+    @Override
+    public Outcome<SubagentResult> finish(TimeoutException timeout) {
+        return Outcome.success(value);
+    }
+
+    @Override
+    public void close() {}
 
     public CompletedSubagentFuture(String sessionId, String callId, SubagentResult value) {
         super(sessionId, callId);

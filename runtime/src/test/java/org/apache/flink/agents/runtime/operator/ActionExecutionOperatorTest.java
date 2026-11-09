@@ -67,7 +67,6 @@ import org.apache.flink.agents.runtime.actionstate.ActionStateUtil;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
-import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
@@ -114,7 +113,6 @@ import pemja.core.PythonInterpreter;
 import java.io.IOException;
 import java.io.Serializable;
 import java.lang.reflect.Field;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -123,6 +121,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -990,7 +989,7 @@ public class ActionExecutionOperatorTest {
             for (long key = 1; key <= workers; key++) {
                 testHarness.processElement(new StreamRecord<>(key));
             }
-            assertThat(TestAgent.SINGLE_ASYNC_STARTED.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(TestAgent.SINGLE_ASYNC_WAITING.await(5, TimeUnit.SECONDS)).isTrue();
             testHarness.processElement(new StreamRecord<>(queuedKey));
             testHarness.processElement(new StreamRecord<>(queuedKey));
 
@@ -1036,7 +1035,7 @@ public class ActionExecutionOperatorTest {
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) restored.getOperator();
             // The restored queued task must be re-dispatched and reach the async stage.
-            assertThat(TestAgent.SINGLE_ASYNC_STARTED.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(TestAgent.SINGLE_ASYNC_WAITING.await(5, TimeUnit.SECONDS)).isTrue();
 
             AtomicBoolean budgetFreed = new AtomicBoolean();
             budgetReleaser =
@@ -1822,7 +1821,7 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
-    void closeInterruptsTimedOutPythonBatchBeforeJoiningActionWorkers() throws Exception {
+    void closeInterruptsOutstandingPythonCallBeforeJoiningActionWorkers() throws Exception {
         assumeFalse(ContinuationActionExecutor.isContinuationSupported());
         KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness = openCloseTestHarness();
         ActionExecutionOperator<?, ?> operator =
@@ -1889,17 +1888,19 @@ public class ActionExecutionOperatorTest {
                     @Override
                     public void execute() {
                         try {
-                            // The timed-out batch retains the lifecycle read lock; Action-worker
-                            // exit cleanup needs its write lock.
+                            // The callback retains the interpreter lifecycle read lock after
+                            // the action stops waiting. Action-worker exit needs its write lock.
                             interpreters.withInterpreter(interpreter -> null);
-                            BatchExecutionResult<String> result =
-                                    batch.executeAllAsync(
-                                            new ContinuationContext(),
-                                            List.of(pythonCall),
-                                            Duration.ofSeconds(1),
-                                            1);
-                            assertThat(result.getOutcomes().get(0).getError())
-                                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                            ContinuationContext context = new ContinuationContext();
+                            CompletableFuture<String> callback =
+                                    batch.submitAsync(context, pythonCall);
+                            // Time out only the wait, leaving outstanding work for shutdown.
+                            CompletableFuture<String> wait =
+                                    callback.thenApply(value -> value)
+                                            .orTimeout(1, TimeUnit.SECONDS);
+                            assertThatThrownBy(() -> batch.awaitFuture(context, wait))
+                                    .hasCauseInstanceOf(
+                                            java.util.concurrent.TimeoutException.class);
                         } catch (Throwable t) {
                             actionFailure.set(t);
                         }
@@ -4290,6 +4291,7 @@ public class ActionExecutionOperatorTest {
         public static volatile CountDownLatch SIBLING_B_ACTION_RETURNING;
 
         public static volatile CountDownLatch SINGLE_ASYNC_STARTED;
+        public static volatile CountDownLatch SINGLE_ASYNC_WAITING;
         public static volatile CountDownLatch SINGLE_ASYNC_ALLOW;
 
         public static final java.util.concurrent.atomic.AtomicInteger EXCEPTION_CALL_COUNTER =
@@ -4522,13 +4524,14 @@ public class ActionExecutionOperatorTest {
         }
 
         /**
-         * Same fixture, but {@code SINGLE_ASYNC_STARTED} opens only after {@code startedCount}
-         * actions have reached the async stage. A test that has to know the whole worker pool is
-         * parked -- because what it is arranging is a task no worker is left to pull -- sizes this
-         * to the pool; awaiting the latch is then the proof of saturation rather than a guess.
+         * Tracks actions entering await separately from callable bodies starting. Tests that
+         * saturate the action-worker pool use {@code SINGLE_ASYNC_WAITING}, because the smaller
+         * async pool may still have their callables queued. {@code SINGLE_ASYNC_STARTED} tracks
+         * actual callable execution.
          */
         public static void resetSingleAsyncFixture(int startedCount) {
             SINGLE_ASYNC_STARTED = new CountDownLatch(startedCount);
+            SINGLE_ASYNC_WAITING = new CountDownLatch(startedCount);
             SINGLE_ASYNC_ALLOW = new CountDownLatch(1);
         }
 
@@ -4540,6 +4543,7 @@ public class ActionExecutionOperatorTest {
         public static void singleAsyncAction(Event event, RunnerContext context) {
             Long inputData = (Long) InputEvent.fromEvent(event).getInput();
             try {
+                SINGLE_ASYNC_WAITING.countDown();
                 Long result =
                         context.durableExecuteAsync(
                                         durableCallable(

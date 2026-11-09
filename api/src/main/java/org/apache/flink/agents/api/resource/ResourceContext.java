@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api.resource;
 
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
+import org.apache.flink.agents.api.tools.Tool;
 
 import java.util.Collections;
 import java.util.List;
@@ -32,6 +33,14 @@ public interface ResourceContext {
 
     /** Get another resource declared in the same Agent. */
     Resource getResource(String name, ResourceType type) throws Exception;
+
+    /**
+     * Get an executable tool view of a subagent declared in this resource scope.
+     *
+     * @param subagentName the AGENT resource name, without the callable prefix
+     * @throws UnsupportedOperationException if this context does not support subagent tools
+     */
+    Tool getSubagentTool(String subagentName) throws Exception;
 
     /**
      * Generate the available skills prompt for the given skill names.

@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.InternalSubagentResourceDescriptorBuilder;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.plan.AgentConfiguration;
@@ -156,7 +157,14 @@ public class InternalSubagentFrameworkFaultTest {
     private static KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness(
             boolean parallel, FaultingStore store, boolean nested) throws Exception {
         Agent parent = new Agent();
-        parent.addResource("child", ResourceType.AGENT, new Child());
+        parent.addResource(
+                "child",
+                ResourceType.AGENT,
+                new InternalSubagentResourceDescriptorBuilder()
+                        .agent(new Child())
+                        .inputSchema(
+                                "{\"type\":\"object\",\"properties\":{\"fail\":{\"type\":\"boolean\"}}}")
+                        .build());
         parent.addAction(
                 new String[] {InputEvent.EVENT_TYPE},
                 InternalSubagentFrameworkFaultTest.class.getMethod(
@@ -179,7 +187,9 @@ public class InternalSubagentFrameworkFaultTest {
                 AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED,
                 !ContinuationActionExecutor.isContinuationSupported());
         config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, parallel);
-        config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
+        // Keep the second child pending so recovery isolates reuse of the first completed child.
+        config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 1);
+        config.set(AgentExecutionOptions.NUM_ASYNC_THREADS, 10);
         AgentPlan compiled = new AgentPlan(parent, config);
         Map<String, Action> actions = new LinkedHashMap<>(compiled.getActions());
         actions.remove("chat_model_action");
@@ -254,7 +264,10 @@ public class InternalSubagentFrameworkFaultTest {
             if (inject
                     && action.getName().equals("tool_call_action")
                     && state.getCallResults().stream()
-                            .anyMatch(call -> call.getFunctionId().startsWith("subagent:"))) {
+                            .anyMatch(
+                                    call ->
+                                            call.getFunctionId().startsWith("subagent:")
+                                                    && !call.isPending())) {
                 throw new IOException(INJECTED_FAILURE);
             }
             // Model a committed write, not a shared mutable ActionState reference.
