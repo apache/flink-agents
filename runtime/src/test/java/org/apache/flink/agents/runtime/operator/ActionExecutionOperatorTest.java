@@ -83,6 +83,7 @@ import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.agents.runtime.tracelog.FileTraceLogger;
 import org.apache.flink.agents.runtime.tracelog.Slf4jTraceLogger;
 import org.apache.flink.agents.runtime.tracelog.TraceLogWriter;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.base.LongSerializer;
@@ -105,6 +106,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InOrder;
 import org.mockito.MockedConstruction;
@@ -141,7 +143,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -729,16 +730,10 @@ public class ActionExecutionOperatorTest {
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
 
-            // Continuation execution waits at the limit; serial execution admits both inputs.
+            // Retire the first input while waiting for room to admit the second.
             testHarness.processElement(new StreamRecord<>(1L));
             testHarness.processElement(new StreamRecord<>(2L));
-            if (ContinuationActionExecutor.isContinuationSupported()) {
-                assertThat(operator.getOperatorStateManager().getProcessingKeys())
-                        .containsExactly(2L);
-            } else {
-                assertThat(operator.getOperatorStateManager().getProcessingKeys())
-                        .containsExactly(1L, 2L);
-            }
+            assertThat(operator.getOperatorStateManager().getProcessingKeys()).containsExactly(2L);
             operator.waitInFlightEventsFinished();
 
             assertThat(operator.getOperatorStateManager().getProcessingKeys()).isEmpty();
@@ -748,9 +743,7 @@ public class ActionExecutionOperatorTest {
 
     @Test
     @Timeout(10)
-    void continuationExecutionProcessesRecordAdmittedAtInFlightLimitUnderItsOwnKey()
-            throws Exception {
-        assumeTrue(ContinuationActionExecutor.isContinuationSupported());
+    void nonParallelEnginesProcessRecordAdmittedAtInFlightLimitUnderItsOwnKey() throws Exception {
         AgentConfiguration config = new AgentConfiguration();
         config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
         config.set(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS, 1);
@@ -776,6 +769,7 @@ public class ActionExecutionOperatorTest {
             // While the second record waits, the first record's mails set the current key to 1L.
             testHarness.processElement(new StreamRecord<>(1L));
             testHarness.processElement(new StreamRecord<>(2L));
+            assertThat(testHarness.getRecordOutput()).isNotEmpty();
             operator.waitInFlightEventsFinished();
 
             assertThat(recordStartKeys).containsExactly(1L, 2L);
@@ -893,6 +887,46 @@ public class ActionExecutionOperatorTest {
             assertThat(testHarness.getRecordOutput())
                     .extracting(StreamRecord::getValue)
                     .containsExactly("single-1", "single-3");
+            assertThat(operator.getOperatorStateManager().getProcessingKeys()).isEmpty();
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,false,2", "false,true,2", "true,false,2", "true,true,2", "false,false,"})
+    @Timeout(10)
+    void inputLimitCountsBothActiveAndQueuedRecords(
+            boolean parallel, boolean sameKey, Integer configuredLimit) throws Exception {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, parallel);
+        if (configuredLimit != null) {
+            config.set(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS, configuredLimit);
+        }
+        int limit = config.get(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS);
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(
+                                TestAgent.getPendingEventsSingleActionPlan(config), true),
+                        (KeySelector<Long, Long>) value -> sameKey ? 0L : value,
+                        TypeInformation.of(Long.class))) {
+            harness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) harness.getOperator();
+            List<String> expected = new ArrayList<>();
+            for (long input = 1; input <= limit; input++) {
+                harness.processElement(new StreamRecord<>(input));
+                expected.add("single-" + input);
+            }
+            assertThat(harness.getRecordOutput()).isEmpty();
+
+            // At capacity, admission must run completion mails to free a slot, even when
+            // the second record is queued behind the first for the same key.
+            harness.processElement(new StreamRecord<>(limit + 1L));
+            expected.add("single-" + (limit + 1));
+            assertThat(harness.getRecordOutput()).isNotEmpty();
+            operator.waitInFlightEventsFinished();
+            assertThat(harness.getRecordOutput())
+                    .extracting(StreamRecord::getValue)
+                    .containsExactlyInAnyOrderElementsOf(expected);
             assertThat(operator.getOperatorStateManager().getProcessingKeys()).isEmpty();
         }
     }
@@ -1680,7 +1714,7 @@ public class ActionExecutionOperatorTest {
 
             InputEvent lookupEvent = new InputEvent(7L);
             lookupEvent.setOccurrenceId(
-                    ActionStateUtil.deriveRootEventOccurrenceId(
+                    RuntimeIdentity.deriveRootEventOccurrenceId(
                             ActionStateUtil.generateBusinessKeyIdentity(
                                     "7", StringSerializer.INSTANCE),
                             0L));
@@ -5419,7 +5453,7 @@ public class ActionExecutionOperatorTest {
             throws Exception {
         InputEvent event = new InputEvent(input);
         event.setOccurrenceId(
-                ActionStateUtil.deriveRootEventOccurrenceId(
+                RuntimeIdentity.deriveRootEventOccurrenceId(
                         ActionStateUtil.generateBusinessKeyIdentity(key, LongSerializer.INSTANCE),
                         0L));
         return event;

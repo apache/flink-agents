@@ -30,6 +30,7 @@ import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.api.java.functions.KeySelector;
@@ -176,7 +177,7 @@ public class KafkaActionStateStoreRecoveryTest {
             // Object serializer in this test suite, per ActionStateTestUtils.KEY_SERIALIZER), so
             // this must match the former, not createKeyEncoder(MAX_PARALLELISM).
             inputEvent.setOccurrenceId(
-                    ActionStateUtil.deriveRootEventOccurrenceId(
+                    RuntimeIdentity.deriveRootEventOccurrenceId(
                             ActionStateUtil.generateBusinessKeyIdentity(
                                     1L, LongSerializer.INSTANCE),
                             1L));

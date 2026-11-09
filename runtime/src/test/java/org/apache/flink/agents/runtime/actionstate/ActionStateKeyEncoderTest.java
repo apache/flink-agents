@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -51,9 +52,15 @@ class ActionStateKeyEncoderTest {
                         TypeInformation.of(Long.class)
                                 .createSerializer(new SerializerConfigImpl()));
         String stateKey =
-                first.generateKey(1L, 1L, new NoOpAction("action"), new InputEvent("input"));
+                first.generateKey(
+                        1L, 1L, new NoOpAction("action"), occurrence(new InputEvent("input")));
 
-        assertThat(restored.generateKey(1L, 1L, new NoOpAction("action"), new InputEvent("input")))
+        assertThat(
+                        restored.generateKey(
+                                1L,
+                                1L,
+                                new NoOpAction("action"),
+                                occurrence(new InputEvent("input"))))
                 .isEqualTo(stateKey);
         assertThat(restored.isKeyRetained(keyGroup -> true, stateKey)).isTrue();
     }
@@ -71,11 +78,15 @@ class ActionStateKeyEncoderTest {
                         TypeInformation.of(Object.class)
                                 .createSerializer(new SerializerConfigImpl()));
         String stateKey =
-                first.generateKey("key", 1L, new NoOpAction("action"), new InputEvent("input"));
+                first.generateKey(
+                        "key", 1L, new NoOpAction("action"), occurrence(new InputEvent("input")));
 
         assertThat(
                         restored.generateKey(
-                                "key", 1L, new NoOpAction("action"), new InputEvent("input")))
+                                "key",
+                                1L,
+                                new NoOpAction("action"),
+                                occurrence(new InputEvent("input"))))
                 .isEqualTo(stateKey);
         assertThat(restored.isKeyRetained(keyGroup -> true, stateKey)).isTrue();
     }

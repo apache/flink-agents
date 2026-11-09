@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -36,6 +37,7 @@ import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.K
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.createKeyEncoder;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.createKeySerializer;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.generateKey;
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -52,8 +54,8 @@ public class ActionStateUtilTest {
         // Create test data
         Object key = "consistency-test";
         Action action = new NoOpAction("consistency-action");
-        InputEvent inputEvent = new InputEvent("same-input");
-        InputEvent inputEvent2 = new InputEvent("same-input");
+        InputEvent inputEvent = occurrence(new InputEvent("same-input"));
+        InputEvent inputEvent2 = occurrence(new InputEvent("same-input"));
 
         // Generate keys multiple times
         String key1 = generateKey(key, 1, action, inputEvent, MAX_PARALLELISM);
@@ -63,45 +65,26 @@ public class ActionStateUtilTest {
         assertEquals(key1, key2);
     }
 
-    /**
-     * Reproduces the collision reported in FLINK-AGENTS-1084: without an assigned occurrence
-     * identity (the legacy fallback, e.g. state written before this fix), two distinct event
-     * occurrences with identical attributes reaching the same action under the same business key
-     * and sequence number produce the same durable action-state key.
-     */
     @Test
-    public void testDistinctEventOccurrencesWithoutOccurrenceIdCollideLegacy() throws Exception {
-        Object businessKey = "key";
-        Action action = new NoOpAction("work-action");
-        Event first = new Event("WorkItem", Map.of("value", "same"));
-        Event second = new Event("WorkItem", Map.of("value", "same"));
-
-        assertNotEquals(first.getId(), second.getId());
-
-        String firstKey = generateKey(businessKey, 1L, action, first, MAX_PARALLELISM);
-        String secondKey = generateKey(businessKey, 1L, action, second, MAX_PARALLELISM);
-
-        assertEquals(firstKey, secondKey);
+    public void testMissingOccurrenceIdIsRejected() {
+        Event event = new Event("work");
+        assertThrows(
+                NullPointerException.class,
+                () -> generateKey("key", 1L, new NoOpAction("work"), event, MAX_PARALLELISM));
     }
 
-    /**
-     * The fix for FLINK-AGENTS-1084: once the runtime assigns each output event its lineage-based
-     * occurrence identity (as {@code ActionExecutionOperator} does via {@link
-     * #deriveOutputEventOccurrenceId}), two sibling occurrences with identical attributes no longer
-     * collide, because their output ordinals differ.
-     */
     @Test
     public void testDistinctEventOccurrencesWithOccurrenceIdDoNotCollide() throws Exception {
         Object businessKey = "key";
         Action action = new NoOpAction("work-action");
-        Event first = new Event("WorkItem", Map.of("value", "same"));
-        Event second = new Event("WorkItem", Map.of("value", "same"));
+        Event first = occurrence(new Event("WorkItem", Map.of("value", "same")));
+        Event second = occurrence(new Event("WorkItem", Map.of("value", "same")));
 
-        String producerExecutionId = generateKey(businessKey, 1L, action, first, MAX_PARALLELISM);
+        String producerExecutionId = "parent-execution";
         first.setOccurrenceId(
-                ActionStateUtil.deriveOutputEventOccurrenceId(producerExecutionId, 0));
+                RuntimeIdentity.deriveEmittedEventOccurrenceId(producerExecutionId, 0));
         second.setOccurrenceId(
-                ActionStateUtil.deriveOutputEventOccurrenceId(producerExecutionId, 1));
+                RuntimeIdentity.deriveEmittedEventOccurrenceId(producerExecutionId, 1));
 
         String firstKey = generateKey(businessKey, 1L, action, first, MAX_PARALLELISM);
         String secondKey = generateKey(businessKey, 1L, action, second, MAX_PARALLELISM);
@@ -118,8 +101,8 @@ public class ActionStateUtilTest {
     public void testOccurrenceIdDoesNotSuppressContentDivergence() throws Exception {
         Object businessKey = "key";
         Action action = new NoOpAction("work-action");
-        Event original = new Event("WorkItem", Map.of("value", "A"));
-        Event diverged = new Event("WorkItem", Map.of("value", "B"));
+        Event original = occurrence(new Event("WorkItem", Map.of("value", "A")));
+        Event diverged = occurrence(new Event("WorkItem", Map.of("value", "B")));
         String sameLineage = "producer-exec-id#0";
         original.setOccurrenceId(sameLineage);
         diverged.setOccurrenceId(sameLineage);
@@ -132,11 +115,11 @@ public class ActionStateUtilTest {
 
     @Test
     public void testDeriveRootEventOccurrenceIdIsReplayStableAndKeySensitive() {
-        String a = ActionStateUtil.deriveRootEventOccurrenceId("business-key-identity", 1L);
-        String b = ActionStateUtil.deriveRootEventOccurrenceId("business-key-identity", 1L);
+        String a = RuntimeIdentity.deriveRootEventOccurrenceId("business-key-identity", 1L);
+        String b = RuntimeIdentity.deriveRootEventOccurrenceId("business-key-identity", 1L);
         String differentSeqNum =
-                ActionStateUtil.deriveRootEventOccurrenceId("business-key-identity", 2L);
-        String differentKey = ActionStateUtil.deriveRootEventOccurrenceId("other-identity", 1L);
+                RuntimeIdentity.deriveRootEventOccurrenceId("business-key-identity", 2L);
+        String differentKey = RuntimeIdentity.deriveRootEventOccurrenceId("other-identity", 1L);
 
         // Replay of the same logical input (same business key, same sequence number) is stable,
         // independent of the fresh random Event#getId() each replay constructs.
@@ -148,10 +131,10 @@ public class ActionStateUtilTest {
     @Test
     public void testDeriveOutputEventOccurrenceIdIsOrdinalAndProducerSensitive() {
         String producer = "producer-execution-id";
-        String ordinal0 = ActionStateUtil.deriveOutputEventOccurrenceId(producer, 0);
-        String ordinal0Again = ActionStateUtil.deriveOutputEventOccurrenceId(producer, 0);
-        String ordinal1 = ActionStateUtil.deriveOutputEventOccurrenceId(producer, 1);
-        String otherProducer = ActionStateUtil.deriveOutputEventOccurrenceId("other-producer", 0);
+        String ordinal0 = RuntimeIdentity.deriveEmittedEventOccurrenceId(producer, 0);
+        String ordinal0Again = RuntimeIdentity.deriveEmittedEventOccurrenceId(producer, 0);
+        String ordinal1 = RuntimeIdentity.deriveEmittedEventOccurrenceId(producer, 1);
+        String otherProducer = RuntimeIdentity.deriveEmittedEventOccurrenceId("other-producer", 0);
 
         assertEquals(ordinal0, ordinal0Again);
         assertNotEquals(ordinal0, ordinal1);
@@ -162,7 +145,7 @@ public class ActionStateUtilTest {
     public void testDeriveOutputEventOccurrenceIdRejectsNegativeOrdinal() {
         assertThrows(
                 IllegalArgumentException.class,
-                () -> ActionStateUtil.deriveOutputEventOccurrenceId("producer", -1));
+                () -> RuntimeIdentity.deriveEmittedEventOccurrenceId("producer", -1));
     }
 
     @ParameterizedTest
@@ -170,9 +153,14 @@ public class ActionStateUtilTest {
     void subgraphStateKeyIgnoresDelegateIdButSeparatesInvocations(boolean bootstrap)
             throws Exception {
         Action action = new NoOpAction("child-action");
-        SubgraphEvent original = new SubgraphEvent("call", new InputEvent("p"), bootstrap);
-        SubgraphEvent replay = new SubgraphEvent("call", new InputEvent("p"), bootstrap);
-        SubgraphEvent otherCall = new SubgraphEvent("other-call", new InputEvent("p"), bootstrap);
+        SubgraphEvent original =
+                occurrence(new SubgraphEvent("call", occurrence(new InputEvent("p")), bootstrap));
+        SubgraphEvent replay =
+                occurrence(new SubgraphEvent("call", occurrence(new InputEvent("p")), bootstrap));
+        SubgraphEvent otherCall =
+                occurrence(
+                        new SubgraphEvent(
+                                "other-call", occurrence(new InputEvent("p")), bootstrap));
 
         assertNotEquals(original.getDelegate().getId(), replay.getDelegate().getId());
         assertFalse(original.getAttributes().containsKey("delegate_id"));
@@ -214,8 +202,8 @@ public class ActionStateUtilTest {
         // Create test data
         Object key = "diff-test";
         Action action = new NoOpAction("diff-action");
-        InputEvent inputEvent1 = new InputEvent("input1");
-        InputEvent inputEvent2 = new InputEvent("input2");
+        InputEvent inputEvent1 = occurrence(new InputEvent("input1"));
+        InputEvent inputEvent2 = occurrence(new InputEvent("input2"));
 
         // Generate keys
         String key1 = generateKey(key, 1, action, inputEvent1, MAX_PARALLELISM);
@@ -228,7 +216,7 @@ public class ActionStateUtilTest {
     @Test
     public void testGenerateKeyWithNullKey() throws Exception {
         Action action = new NoOpAction("test-action");
-        InputEvent inputEvent = new InputEvent("test-input");
+        InputEvent inputEvent = occurrence(new InputEvent("test-input"));
 
         assertThrows(
                 NullPointerException.class,
@@ -240,7 +228,7 @@ public class ActionStateUtilTest {
     @Test
     public void testGenerateKeyWithNullAction() {
         Object key = "test-key";
-        InputEvent inputEvent = new InputEvent("test-input");
+        InputEvent inputEvent = occurrence(new InputEvent("test-input"));
 
         assertThrows(
                 NullPointerException.class,
@@ -265,7 +253,7 @@ public class ActionStateUtilTest {
     public void testGenerateKeyRejectsNonPositiveMaxParallelism() throws Exception {
         Object key = "test-key";
         Action action = new NoOpAction("test-action");
-        InputEvent inputEvent = new InputEvent("test-input");
+        InputEvent inputEvent = occurrence(new InputEvent("test-input"));
 
         assertThrows(
                 IllegalArgumentException.class, () -> generateKey(key, 1, action, inputEvent, 0));
@@ -282,7 +270,7 @@ public class ActionStateUtilTest {
                                 "key",
                                 -1,
                                 new NoOpAction("action"),
-                                new InputEvent("input"),
+                                occurrence(new InputEvent("input")),
                                 MAX_PARALLELISM));
     }
 
@@ -297,7 +285,12 @@ public class ActionStateUtilTest {
     public void testActionUUIDSegmentDerivesFromActionName() throws Exception {
         Action action = new NoOpAction("test-action");
         String generatedKey =
-                generateKey("test-key", 1, action, new InputEvent("test-input"), MAX_PARALLELISM);
+                generateKey(
+                        "test-key",
+                        1,
+                        action,
+                        occurrence(new InputEvent("test-input")),
+                        MAX_PARALLELISM);
 
         String actionUUIDSegment = ActionStateUtil.parseKey(generatedKey).get(3);
         assertEquals(
@@ -310,7 +303,7 @@ public class ActionStateUtilTest {
         // Create test data and generate a key
         Object key = "test-key";
         Action action = new NoOpAction("test-action");
-        InputEvent inputEvent = new InputEvent("test-input");
+        InputEvent inputEvent = occurrence(new InputEvent("test-input"));
         long seqNum = 123;
 
         String generatedKey = generateKey(key, seqNum, action, inputEvent, MAX_PARALLELISM);
@@ -335,7 +328,7 @@ public class ActionStateUtilTest {
         // Test that generate -> parse -> values match original inputs
         Object originalKey = "round-trip-test";
         Action action = new NoOpAction("round-trip-action");
-        InputEvent inputEvent = new InputEvent("round-trip-input");
+        InputEvent inputEvent = occurrence(new InputEvent("round-trip-input"));
         long seqNum = 456;
 
         String generatedKey = generateKey(originalKey, seqNum, action, inputEvent, MAX_PARALLELISM);
@@ -385,7 +378,7 @@ public class ActionStateUtilTest {
         // Test with keys containing special characters (but not the separator)
         Object key = "key-with-special@chars#123";
         Action action = new NoOpAction("action-with-special@chars");
-        InputEvent inputEvent = new InputEvent("input-with-special@chars");
+        InputEvent inputEvent = occurrence(new InputEvent("input-with-special@chars"));
         long seqNum = 789;
 
         String generatedKey = generateKey(key, seqNum, action, inputEvent, MAX_PARALLELISM);
@@ -401,7 +394,7 @@ public class ActionStateUtilTest {
     public void testParseKeyConsistencyWithDifferentKeys() throws Exception {
         // Generate keys with different inputs and verify parsing consistency
         Action action = new NoOpAction("consistency-action");
-        InputEvent inputEvent = new InputEvent("consistency-input");
+        InputEvent inputEvent = occurrence(new InputEvent("consistency-input"));
 
         String key1 = generateKey("key1", 100, action, inputEvent, MAX_PARALLELISM);
         String key2 = generateKey("key2", 200, action, inputEvent, MAX_PARALLELISM);
@@ -421,7 +414,7 @@ public class ActionStateUtilTest {
     @Test
     public void testIsKeyRetainedFiltersForeignKeys() throws Exception {
         Action action = new NoOpAction("owner-action");
-        InputEvent event = new InputEvent("owner-input");
+        InputEvent event = occurrence(new InputEvent("owner-input"));
         String ownedKey = generateKey("A", 1, action, event, MAX_PARALLELISM);
         String foreignKey = generateKey("B", 1, action, event, MAX_PARALLELISM);
 
@@ -437,7 +430,7 @@ public class ActionStateUtilTest {
     @Test
     public void testIsKeyRetainedKeepsAllKeysWhenNoFilter() throws Exception {
         Action action = new NoOpAction("no-filter-action");
-        InputEvent event = new InputEvent("no-filter-input");
+        InputEvent event = occurrence(new InputEvent("no-filter-input"));
         String keyA = generateKey("A", 1, action, event, MAX_PARALLELISM);
         String keyB = generateKey("B", 1, action, event, MAX_PARALLELISM);
 
@@ -465,7 +458,7 @@ public class ActionStateUtilTest {
                         "A",
                         1,
                         new NoOpAction("valid-action"),
-                        new InputEvent("valid-input"),
+                        occurrence(new InputEvent("valid-input")),
                         MAX_PARALLELISM);
         String invalid = "not-a-number" + valid.substring(valid.indexOf('_'));
         IllegalStateException failure =
@@ -486,7 +479,7 @@ public class ActionStateUtilTest {
                         "A",
                         1,
                         new NoOpAction("valid-action"),
-                        new InputEvent("valid-input"),
+                        occurrence(new InputEvent("valid-input")),
                         MAX_PARALLELISM);
         List<String> parts = ActionStateUtil.parseKey(valid);
         String nonCanonicalKeyGroup = withSegment(parts, 0, "+0");
@@ -526,7 +519,7 @@ public class ActionStateUtilTest {
     public void testBusinessKeyContainingSeparatorIsHandled() throws Exception {
         Object businessKey = "tenant_user";
         Action action = new NoOpAction("underscore-action");
-        InputEvent event = new InputEvent("underscore-input");
+        InputEvent event = occurrence(new InputEvent("underscore-input"));
         String stateKey = generateKey(businessKey, 3, action, event, MAX_PARALLELISM);
         String businessKeyIdentity =
                 ActionStateUtil.generateBusinessKeyIdentity(businessKey, KEY_SERIALIZER);
@@ -549,7 +542,9 @@ public class ActionStateUtilTest {
 
     @Test
     public void testRecoveryErrorsBoundEveryFieldAndCause() throws Exception {
-        String valid = generateKey("A", 1, new NoOpAction("action"), new InputEvent("input"), 128);
+        String valid =
+                generateKey(
+                        "A", 1, new NoOpAction("action"), occurrence(new InputEvent("input")), 128);
         List<String> parts = ActionStateUtil.parseKey(valid);
         for (int index = 0; index < parts.size(); index++) {
             String malformed = withSegment(parts, index, "x".repeat(10000));
@@ -588,7 +583,7 @@ public class ActionStateUtilTest {
     @Test
     public void testMatchesBusinessKeyIsSegmentExact() throws Exception {
         Action action = new NoOpAction("match-action");
-        InputEvent event = new InputEvent("match-input");
+        InputEvent event = occurrence(new InputEvent("match-input"));
         // Numeric business key 1 at seqNum 5: a substring match on "_5_" would wrongly
         // attribute this record to business key 5 via its seqNum segment.
         String keyOneAtSeqFive = generateKey(1L, 5, action, event, MAX_PARALLELISM);
@@ -605,7 +600,7 @@ public class ActionStateUtilTest {
     @Test
     public void testMatchesBusinessKeyAndSeqNum() throws Exception {
         Action action = new NoOpAction("match-action");
-        InputEvent event = new InputEvent("match-input");
+        InputEvent event = occurrence(new InputEvent("match-input"));
         String stateKey = generateKey("A", 7, action, event, MAX_PARALLELISM);
         String identityA = ActionStateUtil.generateBusinessKeyIdentity("A", KEY_SERIALIZER);
         String identityB = ActionStateUtil.generateBusinessKeyIdentity("B", KEY_SERIALIZER);
@@ -618,7 +613,7 @@ public class ActionStateUtilTest {
     @Test
     public void testMatchesBusinessKeyWithSeqNumFilter() throws Exception {
         Action action = new NoOpAction("match-action");
-        InputEvent event = new InputEvent("match-input");
+        InputEvent event = occurrence(new InputEvent("match-input"));
         String keyOneAtSeqFive = generateKey(1L, 5, action, event, MAX_PARALLELISM);
         String keyOneIdentity = ActionStateUtil.generateBusinessKeyIdentity(1L, KEY_SERIALIZER);
         String keyFiveIdentity = ActionStateUtil.generateBusinessKeyIdentity(5L, KEY_SERIALIZER);
@@ -638,7 +633,7 @@ public class ActionStateUtilTest {
     @Test
     public void testTypedKeysWithSameStringFormHaveDistinctIdentities() throws Exception {
         Action action = new NoOpAction("typed-key-action");
-        InputEvent event = new InputEvent("typed-key-input");
+        InputEvent event = occurrence(new InputEvent("typed-key-input"));
 
         String numericKey = generateKey(1L, 1, action, event, 1);
         String stringKey = generateKey("1", 1, action, event, 1);
@@ -653,7 +648,7 @@ public class ActionStateUtilTest {
     @Test
     public void testDistinctCustomKeysWithSameStringFormHaveDistinctIdentities() throws Exception {
         Action action = new NoOpAction("custom-key-action");
-        InputEvent event = new InputEvent("custom-key-input");
+        InputEvent event = occurrence(new InputEvent("custom-key-input"));
 
         String first = generateKey(new SameStringKey(1), 1, action, event, 1);
         String second = generateKey(new SameStringKey(2), 1, action, event, 1);

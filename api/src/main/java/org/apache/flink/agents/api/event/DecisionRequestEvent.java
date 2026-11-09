@@ -43,7 +43,8 @@ public class DecisionRequestEvent extends Event {
             List.of(
                     BuiltInAttribute.required("model", String.class),
                     BuiltInAttribute.requiredUntyped("request"),
-                    BuiltInAttribute.optionalUntyped("request_params"));
+                    BuiltInAttribute.optionalUntyped("request_params"),
+                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
 
     /** The model is the registered resource name, not a provider model identifier. */
     public DecisionRequestEvent(String model, DecisionRequest request) {
@@ -53,10 +54,25 @@ public class DecisionRequestEvent extends Event {
     /** Requests a decision with provider-specific parameters for this call. */
     public DecisionRequestEvent(
             String model, DecisionRequest request, @Nullable Map<String, Object> requestParams) {
+        this(model, request, requestParams, null);
+    }
+
+    /**
+     * Requests a decision with provider-specific parameters and application-defined data.
+     *
+     * <p>{@code userContext} is propagated to the response and is not part of {@code request} or
+     * {@code requestParams}. {@code null} omits it.
+     */
+    public DecisionRequestEvent(
+            String model,
+            DecisionRequest request,
+            @Nullable Map<String, Object> requestParams,
+            @Nullable Map<String, Object> userContext) {
         super(EVENT_TYPE);
         setAttr("model", Objects.requireNonNull(model, "model"));
         setAttr("request", Objects.requireNonNull(request, "request"));
         setAttr("request_params", normalizeRequestParams(requestParams));
+        UserDefinedContext.set(this, userContext);
     }
 
     @JsonCreator
@@ -110,5 +126,16 @@ public class DecisionRequestEvent extends Event {
     @JsonIgnore
     public Map<String, Object> getRequestParams() {
         return (Map<String, Object>) getAttr("request_params");
+    }
+
+    /**
+     * Returns application-defined data to propagate to the matching response, or {@code null} when
+     * this request omitted it. The map is not added to the decision request or {@code
+     * request_params}.
+     */
+    @JsonIgnore
+    @Nullable
+    public Map<String, Object> getUserContext() {
+        return UserDefinedContext.get(this);
     }
 }

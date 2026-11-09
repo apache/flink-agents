@@ -67,6 +67,7 @@ import org.apache.flink.agents.runtime.subgraph.SubgraphExecution;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 import org.apache.flink.agents.runtime.utils.IdAllocatorSource;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.function.ThrowingRunnable;
@@ -208,6 +209,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
      * exactly as for the memory context.
      */
     @Nullable private IdAllocatorSource idAllocatorSource;
+
+    private RuntimeIdentity.OutputIdentityAllocator outputIdentities;
 
     @Nullable private SubgraphInvocation<?> subgraphInvocation;
     private SubgraphCallManager subgraphCalls = new SubgraphCallManager();
@@ -375,6 +378,25 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         return idAllocatorSource;
     }
 
+    public void setOutputIdentities(RuntimeIdentity.OutputIdentityAllocator identities) {
+        this.outputIdentities = identities;
+    }
+
+    public RuntimeIdentity.OutputIdentityAllocator getOutputIdentities() {
+        return outputIdentities;
+    }
+
+    /** Reserves the bootstrap occurrence when a completed graph call is reused on replay. */
+    public void reserveOutputIdentity() {
+        Preconditions.checkNotNull(outputIdentities, "Output identity requires an executing action")
+                .nextId();
+    }
+
+    public void assignOutputIdentity(Event event) {
+        Preconditions.checkNotNull(outputIdentities, "Output identity requires an executing action")
+                .assign(event);
+    }
+
     /**
      * The id counter of the executing action for one call target — a named sub-agent, or the
      * built-in chat graph's own namespace.
@@ -477,6 +499,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     /** Enqueues a runtime event without applying user-event or sub-agent routing. */
     public void addPendingEvent(Event event) {
+        assignOutputIdentity(event);
         try {
             EventAttachmentUtils.storeEventAttachments(event, this);
         } catch (Exception e) {
@@ -560,6 +583,12 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     private List<Event> drainPendingEvents(Long timestamp) {
+        // Observation events are created at completion, after user emissions.
+        for (Event event : pendingEvents) {
+            if (event.getOccurrenceId() == null) {
+                assignOutputIdentity(event);
+            }
+        }
         List<Event> list = new ArrayList<>(this.pendingEvents);
         if (timestamp != null) {
             list.forEach(event -> event.setSourceTimestamp(timestamp));

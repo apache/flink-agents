@@ -25,6 +25,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 
+import javax.annotation.Nullable;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -41,14 +43,23 @@ public class ToolRequestEvent extends Event {
             List.of(
                     BuiltInAttribute.required("model", String.class),
                     BuiltInAttribute.requiredList(
-                            "tool_calls", "a tool call", Map.class, ToolCallBlock.class));
+                            "tool_calls", "a tool call", Map.class, ToolCallBlock.class),
+                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    public ToolRequestEvent(String model, List<ToolCallBlock> toolCalls) {
+    public ToolRequestEvent(
+            String model,
+            List<ToolCallBlock> toolCalls,
+            @Nullable Map<String, Object> userContext) {
         super(EVENT_TYPE);
         setAttr("model", model);
         setAttr("tool_calls", validate(toolCalls));
+        UserDefinedContext.set(this, userContext);
+    }
+
+    public ToolRequestEvent(String model, List<ToolCallBlock> toolCalls) {
+        this(model, toolCalls, null);
     }
 
     @JsonCreator
@@ -79,6 +90,16 @@ public class ToolRequestEvent extends Event {
     @SuppressWarnings("unchecked")
     public List<ToolCallBlock> getToolCalls() {
         return Collections.unmodifiableList((List<ToolCallBlock>) getAttr("tool_calls"));
+    }
+
+    /**
+     * Returns application-defined data to propagate to the matching {@link ToolResponseEvent}, or
+     * {@code null} when this request omitted it. The map is not added to tool-call arguments.
+     */
+    @JsonIgnore
+    @Nullable
+    public Map<String, Object> getUserContext() {
+        return UserDefinedContext.get(this);
     }
 
     private static List<ToolCallBlock> restoreToolCalls(List<?> values) {

@@ -388,6 +388,98 @@ class CrossLanguageEventSnapshotTest {
         assertEquals("hi there", response.getText());
     }
 
+    // ── Request context ────────────────────────────────────────────────────
+
+    private static Map<String, Object> snapshotContext() {
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("task", "summary");
+        context.put("item_id", "42");
+        context.put("n", 1);
+        context.put("ok", true);
+        context.put("tags", List.of("a"));
+        return context;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void assertSnapshotContext(Object context) {
+        assertInstanceOf(Map.class, context);
+        Map<String, Object> values = (Map<String, Object>) context;
+        assertEquals("summary", values.get("task"));
+        assertEquals("42", values.get("item_id"));
+        assertEquals(1, ((Number) values.get("n")).intValue());
+        assertEquals(Boolean.TRUE, values.get("ok"));
+        assertEquals(List.of("a"), values.get("tags"));
+    }
+
+    private static ChatRequestEvent buildChatRequestEventWithContext() {
+        ChatRequestEvent event =
+                new ChatRequestEvent(
+                        "test-model",
+                        List.of(new ChatMessage(MessageRole.USER, "hello world")),
+                        null,
+                        null,
+                        snapshotContext());
+        return new ChatRequestEvent(FIXED_EVENT_ID, event.getAttributes());
+    }
+
+    @Test
+    void regenerateChatRequestEventWithContextJavaSnapshot() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        writeJavaSnapshot(
+                "chat_request_event_with_context.json", buildChatRequestEventWithContext());
+    }
+
+    @Test
+    void chatRequestEventWithContextJavaSnapshotIsStable() throws Exception {
+        assertJavaSnapshotStable(
+                "chat_request_event_with_context.json", buildChatRequestEventWithContext());
+    }
+
+    @Test
+    void javaCanDeserializeChatRequestEventWithContextFromPythonSnapshot() throws Exception {
+        ChatRequestEvent typed =
+                ChatRequestEvent.fromEvent(
+                        readPythonSnapshot("chat_request_event_with_context.json"));
+        assertEquals(FIXED_EVENT_ID, typed.getId());
+        assertEquals("test-model", typed.getModel());
+        assertEquals("hello world", typed.getMessages().get(0).getText());
+        assertSnapshotContext(typed.getUserContext());
+    }
+
+    private static ChatResponseEvent buildChatResponseEventWithContext() {
+        ChatResponseEvent event =
+                ChatResponseEvent.success(
+                                FIXED_REQUEST_ID,
+                                new ChatResult(
+                                        ChatMessage.assistant(List.of(new TextBlock("hi there")))))
+                        .withUserContext(snapshotContext());
+        return new ChatResponseEvent(FIXED_EVENT_ID, event.getAttributes());
+    }
+
+    @Test
+    void regenerateChatResponseEventWithContextJavaSnapshot() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        writeJavaSnapshot(
+                "chat_response_event_with_context.json", buildChatResponseEventWithContext());
+    }
+
+    @Test
+    void chatResponseEventWithContextJavaSnapshotIsStable() throws Exception {
+        assertJavaSnapshotStable(
+                "chat_response_event_with_context.json", buildChatResponseEventWithContext());
+    }
+
+    @Test
+    void javaCanDeserializeChatResponseEventWithContextFromPythonSnapshot() throws Exception {
+        ChatResponseEvent typed =
+                ChatResponseEvent.fromEvent(
+                        readPythonSnapshot("chat_response_event_with_context.json"));
+        assertEquals(FIXED_EVENT_ID, typed.getId());
+        assertEquals(FIXED_REQUEST_ID, typed.getRequestId());
+        assertEquals("hi there", typed.getResponse().getText());
+        assertSnapshotContext(typed.getUserContext());
+    }
+
     // ── ToolRequestEvent ───────────────────────────────────────────────────
 
     private static ToolRequestEvent buildToolRequestEvent() {

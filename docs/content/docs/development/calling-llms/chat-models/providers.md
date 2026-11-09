@@ -68,13 +68,20 @@ not support raises `UnsupportedContentBlockException` in Java or
 by the integration can still be rejected by the model service if the selected model
 or deployment does not support it.
 
-**Media in tool results.** Media returned by a tool reaches the model only through
-the Anthropic integration:
+**Media in tool results.** An integration that doesn't support media in tool results raises
+`UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the
+request is sent.
 
 | Integration | Media in tool results |
 |---|---|
+| [Alibaba Cloud Model Studio (DashScope)](#alibaba-cloud-model-studio-dashscope) | Not supported |
+| [OpenAI Chat Completions](#multimodal-input), [Azure OpenAI](#azure-openai), [vLLM](#vllm) | Not supported |
+| [OpenAI Responses](#responses-api) | The media accepted in user messages, sent as `function_call_output` output items in block order. The tool result's error flag is not sent, because the API has no field for it. |
 | [Anthropic](#anthropic) | The media accepted in user messages, sent in the `tool_result` content in block order. |
-| [Alibaba Cloud Model Studio (DashScope)](#alibaba-cloud-model-studio-dashscope), [OpenAI Chat Completions](#multimodal-input), [Azure OpenAI](#azure-openai), [vLLM](#vllm), [OpenAI Responses](#responses-api), [Ollama](#ollama), [Gemini](#gemini), [Amazon Bedrock](#amazon-bedrock), [IBM watsonx.ai](#watsonx-ibm-watsonxai) | Not supported: raises `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the request is sent. |
+| [Ollama](#ollama) | Not supported |
+| [Gemini](#gemini) | Not supported |
+| [Amazon Bedrock](#amazon-bedrock) | Not supported |
+| [IBM watsonx.ai](#watsonx-ibm-watsonxai) | Not supported |
 
 The implementation language does not limit the Agent API you can use: see
 [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}})
@@ -969,8 +976,8 @@ See [Provider Capabilities](#provider-capabilities) for other integrations.
 The OpenAI Responses integration currently has a Java implementation only. To use OpenAI Responses API from Python agents, see [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}).
 {{< /hint >}}
 
-The Flink Agents Responses integration sends images and documents from user
-messages, but not audio or video; see **Multimodal input** below. Its capabilities
+The Flink Agents Responses integration sends images and documents from user messages
+and tool results, but not audio or video; see **Multimodal input** below. Its capabilities
 differ from the Chat Completions integration above, even when both connect to OpenAI.
 
 ##### OpenAIResponsesModelConnection Parameters
@@ -1047,7 +1054,7 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
-**Multimodal input.** The media blocks of a user message are sent as Responses input content, in block order, next to its text blocks:
+**Multimodal input.** The media blocks of a user message are sent as Responses input content, in block order, next to its text blocks. The media blocks of a tool result are sent the same way, with its text blocks, as the output items of its `function_call_output`:
 
 | Block | Sent as |
 |---|---|
@@ -1056,7 +1063,7 @@ public class MyAgent extends Agent {
 | `DocumentBlock` | an `input_file` part: Base64 data as `file_data` (a `data:` URI) with the block's `name` as `filename` (`document` when unset), or a URL as `file_url` |
 | `AudioBlock`, `VideoBlock` | not supported |
 
-A user message with only text blocks is sent as before. Audio, video, and media in assistant messages or tool results raise `UnsupportedContentBlockException` before the request is sent. Which image and file types a model accepts is up to OpenAI.
+A user message or tool result with only text blocks is sent as before. Audio, video, and media in assistant messages raise `UnsupportedContentBlockException` before the request is sent. Which image and file types a model accepts is up to OpenAI.
 
 #### Available Models
 

@@ -36,6 +36,7 @@ from pyflink.datastream.connectors.file_system import (
 from pyflink.table import DataTypes, Schema, StreamTableEnvironment, TableDescriptor
 from pyflink.table.types import DataType
 
+from flink_agents.api.core_options import AgentConfigOptions
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.e2e_tests.e2e_tests_integration.flink_integration_agent import (
     DataStreamAgent,
@@ -49,7 +50,48 @@ from flink_agents.e2e_tests.test_utils import check_result
 
 current_dir = Path(__file__).parent
 
-os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
+os.environ["PYTHONPATH"] = (
+    f"{current_dir.parent.parent.parent}:{sysconfig.get_paths()['purelib']}"
+)
+
+
+@pytest.mark.parametrize(
+    "runtime_mode", [RuntimeExecutionMode.BATCH, RuntimeExecutionMode.AUTOMATIC]
+)
+@pytest.mark.parametrize(
+    ("batch_backend", "sorted_inputs"), [(True, True), (False, True), (False, False)]
+)
+def test_bounded_workflow_with_async_actions_and_keyed_memory(
+    runtime_mode: RuntimeExecutionMode, batch_backend: bool, sorted_inputs: bool
+) -> None:
+    config = Configuration()
+    config.set_string("restart-strategy.type", "disable")
+    config.set_boolean("execution.batch-state-backend.enabled", batch_backend)
+    config.set_boolean("execution.sorted-inputs.enabled", sorted_inputs)
+    env = StreamExecutionEnvironment.get_execution_environment(config)
+    env.set_runtime_mode(runtime_mode)
+    env.set_parallelism(1)
+    inputs = [
+        ItemData(id=key, review="review", review_score=1.0)
+        for key in [1, 2, 1, 2, 1, 2]
+    ]
+    agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
+    agents_env.get_config().set(AgentConfigOptions.TRACE_LOG_TARGETS, [])
+    output = (
+        agents_env.from_datastream(env.from_collection(inputs), MyKeySelector())
+        .apply(DataStreamAgent())
+        .to_datastream()
+    )
+    with output.execute_and_collect() as results:
+        records = [ItemData.model_validate(result) for result in results]
+    assert Counter(
+        (record.id, record.memory_info["total_reviews"]) for record in records
+    ) == Counter((key, count) for key in [1, 2] for count in [1, 2, 3])
+    assert all(
+        record.review
+        == "review first action, log success=True, second action call my tool"
+        for record in records
+    )
 
 
 @pytest.mark.parametrize("table_input", [False, True], ids=["datastream", "table"])

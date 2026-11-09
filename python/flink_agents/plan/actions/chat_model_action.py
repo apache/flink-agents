@@ -70,6 +70,11 @@ _ROUTING_METADATA_CONTEXT = "_ROUTING_METADATA_CONTEXT"
 # position in the action's durable call sequence.
 _CHAT_DURABLE_ID = "chat"
 _PROMPT_ARGS = "prompt_args"
+# Sensory-memory key. Matches the event attribute name.
+_USER_CONTEXT = "user_context"
+# Not a built-in event type. A carrier of this type runs Event JSON encode and
+# decode, including Row reconstruction, for the stored map.
+_USER_CONTEXT_CARRIER = "_user_context_memory"
 _FINISH_REASON = "finish_reason"
 _TRUNCATED_FINISH_REASON = "length"
 _CONTENT_FILTERED_FINISH_REASON = "content_filter"
@@ -193,7 +198,12 @@ async def _durable_invoke(
     return ctx.durable_execute(func, *args, **kwargs)
 
 
-def _send_failure(request_id: UUID, error: Exception, ctx: RunnerContext) -> None:
+def _send_failure(
+    request_id: UUID,
+    error: Exception,
+    ctx: RunnerContext,
+    user_context: dict[str, Any] | None = None,
+) -> None:
     stats = _get_retry_stats(ctx.sensory_memory, request_id)
     _clear_request_context(ctx.sensory_memory, request_id)
     ctx.send_event(
@@ -202,6 +212,7 @@ def _send_failure(request_id: UUID, error: Exception, ctx: RunnerContext) -> Non
             _error_text(error),
             stats["total_retry_count"],
             stats["total_retry_wait_sec"],
+            user_context=user_context,
         )
     )
 
@@ -256,6 +267,41 @@ def _update_tool_call_context(
     return _deserialize_messages(tool_call_context[key])
 
 
+def _serialize_user_context(user_context: dict[str, Any]) -> dict[str, Any]:
+    """Encode ``user_context`` with the JSON rules used for Event attributes.
+
+    Sensory memory accepts only checkpoint-stable values. An Event attribute
+    also accepts UUIDs, datetimes, Pydantic models, tuples, and ``Row``, so the
+    value written here is that Event JSON form.
+    """
+    encoded = json.loads(
+        Event(
+            type=_USER_CONTEXT_CARRIER,
+            attributes={_USER_CONTEXT: user_context},
+        ).model_dump_json()
+    )["attributes"][_USER_CONTEXT]
+    if not isinstance(encoded, dict):
+        msg = "user_context must serialize to a JSON object"
+        raise TypeError(msg)
+    return encoded
+
+
+def _deserialize_user_context(stored: dict[str, Any]) -> dict[str, Any]:
+    """Restore stored ``user_context`` the way ``Event.from_json`` decodes it."""
+    restored = Event.from_json(
+        json.dumps(
+            {
+                "type": _USER_CONTEXT_CARRIER,
+                "attributes": {_USER_CONTEXT: stored},
+            }
+        )
+    ).attributes[_USER_CONTEXT]
+    if not isinstance(restored, dict):
+        msg = "user_context must deserialize to a dict"
+        raise TypeError(msg)
+    return restored
+
+
 def _save_tool_request_event_context(
     sensory_memory: MemoryObject,
     tool_request_event_id: UUID,
@@ -263,10 +309,11 @@ def _save_tool_request_event_context(
     model: str,
     prompt_args: Dict | None,
     output_schema: OutputSchema | None,
+    user_context: dict[str, Any] | None = None,
 ) -> None:
     """Save the context for a specific tool request event."""
-    context = sensory_memory.get(_TOOL_REQUEST_EVENT_CONTEXT) or {}
-    context[str(tool_request_event_id)] = {
+    stored = sensory_memory.get(_TOOL_REQUEST_EVENT_CONTEXT) or {}
+    entry = {
         "initial_request_id": str(initial_request_id),
         "model": model,
         _PROMPT_ARGS: prompt_args if prompt_args is not None else {},
@@ -274,7 +321,13 @@ def _save_tool_request_event_context(
         if output_schema is not None
         else None,
     }
-    sensory_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, context)
+    # Absent when the request omitted it, so a checkpoint from before this field
+    # still resumes with no user context. Present values are Event JSON: memory
+    # rejects objects an Event attribute can already carry.
+    if user_context is not None:
+        entry[_USER_CONTEXT] = _serialize_user_context(user_context)
+    stored[str(tool_request_event_id)] = entry
+    sensory_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, stored)
 
 
 def _get_tool_request_event_context(
@@ -294,6 +347,10 @@ def _get_tool_request_event_context(
             if output_schema is not None
             else None
         )
+        if _USER_CONTEXT in removed_context:
+            removed_context[_USER_CONTEXT] = _deserialize_user_context(
+                removed_context[_USER_CONTEXT]
+            )
     return removed_context
 
 
@@ -395,6 +452,7 @@ def _handle_tool_calls(
     prompt_args: Dict | None,
     output_schema: OutputSchema | None,
     ctx: RunnerContext,
+    user_context: dict[str, Any] | None = None,
 ) -> None:
     """Handle tool calls in chat response."""
     _update_tool_call_context(
@@ -417,6 +475,7 @@ def _handle_tool_calls(
         model,
         prompt_args,
         output_schema,
+        user_context,
     )
 
     ctx.send_event(tool_request_event)
@@ -762,6 +821,8 @@ async def chat(
     prompt_args: Dict | None,
     output_schema: OutputSchema | None,
     ctx: RunnerContext,
+    *,
+    user_context: dict[str, Any] | None = None,
 ) -> None:
     """Chat with llm.
 
@@ -778,10 +839,18 @@ async def chat(
     try:
         selection = await resolve(initial_request_id, model, messages, prompt_args, ctx)
     except RoutingFailure as failure:
-        _send_failure(initial_request_id, _InvocationFailure(str(failure)), ctx)
+        _send_failure(
+            initial_request_id, _InvocationFailure(str(failure)), ctx, user_context
+        )
         return
     await _chat_resolved(
-        initial_request_id, selection, messages, prompt_args, output_schema, ctx
+        initial_request_id,
+        selection,
+        messages,
+        prompt_args,
+        output_schema,
+        ctx,
+        user_context=user_context,
     )
 
 
@@ -792,6 +861,8 @@ async def _chat_resolved(
     prompt_args: Dict | None,
     output_schema: OutputSchema | None,
     ctx: RunnerContext,
+    *,
+    user_context: dict[str, Any] | None = None,
 ) -> None:
     """Execute an initial selection or an already concrete tool follow-up."""
     tried = []
@@ -846,7 +917,7 @@ async def _chat_resolved(
                 )
             )
         )
-        _send_failure(initial_request_id, error, ctx)
+        _send_failure(initial_request_id, error, ctx, user_context)
         return
     response = attempt.response
     chat_model = attempt.chat_model
@@ -864,6 +935,7 @@ async def _chat_resolved(
             prompt_args,
             output_schema,
             ctx,
+            user_context,
         )
     else:  # if there is no tool call generated, return chat response directly
         retry_stats = _get_retry_stats(ctx.sensory_memory, initial_request_id)
@@ -878,6 +950,7 @@ async def _chat_resolved(
             response=response,
             retry_count=total_retry_count,
             total_retry_wait_sec=total_retry_wait_sec,
+            user_context=user_context,
         )
         completed.attributes["structured_output"] = structured_output
         if routing_metadata is not None:
@@ -894,6 +967,7 @@ async def _process_chat_request(event: ChatRequestEvent, ctx: RunnerContext) -> 
         prompt_args=event.prompt_args,
         output_schema=event.output_schema,
         ctx=ctx,
+        user_context=event.user_context,
     )
 
 
@@ -926,6 +1000,7 @@ async def _process_tool_response(event: ToolResponseEvent, ctx: RunnerContext) -
         prompt_args=tool_request_event_context.get(_PROMPT_ARGS, {}),
         output_schema=tool_request_event_context["output_schema"],
         ctx=ctx,
+        user_context=tool_request_event_context.get(_USER_CONTEXT),
     )
 
 

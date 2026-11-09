@@ -64,6 +64,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.KEY_SERIALIZER;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.createKeyEncoder;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.generateKey;
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.apache.kafka.clients.consumer.internals.AutoOffsetResetStrategy.EARLIEST;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -160,7 +161,7 @@ public class KafkaActionStateStoreTest {
 
         // Create test objects
         testAction = new NoOpAction("test-action");
-        testEvent = new InputEvent("test data");
+        testEvent = occurrence(new InputEvent("test data"));
         testActionState = new ActionState(testEvent);
     }
 
@@ -287,7 +288,7 @@ public class KafkaActionStateStoreTest {
                         2L,
                         new TopicPartition(TEST_TOPIC, 1),
                         0L));
-        Event changed = new InputEvent("different input history");
+        Event changed = occurrence(new InputEvent("different input history"));
         assertThat(actionStateStore.get(TEST_KEY, 1L, testAction, changed)).isNull();
         assertThat(actionStates).isEmpty();
         assertThat(
@@ -526,7 +527,7 @@ public class KafkaActionStateStoreTest {
     void testRecoveryMarkerUsesSnapshotCompletedSequencesWithoutRetainingThem() throws Exception {
         ActionState completedState = new ActionState(testEvent);
         completedState.markCompleted();
-        ActionState pendingState = new ActionState(new InputEvent("pending"));
+        ActionState pendingState = new ActionState(occurrence(new InputEvent("pending")));
 
         actionStateStore.put(TEST_KEY, 1L, testAction, testEvent, completedState);
         actionStateStore.put(TEST_KEY, 2L, testAction, testEvent, pendingState);
@@ -785,7 +786,7 @@ public class KafkaActionStateStoreTest {
         actionStateStore.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
 
         // Modify the action state
-        testActionState.addEvent(new InputEvent("additional event"));
+        testActionState.addEvent(occurrence(new InputEvent("additional event")));
 
         // Act - update the same action state
         actionStateStore.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
@@ -814,9 +815,9 @@ public class KafkaActionStateStoreTest {
         assertThat(actionStates).isEmpty();
 
         actionStateStore.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
-        ActionState secondState = new ActionState(new InputEvent("second event"));
+        ActionState secondState = new ActionState(occurrence(new InputEvent("second event")));
         actionStateStore.put(TEST_KEY, 2L, testAction, testEvent, secondState);
-        ActionState thirdState = new ActionState(new InputEvent("third event"));
+        ActionState thirdState = new ActionState(occurrence(new InputEvent("third event")));
         actionStateStore.put(TEST_KEY, 3L, testAction, testEvent, thirdState);
 
         long i = 0L;

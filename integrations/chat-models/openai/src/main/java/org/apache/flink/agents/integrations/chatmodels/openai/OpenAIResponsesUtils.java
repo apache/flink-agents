@@ -25,10 +25,14 @@ import com.openai.core.JsonValue;
 import com.openai.models.responses.EasyInputMessage;
 import com.openai.models.responses.FunctionTool;
 import com.openai.models.responses.Response;
+import com.openai.models.responses.ResponseFunctionCallOutputItem;
 import com.openai.models.responses.ResponseFunctionToolCall;
 import com.openai.models.responses.ResponseInputFile;
+import com.openai.models.responses.ResponseInputFileContent;
 import com.openai.models.responses.ResponseInputImage;
+import com.openai.models.responses.ResponseInputImageContent;
 import com.openai.models.responses.ResponseInputItem;
+import com.openai.models.responses.ResponseInputTextContent;
 import com.openai.models.responses.ResponseOutputItem;
 import com.openai.models.responses.ResponseOutputMessage;
 import com.openai.models.responses.ResponseReasoningItem;
@@ -36,6 +40,7 @@ import com.openai.models.responses.Tool;
 import org.apache.flink.agents.api.chat.messages.Base64Source;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ContentBlock;
+import org.apache.flink.agents.api.chat.messages.DataContentBlock;
 import org.apache.flink.agents.api.chat.messages.DocumentBlock;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MediaBlock;
@@ -62,6 +67,8 @@ final class OpenAIResponsesUtils {
     private static final String REASONING_METADATA = "openai_responses";
     private static final String ITEM_ID = "item_id";
     private static final String REFUSAL = "refusal";
+    private static final String UNSUPPORTED_MEDIA =
+            "the Responses API takes images and documents only";
 
     private OpenAIResponsesUtils() {}
 
@@ -74,20 +81,17 @@ final class OpenAIResponsesUtils {
     }
 
     /**
-     * Converts a message to Responses input items. Only user messages can carry media: images
-     * become {@code input_image} and documents {@code input_file}, by URL or Base64 data. Audio and
-     * video, and media in an assistant message or a tool result, throw {@link
+     * Converts a message to Responses input items. Only user messages and tool results can carry
+     * media: images become {@code input_image} and documents {@code input_file}, by URL or Base64
+     * data. A tool result's media goes into its {@code function_call_output} as a list output.
+     * Audio and video, and media in an assistant message, throw {@link
      * UnsupportedContentBlockException}.
      */
     static List<ResponseInputItem> convertSingleMessage(ChatMessage message) {
         List<ResponseInputItem> items = new ArrayList<>();
         MessageRole role = message.getRole();
-        if (role != MessageRole.USER) {
-            requireTextOnly(
-                    message,
-                    role == MessageRole.TOOL
-                            ? ((ToolResultBlock) message.getBlocks().get(0)).getBlocks()
-                            : message.getBlocks());
+        if (role != MessageRole.USER && role != MessageRole.TOOL) {
+            requireTextOnly(message);
         }
         String content = message.getText();
 
@@ -110,19 +114,9 @@ final class OpenAIResponsesUtils {
                 break;
 
             case TOOL:
-                ToolResultBlock toolResult = (ToolResultBlock) message.getBlocks().get(0);
-                String toolCallId = toolResult.getCallId();
-                content =
-                        toolResult.getBlocks().stream()
-                                .filter(block -> block instanceof TextBlock)
-                                .map(block -> ((TextBlock) block).getText())
-                                .collect(Collectors.joining());
                 items.add(
                         ResponseInputItem.ofFunctionCallOutput(
-                                ResponseInputItem.FunctionCallOutput.builder()
-                                        .callId(toolCallId)
-                                        .output(content)
-                                        .build()));
+                                convertToolResult((ToolResultBlock) message.getBlocks().get(0))));
                 break;
 
             default:
@@ -150,10 +144,55 @@ final class OpenAIResponsesUtils {
             } else if (block instanceof DocumentBlock) {
                 builder.addContent(toInputFile((DocumentBlock) block));
             } else {
-                throw unsupported(block, "the Responses API takes images and documents only");
+                throw unsupported(block, UNSUPPORTED_MEDIA);
             }
         }
         return builder.build();
+    }
+
+    /**
+     * Sends a text-only result as one string, and a result with media as a list in block order. The
+     * result's error flag is not sent: a function output has no error field.
+     */
+    private static ResponseInputItem.FunctionCallOutput convertToolResult(ToolResultBlock result) {
+        ResponseInputItem.FunctionCallOutput.Builder builder =
+                ResponseInputItem.FunctionCallOutput.builder().callId(result.getCallId());
+        if (result.getBlocks().stream().allMatch(block -> block instanceof TextBlock)) {
+            return builder.output(result.getText()).build();
+        }
+        List<ResponseFunctionCallOutputItem> output = new ArrayList<>();
+        for (DataContentBlock block : result.getBlocks()) {
+            output.add(toOutputItem(block));
+        }
+        return builder.outputOfResponseFunctionCallOutputItemList(output).build();
+    }
+
+    private static ResponseFunctionCallOutputItem toOutputItem(DataContentBlock block) {
+        if (block instanceof TextBlock) {
+            return ResponseFunctionCallOutputItem.ofInputText(
+                    ResponseInputTextContent.builder().text(((TextBlock) block).getText()).build());
+        }
+        if (block instanceof ImageBlock) {
+            return ResponseFunctionCallOutputItem.ofInputImage(
+                    ResponseInputImageContent.builder()
+                            .imageUrl(urlOrDataUri((MediaBlock) block))
+                            .detail(ResponseInputImageContent.Detail.AUTO)
+                            .build());
+        }
+        if (block instanceof DocumentBlock) {
+            return ResponseFunctionCallOutputItem.ofInputFile(
+                    toInputFileContent(toInputFile((DocumentBlock) block)));
+        }
+        throw unsupported(block, UNSUPPORTED_MEDIA);
+    }
+
+    /** The same fields in the SDK's function-output class. Unset fields stay off the wire. */
+    private static ResponseInputFileContent toInputFileContent(ResponseInputFile file) {
+        ResponseInputFileContent.Builder content = ResponseInputFileContent.builder();
+        file.fileData().ifPresent(content::fileData);
+        file.fileUrl().ifPresent(content::fileUrl);
+        file.filename().ifPresent(content::filename);
+        return content.build();
     }
 
     private static ResponseInputFile toInputFile(DocumentBlock document) {
@@ -180,12 +219,12 @@ final class OpenAIResponsesUtils {
                 + ((Base64Source) block.getSource()).getData();
     }
 
-    private static void requireTextOnly(ChatMessage message, List<? extends ContentBlock> blocks) {
-        for (ContentBlock block : blocks) {
+    private static void requireTextOnly(ChatMessage message) {
+        for (ContentBlock block : message.getBlocks()) {
             if (block instanceof MediaBlock) {
                 throw unsupported(
                         block,
-                        "only user messages can carry media, not "
+                        "only user messages and tool results can carry media, not "
                                 + message.getRole().getValue()
                                 + " messages");
             }

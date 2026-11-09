@@ -38,7 +38,6 @@ import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
-import org.apache.flink.agents.runtime.actionstate.ActionStateUtil;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -65,6 +64,7 @@ import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.trace.TraceTaskLifecycleListener;
 import org.apache.flink.agents.runtime.tracelog.TraceLogWriter;
 import org.apache.flink.agents.runtime.utils.EventUtil;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -304,6 +304,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient TypeSerializer<Event> eventSerializer;
 
+    private transient boolean usesBatchExecutionKeyedStateBackend;
+
     // Each job can only have one identifier and this identifier must be consistent across restarts.
     // We cannot use job id as the identifier here because user may change job id by
     // creating a savepoint, stop the job and then resume from savepoint.
@@ -354,6 +356,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void open() throws Exception {
         super.open();
+
+        usesBatchExecutionKeyedStateBackend =
+                getKeyedStateBackend() instanceof BatchExecutionKeyedStateBackend;
 
         eventSerializer =
                 TypeInformation.of(Event.class)
@@ -543,16 +548,17 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         processElementInternal(record);
                     });
         } else {
-            if (ContinuationActionExecutor.isContinuationSupported()) {
-                // Mails run while yielding can change the current key, so set the record's key
-                // after the last yield.
-                while (inFlightInputRecords >= maxInFlightInputRecords) {
-                    mailboxExecutor.yield();
-                }
-                super.setKeyContextElement1(record);
+            // Mails run while yielding can change the current key, so set the record's key
+            // after the last yield.
+            while (inFlightInputRecords >= maxInFlightInputRecords) {
+                mailboxExecutor.yield();
             }
+            super.setKeyContextElement1(record);
             processElementInternal(record);
         }
+        // Drain only after releasing the parallel engine's lock: workers need it to
+        // complete Actions, and waitInFlightEventsFinished acquires it itself.
+        waitForCurrentInputInBatchMode();
     }
 
     private void processElementInternal(StreamRecord<IN> record) throws Exception {
@@ -598,6 +604,21 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         processInputEvent(key, inputEvent);
     }
 
+    /**
+     * Completes the current input before Flink's batch keyed-state backend advances to another key.
+     *
+     * <p>The batch backend clears keyed state on every key switch because it assumes that an
+     * operator fully processes one key before returning to its input loop. Action execution
+     * normally spans mailbox continuations, so streaming backends deliberately keep multiple keys
+     * in flight. Under the batch backend, drain those continuations here to honor its processing
+     * contract without changing streaming concurrency.
+     */
+    private void waitForCurrentInputInBatchMode() throws Exception {
+        if (usesBatchExecutionKeyedStateBackend) {
+            waitInFlightEventsFinished();
+        }
+    }
+
     /** Resolves one context key for an input and reuses it for the entire agent run. */
     private void processInputEvent(Object key, Event inputEvent) throws Exception {
         final String contextKey;
@@ -633,27 +654,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private void assignRootOccurrenceId(Object key, Event event) throws Exception {
         String businessKeyIdentity = occurrenceIdentityKeyEncoder.generateBusinessKeyIdentity(key);
         event.setOccurrenceId(
-                ActionStateUtil.deriveRootEventOccurrenceId(
+                RuntimeIdentity.deriveRootEventOccurrenceId(
                         businessKeyIdentity, stateManager.getSequenceNumber()));
-    }
-
-    /**
-     * Assigns each of an action execution's output events its lineage-based occurrence identity
-     * before dispatch, so that distinct event occurrences with identical attributes never collide
-     * in the durable action-state key. Derived purely from the triggering event's own occurrence
-     * identity and the action's identity, so it needs neither the business key nor a durable store.
-     */
-    private void assignOutputOccurrenceIds(ActionTask actionTask, List<Event> outputEvents)
-            throws Exception {
-        String producerExecutionId =
-                ActionStateUtil.deriveActionExecutionId(actionTask.event, actionTask.action);
-        for (int ordinal = 0; ordinal < outputEvents.size(); ordinal++) {
-            outputEvents
-                    .get(ordinal)
-                    .setOccurrenceId(
-                            ActionStateUtil.deriveOutputEventOccurrenceId(
-                                    producerExecutionId, ordinal));
-        }
     }
 
     /** Processes an Action's output Event with its producer and upstream references populated. */
@@ -816,6 +818,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (inputEvent.hasSourceTimestamp()) {
             beginEvent.setSourceTimestamp(inputEvent.getSourceTimestamp());
         }
+        beginEvent.setOccurrenceId(
+                RuntimeIdentity.deriveEmittedEventOccurrenceId(
+                        RuntimeIdentity.deriveActionExecutionId(
+                                inputEvent, AGENT_RUN_BEGIN_ACTION_NAME),
+                        0));
         TraceContext beginTraceContext =
                 TraceContext.forEvent(
                         inputEventTraceContext,
@@ -1057,6 +1064,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     // before its completion becomes durable.
                     notifyActionFinishing(actionTask);
                 }
+                for (Event emitted : actionTaskResult.getOutputEvents()) {
+                    if (emitted.getOccurrenceId() == null) {
+                        actionTask.getRunnerContext().assignOutputIdentity(emitted);
+                    }
+                }
                 durableExecManager.maybePersistTaskResult(
                         key,
                         sequenceNumber,
@@ -1078,7 +1090,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             }
         }
 
-        assignOutputOccurrenceIds(actionTask, outputEvents);
         for (Event actionOutputEvent : outputEvents) {
             processActionOutputEvent(key, contextKey, actionOutputEvent, actionTask);
         }
@@ -1253,15 +1264,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void initializeState(StateInitializationContext context) throws Exception {
         super.initializeState(context);
-
-        // Check the actual backend after Flink resolves AUTOMATIC and any configuration changes
-        // made after the Agent pipeline was built, before opening resources or recovering Actions.
-        checkState(
-                !(getKeyedStateBackend() instanceof BatchExecutionKeyedStateBackend),
-                "Flink Agents does not support Flink's batch keyed-state backend"
-                        + " (execution.batch-state-backend.enabled): switching keys can discard"
-                        + " unfinished Actions. Run this job with RuntimeExecutionMode.STREAMING,"
-                        + " or set execution.batch-state-backend.enabled to false.");
 
         int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
         occurrenceIdentityKeyEncoder =
@@ -2136,6 +2138,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     if (lifecyclePrepared) {
                         notifyActionFinishing(actionTask);
                     }
+                    for (Event emitted : result.getOutputEvents()) {
+                        if (emitted.getOccurrenceId() == null) {
+                            actionTask.getRunnerContext().assignOutputIdentity(emitted);
+                        }
+                    }
                     durableExecManager.maybePersistTaskResult(
                             key,
                             sequenceNumber,
@@ -2152,7 +2159,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     // callback belongs to, which would otherwise get none.
                     notifyActionReused(actionTask);
                 }
-                assignOutputOccurrenceIds(actionTask, result.getOutputEvents());
+
             } catch (Throwable t) {
                 if (lifecyclePrepared && actionTask != null) {
                     notifyActionFailed(actionTask, t);

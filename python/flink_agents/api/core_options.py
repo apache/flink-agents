@@ -314,10 +314,8 @@ class AgentExecutionOptions:
     )
 
     # Maximum number of input records that may be in flight concurrently on
-    # each operator subtask, enforced by continuation-based execution and the
-    # Java JDK<21 parallel execution engine; serial execution ignores it. At
-    # the cap, admission of further records waits until an in-flight record
-    # retires.
+    # each operator subtask, including records queued behind another record
+    # for the same key. At the cap, admission waits until an in-flight record retires.
     MAX_IN_FLIGHT_INPUT_RECORDS = ConfigOption(
         key="max-in-flight-input-records",
         config_type=int,

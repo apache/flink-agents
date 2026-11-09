@@ -566,31 +566,39 @@ def _mistyped_attribute_cases() -> list[tuple[str, str, object]]:
         (ChatRequestEvent.EVENT_TYPE, "model", 0),
         (ChatRequestEvent.EVENT_TYPE, "messages", [0]),
         (ChatRequestEvent.EVENT_TYPE, "prompt_args", "not-a-dict"),
+        (ChatRequestEvent.EVENT_TYPE, "user_context", "not-a-dict"),
         # ChatResponseEvent
         (ChatResponseEvent.EVENT_TYPE, "retry_count", "not-a-number"),
         (ChatResponseEvent.EVENT_TYPE, "total_retry_wait_sec", "not-a-number"),
+        (ChatResponseEvent.EVENT_TYPE, "user_context", "not-a-dict"),
         # Decision events
         (DecisionRequestEvent.EVENT_TYPE, "model", 0),
+        (DecisionRequestEvent.EVENT_TYPE, "user_context", "not-a-dict"),
         (DecisionResponseEvent.EVENT_TYPE, "retry_count", "not-a-number"),
         (DecisionResponseEvent.EVENT_TYPE, "total_retry_wait_sec", "not-a-number"),
+        (DecisionResponseEvent.EVENT_TYPE, "user_context", "not-a-dict"),
         # ToolRequestEvent
         (ToolRequestEvent.EVENT_TYPE, "model", 0),
         (ToolRequestEvent.EVENT_TYPE, "tool_calls", [0]),
+        (ToolRequestEvent.EVENT_TYPE, "user_context", "not-a-dict"),
         # ToolResponseEvent
         (ToolResponseEvent.EVENT_TYPE, "request_id", "not-a-uuid"),
         (ToolResponseEvent.EVENT_TYPE, "responses", "not-a-dict"),
         (ToolResponseEvent.EVENT_TYPE, "success", "not-a-dict"),
         (ToolResponseEvent.EVENT_TYPE, "error", "not-a-dict"),
+        (ToolResponseEvent.EVENT_TYPE, "user_context", "not-a-dict"),
         (ChatResponseEvent.EVENT_TYPE, "model_routing", "not-a-dict"),
         (ToolResponseEvent.EVENT_TYPE, "timestamp", "not-a-number"),
         # ContextRetrievalRequestEvent
         (ContextRetrievalRequestEvent.EVENT_TYPE, "query", 0),
         (ContextRetrievalRequestEvent.EVENT_TYPE, "vector_store", 0),
         (ContextRetrievalRequestEvent.EVENT_TYPE, "max_results", "not-a-number"),
+        (ContextRetrievalRequestEvent.EVENT_TYPE, "user_context", "not-a-dict"),
         # ContextRetrievalResponseEvent
         (ContextRetrievalResponseEvent.EVENT_TYPE, "request_id", "not-a-uuid"),
         (ContextRetrievalResponseEvent.EVENT_TYPE, "query", 0),
         (ContextRetrievalResponseEvent.EVENT_TYPE, "documents", [0]),
+        (ContextRetrievalResponseEvent.EVENT_TYPE, "user_context", "not-a-dict"),
     ]
 
 

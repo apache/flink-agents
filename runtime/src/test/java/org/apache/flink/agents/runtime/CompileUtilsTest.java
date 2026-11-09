@@ -18,8 +18,10 @@
 package org.apache.flink.agents.runtime;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorTest;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
@@ -44,6 +46,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -51,9 +54,8 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /** Tests for {@link CompileUtils}. */
 public class CompileUtilsTest {
@@ -120,39 +122,82 @@ public class CompileUtilsTest {
         checkResult(resultList);
     }
 
-    @Test
-    void rejectsExplicitBatchModeWithDefaultBatchStateBackend() {
-        // execution.batch-state-backend.enabled defaults to true in BATCH mode, which is exactly
-        // the combination that silently drops records (issue #939).
-        Configuration conf = new Configuration();
-        conf.set(ExecutionOptions.RUNTIME_MODE, RuntimeExecutionMode.BATCH);
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(conf);
-        KeyedStream<Long, Long> keyedInputStream = env.fromData(testSequence).keyBy(x -> x);
-
-        assertThatIllegalStateException()
-                .isThrownBy(() -> CompileUtils.connectToAgent(keyedInputStream, TEST_AGENT_PLAN))
-                .withMessageContaining("RuntimeExecutionMode.BATCH")
-                .withMessageContaining("execution.batch-state-backend.enabled");
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    @Timeout(60)
+    void processesEveryKeyWithDefaultBatchStateBackend(boolean parallel) throws Exception {
+        assertThat(
+                        executeBatch(
+                                configureExecution(
+                                        ActionExecutionOperatorTest.TestAgent.getAgentPlan(false),
+                                        parallel),
+                                List.of(0L, 1L, 2L, 3L, 4L)))
+                .containsExactly(2L, 4L, 6L, 8L, 10L);
     }
 
-    @Test
-    void allowsExplicitBatchModeWithBatchStateBackendDisabled() {
-        // The documented workaround: disabling the batch-specific state backend restores the
-        // per-key-processed-to-completion semantics the operator relies on.
-        Configuration conf = new Configuration();
-        conf.set(ExecutionOptions.RUNTIME_MODE, RuntimeExecutionMode.BATCH);
-        conf.set(ExecutionOptions.USE_BATCH_STATE_BACKEND, false);
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(conf);
-        KeyedStream<Long, Long> keyedInputStream = env.fromData(testSequence).keyBy(x -> x);
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    @Timeout(60)
+    void processesEveryKeyWhenAutomaticModeSelectsBatchExecution(boolean parallel)
+            throws Exception {
+        assertThat(
+                        executeBounded(
+                                configureExecution(
+                                        ActionExecutionOperatorTest.TestAgent.getAgentPlan(false),
+                                        parallel),
+                                List.of(0L, 1L, 2L, 3L, 4L),
+                                RuntimeExecutionMode.AUTOMATIC))
+                .containsExactly(2L, 4L, 6L, 8L, 10L);
+    }
 
-        assertThatCode(() -> CompileUtils.connectToAgent(keyedInputStream, TEST_AGENT_PLAN))
-                .doesNotThrowAnyException();
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    @Timeout(60)
+    void processesAsyncActionsWithDefaultBatchStateBackend(boolean parallel) throws Exception {
+        assertThat(
+                        executeBatch(
+                                configureExecution(
+                                        ActionExecutionOperatorTest.TestAgent.getAsyncAgentPlan(
+                                                false),
+                                        parallel),
+                                List.of(1L, 2L, 3L)))
+                .containsExactly(20L, 40L, 60L);
+    }
+
+    private static AgentPlan configureExecution(AgentPlan plan, boolean parallel) {
+        // These variants specifically exercise the serial and lock-based parallel engines.
+        assumeFalse(ContinuationActionExecutor.isContinuationSupported());
+        plan.getConfig().set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, parallel);
+        plan.getConfig().set(AgentConfigOptions.TRACE_LOG_TARGETS, Collections.emptyList());
+        return plan;
+    }
+
+    private static List<Long> executeBatch(AgentPlan agentPlan, List<Long> input) throws Exception {
+        return executeBounded(agentPlan, input, RuntimeExecutionMode.BATCH);
+    }
+
+    private static List<Long> executeBounded(
+            AgentPlan agentPlan, List<Long> input, RuntimeExecutionMode runtimeMode)
+            throws Exception {
+        Configuration conf = new Configuration();
+        conf.set(ExecutionOptions.RUNTIME_MODE, runtimeMode);
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(conf);
+        env.setParallelism(1);
+        KeyedStream<Long, Long> keyedInputStream = env.fromData(input).keyBy(value -> value);
+        DataStream<Object> output = CompileUtils.connectToAgent(keyedInputStream, agentPlan);
+
+        List<Long> results = new ArrayList<>();
+        try (CloseableIterator<Object> iterator = output.executeAndCollect()) {
+            iterator.forEachRemaining(value -> results.add((Long) value));
+        }
+        results.sort(Long::compareTo);
+        return results;
     }
 
     @ParameterizedTest
     @CsvSource({"AUTOMATIC, false", "AUTOMATIC, true", "BATCH, true"})
     @Timeout(60)
-    void rejectsBatchStateBackendAtRuntime(
+    void processesAllKeysWhenBatchModeIsResolvedAtRuntime(
             RuntimeExecutionMode mode, boolean configureAfterConnecting) throws Exception {
         Configuration conf = new Configuration();
         conf.set(RestartStrategyOptions.RESTART_STRATEGY, "none");
@@ -170,19 +215,13 @@ public class CompileUtilsTest {
                 env.setRuntimeMode(mode);
             }
 
-            // Flink resolves AUTOMATIC only when generating the job graph. The guard must also
-            // catch configuration changes after connectToAgent's early validation.
-            assertThatThrownBy(
-                            () -> {
-                                try (CloseableIterator<Object> iterator =
-                                        output.executeAndCollect()) {
-                                    iterator.forEachRemaining(ignored -> {});
-                                }
-                            })
-                    .hasStackTraceContaining(
-                            "Flink Agents does not support Flink's batch keyed-state backend")
-                    .hasStackTraceContaining("execution.batch-state-backend.enabled")
-                    .hasStackTraceContaining("RuntimeExecutionMode.STREAMING");
+            // Resolve the backend at execution time, including configuration changes after
+            // connectToAgent has built the pipeline.
+            List<Object> results = new ArrayList<>();
+            try (CloseableIterator<Object> iterator = output.executeAndCollect()) {
+                iterator.forEachRemaining(results::add);
+            }
+            assertThat(results).containsExactlyInAnyOrder(2L, 4L, 6L, 8L, 10L);
         }
     }
 

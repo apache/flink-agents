@@ -41,6 +41,7 @@ import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 import org.apache.flink.agents.runtime.utils.IdAllocatorSource;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.Preconditions;
@@ -138,17 +139,13 @@ class ActionTaskContextManager implements AutoCloseable {
      * reissuing ids.
      */
     private static IdAllocatorSource newIdAllocators(ActionTask task) {
-        Object key = task.getKey();
-        long sequenceNumber = task.getSequenceNumber();
-        String actionName = task.getAction().getName();
-        Event event = task.getEvent();
+        String executionId =
+                RuntimeIdentity.deriveActionExecutionId(
+                        task.getEvent(), task.getAction().getName());
         Map<String, DeterministicIdAllocator> byTarget = new HashMap<>();
         return targetName ->
                 byTarget.computeIfAbsent(
-                        targetName,
-                        name ->
-                                new DeterministicIdAllocator(
-                                        key, sequenceNumber, actionName, event, name));
+                        targetName, name -> new DeterministicIdAllocator(executionId, name));
     }
 
     /**
@@ -163,6 +160,7 @@ class ActionTaskContextManager implements AutoCloseable {
         @Nullable private IdAllocatorSource idAllocators;
         @Nullable private SubgraphInvocation<?> subgraphInvocation;
         private List<Event> pendingEvents = new ArrayList<>();
+        private RuntimeIdentity.OutputIdentityAllocator outputIdentities;
         @Nullable private ExecutionReportingContext executionReportingContext;
         @Nullable private String contextKey;
 
@@ -341,6 +339,10 @@ class ActionTaskContextManager implements AutoCloseable {
             // reference back off the runner context, so a lazily built source would hand a
             // successor task a null.
             taskContexts.idAllocators = newIdAllocators(actionTask);
+            taskContexts.outputIdentities =
+                    new RuntimeIdentity.OutputIdentityAllocator(
+                            RuntimeIdentity.deriveActionExecutionId(
+                                    actionTask.getEvent(), actionTask.getAction().getName()));
         }
         if (actionTask.getEvent() instanceof SubgraphEvent) {
             taskContexts.subgraphInvocation =
@@ -410,6 +412,7 @@ class ActionTaskContextManager implements AutoCloseable {
         // of whichever task was wired on previously.
         context.setResourceScope(getResourceScope(actionTask));
         context.setIdAllocatorSource(taskContexts.idAllocators);
+        context.setOutputIdentities(taskContexts.outputIdentities);
         context.setSubgraphCalls(subgraphCalls);
         context.setSubgraphInvocation(taskContexts.subgraphInvocation);
 
@@ -461,6 +464,7 @@ class ActionTaskContextManager implements AutoCloseable {
                 requireContexts(actionTask).executionReportingContext);
         context.setResourceScope(getResourceScope(actionTask));
         context.setIdAllocatorSource(requireContexts(actionTask).idAllocators);
+        context.setOutputIdentities(requireContexts(actionTask).outputIdentities);
         context.setSubgraphCalls(subgraphCalls);
         context.setSubgraphInvocation(requireContexts(actionTask).subgraphInvocation);
         if (context instanceof JavaRunnerContextImpl) {
@@ -532,6 +536,8 @@ class ActionTaskContextManager implements AutoCloseable {
         // finishing task's contexts before this runs. The counters are carried over rather than
         // rebuilt — rebuilding from the successor's facts would change the digest and the ordinals.
         requireContexts(toTask).idAllocators = fromTask.getRunnerContext().getIdAllocatorSource();
+        requireContexts(toTask).outputIdentities =
+                fromTask.getRunnerContext().getOutputIdentities();
         requireContexts(toTask).subgraphInvocation =
                 fromTask.getRunnerContext().getSubgraphInvocation();
         RunnerContextImpl.DurableExecutionContext durableContext =
