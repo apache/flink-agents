@@ -122,45 +122,11 @@ Now you should see a Flink job submitted to the Flink Cluster in Flink web UI (t
 
 ### Set a stable operator UID
 
-The agent operator holds the agent's memory, pending actions and input events. By default,
-Flink derives its operator ID from the job topology, so some upstream changes can change the
-ID and the saved state no longer maps back to the operator when you restore from a savepoint.
-Pass a UID to `apply` to pin the operator ID. The UID identifies this agent operator in the
-job, so it must be unique there. An empty or blank UID is rejected. When you omit it, the
-operator ID is generated as before.
-
-Supply the UID before obtaining the output stream or table. To use another agent or UID after
-the output has been built, create a new builder.
-
-{{< tabs "Set a stable operator UID" >}}
-
-{{< tab "Python" >}}
-```python
-agents_env.from_datastream(input_stream, key_selector=key_selector) \
-    .apply(MyAgent(), uid="my-agent-uid") \
-    .to_datastream()
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-```java
-agentsEnv
-        .fromDataStream(inputStream, keySelector)
-        .apply(new MyAgent(), "my-agent-uid")
-        .toDataStream();
-```
-
-An agent loaded from YAML takes the UID the same way: `apply("my-agent-name", "my-agent-uid")`.
-{{< /tab >}}
-
-{{< /tabs >}}
-
-Set the UID from the first deployment. Adding it to a job that already has savepoints changes
-the operator ID, so state saved under the generated ID is not restored to the operator. Existing
-savepoints need a migration, such as remapping the operator identifier with Flink's State
-Processor API. `--allowNonRestoredState` skips unmatched state instead of migrating it. For a
-savepoint taken with a UID, `KafkaActionStateCleanupTool plan` accepts `--operator-uid` (see
-[Consistency]({{< ref "docs/operations/consistency" >}})).
+Set a stable UID on the agent operator from the first deployment, so savepoints keep
+restoring to it when the job topology changes. Adding or changing the UID later may require
+migrating existing savepoints. See
+[Stable operator UID]({{< ref "docs/development/integrate_with_flink#stable-operator-uid" >}})
+for how to set it.
 
 
 <span id="exactly-once-output-consistency"></span>
