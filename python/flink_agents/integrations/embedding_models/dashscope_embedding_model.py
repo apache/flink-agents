@@ -17,20 +17,85 @@
 ################################################################################
 import os
 from http import HTTPStatus
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, Literal
+from urllib.parse import urlsplit
 
 import dashscope
 from pydantic import Field
+from typing_extensions import override
 
+from flink_agents.api.chat_message import (
+    Base64Source,
+    DataContentBlock,
+    ImageBlock,
+    MediaBlock,
+    TextBlock,
+    UnsupportedContentBlockError,
+    UrlSource,
+    VideoBlock,
+)
 from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelConnection,
     BaseEmbeddingModelSetup,
+    EmbeddingContent,
     EmbeddingResult,
     EmbeddingTokenUsage,
+    _text_embedding_input,
 )
 
 DEFAULT_REQUEST_TIMEOUT = 30.0
 DEFAULT_MODEL = "text-embedding-v4"
+DEFAULT_MULTIMODAL_MODEL = "qwen3-vl-embedding"
+
+
+def _encode_embedding_content(content: str | DataContentBlock) -> dict[str, str]:
+    if isinstance(content, str):
+        return {"text": content}
+    if isinstance(content, TextBlock):
+        return {"text": content.text}
+    if not isinstance(content, MediaBlock):
+        msg = "Each embedding input must be a string or a data content block"
+        raise TypeError(msg)
+    if isinstance(content, ImageBlock | VideoBlock):
+        source = content.source
+        if isinstance(source, UrlSource) and urlsplit(source.url).scheme in {
+            "http",
+            "https",
+        }:
+            return {content.type: source.url}
+        if isinstance(content, ImageBlock) and isinstance(source, Base64Source):
+            return {"image": f"data:{content.media_type};base64,{source.data}"}
+        reason = (
+            "images require HTTP(S) URLs or Base64 data, videos require HTTP(S) URLs"
+        )
+    else:
+        reason = "multimodal embeddings support text, images, and videos"
+    provider = "DashScope MultiModalEmbedding"
+    raise UnsupportedContentBlockError.for_block(provider, content, reason)
+
+
+def _order_multimodal_embeddings(
+    entries: list[dict[str, Any]], expected: int
+) -> list[list[float]]:
+    if len(entries) != expected:
+        msg = (
+            f"DashScope MultiModalEmbedding returned {len(entries)} vectors "
+            f"for {expected} inputs"
+        )
+        raise RuntimeError(msg)
+    vectors: dict[int, list[float]] = {}
+    for entry in entries:
+        index = entry.get("index")
+        if (
+            not isinstance(index, int)
+            or isinstance(index, bool)
+            or not 0 <= index < expected
+            or index in vectors
+        ):
+            msg = "DashScope MultiModalEmbedding returned invalid or duplicate indices"
+            raise RuntimeError(msg)
+        vectors[index] = entry["embedding"]
+    return [vectors[index] for index in range(expected)]
 
 
 def _get_usage_value(obj: Any, *names: str) -> int | None:
@@ -44,6 +109,17 @@ def _get_usage_value(obj: Any, *names: str) -> int | None:
         if value is not None:
             return int(value)
     return None
+
+
+class _MultiModalEmbedding(dashscope.MultiModalEmbedding):
+    @classmethod
+    @override
+    def _preprocess_message_inputs(
+        cls, model: str, input: list[dict[str, str]], api_key: str
+    ) -> bool:
+        # Sources are already HTTP(S) URLs or inline images. The SDK otherwise
+        # treats text fields that match local paths as files to upload.
+        return False
 
 
 class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
@@ -90,38 +166,70 @@ class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
         )
 
     def embed(
-        self, text: str | Sequence[str], **kwargs: Any
+        self, content: EmbeddingContent, **kwargs: Any
     ) -> list[float] | list[list[float]]:
-        """Generate embedding vector for text input."""
-        return self.embed_with_usage(text, **kwargs).embeddings
+        """Generate vectors for one input or an ordered batch."""
+        return self.embed_with_usage(content, **kwargs).embeddings
 
     def embed_with_usage(
-        self, text: str | Sequence[str], **kwargs: Any
+        self, content: EmbeddingContent, **kwargs: Any
     ) -> EmbeddingResult[list[float] | list[list[float]]]:
         """Generate embeddings and return DashScope token usage when available."""
-        model = kwargs.pop("model", DEFAULT_MODEL)
+        api_type = kwargs.pop("api_type", "text")
+        if api_type not in ("text", "multimodal"):
+            msg = "DashScope embedding api_type must be 'text' or 'multimodal'"
+            raise ValueError(msg)
+        multimodal = api_type == "multimodal"
+        provider = (
+            "DashScope MultiModalEmbedding" if multimodal else "DashScope TextEmbedding"
+        )
+        default_model = DEFAULT_MULTIMODAL_MODEL if multimodal else DEFAULT_MODEL
+        model = kwargs.pop("model", default_model)
         text_type = kwargs.pop("text_type", None)
         dimension = kwargs.pop("dimension", None)
         req_api_key = kwargs.pop("api_key", self.api_key)
 
         call_params: Dict[str, Any] = {
             "model": model,
-            "input": text,
             "api_key": req_api_key,
             "timeout": self.request_timeout,
         }
 
-        if text_type is not None:
-            call_params["text_type"] = text_type
         if dimension is not None:
             call_params["dimension"] = dimension
+        if multimodal:
+            if text_type is not None:
+                msg = "DashScope text_type is only supported by the text embedding API"
+                raise ValueError(msg)
+            if kwargs.pop("enable_fusion", False) is not False:
+                msg = "DashScope requires enable_fusion=False to return one vector per input"
+                raise ValueError(msg)
+            if "input" in kwargs:
+                msg = "Pass the embedding input as content"
+                raise ValueError(msg)
+            single = isinstance(content, str | TextBlock | MediaBlock)
+            items = [content] if single else content
+            # DashScope requires every item in a mixed batch to use the object form.
+            contents = [_encode_embedding_content(item) for item in items]
+            if not contents:
+                return EmbeddingResult(embeddings=[])
+            call_params["input"] = contents
+            call_params["enable_fusion"] = False
+            api = _MultiModalEmbedding
+        else:
+            text = _text_embedding_input(content, provider)
+            single = isinstance(text, str)
+            call_params["input"] = text
+            if text_type is not None:
+                call_params["text_type"] = text_type
+            api = dashscope.TextEmbedding
 
         call_params.update(kwargs)
 
-        response = dashscope.TextEmbedding.call(**call_params)
+        response = api.call(**call_params)
 
         if response.status_code != HTTPStatus.OK:
-            msg = f"DashScope TextEmbedding call failed: {response.message}"
+            msg = f"{provider} call failed: {response.message}"
             raise RuntimeError(msg)
 
         usage = getattr(response, "usage", None)
@@ -140,9 +248,14 @@ class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
                 ),
             )
 
-        embeddings = [e["embedding"] for e in response.output["embeddings"]]
+        entries = response.output["embeddings"]
+        embeddings = (
+            _order_multimodal_embeddings(entries, len(contents))
+            if multimodal
+            else [entry["embedding"] for entry in entries]
+        )
         return EmbeddingResult(
-            embeddings=embeddings[0] if isinstance(text, str) else embeddings,
+            embeddings=embeddings[0] if single else embeddings,
             token_usage=token_usage,
         )
 
@@ -156,18 +269,22 @@ class DashScopeEmbeddingModelSetup(BaseEmbeddingModelSetup):
         Name of the referenced connection. (Inherited from BaseEmbeddingModelSetup)
     model : str
         Name of the embedding model to use. (Inherited from BaseEmbeddingModelSetup)
-        Available models: text-embedding-v1, text-embedding-v2, text-embedding-v3,
-            text-embedding-v4
+    api_type : Literal["text", "multimodal"]
+        Select the DashScope text or multimodal embedding API.
     text_type : str | None
         The type of input text. Optional values: "query" or "document".
-        Used to optimize embeddings for different use cases.
+        Used to optimize embeddings for different use cases on the text API.
     dimension : int | None
         The number of dimensions for the output embedding vector.
         Only supported in certain models (e.g., text-embedding-v3 and later).
     additional_kwargs : Dict[str, Any]
-        Additional parameters for the DashScope TextEmbedding API.
+        Additional parameters for the selected DashScope embedding API.
     """
 
+    api_type: Literal["text", "multimodal"] = Field(
+        default="text",
+        description="The DashScope embedding API to call.",
+    )
     text_type: str | None = Field(
         default=None,
         description='The type of input text. Optional values: "query" or "document".',
@@ -178,14 +295,15 @@ class DashScopeEmbeddingModelSetup(BaseEmbeddingModelSetup):
     )
     additional_kwargs: Dict[str, Any] = Field(
         default_factory=dict,
-        description="Additional parameters for the DashScope TextEmbedding API.",
+        description="Additional parameters for the selected DashScope embedding API.",
     )
 
     def __init__(
         self,
         *,
         connection: str,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
+        api_type: Literal["text", "multimodal"] = "text",
         text_type: str | None = None,
         dimension: int | None = None,
         additional_kwargs: Dict[str, Any] | None = None,
@@ -194,9 +312,14 @@ class DashScopeEmbeddingModelSetup(BaseEmbeddingModelSetup):
         """Init method."""
         if additional_kwargs is None:
             additional_kwargs = {}
+        if model is None:
+            model = (
+                DEFAULT_MULTIMODAL_MODEL if api_type == "multimodal" else DEFAULT_MODEL
+            )
         super().__init__(
             connection=connection,
             model=model,
+            api_type=api_type,
             text_type=text_type,
             dimension=dimension,
             additional_kwargs=additional_kwargs,
@@ -208,6 +331,7 @@ class DashScopeEmbeddingModelSetup(BaseEmbeddingModelSetup):
         """Return DashScope embedding model configuration."""
         base_kwargs: Dict[str, Any] = {
             "model": self.model,
+            "api_type": self.api_type,
         }
 
         if self.text_type is not None:

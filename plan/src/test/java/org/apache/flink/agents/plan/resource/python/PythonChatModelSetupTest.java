@@ -173,12 +173,38 @@ public class PythonChatModelSetupTest {
                 mockGetResource);
     }
 
+    @Test
+    void testOpenExposesPythonModelDefault() throws Exception {
+        when(mockAdapter.invoke("python_java_utils.get_model_name", mockChatModelSetup))
+                .thenReturn("default-chat-model");
+
+        pythonChatModelSetup.open();
+
+        assertThat(pythonChatModelSetup.getModel()).isEqualTo("default-chat-model");
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"auto", "prompt"})
     void testWillApplyNativeStructuredOutputIsFalse(String strategy) {
         // No connection is bound on this side, so the gate must answer without consulting one.
         assertThat(setupWithStrategy(strategy).willApplyNativeStructuredOutput(String.class))
                 .isFalse();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"auto", "prompt"})
+    void testOutputSchemaRejectionFromPythonSetupIsSurfaced(String strategy) {
+        IllegalArgumentException rejected =
+                new IllegalArgumentException("The setup does not support output_schema.");
+        when(mockAdapter.callMethod(
+                        mockChatModelSetup, "_validate_structured_output_request", Map.of()))
+                .thenThrow(rejected);
+
+        assertThatThrownBy(
+                        () ->
+                                setupWithStrategy(strategy)
+                                        .willApplyNativeStructuredOutput(Map.class))
+                .isSameAs(rejected);
     }
 
     @Test

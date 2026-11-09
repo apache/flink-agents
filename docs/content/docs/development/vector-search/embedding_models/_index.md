@@ -27,12 +27,13 @@ under the License.
 # Embedding Models
 
 {{< hint info >}}
-This page covers text-based embedding models. Flink Agents does not currently support multimodal embeddings.
+Built-in embedding models accept text.
+[DashScope multimodal embeddings]({{< ref "docs/development/vector-search/embedding_models/providers#multimodal-embeddings" >}}) also accept images and video files.
 {{< /hint >}}
 
 ## Overview
 
-Embedding models convert text strings into high-dimensional vectors that capture semantic meaning, enabling powerful semantic search and retrieval capabilities. These vector representations allow agents to understand and work with text similarity, semantic search, and knowledge retrieval patterns.
+Embedding models convert text and supported media into high-dimensional vectors that capture semantic meaning, enabling powerful semantic search and retrieval capabilities. These vector representations allow agents to understand and work with text similarity, semantic search, and knowledge retrieval patterns.
 
 In Flink Agents, embedding models are essential for:
 - **Semantic Search**: Finding relevant documents or information based on meaning rather than exact keyword matches
@@ -195,6 +196,23 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
+## Inputs and Results
+
+The selected provider and model determine which blocks and media sources you can
+pass. See [Chat Messages]({{< ref "docs/development/calling-llms/chat#message-content-blocks" >}})
+for the shared text and media blocks.
+
+| Operation | Python | Java |
+|---|---|---|
+| Embed a string | `embed("text")` returns one vector | `embed("text")` returns one `float[]` |
+| Embed one block | `embed(block)` returns one vector | `embedBlocksWithUsage(List.of(block))` returns a result with one vector |
+| Embed a batch | `embed([text, image, video])` returns a list of vectors | `embedBlocksWithUsage(List.of(textBlock, image, video))` returns a result with a list of vectors |
+
+Each input in a batch produces one vector. The result preserves input order.
+Use `embed_with_usage` (Python), `embedWithUsage` for strings (Java), or
+`embedBlocksWithUsage` for blocks (Java) to also read token usage when the provider
+reports it.
+
 ## Using Cross-Language Providers
 
 For descriptor selection, registration, and runtime requirements, see
@@ -218,15 +236,17 @@ Handles the connection to embedding services and provides the core embedding fun
 
 ```python
 class MyEmbeddingConnection(BaseEmbeddingModelConnection):
-
-    @abstractmethod
-    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float] | list[list[float]]:
-        # Core method: convert text to embedding vector
-        # - text: Input text to embed
-        # - kwargs: Additional parameters from model_kwargs
-        # - Returns: List of float values representing the embedding
-        pass
+    def embed(
+        self, content: EmbeddingContent, **kwargs: Any
+    ) -> list[float] | list[list[float]]:
+        # Validate the input types supported by your provider.
+        # Return one vector for a single input, or one per batch item in order.
+        ...
 ```
+
+`EmbeddingContent`, imported from
+`flink_agents.api.embedding_models.embedding_model`, represents a string, a data
+content block, or a sequence of either.
 
 {{< /tab >}}
 
@@ -255,6 +275,11 @@ public class MyEmbeddingConnection extends BaseEmbeddingModelConnection {
     }
 }
 ```
+
+To add media support, override
+`embedBlocksWithUsage(List<? extends DataContentBlock>, Map<String, Object>)` in
+the connection. Return one vector per block in input order. The base
+implementation delegates text blocks to the text batch method.
 {{< /tab >}}
 
 {{< /tabs >}}

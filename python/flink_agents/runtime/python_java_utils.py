@@ -25,9 +25,9 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Dict, cast
 
 import cloudpickle
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import ChatMessage, DataContentBlock, MessageRole
 from flink_agents.api.decision_models import DecisionRequest
 from flink_agents.api.events.event import Event, InputEvent
 from flink_agents.api.memory.long_term_memory import MemorySet, MemorySetItem
@@ -149,6 +149,11 @@ def create_resource(
     module = importlib.import_module(resource_module)
     cls = getattr(module, resource_clazz)
     return cls(**func_kwargs)
+
+
+def get_model_name(model_setup: Any) -> str:
+    """Return the model name resolved by a Python setup."""
+    return model_setup.model
 
 
 def get_resource_context(j_resource_adapter: Any) -> JavaResourceContextWrapper:
@@ -336,14 +341,23 @@ def embedding_result_to_java(result: Any) -> Dict[str, Any]:
     }
 
 
-def call_embedding_with_usage(
-    embedding_model: Any, kwargs: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Call ``embed_with_usage`` and return Java-safe primitives.
+_EMBEDDING_BLOCKS_ADAPTER = TypeAdapter(list[DataContentBlock])
 
-    This avoids PyObject attribute access in the Java caller.
-    """
-    return embedding_result_to_java(embedding_model.embed_with_usage(**kwargs))
+
+def call_embedding(
+    embedding_model: Any,
+    method: str,
+    content: str | list[str] | list[dict],
+    kwargs: Dict[str, Any],
+) -> Any:
+    """Restore any data blocks and pass content positionally to the Python model."""
+    if isinstance(content, list) and content and isinstance(content[0], dict):
+        content = _EMBEDDING_BLOCKS_ADAPTER.validate_python(content)
+    if method == "embed_with_usage":
+        return embedding_result_to_java(
+            embedding_model.embed_with_usage(content, **kwargs)
+        )
+    return embedding_model.embed(content, **kwargs)
 
 
 def to_java_chat_message(chat_message: ChatMessage) -> Any:

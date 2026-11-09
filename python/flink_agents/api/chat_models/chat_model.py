@@ -716,11 +716,12 @@ class BaseChatModelSetup(Resource):
         Raises:
             TypeError: If the schema is not ``None`` and ``open()`` has not resolved
                 the connection.
-            ValueError: If the strategy is ``NATIVE`` and the connection cannot apply
-                this schema to such a request.
+            ValueError: If the setup rejects structured output, or the strategy is
+                ``NATIVE`` and the connection cannot apply this schema.
         """
         if output_schema is None:
             return False
+        self._validate_structured_output_request()
         connection = self._resolved_connection
         if connection is None:
             msg = (
@@ -746,6 +747,9 @@ class BaseChatModelSetup(Resource):
             )
             raise ValueError(msg)
         return self.structured_output_strategy.resolves_to_native(support)
+
+    def _validate_structured_output_request(self) -> None:
+        """Reject requests with an output schema if the setup cannot serve them."""
 
     def _record_token_metrics(
         self,

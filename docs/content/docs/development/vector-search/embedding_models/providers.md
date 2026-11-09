@@ -69,6 +69,31 @@ class MyAgent(Agent):
         )
 ```
 
+#### Multimodal Embeddings
+
+Set `api_type="multimodal"` to use the multimodal API. The default model is
+`qwen3-vl-embedding`. Use the same model and dimensions for indexing and search.
+
+| Input | Supported forms |
+|---|---|
+| Text | A string or `TextBlock` |
+| Image | `ImageBlock` with an HTTP(S) URL or inline Base64 data |
+| Video | `VideoBlock` with an HTTP(S) URL |
+
+Provide URLs that DashScope can access. Use `ImageBlock.from_bytes(media_type, data)`
+to encode a local image, or `ImageBlock.from_base64(media_type, data)` if you
+already have Base64 data. The
+[multimodal API reference](https://help.aliyun.com/en/model-studio/multimodal-embedding-api-reference)
+lists model-specific format, size, and batch limits.
+
+A batch can mix text, images, and videos. It returns one independent vector per
+input, in the same order. For multimodal requests, omit `text_type` and leave
+`enable_fusion` unset or set it to `False`.
+
+Use `embed` or `embed_with_usage` in Python. In Java, pass a list of blocks to
+`embedBlocksWithUsage`. See [Inputs and Results]({{< ref "docs/development/vector-search/embedding_models#inputs-and-results" >}})
+for the input and result shapes.
+
 #### DashScopeEmbeddingModelConnection Parameters
 
 | Parameter | Type | Default | Description |
@@ -81,14 +106,15 @@ class MyAgent(Agent):
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | str | Required | Registered connection Resource name |
-| `model` | str | `"text-embedding-v4"` | Embedding model name |
-| `text_type` | str | None | Input type: `"query"` or `"document"` |
+| `api_type` | str | `"text"` | Selects the `"text"` or `"multimodal"` embedding API |
+| `model` | str | `"text-embedding-v4"` for text, `"qwen3-vl-embedding"` for multimodal | Embedding model name |
+| `text_type` | str | None | `"query"` or `"document"` for the text API |
 | `dimension` | int | None | Output vector dimensions (model-dependent) |
 | `additional_kwargs` | dict | `{}` | Additional DashScope API parameters |
 
 #### Available Models
 
-Visit the [Alibaba Cloud Model Studio embedding models documentation](https://help.aliyun.com/zh/dashscope/developer-reference/text-embedding-api-details) for the complete and up-to-date list of available embedding models.
+See the [DashScope text embedding API](https://help.aliyun.com/en/model-studio/text-embedding-synchronous-api) for text models and limits.
 
 Some popular options include:
 - **text-embedding-v4** (default, recommended)

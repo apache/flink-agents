@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.python.utils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.DataContentBlock;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -41,6 +42,7 @@ import java.util.Map;
 /** Adapter for managing Java resources and facilitating Python-Java interoperability. */
 public class JavaResourceAdapter {
     private static final String TOOL_RESULT_MARKER = "__flink_agents_tool_result__";
+    private static final ObjectMapper DATA_BLOCK_MAPPER = new ObjectMapper();
 
     private final ResourceContext resourceContext;
 
@@ -132,6 +134,11 @@ public class JavaResourceAdapter {
      */
     public ChatMessage fromPythonChatMessage(Map<String, Object> message) {
         return ChatMessage.fromMap(message);
+    }
+
+    /** Restore a data block from its canonical Python map. */
+    public DataContentBlock fromPythonDataContentBlock(Map<String, Object> block) {
+        return DATA_BLOCK_MAPPER.convertValue(block, DataContentBlock.class);
     }
 
     public ChatResult fromPythonChatResult(Map<String, Object> response) {

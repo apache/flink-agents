@@ -64,6 +64,9 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
     @Override
     public void open() throws Exception {
         this.adapter.callMethod(chatModelSetup, "open", Collections.emptyMap());
+        if (model == null) {
+            model = (String) adapter.invoke("python_java_utils.get_model_name", chatModelSetup);
+        }
         resolveSkillsFromSources();
     }
 
@@ -94,16 +97,20 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
     }
 
     /**
-     * False, so a caller keeps describing the schema in the prompt, which works here. No connection
-     * is bound on this side, and {@link #chat(List, Map, Map)} carries only messages, prompt
-     * arguments and model parameters across the bridge, so a schema has no way to travel natively.
+     * Validate that the Python setup accepts a schema-bearing request before the first model call.
+     * For supported requests, Java callers can describe the schema in the prompt. The bridge
+     * carries only messages, prompt arguments and model parameters to the Python setup.
      *
-     * @throws IllegalArgumentException if {@code outputSchema} is non-null and the strategy is
-     *     {@link StructuredOutputStrategy#NATIVE}, which this setup cannot honor
+     * @throws IllegalArgumentException if the strategy is {@link StructuredOutputStrategy#NATIVE}
+     *     and the request carries an output schema
      */
     @Override
     public boolean willApplyNativeStructuredOutput(@Nullable Object outputSchema) {
-        if (outputSchema != null && structuredOutputStrategy == StructuredOutputStrategy.NATIVE) {
+        if (outputSchema == null) {
+            return false;
+        }
+        adapter.callMethod(chatModelSetup, "_validate_structured_output_request", Map.of());
+        if (structuredOutputStrategy == StructuredOutputStrategy.NATIVE) {
             throw new IllegalArgumentException(
                     "Structured output strategy NATIVE was requested, but a Python chat model"
                             + " setup reached from Java cannot carry an output schema across the"
