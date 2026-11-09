@@ -83,6 +83,7 @@ import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.agents.runtime.tracelog.FileTraceLogger;
 import org.apache.flink.agents.runtime.tracelog.Slf4jTraceLogger;
 import org.apache.flink.agents.runtime.tracelog.TraceLogWriter;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.base.LongSerializer;
@@ -1713,7 +1714,7 @@ public class ActionExecutionOperatorTest {
 
             InputEvent lookupEvent = new InputEvent(7L);
             lookupEvent.setOccurrenceId(
-                    ActionStateUtil.deriveRootEventOccurrenceId(
+                    RuntimeIdentity.deriveRootEventOccurrenceId(
                             ActionStateUtil.generateBusinessKeyIdentity(
                                     "7", StringSerializer.INSTANCE),
                             0L));
@@ -5452,7 +5453,7 @@ public class ActionExecutionOperatorTest {
             throws Exception {
         InputEvent event = new InputEvent(input);
         event.setOccurrenceId(
-                ActionStateUtil.deriveRootEventOccurrenceId(
+                RuntimeIdentity.deriveRootEventOccurrenceId(
                         ActionStateUtil.generateBusinessKeyIdentity(key, LongSerializer.INSTANCE),
                         0L));
         return event;

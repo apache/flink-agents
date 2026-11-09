@@ -27,6 +27,7 @@ import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
 import org.apache.flink.agents.runtime.python.operator.PythonGeneratorActionTask;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -102,6 +103,7 @@ class ActionTaskTest {
         PythonRunnerContextImpl context =
                 new PythonRunnerContextImpl(
                         null, () -> {}, new AgentPlan(Map.of()), null, "test-job");
+        context.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         PythonActionExecutor executor = mock(PythonActionExecutor.class);
         task.setRunnerContext(context);
         Event firstEvent = new Event("first-event");

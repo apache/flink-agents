@@ -38,7 +38,6 @@ import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
-import org.apache.flink.agents.runtime.actionstate.ActionStateUtil;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -65,6 +64,7 @@ import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.trace.TraceTaskLifecycleListener;
 import org.apache.flink.agents.runtime.tracelog.TraceLogWriter;
 import org.apache.flink.agents.runtime.utils.EventUtil;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -631,27 +631,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private void assignRootOccurrenceId(Object key, Event event) throws Exception {
         String businessKeyIdentity = occurrenceIdentityKeyEncoder.generateBusinessKeyIdentity(key);
         event.setOccurrenceId(
-                ActionStateUtil.deriveRootEventOccurrenceId(
+                RuntimeIdentity.deriveRootEventOccurrenceId(
                         businessKeyIdentity, stateManager.getSequenceNumber()));
-    }
-
-    /**
-     * Assigns each of an action execution's output events its lineage-based occurrence identity
-     * before dispatch, so that distinct event occurrences with identical attributes never collide
-     * in the durable action-state key. Derived purely from the triggering event's own occurrence
-     * identity and the action's identity, so it needs neither the business key nor a durable store.
-     */
-    private void assignOutputOccurrenceIds(ActionTask actionTask, List<Event> outputEvents)
-            throws Exception {
-        String producerExecutionId =
-                ActionStateUtil.deriveActionExecutionId(actionTask.event, actionTask.action);
-        for (int ordinal = 0; ordinal < outputEvents.size(); ordinal++) {
-            outputEvents
-                    .get(ordinal)
-                    .setOccurrenceId(
-                            ActionStateUtil.deriveOutputEventOccurrenceId(
-                                    producerExecutionId, ordinal));
-        }
     }
 
     /** Processes an Action's output Event with its producer and upstream references populated. */
@@ -814,6 +795,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (inputEvent.hasSourceTimestamp()) {
             beginEvent.setSourceTimestamp(inputEvent.getSourceTimestamp());
         }
+        beginEvent.setOccurrenceId(
+                RuntimeIdentity.deriveEmittedEventOccurrenceId(
+                        RuntimeIdentity.deriveActionExecutionId(
+                                inputEvent, AGENT_RUN_BEGIN_ACTION_NAME),
+                        0));
         TraceContext beginTraceContext =
                 TraceContext.forEvent(
                         inputEventTraceContext,
@@ -1055,6 +1041,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     // before its completion becomes durable.
                     notifyActionFinishing(actionTask);
                 }
+                for (Event emitted : actionTaskResult.getOutputEvents()) {
+                    if (emitted.getOccurrenceId() == null) {
+                        actionTask.getRunnerContext().assignOutputIdentity(emitted);
+                    }
+                }
                 durableExecManager.maybePersistTaskResult(
                         key,
                         sequenceNumber,
@@ -1076,7 +1067,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             }
         }
 
-        assignOutputOccurrenceIds(actionTask, outputEvents);
         for (Event actionOutputEvent : outputEvents) {
             processActionOutputEvent(key, contextKey, actionOutputEvent, actionTask);
         }
@@ -2134,6 +2124,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     if (lifecyclePrepared) {
                         notifyActionFinishing(actionTask);
                     }
+                    for (Event emitted : result.getOutputEvents()) {
+                        if (emitted.getOccurrenceId() == null) {
+                            actionTask.getRunnerContext().assignOutputIdentity(emitted);
+                        }
+                    }
                     durableExecManager.maybePersistTaskResult(
                             key,
                             sequenceNumber,
@@ -2150,7 +2145,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     // callback belongs to, which would otherwise get none.
                     notifyActionReused(actionTask);
                 }
-                assignOutputOccurrenceIds(actionTask, result.getOutputEvents());
+
             } catch (Throwable t) {
                 if (lifecyclePrepared && actionTask != null) {
                     notifyActionFailed(actionTask, t);

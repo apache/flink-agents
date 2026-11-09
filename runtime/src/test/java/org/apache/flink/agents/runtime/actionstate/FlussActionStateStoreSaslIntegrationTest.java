@@ -37,6 +37,7 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_SASL_USERNAME;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_SECURITY_PROTOCOL;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.createKeyEncoder;
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -79,7 +80,7 @@ public class FlussActionStateStoreSaslIntegrationTest {
     @Test
     void testPutAndGetWithSaslAuth() throws Exception {
         Action testAction = new NoOpAction("sasl-action");
-        InputEvent testEvent = new InputEvent("sasl-data");
+        InputEvent testEvent = occurrence(new InputEvent("sasl-data"));
         ActionState state = new ActionState(testEvent);
 
         store.put(TEST_KEY, 1L, testAction, testEvent, state);
@@ -92,7 +93,7 @@ public class FlussActionStateStoreSaslIntegrationTest {
     @Test
     void testRecoveryWithSaslAuth() throws Exception {
         Action testAction = new NoOpAction("sasl-recovery-action");
-        InputEvent testEvent = new InputEvent("sasl-recovery-data");
+        InputEvent testEvent = occurrence(new InputEvent("sasl-recovery-data"));
 
         // A durable call has completed, but its enclosing action is still pending at checkpoint.
         ActionState pending = new ActionState(testEvent);
@@ -135,7 +136,7 @@ public class FlussActionStateStoreSaslIntegrationTest {
     @Test
     void testMultipleWritesWithSaslAuth() throws Exception {
         Action testAction = new NoOpAction("sasl-multi-action");
-        InputEvent testEvent = new InputEvent("sasl-multi-data");
+        InputEvent testEvent = occurrence(new InputEvent("sasl-multi-data"));
 
         for (int i = 0; i < 5; i++) {
             store.put("key-" + i, (long) i, testAction, testEvent, new ActionState(testEvent));

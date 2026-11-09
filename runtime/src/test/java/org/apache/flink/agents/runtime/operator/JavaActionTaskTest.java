@@ -34,6 +34,7 @@ import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.ForTestMemoryMapState;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
@@ -48,6 +49,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 
+import static org.apache.flink.agents.runtime.utils.TestEvents.occurrence;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Tests for {@link JavaActionTask}. */
@@ -101,7 +103,7 @@ public class JavaActionTaskTest {
     void resolvesAttachmentsWithoutMutatingDurableEvent() throws Exception {
         Map<String, Object> payload = Map.of("value", "original");
         MemoryRef reference = runnerContext.getSensoryMemory().set("attachment.payload", payload);
-        InputEvent runtimeEvent = new InputEvent(1L);
+        InputEvent runtimeEvent = occurrence(new InputEvent(1L));
         runtimeEvent.setAttachment("payload", reference);
         JavaActionTask task = new JavaActionTask(KEY, runtimeEvent, action, 1L);
         task.setRunnerContext(runnerContext);
@@ -130,6 +132,7 @@ public class JavaActionTaskTest {
                         null,
                         "test-job",
                         continuationExecutor);
+        context.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         context.setContinuationContext(new ContinuationContext());
         context.switchActionContext(
                 ACTION_NAME,

@@ -34,6 +34,7 @@ import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -218,6 +219,7 @@ class DecisionModelActionRecoveryTest {
         } else {
             context = new RunnerContextImpl(metrics, () -> {}, plan, resources, "test-job");
         }
+        context.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         context.actionName = "decision_model_action";
         context.durableExecutionContext =
                 new RunnerContextImpl.DurableExecutionContext(

@@ -40,6 +40,7 @@ import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.agents.runtime.operator.ActionTask;
 import org.apache.flink.agents.runtime.operator.JavaActionTask;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
@@ -160,12 +161,12 @@ public class BaseSubagentSetupTest {
             String[] first = captures.get(0);
             assertThat(first[2]).isEqualTo("a");
             assertThat(first[0]).endsWith("-0");
-            assertThat(first[1]).isEqualTo(first[0] + "-1");
+            assertThat(first[1]).isNotBlank();
 
             // The session-only form assigns the call id under the given session.
             String[] second = captures.get(1);
             assertThat(second[0]).isEqualTo("given-session");
-            assertThat(second[1]).isEqualTo("given-session-1");
+            assertThat(second[1]).isNotBlank().isNotEqualTo(captures.get(3)[1]);
 
             // Another key runs under another namespace, so the assigned session differs.
             String[] third = captures.get(2);
@@ -302,17 +303,12 @@ public class BaseSubagentSetupTest {
                         null,
                         "job");
         Map<String, DeterministicIdAllocator> byTarget = new HashMap<>();
+        ctx.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         ctx.setIdAllocatorSource(
                 name ->
                         byTarget.computeIfAbsent(
                                 name,
-                                target ->
-                                        new DeterministicIdAllocator(
-                                                task.getKey(),
-                                                task.getSequenceNumber(),
-                                                task.getAction().getName(),
-                                                task.getEvent(),
-                                                target)));
+                                target -> new DeterministicIdAllocator("test-execution", target)));
         return ctx;
     }
 
