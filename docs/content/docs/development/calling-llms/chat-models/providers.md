@@ -236,7 +236,7 @@ public class MyAgent extends Agent {
 | `VideoBlock` | a `video` block | `video/x-matroska`, `video/quicktime`, `video/mp4`, `video/webm`, `video/x-flv`, `video/mpeg`, `video/x-ms-wmv`, `video/3gpp` |
 | `AudioBlock` | an `audio` block | `audio/mpeg`, `audio/opus`, `audio/wav`, `audio/x-wav`, `audio/aac`, `audio/x-aac`, `audio/flac`, `audio/mp4`, `audio/x-m4a`, `audio/ogg`, `audio/x-matroska`, `audio/webm` |
 
-Other media types, URLs other than `s3://`, and media in assistant messages or tool results raise `UnsupportedContentBlockException` before the request is sent. Which media a model accepts, and whether it can read from S3, varies by model; see [Supported models and model features](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html).
+Other media types, URLs other than `s3://`, and media in assistant messages or tool results raise `UnsupportedContentBlockException` before the request is sent. Which media a model accepts, and whether it can read from S3, varies by model; see [Supported models and model features](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html). The Converse API also limits the number and size of images and documents, requires a text block next to a document, and restricts media by role; see the [Converse message restrictions](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Message.html).
 
 #### Available Models
 
