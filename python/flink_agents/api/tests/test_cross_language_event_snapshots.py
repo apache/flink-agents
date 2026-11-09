@@ -344,6 +344,93 @@ def test_python_can_deserialize_chat_response_event_from_java_snapshot() -> None
     assert typed.response.text == "hi there"
 
 
+# ── Request context ─────────────────────────────────────────────────────
+
+_SNAPSHOT_CONTEXT = {
+    "task": "summary",
+    "item_id": "42",
+    "n": 1,
+    "ok": True,
+    "tags": ["a"],
+}
+
+
+def _build_chat_request_event_with_context() -> ChatRequestEvent:
+    event = ChatRequestEvent(
+        model="test-model",
+        messages=[ChatMessage.of(MessageRole.USER, "hello world")],
+        user_context=dict(_SNAPSHOT_CONTEXT),
+    )
+    return _force_id(event, _FIXED_EVENT_ID)
+
+
+def test_regenerate_chat_request_event_with_context_python_snapshot() -> None:
+    if not _regenerate_enabled():
+        pytest.skip("Set REGENERATE_SNAPSHOTS=1 to refresh.")
+    _write_python_snapshot(
+        "chat_request_event_with_context.json",
+        _build_chat_request_event_with_context(),
+    )
+
+
+def test_chat_request_event_with_context_python_snapshot_is_stable() -> None:
+    _assert_python_snapshot_stable(
+        "chat_request_event_with_context.json",
+        _build_chat_request_event_with_context(),
+    )
+
+
+def test_python_can_deserialize_chat_request_event_with_context_from_java_snapshot() -> (
+    None
+):
+    typed = ChatRequestEvent.from_event(
+        _read_java_snapshot("chat_request_event_with_context.json")
+    )
+    assert typed.id == _FIXED_EVENT_ID
+    assert typed.model == "test-model"
+    assert typed.messages[0].text == "hello world"
+    assert typed.user_context == _SNAPSHOT_CONTEXT
+
+
+def _build_chat_response_event_with_context() -> ChatResponseEvent:
+    event = ChatResponseEvent.success(
+        request_id=_FIXED_REQUEST_ID,
+        response=ChatResult(
+            message=ChatMessage.assistant([TextBlock(text="hi there")])
+        ),
+        user_context=dict(_SNAPSHOT_CONTEXT),
+    )
+    return _force_id(event, _FIXED_EVENT_ID)
+
+
+def test_regenerate_chat_response_event_with_context_python_snapshot() -> None:
+    if not _regenerate_enabled():
+        pytest.skip("Set REGENERATE_SNAPSHOTS=1 to refresh.")
+    _write_python_snapshot(
+        "chat_response_event_with_context.json",
+        _build_chat_response_event_with_context(),
+    )
+
+
+def test_chat_response_event_with_context_python_snapshot_is_stable() -> None:
+    _assert_python_snapshot_stable(
+        "chat_response_event_with_context.json",
+        _build_chat_response_event_with_context(),
+    )
+
+
+def test_python_can_deserialize_chat_response_event_with_context_from_java_snapshot() -> (
+    None
+):
+    typed = ChatResponseEvent.from_event(
+        _read_java_snapshot("chat_response_event_with_context.json")
+    )
+    assert typed.id == _FIXED_EVENT_ID
+    assert typed.request_id == _FIXED_REQUEST_ID
+    assert typed.response.text == "hi there"
+    assert typed.user_context == _SNAPSHOT_CONTEXT
+
+
 # ── ToolRequestEvent ────────────────────────────────────────────────────
 
 

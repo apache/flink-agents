@@ -249,6 +249,63 @@ def test_restored_tool_request_reaches_action_as_concrete_type() -> None:
     assert response.success["call-1"] is True
 
 
+def test_tool_response_echoes_context_on_success_and_failure() -> None:
+    context = {"task": "lookup", "item_id": "42"}
+    ctx = _Context()
+    event = _request(
+        model="model",
+        tool_calls=[
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {
+                    "name": "query_order",
+                    "arguments": {"order_id": "order-1"},
+                },
+            }
+        ],
+    )
+    event.attributes["user_context"] = context
+    event = ToolRequestEvent.from_event(event)
+    event.set_attachment("trace", "keep-on-request")
+
+    asyncio.run(process_tool_request(event, ctx))
+
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.user_context == context
+    assert response.request_id == event.id
+    assert response.responses["call-1"].get_text() == "tenant-1:order-1"
+    assert response.attachments == {}
+    assert response.success["call-1"] is True
+    _func, _args, executed = ctx.durable_execute_calls[0]
+    assert "user_context" not in executed
+    assert executed["order_id"] == "order-1"
+
+    missing = ToolRequestEvent(
+        model="model",
+        tool_calls=[
+            ToolCallBlock(
+                call_id="call-1", name="missing_tool", input={"order_id": "order-1"}
+            )
+        ],
+        user_context=context,
+    )
+    failed_ctx = _Context()
+    asyncio.run(process_tool_request(missing, failed_ctx))
+    failure = ToolResponseEvent.from_event(failed_ctx.sent_events[0])
+    assert failure.success["call-1"] is False
+    assert failure.user_context == context
+    assert failure.attachments == {}
+
+
+def test_tool_response_omits_context_when_the_request_does() -> None:
+    ctx = _Context()
+    asyncio.run(process_tool_request(tool_request(), ctx))
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.user_context is None
+    assert "user_context" not in response.attributes
+
+
 def test_tool_call_action_injects_args_from_config_without_mutating_request() -> None:
     ctx = _Context()
     arguments = {"order_id": "order-1"}

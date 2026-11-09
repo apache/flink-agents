@@ -66,15 +66,17 @@ public final class DecisionModelAction {
         DecisionResponseEvent terminal =
                 result.isSuccess()
                         ? DecisionResponseEvent.success(
-                                request.getId(),
-                                result.response,
-                                result.retryCount,
-                                result.totalWaitSec)
+                                        request.getId(),
+                                        result.response,
+                                        result.retryCount,
+                                        result.totalWaitSec)
+                                .withUserContext(request.getUserContext())
                         : DecisionResponseEvent.failed(
-                                request.getId(),
-                                result.error,
-                                result.retryCount,
-                                result.totalWaitSec);
+                                        request.getId(),
+                                        result.error,
+                                        result.retryCount,
+                                        result.totalWaitSec)
+                                .withUserContext(request.getUserContext());
         ctx.sendEvent(terminal);
     }
 }

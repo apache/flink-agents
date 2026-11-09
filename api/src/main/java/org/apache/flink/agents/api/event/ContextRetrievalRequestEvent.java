@@ -23,6 +23,8 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.Event;
 
+import javax.annotation.Nullable;
+
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -38,7 +40,8 @@ public class ContextRetrievalRequestEvent extends Event {
             List.of(
                     BuiltInAttribute.required("query", String.class),
                     BuiltInAttribute.required("vector_store", String.class),
-                    BuiltInAttribute.optional("max_results", Number.class));
+                    BuiltInAttribute.optional("max_results", Number.class),
+                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
 
     public ContextRetrievalRequestEvent(String query, String vectorStore) {
         this(query, vectorStore, DEFAULT_MAX_RESULTS);
@@ -50,14 +53,32 @@ public class ContextRetrievalRequestEvent extends Event {
      * @param query the search query text
      * @param vectorStore the name of the vector store to query
      * @param maxResults the maximum number of results to return; must be positive
+     * @param userContext application-defined data propagated to the response; {@code null} omits it
      * @throws IllegalArgumentException if {@code maxResults} is non-positive
      */
-    public ContextRetrievalRequestEvent(String query, String vectorStore, int maxResults) {
+    public ContextRetrievalRequestEvent(
+            String query,
+            String vectorStore,
+            int maxResults,
+            @Nullable Map<String, Object> userContext) {
         super(EVENT_TYPE);
         validateMaxResults(maxResults);
         setAttr("query", query);
         setAttr("vector_store", vectorStore);
         setAttr("max_results", maxResults);
+        UserDefinedContext.set(this, userContext);
+    }
+
+    /**
+     * Creates a new context retrieval request event.
+     *
+     * @param query the search query text
+     * @param vectorStore the name of the vector store to query
+     * @param maxResults the maximum number of results to return; must be positive
+     * @throws IllegalArgumentException if {@code maxResults} is non-positive
+     */
+    public ContextRetrievalRequestEvent(String query, String vectorStore, int maxResults) {
+        this(query, vectorStore, maxResults, null);
     }
 
     /**
@@ -93,8 +114,8 @@ public class ContextRetrievalRequestEvent extends Event {
      * Reconstructs a typed ContextRetrievalRequestEvent from a base Event.
      *
      * <p>Enforces the fixed cross-language schema: {@code query} and {@code vector_store} are
-     * required strings, {@code max_results} is an optional positive number, and no other attribute
-     * is allowed.
+     * required strings, {@code max_results} is an optional positive number, {@code user_context} is
+     * an optional map, and no other attribute is allowed.
      *
      * @param event the base event containing context retrieval request data in attributes
      * @return a typed ContextRetrievalRequestEvent
@@ -123,6 +144,16 @@ public class ContextRetrievalRequestEvent extends Event {
     @JsonIgnore
     public int getMaxResults() {
         return ((Number) getAttr("max_results")).intValue();
+    }
+
+    /**
+     * Returns application-defined data to propagate to the matching response, or {@code null} when
+     * this request omitted it. The map is not added to the vector-store query.
+     */
+    @JsonIgnore
+    @Nullable
+    public Map<String, Object> getUserContext() {
+        return UserDefinedContext.get(this);
     }
 
     @Override

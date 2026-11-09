@@ -141,6 +141,51 @@ def _response(ctx) -> DecisionResponseEvent:
     return ctx.send_event.call_args.args[0]
 
 
+def test_success_and_failure_echo_context_without_changing_the_provider_request():
+    context = {"task": "review", "item_id": "42"}
+    event = DecisionRequestEvent(
+        model="review-decision",
+        request=DecisionRequest(
+            input={"review": "The package arrived damaged."},
+            questions={"urgent": PredicateQuestion(instructions="Needs attention?")},
+        ),
+        request_params={"safety_identifier": "review-user", "timeout": 4.0},
+        user_context=context,
+    )
+    event.set_attachment("trace", "keep-on-request")
+    model = _Model([_result()])
+    ctx, _ = _context(model, decision_async=False, interval=0)
+    asyncio.run(process_decision_request(event, ctx))
+    response = _response(ctx)
+    assert response.is_success
+    assert response.user_context == context
+    assert response.attachments == {}
+    model.decide.assert_called_once_with(
+        event.request, request_params=event.request_params
+    )
+
+    failed_event = DecisionRequestEvent(
+        model="review-decision",
+        request=event.request,
+        request_params=event.request_params,
+        user_context=context,
+    )
+    failed_model = _Model([RuntimeError("provider down")])
+    failed_ctx, _ = _context(failed_model, decision_async=False, retries=0, interval=0)
+    asyncio.run(process_decision_request(failed_event, failed_ctx))
+    failed = _response(failed_ctx)
+    assert failed.is_failed
+    assert "provider down" in failed.error
+    assert failed.user_context == context
+
+    omitted = _request()
+    omitted_model = _Model([_result()])
+    omitted_ctx, _ = _context(omitted_model, decision_async=False, interval=0)
+    asyncio.run(process_decision_request(omitted, omitted_ctx))
+    assert _response(omitted_ctx).user_context is None
+    assert "user_context" not in _response(omitted_ctx).attributes
+
+
 @pytest.mark.parametrize("decision_async", [False, True])
 def test_success_uses_selected_durable_path_and_action_owned_context(decision_async):
     event = _request()

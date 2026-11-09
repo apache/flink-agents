@@ -47,6 +47,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
 import pemja.core.object.PyObject;
 
+import javax.annotation.Nullable;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -64,6 +66,35 @@ class DecisionModelActionTest {
     @AfterEach
     void clearInterrupt() {
         Thread.interrupted();
+    }
+
+    @Test
+    void successAndFailureEchoContextAndLeaveTheProviderRequestUnchanged() throws Exception {
+        Map<String, Object> context = Map.of("task", "review", "item_id", "42");
+        Harness ok = new Harness(false, 0, context);
+        ok.request.setAttachment("trace", "keep-on-request");
+        when(ok.model.decide(any(), anyMap())).thenReturn(result("provider-model", null));
+
+        ok.run();
+
+        assertThat(ok.response().isSuccess()).isTrue();
+        assertThat(ok.response().getUserContext()).isEqualTo(context);
+        assertThat(ok.response().getAttachments()).isEmpty();
+        verify(ok.model).decide(ok.request.getRequest(), ok.request.getRequestParams());
+
+        Harness failed = new Harness(false, 0, context);
+        when(failed.model.decide(any(), anyMap()))
+                .thenThrow(new IllegalStateException("provider down"));
+        failed.run();
+        assertThat(failed.response().isFailed()).isTrue();
+        assertThat(failed.response().getError()).contains("provider down");
+        assertThat(failed.response().getUserContext()).isEqualTo(context);
+
+        Harness omitted = new Harness(false, 0);
+        when(omitted.model.decide(any(), anyMap())).thenReturn(result(null, null));
+        omitted.run();
+        assertThat(omitted.response().getUserContext()).isNull();
+        assertThat(omitted.response().getAttributes()).doesNotContainKey("user_context");
     }
 
     @ParameterizedTest
@@ -507,17 +538,24 @@ class DecisionModelActionTest {
         private final ObjectMapper mapper = new ObjectMapper();
         private final List<byte[]> stored = new ArrayList<>();
         private int slot;
-        private final DecisionRequestEvent request =
-                new DecisionRequestEvent(
-                        MODEL,
-                        new DecisionRequest(
-                                "The delivery arrived damaged",
-                                Map.of(
-                                        "damaged",
-                                        DecisionRequest.Question.predicate("Is it damaged?"))),
-                        Map.of("safety_identifier", "review-user", "timeout", 4.0));
+        private final DecisionRequestEvent request;
 
         private Harness(boolean async, int retries) throws Exception {
+            this(async, retries, null);
+        }
+
+        private Harness(boolean async, int retries, @Nullable Map<String, Object> userContext)
+                throws Exception {
+            request =
+                    new DecisionRequestEvent(
+                            MODEL,
+                            new DecisionRequest(
+                                    "The delivery arrived damaged",
+                                    Map.of(
+                                            "damaged",
+                                            DecisionRequest.Question.predicate("Is it damaged?"))),
+                            Map.of("safety_identifier", "review-user", "timeout", 4.0),
+                            userContext);
             ReadableConfiguration config = mock(ReadableConfiguration.class);
             when(config.get(AgentExecutionOptions.DECISION_ASYNC)).thenReturn(async);
             when(config.get(AgentExecutionOptions.MAX_RETRIES)).thenReturn(retries);
