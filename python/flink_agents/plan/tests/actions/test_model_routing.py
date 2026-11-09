@@ -416,3 +416,61 @@ def test_fallback_tool_failure_reports_current_round_without_routing_metadata():
     assert models["big"].chat.call_count == 1
     assert models["small"].chat.call_count == 2
     models["last"].chat.assert_not_called()
+
+
+@pytest.mark.parametrize("outcome", ["fallback", "exhausted", "strategy_error"])
+def test_routed_terminal_response_keeps_user_context(outcome):
+    context = {"task": "summary", "item_id": "42"}
+    if outcome == "strategy_error":
+        ctx, events, models, _ = setup(Strategies.custom(Select, {"fail": True}))
+    else:
+        ctx, events, models, _ = setup(fallback=True)
+        failing = ["big"] if outcome == "fallback" else list(models)
+        for name in failing:
+            models[name].chat.side_effect = RuntimeError(name + " down")
+    asyncio.run(
+        chat(
+            uuid4(),
+            "router",
+            [ChatMessage.user("write CODE")],
+            None,
+            None,
+            ctx,
+            user_context=context,
+        )
+    )
+    response = events[-1]
+    assert isinstance(response, ChatResponseEvent)
+    assert response.is_success == (outcome == "fallback")
+    assert response.user_context == context
+
+
+def test_fallback_then_tool_round_keeps_user_context():
+    context = {"task": "summary", "item_id": "42"}
+    ctx, events, models, _ = setup(fallback=True)
+    models["big"].chat.side_effect = RuntimeError("big down")
+    models["small"].chat.side_effect = [
+        result([ToolCallBlock(call_id="c", name="tool", input={})]),
+        result("final from small"),
+    ]
+    asyncio.run(
+        chat(
+            uuid4(),
+            "router",
+            [ChatMessage.user("write CODE")],
+            None,
+            None,
+            ctx,
+            user_context=context,
+        )
+    )
+    tool_request = events[-1]
+    assert isinstance(tool_request, ToolRequestEvent)
+    assert tool_request.user_context is None
+    response = ToolResponseEvent(
+        request_id=tool_request.id, responses={"c": ToolResponse.text("done")}
+    )
+    asyncio.run(process_chat_request_or_tool_response(response, ctx))
+    assert events[-1].response.text == "final from small"
+    assert events[-1].user_context == context
+    assert events[-1].attributes["model_routing"]["final_model"] == "small"
