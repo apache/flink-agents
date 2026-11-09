@@ -18,8 +18,10 @@
 package org.apache.flink.agents.runtime;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorTest;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
@@ -44,6 +46,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -52,6 +55,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /** Tests for {@link CompileUtils}. */
 public class CompileUtilsTest {
@@ -118,32 +122,54 @@ public class CompileUtilsTest {
         checkResult(resultList);
     }
 
-    @Test
-    void processesEveryKeyWithDefaultBatchStateBackend() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    @Timeout(60)
+    void processesEveryKeyWithDefaultBatchStateBackend(boolean parallel) throws Exception {
         assertThat(
                         executeBatch(
-                                ActionExecutionOperatorTest.TestAgent.getAgentPlan(false),
+                                configureExecution(
+                                        ActionExecutionOperatorTest.TestAgent.getAgentPlan(false),
+                                        parallel),
                                 List.of(0L, 1L, 2L, 3L, 4L)))
                 .containsExactly(2L, 4L, 6L, 8L, 10L);
     }
 
-    @Test
-    void processesEveryKeyWhenAutomaticModeSelectsBatchExecution() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    @Timeout(60)
+    void processesEveryKeyWhenAutomaticModeSelectsBatchExecution(boolean parallel)
+            throws Exception {
         assertThat(
                         executeBounded(
-                                ActionExecutionOperatorTest.TestAgent.getAgentPlan(false),
+                                configureExecution(
+                                        ActionExecutionOperatorTest.TestAgent.getAgentPlan(false),
+                                        parallel),
                                 List.of(0L, 1L, 2L, 3L, 4L),
                                 RuntimeExecutionMode.AUTOMATIC))
                 .containsExactly(2L, 4L, 6L, 8L, 10L);
     }
 
-    @Test
-    void processesAsyncActionsWithDefaultBatchStateBackend() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    @Timeout(60)
+    void processesAsyncActionsWithDefaultBatchStateBackend(boolean parallel) throws Exception {
         assertThat(
                         executeBatch(
-                                ActionExecutionOperatorTest.TestAgent.getAsyncAgentPlan(false),
+                                configureExecution(
+                                        ActionExecutionOperatorTest.TestAgent.getAsyncAgentPlan(
+                                                false),
+                                        parallel),
                                 List.of(1L, 2L, 3L)))
                 .containsExactly(20L, 40L, 60L);
+    }
+
+    private static AgentPlan configureExecution(AgentPlan plan, boolean parallel) {
+        // These variants specifically exercise the serial and lock-based parallel engines.
+        assumeFalse(ContinuationActionExecutor.isContinuationSupported());
+        plan.getConfig().set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, parallel);
+        plan.getConfig().set(AgentConfigOptions.TRACE_LOG_TARGETS, Collections.emptyList());
+        return plan;
     }
 
     private static List<Long> executeBatch(AgentPlan agentPlan, List<Long> input) throws Exception {
@@ -171,7 +197,7 @@ public class CompileUtilsTest {
     @ParameterizedTest
     @CsvSource({"AUTOMATIC, false", "AUTOMATIC, true", "BATCH, true"})
     @Timeout(60)
-    void rejectsBatchStateBackendAtRuntime(
+    void processesAllKeysWhenBatchModeIsResolvedAtRuntime(
             RuntimeExecutionMode mode, boolean configureAfterConnecting) throws Exception {
         Configuration conf = new Configuration();
         conf.set(RestartStrategyOptions.RESTART_STRATEGY, "none");
@@ -189,19 +215,13 @@ public class CompileUtilsTest {
                 env.setRuntimeMode(mode);
             }
 
-            // Flink resolves AUTOMATIC only when generating the job graph. The guard must also
-            // catch configuration changes after connectToAgent's early validation.
-            assertThatThrownBy(
-                            () -> {
-                                try (CloseableIterator<Object> iterator =
-                                        output.executeAndCollect()) {
-                                    iterator.forEachRemaining(ignored -> {});
-                                }
-                            })
-                    .hasStackTraceContaining(
-                            "Flink Agents does not support Flink's batch keyed-state backend")
-                    .hasStackTraceContaining("execution.batch-state-backend.enabled")
-                    .hasStackTraceContaining("RuntimeExecutionMode.STREAMING");
+            // Resolve the backend at execution time, including configuration changes after
+            // connectToAgent has built the pipeline.
+            List<Object> results = new ArrayList<>();
+            try (CloseableIterator<Object> iterator = output.executeAndCollect()) {
+                iterator.forEachRemaining(results::add);
+            }
+            assertThat(results).containsExactlyInAnyOrder(2L, 4L, 6L, 8L, 10L);
         }
     }
 

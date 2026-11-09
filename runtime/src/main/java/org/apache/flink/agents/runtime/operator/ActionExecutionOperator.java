@@ -556,6 +556,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             super.setKeyContextElement1(record);
             processElementInternal(record);
         }
+        // Drain only after releasing the parallel engine's lock: workers need it to
+        // complete Actions, and waitInFlightEventsFinished acquires it itself.
+        waitForCurrentInputInBatchMode();
     }
 
     private void processElementInternal(StreamRecord<IN> record) throws Exception {
@@ -589,7 +592,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 // incoming event should be queued and processed later. Therefore, we add it to
                 // pendingInputEventsState.
                 enqueuePendingInputEvent(inputEvent);
-                waitForCurrentInputInBatchMode();
                 return;
             }
         } catch (Exception e) {
@@ -600,7 +602,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // Otherwise, the new event is processed immediately. Its failures are attributed to the
         // input run created by processInputEvent.
         processInputEvent(key, inputEvent);
-        waitForCurrentInputInBatchMode();
     }
 
     /**
@@ -1263,15 +1264,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void initializeState(StateInitializationContext context) throws Exception {
         super.initializeState(context);
-
-        // Check the actual backend after Flink resolves AUTOMATIC and any configuration changes
-        // made after the Agent pipeline was built, before opening resources or recovering Actions.
-        checkState(
-                !(getKeyedStateBackend() instanceof BatchExecutionKeyedStateBackend),
-                "Flink Agents does not support Flink's batch keyed-state backend"
-                        + " (execution.batch-state-backend.enabled): switching keys can discard"
-                        + " unfinished Actions. Run this job with RuntimeExecutionMode.STREAMING,"
-                        + " or set execution.batch-state-backend.enabled to false.");
 
         int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
         occurrenceIdentityKeyEncoder =
