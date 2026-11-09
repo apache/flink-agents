@@ -195,11 +195,44 @@ public class InternalSubagentSetup extends BaseSubagentSetup {
         String planJson = getPlanJson();
         return childCaches.computeIfAbsent(
                 scope,
-                k ->
-                        new ResourceCache(
-                                plan.getResourceProviders(),
-                                userCodeClassLoader,
-                                rootResourceCache,
-                                planJson));
+                k -> {
+                    ResourceCache cache =
+                            new ResourceCache(
+                                    plan.getResourceProviders(),
+                                    userCodeClassLoader,
+                                    rootResourceCache,
+                                    planJson);
+                    try {
+                        cache.discoverMCPResources();
+                        return cache;
+                    } catch (Exception failure) {
+                        try {
+                            cache.close();
+                        } catch (Exception closeFailure) {
+                            failure.addSuppressed(closeFailure);
+                        }
+                        throw new IllegalStateException(
+                                "Failed to discover MCP resources in sub-agent scope '"
+                                        + scope
+                                        + "'",
+                                failure);
+                    }
+                });
+    }
+
+    @Override
+    public void close() throws Exception {
+        Throwable failure = null;
+        for (ResourceCache cache : childCaches.values()) {
+            try {
+                cache.close();
+            } catch (Throwable closeFailure) {
+                failure = ExceptionUtils.firstOrSuppressed(closeFailure, failure);
+            }
+        }
+        childCaches.clear();
+        if (failure != null) {
+            ExceptionUtils.rethrowException(failure);
+        }
     }
 }

@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import TYPE_CHECKING, Any, Dict, List, cast
+from typing import Any, Dict, List
 
 from pydantic import BaseModel, field_serializer, model_validator
 
@@ -28,7 +28,6 @@ from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceType,
 )
-from flink_agents.api.resource_context import ResourceContext
 from flink_agents.api.skills import (
     BASH_TOOL,
     LOAD_SKILL_TOOL,
@@ -53,12 +52,6 @@ from flink_agents.plan.resource_provider import (
     ResourceProvider,
 )
 from flink_agents.plan.tools.function_tool import FunctionTool
-
-if TYPE_CHECKING:
-    from flink_agents.api.resource import (
-        Resource,
-    )
-    from flink_agents.integrations.mcp.mcp import MCPServer
 
 BUILT_IN_ACTIONS = [
     CHAT_MODEL_ACTION,
@@ -425,7 +418,7 @@ def _get_resource_providers(
                 value = value.__func__
 
             descriptor = value()
-            _add_mcp_server(name, resource_providers, descriptor, config)
+            _add_mcp_server(name, resource_providers, descriptor)
         elif hasattr(value, "_is_skills"):
             if isinstance(value, staticmethod):
                 value = value.__func__
@@ -454,7 +447,7 @@ def _get_resource_providers(
         )
 
     for name, descriptor in agent.resources[ResourceType.MCP_SERVER].items():
-        _add_mcp_server(name, resource_providers, descriptor, config)
+        _add_mcp_server(name, resource_providers, descriptor)
 
     # Merge decorator-based and programmatic skills. A name declared both ways resolves
     # to the programmatic declaration and moves to the end: the flattened source order
@@ -509,58 +502,15 @@ def _add_mcp_server(
     name: str,
     resource_providers: List[ResourceProvider],
     descriptor: ResourceDescriptor,
-    config: AgentConfiguration,
 ) -> None:
-    provider = PythonResourceProvider.get(name=name, descriptor=descriptor)
+    """Register the MCP server only.
 
-    resource_providers.append(provider)
-
-    class ResourceContextPlaceholder(ResourceContext):
-        """Placeholder - MCP server construction doesn't need resource resolution."""
-
-        def generate_available_skills_prompt(self, *skill_names: str) -> str:
-            pass
-
-        def get_resource(self, name: str, resource_type: "ResourceType") -> "Resource":
-            pass
-
-        def get_skill_dirs(self, *skill_names: str) -> List[str]:
-            return []
-
-    mcp_server = cast(
-        "MCPServer",
-        provider.provide(resource_context=ResourceContextPlaceholder(), config=config),
+    The server is not contacted here. Its tools and prompts are discovered when
+    the operator starts, see ``flink_agents.runtime.mcp_resource_discovery``.
+    """
+    resource_providers.append(
+        PythonResourceProvider.get(name=name, descriptor=descriptor)
     )
-
-    resource_providers.extend(
-        [
-            PythonSerializableResourceProvider.from_resource(
-                name=prompt.name, resource=prompt
-            )
-            for prompt in mcp_server.list_prompts()
-        ]
-    )
-
-    for tool in mcp_server.list_tools():
-        # The remote server picks the tool names, so the reserved-prefix
-        # check has to run here too: a tool advertised as ``_subagent_*``
-        # would land in the TOOL provider map, but dispatch routes any
-        # prefixed call to AGENT, so the tool could never be called. Wrap
-        # the error with the server name so operators can tell which
-        # remote advertised the bad name.
-        try:
-            _check_tool_name_not_reserved(tool.name)
-        except ValueError as e:
-            msg = f"MCP server '{name}' advertised a tool with a reserved name: {e}"
-            raise ValueError(msg) from e
-        tool.mcp_server_name = name
-        resource_providers.append(
-            PythonSerializableResourceProvider.from_resource(
-                name=tool.name, resource=tool
-            )
-        )
-
-    mcp_server.close()
 
 
 SKILLS_CONFIG = "_skills_config"

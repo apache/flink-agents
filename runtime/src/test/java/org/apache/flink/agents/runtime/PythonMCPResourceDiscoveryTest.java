@@ -24,6 +24,7 @@ import org.apache.flink.agents.plan.resource.python.PythonMCPTool;
 import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -33,12 +34,94 @@ import static org.apache.flink.agents.api.resource.ResourceType.MCP_SERVER;
 import static org.apache.flink.agents.api.resource.ResourceType.PROMPT;
 import static org.apache.flink.agents.api.resource.ResourceType.TOOL;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class PythonMCPResourceDiscoveryTest {
+
+    @Test
+    void mcpOnlyChildInitializesPythonAndExposesToolsToJavaBeforeActions() throws Exception {
+        PythonResourceProvider provider = mock(PythonResourceProvider.class);
+        PythonMCPServer server = mock(PythonMCPServer.class);
+        PythonMCPTool tool = mock(PythonMCPTool.class);
+        PythonMCPPrompt prompt = mock(PythonMCPPrompt.class);
+        PythonActionExecutor executor = mock(PythonActionExecutor.class);
+        PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
+        Map<ResourceType, Map<String, ResourceProvider>> providers =
+                Map.of(MCP_SERVER, Map.of("remote", provider));
+        when(provider.getName()).thenReturn("remote");
+        when(provider.provide(any())).thenReturn(server);
+        when(server.listTools("remote")).thenReturn(List.of(tool));
+        when(server.listPrompts()).thenReturn(List.of(prompt));
+        when(tool.getName()).thenReturn("lookup");
+        when(prompt.getName()).thenReturn("ask");
+        try (ResourceCache parent = new ResourceCache(Map.of());
+                ResourceCache child =
+                        new ResourceCache(
+                                providers,
+                                getClass().getClassLoader(),
+                                parent,
+                                "child-plan-json")) {
+            parent.setPythonActionExecutor(executor);
+            parent.setPythonResourceAdapter(adapter);
+            child.discoverMCPResources();
+            verify(executor).initializeMCPScope("child-plan-json");
+            assertThat(child.getResource("lookup", TOOL)).isSameAs(tool);
+            assertThat(child.getResource("ask", PROMPT)).isSameAs(prompt);
+        }
+        verify(server).close();
+    }
+
+    @Test
+    void cannotOverwriteAnAlreadyDiscoveredJavaTool() throws Exception {
+        PythonResourceProvider provider = mock(PythonResourceProvider.class);
+        PythonMCPServer server = mock(PythonMCPServer.class);
+        PythonMCPTool tool = mock(PythonMCPTool.class);
+        Map<ResourceType, Map<String, ResourceProvider>> providers =
+                Map.of(MCP_SERVER, Map.of("remote", provider));
+        try (ResourceCache cache = new ResourceCache(providers)) {
+            when(provider.getName()).thenReturn("remote");
+            when(provider.provide(any())).thenReturn(server);
+            when(server.listTools("remote")).thenReturn(List.of(tool));
+            when(tool.getName()).thenReturn("lookup");
+            org.apache.flink.agents.api.resource.Resource existing =
+                    mock(org.apache.flink.agents.api.resource.Resource.class);
+            cache.put("lookup", TOOL, existing);
+
+            assertThatThrownBy(
+                            () ->
+                                    PythonMCPResourceDiscovery.discoverPythonMCPResources(
+                                            providers, mock(PythonResourceAdapter.class), cache))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Duplicate tool name 'lookup'");
+            assertThat(cache.getResource("lookup", TOOL)).isSameAs(existing);
+        }
+        verify(server).close();
+    }
+
+    @Test
+    void rejectsReservedToolNamesAcrossThePythonBridge() throws Exception {
+        PythonResourceProvider provider = mock(PythonResourceProvider.class);
+        PythonMCPServer server = mock(PythonMCPServer.class);
+        PythonMCPTool tool = mock(PythonMCPTool.class);
+        Map<ResourceType, Map<String, ResourceProvider>> providers =
+                Map.of(MCP_SERVER, Map.of("remote", provider));
+        when(provider.getName()).thenReturn("remote");
+        when(provider.provide(any())).thenReturn(server);
+        when(server.listTools("remote")).thenReturn(List.of(tool));
+        when(tool.getName()).thenReturn("_subagent_child");
+        try (ResourceCache cache = new ResourceCache(providers)) {
+            assertThatThrownBy(
+                            () ->
+                                    PythonMCPResourceDiscovery.discoverPythonMCPResources(
+                                            providers, mock(PythonResourceAdapter.class), cache))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("reserved prefix '_subagent_'");
+        }
+    }
 
     @Test
     void cachesServerAndDiscoveredResourcesForNormalShutdown() throws Exception {

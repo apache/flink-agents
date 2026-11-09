@@ -203,6 +203,15 @@ class AgentPlanDeclareMCPServerTest {
                                 }));
     }
 
+    private MCPTool findTool(MCPServer server, String name) {
+        for (MCPTool t : server.listTools()) {
+            if (name.equals(t.getName())) {
+                return t;
+            }
+        }
+        return null;
+    }
+
     @AfterAll
     static void afterAll() {
         if (pythonMcpServerProcess != null) {
@@ -228,7 +237,7 @@ class AgentPlanDeclareMCPServerTest {
 
     @Test
     @DisabledOnJre(JRE.JAVA_11)
-    @DisplayName("Tools are NOT in AgentPlan providers — discovery is deferred to operator startup")
+    @DisplayName("Tools are NOT in AgentPlan providers; discovery is deferred to operator startup")
     void discoverToolsFromMCPServer() {
         Map<ResourceType, Map<String, ResourceProvider>> providers =
                 agentPlan.getResourceProviders();
@@ -241,7 +250,7 @@ class AgentPlanDeclareMCPServerTest {
     @Test
     @DisabledOnJre(JRE.JAVA_11)
     @DisplayName(
-            "Prompts are NOT in AgentPlan providers — discovery is deferred to operator startup")
+            "Prompts are NOT in AgentPlan providers; discovery is deferred to operator startup")
     void discoverPromptsFromMCPServer() {
         Map<ResourceType, Map<String, ResourceProvider>> providers =
                 agentPlan.getResourceProviders();
@@ -258,13 +267,7 @@ class AgentPlanDeclareMCPServerTest {
     void retrieveMCPToolAdd() throws Exception {
         MCPServer server = instantiateMCPServer();
         try {
-            MCPTool tool = null;
-            for (MCPTool t : server.listTools()) {
-                if ("add".equals(t.getName())) {
-                    tool = t;
-                    break;
-                }
-            }
+            MCPTool tool = findTool(server, "add");
             assertNotNull(tool, "add tool should be discoverable from MCPServer");
             assertInstanceOf(MCPTool.class, tool);
             assertEquals("add", tool.getName());
@@ -308,8 +311,7 @@ class AgentPlanDeclareMCPServerTest {
 
     @Test
     @DisabledOnJre(JRE.JAVA_11)
-    @DisplayName(
-            "AgentPlan JSON serialization contains MCPServer descriptor, not tool/prompt entries")
+    @DisplayName("AgentPlan JSON serialization contains MCPServer descriptor, not tool entries")
     void testAgentPlanJsonSerializableWithMCP() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(agentPlan);
@@ -321,12 +323,8 @@ class AgentPlanDeclareMCPServerTest {
 
         // Tools and prompts are NOT serialized into the plan (they are runtime-discovered)
         assertFalse(
-                json.contains("\"add\"") && json.contains("java_serializable"),
-                "JSON should not contain a serialized 'add' tool provider");
-
-        // Verify serialization/deserialization roundtrip works without errors
-        assertNotNull(json);
-        assertFalse(json.isEmpty());
+                json.contains("java_serializable"),
+                "JSON should not contain any java_serializable provider entries");
     }
 
     @Test
@@ -348,13 +346,7 @@ class AgentPlanDeclareMCPServerTest {
     void testMCPToolMetadata() throws Exception {
         MCPServer server = instantiateMCPServer();
         try {
-            MCPTool tool = null;
-            for (MCPTool t : server.listTools()) {
-                if ("add".equals(t.getName())) {
-                    tool = t;
-                    break;
-                }
-            }
+            MCPTool tool = findTool(server, "add");
             assertNotNull(tool);
             ToolMetadata metadata = tool.getMetadata();
 

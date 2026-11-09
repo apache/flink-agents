@@ -67,6 +67,7 @@ from flink_agents.runtime.durable_execution import (
 )
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
+from flink_agents.runtime.mcp_resource_discovery import discover_mcp_resources
 from flink_agents.runtime.memory.event_attachment_utils import store_event_attachments
 from flink_agents.runtime.memory.internal_base_long_term_memory import (
     InternalBaseLongTermMemory,
@@ -666,6 +667,15 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             self.__agent_plan.resource_providers, self.__agent_plan.config
         )
         self.__resource_cache.set_java_resource_adapter(j_resource_adapter)
+        # The operator is starting: MCP tools and prompts are discovered now, and
+        # an unreachable server fails the start instead of the plan build.
+        try:
+            discover_mcp_resources(self.__resource_cache)
+        except Exception as failure:
+            first_or_logged(
+                failure_of(self.__resource_cache.close), failure, "MCP startup cleanup"
+            )
+            raise
         self.__config = self.__agent_plan.config
         self.__j_resource_adapter = j_resource_adapter
         # Resource caches for sub-agent scopes, keyed by the child plan JSON.
@@ -759,6 +769,11 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
                 parent=self.__resource_cache,
             )
             cache.set_java_resource_adapter(self.__j_resource_adapter)
+            try:
+                discover_mcp_resources(cache)
+            except Exception as failure:
+                first_or_logged(failure_of(cache.close), failure, "MCP scope cleanup")
+                raise
             entry = (scoped_plan, cache)
             self.__scoped_resource_caches[plan_json] = entry
         return entry
@@ -819,6 +834,11 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             self.__prepared_namespace = Namespace.from_task(task)
         except AttributeError:
             self.__prepared_namespace = None
+
+    def initialize_mcp_scope(self, plan_json: str | None) -> None:
+        """Discover a child's MCP resources before its first action."""
+        if plan_json is not None:
+            self.__scoped_plan_and_cache(plan_json)
 
     def eager_materialize(
         self, resource_type: str, plan_json: str | None = None
@@ -1926,6 +1946,11 @@ def close_flink_runner_context(
 ) -> None:
     """Clean up the resources kept by the flink runner context."""
     ctx.close()
+
+
+def initialize_mcp_scope(ctx: FlinkRunnerContext, plan_json: str | None) -> None:
+    """Java entry: initialize a child's MCP cache without returning resource handles."""
+    ctx.initialize_mcp_scope(plan_json)
 
 
 def eager_materialize(

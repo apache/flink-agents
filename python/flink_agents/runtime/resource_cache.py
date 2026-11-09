@@ -76,6 +76,20 @@ class ResourceCache:
 
         self._j_resource_adapter = JavaResourceAdapterImpl(j_resource_adapter)
 
+    def get_resource_providers(self, type: ResourceType) -> Dict[str, ResourceProvider]:
+        """Return the providers declared for ``type``, keyed by resource name."""
+        return self._resource_providers.get(type, {})
+
+    def has_resource(self, name: str, type: ResourceType) -> bool:
+        """Whether a resource is declared or already cached, without creating it."""
+        cached = self._cache.get(type, {})
+        declared = self._resource_providers.get(type, {})
+        return name in cached or name in declared
+
+    def put(self, name: str, type: ResourceType, resource: Resource) -> None:
+        """Cache an already built resource, so ``close()`` releases it."""
+        self._cache.setdefault(type, {})[name] = resource
+
     def get_resource(self, name: str, type: ResourceType) -> Resource:
         """Get resource by name and type, creating it from its provider if not cached.
 

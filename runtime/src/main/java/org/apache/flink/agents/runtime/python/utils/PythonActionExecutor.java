@@ -53,6 +53,7 @@ public class PythonActionExecutor implements AutoCloseable {
 
     // =========== PYTHON RESOURCE MATERIALIZATION ===========
     private static final String EAGER_MATERIALIZE = "flink_runner_context.eager_materialize";
+    private static final String INITIALIZE_MCP_SCOPE = "flink_runner_context.initialize_mcp_scope";
 
     // =========== TASK LIFECYCLE FORWARDING ===========
     private static final String ADD_TASK_LIFECYCLE_LISTENER =
@@ -122,6 +123,11 @@ public class PythonActionExecutor implements AutoCloseable {
 
     public PyObject getPythonRunnerContext() {
         return pythonRunnerContext;
+    }
+
+    /** Initializes a child's MCP cache without returning or retaining Python resource handles. */
+    public void initializeMCPScope(String scopePlanJson) {
+        interpreterManager.invoke(INITIALIZE_MCP_SCOPE, pythonRunnerContext, scopePlanJson);
     }
 
     /**

@@ -440,19 +440,6 @@ public class AgentPlan implements Serializable {
         addResourceProvider(new JavaResourceProvider(name, MCP_SERVER, descriptor));
     }
 
-    private static SerializableResource attachMcpServerNameIfSupported(
-            SerializableResource tool, String mcpServerName) throws Exception {
-        try {
-            Method method = tool.getClass().getMethod("withMcpServerName", String.class);
-            Object associatedTool = method.invoke(tool, mcpServerName);
-            return associatedTool instanceof SerializableResource
-                    ? (SerializableResource) associatedTool
-                    : tool;
-        } catch (NoSuchMethodException ignored) {
-            return tool;
-        }
-    }
-
     private void extractResourceProvidersFromAgent(Agent agent) throws Exception {
         Class<?> agentClass = agent.getClass();
 

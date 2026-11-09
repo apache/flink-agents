@@ -36,19 +36,34 @@ import static org.apache.flink.agents.api.resource.ResourceType.MCP_SERVER;
 import static org.apache.flink.agents.api.resource.ResourceType.PROMPT;
 import static org.apache.flink.agents.api.resource.ResourceType.TOOL;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Tests for {@link JavaMCPResourceDiscovery}. */
 public class JavaMCPResourceDiscoveryTest {
 
     static class FakeMCPTool extends Resource {
         private final String name;
+        private final String mcpServerName;
 
         FakeMCPTool(String name) {
+            this(name, null);
+        }
+
+        private FakeMCPTool(String name, String mcpServerName) {
             this.name = name;
+            this.mcpServerName = mcpServerName;
         }
 
         public String getName() {
             return name;
+        }
+
+        public String getMcpServerName() {
+            return mcpServerName;
+        }
+
+        public FakeMCPTool withMcpServerName(String mcpServerName) {
+            return new FakeMCPTool(name, mcpServerName);
         }
 
         @Override
@@ -78,6 +93,8 @@ public class JavaMCPResourceDiscoveryTest {
         private final List<FakeMCPTool> tools;
         private final List<FakeMCPPrompt> prompts;
         private final boolean supportsPrompts;
+        private boolean closed;
+        private RuntimeException listToolsFailure;
 
         FakeMCPServer(
                 List<FakeMCPTool> tools, List<FakeMCPPrompt> prompts, boolean supportsPrompts) {
@@ -87,6 +104,9 @@ public class JavaMCPResourceDiscoveryTest {
         }
 
         public List<FakeMCPTool> listTools() {
+            if (listToolsFailure != null) {
+                throw listToolsFailure;
+            }
             return tools;
         }
 
@@ -96,6 +116,11 @@ public class JavaMCPResourceDiscoveryTest {
 
         public boolean supportsPrompts() {
             return supportsPrompts;
+        }
+
+        @Override
+        public void close() {
+            closed = true;
         }
 
         @Override
@@ -239,5 +264,138 @@ public class JavaMCPResourceDiscoveryTest {
 
         // Only the Java server's tools should be discoverable
         assertThat(cache.getResource("javaToolA", TOOL)).isInstanceOf(FakeMCPTool.class);
+    }
+
+    @Test
+    void testServerIsCachedAndClosedWithCacheEvenWhenNothingIsDiscovered() throws Exception {
+        FakeMCPServer server = new FakeMCPServer(List.of(), List.of(), false);
+
+        ResourceCache cache = emptyCache();
+        JavaMCPResourceDiscovery.discoverJavaMCPResources(
+                buildProviders("myServer", new StubJavaResourceProvider("myServer", server)),
+                cache);
+
+        assertThat(cache.getResource("myServer", MCP_SERVER)).isSameAs(server);
+        assertThat(server.closed).isFalse();
+        cache.close();
+        assertThat(server.closed).isTrue();
+    }
+
+    @Test
+    void testDiscoveredToolsRememberTheirServer() throws Exception {
+        FakeMCPServer server = new FakeMCPServer(List.of(new FakeMCPTool("add")), List.of(), false);
+
+        ResourceCache cache = emptyCache();
+        JavaMCPResourceDiscovery.discoverJavaMCPResources(
+                buildProviders("myServer", new StubJavaResourceProvider("myServer", server)),
+                cache);
+
+        assertThat(((FakeMCPTool) cache.getResource("add", TOOL)).getMcpServerName())
+                .isEqualTo("myServer");
+    }
+
+    @Test
+    void testUnreachableServerFailsDiscoveryNamingTheServer() throws Exception {
+        FakeMCPServer server = new FakeMCPServer(List.of(), List.of(), true);
+        server.listToolsFailure = new IllegalStateException("connect timed out");
+
+        ResourceCache cache = emptyCache();
+        assertThatThrownBy(
+                        () ->
+                                JavaMCPResourceDiscovery.discoverJavaMCPResources(
+                                        buildProviders(
+                                                "myServer",
+                                                new StubJavaResourceProvider("myServer", server)),
+                                        cache))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("MCP server 'myServer'")
+                .hasRootCauseMessage("connect timed out");
+
+        // The half-initialized server is still owned by the cache, so it gets closed.
+        cache.close();
+        assertThat(server.closed).isTrue();
+    }
+
+    @Test
+    void testDuplicateToolNameAcrossServersIsRejected() throws Exception {
+        FakeMCPServer first = new FakeMCPServer(List.of(new FakeMCPTool("add")), List.of(), false);
+        FakeMCPServer second = new FakeMCPServer(List.of(new FakeMCPTool("add")), List.of(), false);
+        Map<String, ResourceProvider> servers = new HashMap<>();
+        servers.put("serverA", new StubJavaResourceProvider("serverA", first));
+        servers.put("serverB", new StubJavaResourceProvider("serverB", second));
+        Map<ResourceType, Map<String, ResourceProvider>> providers = new HashMap<>();
+        providers.put(MCP_SERVER, servers);
+
+        assertThatThrownBy(
+                        () ->
+                                JavaMCPResourceDiscovery.discoverJavaMCPResources(
+                                        providers, emptyCache()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Duplicate tool name 'add'")
+                .hasMessageContaining("serverA")
+                .hasMessageContaining("serverB");
+    }
+
+    @Test
+    void testDuplicatePromptNameAcrossServersIsRejected() throws Exception {
+        FakeMCPServer first =
+                new FakeMCPServer(List.of(), List.of(new FakeMCPPrompt("ask_sum")), true);
+        FakeMCPServer second =
+                new FakeMCPServer(List.of(), List.of(new FakeMCPPrompt("ask_sum")), true);
+        Map<String, ResourceProvider> servers = new HashMap<>();
+        servers.put("serverA", new StubJavaResourceProvider("serverA", first));
+        servers.put("serverB", new StubJavaResourceProvider("serverB", second));
+        Map<ResourceType, Map<String, ResourceProvider>> providers = new HashMap<>();
+        providers.put(MCP_SERVER, servers);
+
+        assertThatThrownBy(
+                        () ->
+                                JavaMCPResourceDiscovery.discoverJavaMCPResources(
+                                        providers, emptyCache()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Duplicate prompt name 'ask_sum'");
+    }
+
+    @Test
+    void testToolNameClashingWithDeclaredToolIsRejected() throws Exception {
+        Map<ResourceType, Map<String, ResourceProvider>> providers =
+                buildProviders(
+                        "myServer",
+                        new StubJavaResourceProvider(
+                                "myServer",
+                                new FakeMCPServer(
+                                        List.of(new FakeMCPTool("add")), List.of(), false)));
+        providers.put(
+                TOOL,
+                Map.of(
+                        "add",
+                        JavaSerializableResourceProvider.createResourceProvider(
+                                "add", TOOL, new TestTool("add"))));
+
+        assertThatThrownBy(
+                        () ->
+                                JavaMCPResourceDiscovery.discoverJavaMCPResources(
+                                        providers, new ResourceCache(providers)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Duplicate tool name 'add'")
+                .hasMessageContaining("already declared on the agent");
+    }
+
+    @Test
+    void testReservedSubagentToolNameIsRejected() throws Exception {
+        FakeMCPServer server =
+                new FakeMCPServer(List.of(new FakeMCPTool("_subagent_helper")), List.of(), false);
+
+        assertThatThrownBy(
+                        () ->
+                                JavaMCPResourceDiscovery.discoverJavaMCPResources(
+                                        buildProviders(
+                                                "myServer",
+                                                new StubJavaResourceProvider("myServer", server)),
+                                        emptyCache()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("MCP server 'myServer' advertised a tool")
+                .hasMessageContaining("reserved name")
+                .hasMessageContaining("_subagent_");
     }
 }

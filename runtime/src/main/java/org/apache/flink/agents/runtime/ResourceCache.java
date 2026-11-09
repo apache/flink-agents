@@ -194,6 +194,25 @@ public class ResourceCache implements AutoCloseable {
         return resourceContext;
     }
 
+    /** Discovers the local MCP servers of a child scope before its first action. */
+    public void discoverMCPResources() throws Exception {
+        JavaMCPResourceDiscovery.discoverJavaMCPResources(resourceProviders, this);
+        Map<String, ResourceProvider> servers = resourceProviders.get(ResourceType.MCP_SERVER);
+        if (servers == null
+                || servers.values().stream().noneMatch(ResourceProvider::isPythonOwned)) {
+            return;
+        }
+        PythonActionExecutor executor = effectivePythonActionExecutor();
+        PythonResourceAdapter adapter = effectivePythonResourceAdapter();
+        checkState(
+                executor != null && adapter != null,
+                "Python MCP servers require an initialized Python runtime");
+        // The Python cache serves Python actions; bridge wrappers in this cache serve Java
+        // actions. Initialize both now, even when the child declares no AGENT resources.
+        executor.initializeMCPScope(scopePlanJson);
+        PythonMCPResourceDiscovery.discoverPythonMCPResources(resourceProviders, adapter, this);
+    }
+
     /**
      * Checks whether a resource of the given name and type is available, without creating it.
      * Covers both registered providers and resources inserted directly into the cache via {@link
