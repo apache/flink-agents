@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from pyflink.datastream import KeySelector
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -76,9 +77,14 @@ class EchoConnection(BaseChatModelConnection):
     """Answer with the model name, or fail for the model named ``broken``."""
 
     def chat(
-        self, messages: Sequence[ChatMessage], tools: Any = None, **kwargs: Any
+        self,
+        messages: Sequence[ChatMessage],
+        tools: Any = None,
+        output_schema: OutputSchema | None = None,
+        **kwargs: Any,
     ) -> ChatResult:
         """Echo the latest message prefixed by the model name."""
+        self._reject_unsupported_output_schema(output_schema)
         model = kwargs["model"]
         if model == "broken":
             msg = "broken model is unavailable"

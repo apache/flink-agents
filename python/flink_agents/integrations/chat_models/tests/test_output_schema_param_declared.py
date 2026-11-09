@@ -26,6 +26,7 @@ from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_models.chat_model import BaseChatModelConnection
 from flink_agents.e2e_tests.e2e_tests_integration import (
     mock_chat_model_agent,
+    model_routing_agent,
     tool_parameter_injection_agent,
 )
 from flink_agents.integrations.chat_models import (
@@ -46,6 +47,7 @@ _MODULES_DEFINING_CONNECTIONS = (
     java_chat_model,
     azure_openai_chat_model,
     mock_chat_model_agent,
+    model_routing_agent,
     ollama_chat_model,
     openai_chat_model,
     dashscope_chat_model,
