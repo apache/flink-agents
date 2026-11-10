@@ -933,7 +933,7 @@ def test_model_router_declarations_keep_descriptor_arguments(tmp_path: Path) -> 
     source.write_text(
         "model_routers:\n"
         "  - name: shared_router\n"
-        "    clazz: model_router\n"
+        "    clazz: router\n"
         "    candidates: [small, big]\n"
         "    strategy_type: rule_based\n"
         "    strategy_args:\n"
@@ -988,7 +988,7 @@ def test_load_yaml_registers_shared_model_router(tmp_path: Path) -> None:
     source.write_text(
         "model_routers:\n"
         "  - name: shared_router\n"
-        "    clazz: model_router\n"
+        "    clazz: router\n"
         "    candidates: [small]\n"
         "    strategy_type: rule_based\n"
         "agents:\n"
@@ -1027,7 +1027,7 @@ def test_model_router_name_collision_matches_programmatic_registration(
         "        clazz: ollama\n"
         "    model_routers:\n"
         "      - name: same\n"
-        "        clazz: model_router\n"
+        "        clazz: router\n"
         "        candidates: [small]\n"
         "        strategy_type: rule_based\n"
     )

@@ -90,7 +90,7 @@ class YamlModelRouterLoaderTest {
         String yaml =
                 "model_routers:\n"
                         + "  - name: router\n"
-                        + "    clazz: model_router\n"
+                        + "    clazz: router\n"
                         + "    candidates: [small]\n"
                         + "    strategy_type: rule_based\n";
         assertThatThrownBy(() -> YamlLoader.buildAgents(write(yaml)))
@@ -109,7 +109,7 @@ class YamlModelRouterLoaderTest {
                         + "        type: java\n"
                         + "    model_routers:\n"
                         + "      - name: same\n"
-                        + "        clazz: model_router\n"
+                        + "        clazz: router\n"
                         + "        type: java\n"
                         + "        candidates: [small]\n"
                         + "        strategy_type: rule_based\n";
@@ -149,7 +149,7 @@ class YamlModelRouterLoaderTest {
         return ""
                 + "model_routers:\n"
                 + "  - name: shared_router\n"
-                + "    clazz: model_router\n"
+                + "    clazz: router\n"
                 + "    type: java\n"
                 + "    candidates: [small, big]\n"
                 + "    strategy_type: rule_based\n"

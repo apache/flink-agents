@@ -165,10 +165,10 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
     },
     ResourceType.MODEL_ROUTER: {
         "python": {
-            "model_router": ResourceName.ModelRouter.MODEL_ROUTER,
+            "router": ResourceName.ModelRouter.MODEL_ROUTER,
         },
         "java": {
-            "model_router": ResourceName.ModelRouter.Java.MODEL_ROUTER,
+            "router": ResourceName.ModelRouter.Java.MODEL_ROUTER,
         },
     },
 }

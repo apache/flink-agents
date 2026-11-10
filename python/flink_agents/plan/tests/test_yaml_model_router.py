@@ -93,7 +93,7 @@ def test_yaml_routers_execute_rules_and_custom_strategies(tmp_path: Path) -> Non
         f"""
 model_routers:
   - name: shared_router
-    clazz: model_router
+    clazz: router
     candidates: [small, big]
     strategy_type: rule_based
     strategy_args:
@@ -116,7 +116,7 @@ agents:
         default_model: small
         fallback: true
       - name: custom_router
-        clazz: model_router
+        clazz: router
         candidates: [small, big]
         strategy_type: custom
         strategy_executor_class: {executor}
@@ -154,7 +154,7 @@ agents:
     [
         """
       - name: router
-        clazz: model_router
+        clazz: router
         candidates: [small, big]
         strategy_type: llm_judge
         strategy_args:
@@ -162,7 +162,7 @@ agents:
 """,
         """
       - name: router
-        clazz: model_router
+        clazz: router
         candidates: [small, big]
         strategy_type: decision_model
         strategy_args:
@@ -170,7 +170,7 @@ agents:
 """,
         """
       - name: router
-        clazz: model_router
+        clazz: router
         candidates: [small, big]
         strategy_type: rule_based
         strategy_args:
@@ -179,14 +179,14 @@ agents:
 """,
         """
       - name: router
-        clazz: model_router
+        clazz: router
         candidates: [small, big]
         strategy_type: custom
         strategy_executor_class: missing.module.Executor
 """,
         """
       - name: router
-        clazz: model_router
+        clazz: router
         candidates: [small, big]
 """,
     ],

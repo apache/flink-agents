@@ -233,12 +233,21 @@ def test_resolve_clazz_covers_embedding_model_openai_in_both_languages() -> None
 
 def test_resolve_clazz_covers_model_router_in_both_languages() -> None:
     assert (
-        resolve_clazz("model_router", ResourceType.MODEL_ROUTER, "python")
+        resolve_clazz("router", ResourceType.MODEL_ROUTER, "python")
         == ResourceName.ModelRouter.MODEL_ROUTER
     )
     assert (
-        resolve_clazz("model_router", ResourceType.MODEL_ROUTER, "java")
+        resolve_clazz("router", ResourceType.MODEL_ROUTER, "java")
         == ResourceName.ModelRouter.Java.MODEL_ROUTER
+    )
+    # The section name already identifies the resource, so the old alias is not kept.
+    assert (
+        resolve_clazz("model_router", ResourceType.MODEL_ROUTER, "python")
+        == "model_router"
+    )
+    assert (
+        resolve_clazz("model_router", ResourceType.MODEL_ROUTER, "java")
+        == "model_router"
     )
 
 

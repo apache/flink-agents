@@ -183,8 +183,8 @@ public final class Aliases {
         ca.put(
                 ResourceType.MODEL_ROUTER,
                 buildLangBuckets(
-                        Map.of("model_router", ResourceName.ModelRouter.MODEL_ROUTER),
-                        Map.of("model_router", ResourceName.ModelRouter.Python.MODEL_ROUTER)));
+                        Map.of("router", ResourceName.ModelRouter.MODEL_ROUTER),
+                        Map.of("router", ResourceName.ModelRouter.Python.MODEL_ROUTER)));
 
         CLAZZ_ALIASES = Collections.unmodifiableMap(ca);
     }

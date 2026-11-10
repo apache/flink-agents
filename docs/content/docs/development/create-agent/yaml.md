@@ -770,7 +770,7 @@ Model-router alias:
 
 | Alias | `type: python` | `type: java` |
 | ----- | -------------- | ------------ |
-| `model_router` | ModelRouter | ModelRouter |
+| `router` | ModelRouter | ModelRouter |
 
 The full alias tables live in `flink_agents.api.yaml.aliases` (Python) and `org.apache.flink.agents.api.yaml.Aliases` (Java).
 
