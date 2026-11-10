@@ -407,6 +407,118 @@ def test_to_datastream_submits_java_validated_plan_json() -> None:
     )
 
 
+def _connect_to_agent_call(
+    builder: RemoteAgentBuilder, apply_args: tuple, **kwargs: str
+) -> tuple[list, list[str]]:
+    """Apply, build the raw stream, and return the ``connectToAgent`` invocation."""
+    with (
+        patch(
+            "flink_agents.runtime.remote_execution_environment.invoke_method",
+            side_effect=[None, MagicMock()],
+        ) as invoke,
+        patch("flink_agents.runtime.remote_execution_environment.DataStream"),
+    ):
+        builder.apply(*apply_args, **kwargs)
+        builder.to_datastream()
+    connect_call = invoke.call_args_list[1]
+    _, class_name, method_name, args, parameter_types = connect_call.args
+    assert class_name == "org.apache.flink.agents.runtime.CompileUtils"
+    assert method_name == "connectToAgent"
+    return args, parameter_types
+
+
+def test_apply_with_uid_passes_uid_to_java_connect_to_agent() -> None:
+    builder = _remote_builder()
+
+    args, parameter_types = _connect_to_agent_call(
+        builder, (_agent_with_conditions(["_input_event"]),), uid="my-agent-uid"
+    )
+
+    assert args[2] == "my-agent-uid"
+    assert parameter_types == [
+        "org.apache.flink.streaming.api.datastream.KeyedStream",
+        "java.lang.String",
+        "java.lang.String",
+    ]
+
+
+def test_apply_by_name_with_uid_passes_uid_to_java_connect_to_agent() -> None:
+    with patch(
+        "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+    ):
+        remote_env = RemoteExecutionEnvironment(env=MagicMock())
+    remote_env._agents["named"] = _agent_with_conditions(["_input_event"])
+    builder = remote_env.from_datastream(
+        input=MagicMock(), key_selector=lambda record: record["key"]
+    )
+
+    args, _ = _connect_to_agent_call(builder, ("named", "my-agent-uid"))
+
+    assert args[2] == "my-agent-uid"
+
+
+def test_yaml_loaded_agent_with_uid_passes_uid_to_java(tmp_path: Path) -> None:
+    with patch(
+        "flink_agents.runtime.remote_execution_environment.StreamExecutionEnvironment"
+    ):
+        remote_env = RemoteExecutionEnvironment(env=MagicMock())
+    yaml_path = tmp_path / "agent.yaml"
+    yaml_path.write_text(
+        "agents:\n  - name: named\n    actions:\n      - name: handle\n"
+        "        function: "
+        "flink_agents.runtime.tests.test_remote_execution_environment:_action\n"
+        "        trigger_conditions: [_input_event]\n"
+    )
+    remote_env.load_yaml(yaml_path)
+    builder = remote_env.from_datastream(
+        input=MagicMock(), key_selector=lambda record: record["key"]
+    )
+
+    args, _ = _connect_to_agent_call(builder, ("named",), uid="my-agent-uid")
+
+    assert args[2] == "my-agent-uid"
+
+
+def test_table_input_with_uid_passes_uid_to_java() -> None:
+    env = StreamExecutionEnvironment.get_execution_environment()
+    t_env = StreamTableEnvironment.create(env)
+    remote_env = RemoteExecutionEnvironment(env=env, t_env=t_env)
+    table = t_env.from_elements([("a",), ("b",)], ["id"])
+    builder = remote_env.from_table(table, key_selector=lambda row: row[0])
+
+    args, _ = _connect_to_agent_call(
+        builder, (_agent_with_conditions(["_input_event"]),), uid="my-agent-uid"
+    )
+
+    assert args[2] == "my-agent-uid"
+
+
+def test_apply_without_uid_passes_none_to_java_connect_to_agent() -> None:
+    # Control: omitting the UID leaves it unset, so Java builds the graph as before.
+    builder = _remote_builder()
+
+    args, _ = _connect_to_agent_call(
+        builder, (_agent_with_conditions(["_input_event"]),)
+    )
+
+    assert args[2] is None
+
+
+@pytest.mark.parametrize("uid", ["", " ", "   ", "\t", "\n"])
+def test_apply_rejects_blank_uid_before_java_validation(uid: str) -> None:
+    builder = _remote_builder()
+
+    with (
+        patch(
+            "flink_agents.runtime.remote_execution_environment.invoke_method"
+        ) as invoke,
+        pytest.raises(ValueError, match="must not be empty or blank"),
+    ):
+        builder.apply(_agent_with_conditions(["_input_event"]), uid=uid)
+
+    invoke.assert_not_called()
+
+
 def _output_schema() -> Schema:
     return (
         Schema.new_builder()
