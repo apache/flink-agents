@@ -38,6 +38,7 @@ from flink_agents.api.core_options import (
 )
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event
+from flink_agents.api.events.model_routing_event import ModelRoutingEvent
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.resource import ResourceType
@@ -52,6 +53,8 @@ from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.utils import support_async
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.resource.java.java_chat_model import JavaChatModelSetup
+from flink_agents.plan.routing.resolved_route import ResolvedModelRoute
+from flink_agents.plan.routing.resolver import RoutingFailure, resolve
 
 if TYPE_CHECKING:
     from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
@@ -60,6 +63,7 @@ if TYPE_CHECKING:
 _TOOL_CALL_CONTEXT = "_TOOL_CALL_CONTEXT"
 _TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT"
 _RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT"
+_ROUTING_METADATA_CONTEXT = "_ROUTING_METADATA_CONTEXT"
 # The identity of each chat model attempt, the same as the Java chat action's call id
 # for a plain chat model. Without it the identity is a digest of the pickled messages,
 # which can change between Python processes (#1190); attempts are told apart by their
@@ -214,7 +218,7 @@ def _send_failure(
 
 
 def _clear_request_context(memory: MemoryObject, request_id: UUID) -> None:
-    for key in (_TOOL_CALL_CONTEXT, _RETRY_STATS_CONTEXT):
+    for key in (_TOOL_CALL_CONTEXT, _RETRY_STATS_CONTEXT, _ROUTING_METADATA_CONTEXT):
         context = dict(memory.get(key) or {})
         if context.pop(str(request_id), None) is not None:
             memory.set(key, context)
@@ -833,11 +837,87 @@ async def chat(
     parse its response, consume the same retry budget.
     """
     try:
-        attempt = await _chat_with_retries(
-            initial_request_id, model, messages, prompt_args, output_schema, ctx
+        selection = await resolve(initial_request_id, model, messages, prompt_args, ctx)
+    except RoutingFailure as failure:
+        _send_failure(
+            initial_request_id, _InvocationFailure(str(failure)), ctx, user_context
         )
-    except _ChatAttemptFailed as failure:
-        _send_failure(initial_request_id, failure.error, ctx, user_context)
+        return
+    await _chat_resolved(
+        initial_request_id,
+        selection,
+        messages,
+        prompt_args,
+        output_schema,
+        ctx,
+        user_context=user_context,
+    )
+
+
+async def _chat_resolved(
+    initial_request_id: UUID,
+    selection: ResolvedModelRoute,
+    messages: List[ChatMessage],
+    prompt_args: Dict | None,
+    output_schema: OutputSchema | None,
+    ctx: RunnerContext,
+    *,
+    user_context: dict[str, Any] | None = None,
+) -> None:
+    """Execute an initial selection or an already concrete tool follow-up."""
+    tried = []
+    failures = []
+    for candidate in selection.attempt_order():
+        tried.append(candidate)
+        try:
+            attempt = await _chat_with_retries(
+                initial_request_id,
+                candidate,
+                messages,
+                prompt_args,
+                output_schema,
+                ctx,
+                durable_id=selection.durable_chat_call_id(candidate),
+            )
+        except _ChatAttemptFailed as failure:
+            failures.append(failure.error)
+            continue
+        model = candidate
+        if selection.is_router:
+            if candidate != selection.selected_model:
+                ctx.send_event(
+                    ModelRoutingEvent(
+                        request_id=initial_request_id,
+                        router=selection.requested_model,
+                        candidates=selection.candidates,
+                        selected_model=candidate,
+                        decision_source="fallback",
+                        fallback_enabled=selection.fallback_enabled,
+                        reason=f"fallback after selected model '{selection.selected_model}' failed",
+                        metadata=selection.metadata,
+                    )
+                )
+            routing_context = dict(
+                ctx.sensory_memory.get(_ROUTING_METADATA_CONTEXT) or {}
+            )
+            routing_context[str(initial_request_id)] = (
+                selection.build_response_metadata(candidate, tried)
+            )
+            ctx.sensory_memory.set(_ROUTING_METADATA_CONTEXT, routing_context)
+        break
+    else:
+        # Keep every candidate's cause in the final failure, in attempt order.
+        error = (
+            failures[-1]
+            if len(failures) == 1
+            else _InvocationFailure(
+                "; ".join(
+                    f"{name}: {_error_text(error)}"
+                    for name, error in zip(tried, failures, strict=True)
+                )
+            )
+        )
+        _send_failure(initial_request_id, error, ctx, user_context)
         return
     response = attempt.response
     chat_model = attempt.chat_model
@@ -861,6 +941,9 @@ async def chat(
         retry_stats = _get_retry_stats(ctx.sensory_memory, initial_request_id)
         total_retry_count = retry_stats["total_retry_count"]
         total_retry_wait_sec = retry_stats["total_retry_wait_sec"]
+        routing_metadata = (
+            ctx.sensory_memory.get(_ROUTING_METADATA_CONTEXT) or {}
+        ).get(str(initial_request_id))
         _clear_request_context(ctx.sensory_memory, initial_request_id)
         completed = ChatResponseEvent.success(
             request_id=initial_request_id,
@@ -870,6 +953,8 @@ async def chat(
             user_context=user_context,
         )
         completed.attributes["structured_output"] = structured_output
+        if routing_metadata is not None:
+            completed.attributes["model_routing"] = routing_metadata
         ctx.send_event(completed)
 
 
@@ -908,9 +993,9 @@ async def _process_tool_response(event: ToolResponseEvent, ctx: RunnerContext) -
         ],
     )
 
-    await chat(
+    await _chat_resolved(
         initial_request_id=initial_request_id,
-        model=tool_request_event_context["model"],
+        selection=ResolvedModelRoute.direct(tool_request_event_context["model"]),
         messages=messages,
         prompt_args=tool_request_event_context.get(_PROMPT_ARGS, {}),
         output_schema=tool_request_event_context["output_schema"],

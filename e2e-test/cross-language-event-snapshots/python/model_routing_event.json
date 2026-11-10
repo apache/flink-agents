@@ -1,0 +1,21 @@
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "type": "_model_routing_event",
+  "attributes": {
+    "request_id": "00000000-0000-0000-0000-000000000002",
+    "router": "router",
+    "candidates": [
+      "small",
+      "big"
+    ],
+    "selected_model": "big",
+    "decision_source": "strategy",
+    "fallback_enabled": true,
+    "metadata": {
+      "tag": "python"
+    },
+    "score": 0.5,
+    "decision_ms": 1.25
+  },
+  "attachments": {}
+}

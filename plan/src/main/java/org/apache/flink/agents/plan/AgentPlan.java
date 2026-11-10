@@ -924,7 +924,11 @@ public class AgentPlan implements Serializable {
                     validateJudge(provider.getName(), strategy, chatModels);
                     break;
                 case CUSTOM:
-                    validateCustomExecutor(provider.getName(), strategy);
+                    // Python declarations are checked by the Python plan compiler.
+                    // Their executor paths cannot be resolved with Class.forName.
+                    if (!(provider instanceof PythonResourceProvider)) {
+                        validateCustomExecutor(provider.getName(), strategy);
+                    }
                     break;
                 case RULE_BASED:
                     validateRuleKeys(provider.getName(), strategy, candidates);

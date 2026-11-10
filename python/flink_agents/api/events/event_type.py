@@ -68,6 +68,9 @@ from flink_agents.api.events.memory_event import (
 from flink_agents.api.events.memory_event import (
     ShortTermWriteEvent as _ShortTermWriteEvent,
 )
+from flink_agents.api.events.model_routing_event import (
+    ModelRoutingEvent as _ModelRoutingEvent,
+)
 from flink_agents.api.events.run_event import (
     AgentRunBeginEvent as _AgentRunBeginEvent,
 )
@@ -89,6 +92,7 @@ class EventType:
     OutputEvent: str = _OutputEvent.EVENT_TYPE
     ChatRequestEvent: str = _ChatRequestEvent.EVENT_TYPE
     ChatResponseEvent: str = _ChatResponseEvent.EVENT_TYPE
+    ModelRoutingEvent: str = _ModelRoutingEvent.EVENT_TYPE
     DecisionRequestEvent: str = _DecisionRequestEvent.EVENT_TYPE
     DecisionResponseEvent: str = _DecisionResponseEvent.EVENT_TYPE
     ToolRequestEvent: str = _ToolRequestEvent.EVENT_TYPE

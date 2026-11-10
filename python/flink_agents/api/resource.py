@@ -46,31 +46,21 @@ class ResourceType(Enum):
     PROMPT = "prompt"
     MCP_SERVER = "mcp_server"
     SKILLS = "skills"
-    # Java-side in-chat model routing (FLIP; full Python routing is a follow-up).
-    # Present so a Java plan containing a MODEL_ROUTER resource deserializes on the
-    # Python side: mixed jobs (Java router + Python actions) must not fail at
-    # operator open with a ValidationError.
     MODEL_ROUTER = "model_router"
     AGENT = "agent"
 
 
-def check_registrable_from_python(resource_type: "ResourceType") -> None:
-    """Reject resource types that cannot be registered from Python.
-
-    MODEL_ROUTER exists in the enum only so Java plans containing routers
-    deserialize on the Python side; Python-side routing is a planned
-    follow-up. Shared by every registration entry point
-    (``Agent.add_resource`` and ``AgentsExecutionEnvironment.add_resource``)
-    so the guard and its message cannot drift apart.
-    """
-    if resource_type == ResourceType.MODEL_ROUTER:
-        msg = (
-            "MODEL_ROUTER resources cannot be registered from Python yet: "
-            "model routing currently executes on the Java side only (the "
-            "enum member exists so Java plans containing routers "
-            "deserialize). Python-side routing is a planned follow-up."
-        )
-        raise NotImplementedError(msg)
+def check_model_name_collision(
+    name: str, resource_type: ResourceType, resources: dict
+) -> None:
+    """Chat models and routers share the name used by chat requests."""
+    counterpart = {
+        ResourceType.CHAT_MODEL: ResourceType.MODEL_ROUTER,
+        ResourceType.MODEL_ROUTER: ResourceType.CHAT_MODEL,
+    }.get(resource_type)
+    if counterpart is not None and name in resources.get(counterpart, {}):
+        msg = f"Resource '{name}' cannot name both a chat model and a model router."
+        raise ValueError(msg)
 
 
 class Resource(BaseModel, ABC):
