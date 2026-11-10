@@ -400,7 +400,8 @@ public final class YamlLoader {
      * Load multiple YAML files. Multiple calls accumulate. Duplicate names — both within a single
      * file (caught by {@link #buildAgents(Path)}) and across the current environment — raise {@link
      * IllegalArgumentException}. Files are loaded in order; child references may resolve Agents
-     * registered by earlier files or calls.
+     * registered by earlier files or calls. A registration conflict leaves the failing file's
+     * resources and agents unregistered.
      */
     public static void loadYaml(AgentsExecutionEnvironment env, List<Path> paths) {
         for (Path path : paths) {
@@ -434,7 +435,7 @@ public final class YamlLoader {
                 }
             }
 
-            // Commit shared resources — env.addResource enforces dedup with its own message.
+            validateSharedResourceNames(loaded.getSharedResources(), env.getResources());
             for (Map.Entry<ResourceType, Map<String, Object>> e :
                     loaded.getSharedResources().entrySet()) {
                 for (Map.Entry<String, Object> r : e.getValue().entrySet()) {
@@ -442,6 +443,21 @@ public final class YamlLoader {
                 }
             }
             env.getAgents().putAll(loaded.getAgents());
+        }
+    }
+
+    private static void validateSharedResourceNames(
+            Map<ResourceType, Map<String, Object>> sharedResources,
+            Map<ResourceType, Map<String, Object>> registeredResources) {
+        for (Map.Entry<ResourceType, Map<String, Object>> entry : sharedResources.entrySet()) {
+            ResourceType type = entry.getKey();
+            for (String name : entry.getValue().keySet()) {
+                if (registeredResources.get(type).containsKey(name)) {
+                    throw new IllegalArgumentException(
+                            String.format("%s %s already defined.", type, name));
+                }
+                Agent.checkNoChatModelRouterNameClash(name, type, registeredResources);
+            }
         }
     }
 
