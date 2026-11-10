@@ -210,34 +210,32 @@ class TraceLogWriterTest {
                         Map.of("lookup", TraceLogLevel.VERBOSE, "other", TraceLogLevel.VERBOSE)),
                 Arguments.of(
                         Map.of(
-                                "trace-log",
-                                Map.of(
-                                        "targets",
-                                        List.of(
-                                                Map.of("scope", "ALL", "level", "VERBOSE"),
-                                                Map.of("scope", "EVENT_ONLY"),
+                                "trace-log.targets",
+                                List.of(
+                                        Map.of("scope", "ALL", "level", "VERBOSE"),
+                                        Map.of("scope", "EVENT_ONLY"),
+                                        Map.of(
+                                                "scope",
+                                                Map.of("entityType", "event"),
+                                                "level",
+                                                "OFF"),
+                                        Map.of("scope", Map.of("entityType", "tool")),
+                                        Map.of(
+                                                "scope",
                                                 Map.of(
-                                                        "scope",
-                                                        Map.of("entityType", "event"),
-                                                        "level",
-                                                        "OFF"),
-                                                Map.of("scope", Map.of("entityType", "tool")),
+                                                        "entityType",
+                                                        "tool",
+                                                        "entityName",
+                                                        "lookup.*"),
+                                                "level",
+                                                "OFF"),
+                                        Map.of(
+                                                "scope",
                                                 Map.of(
-                                                        "scope",
-                                                        Map.of(
-                                                                "entityType",
-                                                                "tool",
-                                                                "entityName",
-                                                                "lookup.*"),
-                                                        "level",
-                                                        "OFF"),
-                                                Map.of(
-                                                        "scope",
-                                                        Map.of(
-                                                                "entityType",
-                                                                "tool",
-                                                                "entityName",
-                                                                "lookup"))))),
+                                                        "entityType",
+                                                        "tool",
+                                                        "entityName",
+                                                        "lookup")))),
                         Map.of("process", TraceLogLevel.VERBOSE, "other", TraceLogLevel.VERBOSE)));
     }
 

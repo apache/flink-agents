@@ -24,10 +24,8 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
-import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
-import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.api.common.JobExecutionResult;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
@@ -38,220 +36,18 @@ import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
-import java.util.UUID;
 
-import static org.apache.flink.agents.runtime.env.RemoteExecutionEnvironment.FLINK_CONF_FILENAME;
-import static org.apache.flink.agents.runtime.env.RemoteExecutionEnvironment.LEGACY_FLINK_CONF_FILENAME;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assertions.entry;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class RemoteExecutionEnvironmentTest {
-    private static final String FLINK_1_20 = "1.20.3";
-    private static final String FLINK_2_3 = "2.3.0";
-
-    @TempDir private File tmpDir;
-
-    @Test
-    void testLoadAgentConfiguration() throws FileNotFoundException {
-        File confFile = new File(tmpDir, FLINK_CONF_FILENAME);
-
-        try (final PrintWriter pw = new PrintWriter(confFile)) {
-            pw.println("agent:");
-            pw.println("    key1: ");
-            pw.println("        key2: v1");
-            pw.println("        key3: 'v2'");
-            pw.println("    key4: 1");
-            pw.println("    key5: 'v3'");
-            pw.println("    key6: 1.5");
-            pw.println("    key7: true");
-        }
-
-        AgentConfiguration conf =
-                RemoteExecutionEnvironment.loadAgentConfiguration(tmpDir.getAbsolutePath());
-
-        assertThat(conf.getConfData().keySet()).hasSize(6);
-        assert conf.getConfData().get("key1.key2").equals("v1");
-        assert conf.getConfData().get("key1.key3").equals("v2");
-        assert conf.getConfData().get("key4").equals(1);
-        assert conf.getConfData().get("key5").equals("v3");
-        assert conf.getConfData().get("key6").equals(1.5);
-        assert conf.getConfData().get("key7").equals(true);
-    }
-
-    @Test
-    void testIsFlink2OrLater() {
-        assertThat(RemoteExecutionEnvironment.isFlink2OrLater("1.20.3")).isFalse();
-        assertThat(RemoteExecutionEnvironment.isFlink2OrLater("1.20-vvr-11.5.0")).isFalse();
-        assertThat(RemoteExecutionEnvironment.isFlink2OrLater("2.3.0")).isTrue();
-        assertThat(RemoteExecutionEnvironment.isFlink2OrLater("2.0-SNAPSHOT")).isTrue();
-        assertThat(RemoteExecutionEnvironment.isFlink2OrLater("<unknown>")).isFalse();
-        assertThat(RemoteExecutionEnvironment.isFlink2OrLater("")).isFalse();
-        assertThat(RemoteExecutionEnvironment.isFlink2OrLater(null)).isFalse();
-    }
-
-    @Test
-    void testFlink1LoadsLegacyFileWhenOnlyLegacyFileExists() throws IOException {
-        writeLegacyConf("agent.key1: fromLegacy");
-
-        assertThat(load(FLINK_1_20).getConfData()).containsOnly(entry("key1", "fromLegacy"));
-    }
-
-    @Test
-    void testFlink1LoadsConfigYamlWhenOnlyConfigYamlExists() throws IOException {
-        writeConfigYaml("agent:", "    key1: fromConfigYaml");
-
-        assertThat(load(FLINK_1_20).getConfData()).containsOnly(entry("key1", "fromConfigYaml"));
-    }
-
-    @Test
-    void testFlink1PrefersLegacyFileOverConfigYaml() throws IOException {
-        writeConfigYaml("agent:", "    key1: fromConfigYaml");
-        writeLegacyConf("agent.key1: fromLegacy");
-
-        assertThat(load(FLINK_1_20).getConfData()).containsOnly(entry("key1", "fromLegacy"));
-    }
-
-    @Test
-    void testFlink1FailsWhenNoConfigFileExists() {
-        assertThatThrownBy(() -> load(FLINK_1_20)).isInstanceOf(RuntimeException.class);
-    }
-
-    @Test
-    void testFlink2IgnoresLegacyFile() throws IOException {
-        writeLegacyConf("agent.key1: fromLegacy");
-
-        assertThatThrownBy(() -> load(FLINK_2_3))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining(tmpDir.getAbsolutePath());
-    }
-
-    @Test
-    void testFlink2LoadsConfigYamlWhenOnlyConfigYamlExists() throws IOException {
-        writeConfigYaml("agent:", "    key1: fromConfigYaml");
-
-        assertThat(load(FLINK_2_3).getConfData()).containsOnly(entry("key1", "fromConfigYaml"));
-    }
-
-    @Test
-    void testFlink2LoadsConfigYamlWhenBothFilesExist() throws IOException {
-        writeConfigYaml("agent:", "    key1: fromConfigYaml");
-        writeLegacyConf("agent.key1: fromLegacy");
-
-        assertThat(load(FLINK_2_3).getConfData()).containsOnly(entry("key1", "fromConfigYaml"));
-    }
-
-    @Test
-    void testFlink2FailsWhenNoConfigFileExists() {
-        assertThatThrownBy(() -> load(FLINK_2_3)).isInstanceOf(RuntimeException.class);
-    }
-
-    @Test
-    void testLegacyFileAcceptsDuplicateKeysAndValuesContainingColonSpace() throws IOException {
-        // Both lines are rejected by a standard YAML parser but accepted by Flink 1.20.
-        writeLegacyConf(
-                "env.java.opts.all: -Dfoo=bar",
-                "env.java.opts.all: -Dfoo=baz",
-                "kubernetes.jobmanager.annotations: owner: team-a",
-                "agent.key1: first",
-                "agent.key1: second",
-                "agent.key2: a: b");
-
-        assertThat(load(FLINK_1_20).getConfData())
-                .containsOnly(entry("key1", "second"), entry("key2", "a: b"));
-    }
-
-    @Test
-    void testLegacyFileWithoutAgentOptions() throws IOException {
-        writeLegacyConf(
-                "# Flink configuration as shipped by a distribution",
-                "jobmanager.rpc.address: localhost",
-                "taskmanager.memory.process.size: 1728m",
-                "env.java.opts.all: -XX:+UseG1GC -Dfoo=bar");
-
-        assertThat(load(FLINK_1_20).getConfData()).isEmpty();
-    }
-
-    @Test
-    void testLegacyFileIgnoresNestedAgentBlock() throws IOException {
-        writeLegacyConf("agent:", "    key1: nested", "agent.key2: flat");
-
-        assertThat(load(FLINK_1_20).getConfData()).containsOnly(entry("key2", "flat"));
-    }
-
-    @Test
-    void testLegacyFileValuesAreStringsAndConvertOnRead() throws IOException {
-        writeLegacyConf(
-                "agent.trace-log.base-dir: /tmp/agent-traces",
-                "agent.trace-log.pretty-print: true");
-
-        AgentConfiguration conf = load(FLINK_1_20);
-
-        assertThat(conf.getConfData()).containsEntry("trace-log.pretty-print", "true");
-        assertThat(conf.get(AgentConfigOptions.TRACE_LOG_OUTPUT_BASE_DIR))
-                .isEqualTo("/tmp/agent-traces");
-        assertThat(conf.get(AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT)).isTrue();
-    }
-
-    @Test
-    void testConfigYamlAcceptsNestedAndFlattenedKeys() throws IOException {
-        writeConfigYaml("agent:", "    key1: v1", "agent.key2: v2");
-
-        assertThat(load(FLINK_2_3).getConfData())
-                .containsOnly(entry("key1", "v1"), entry("key2", "v2"));
-    }
-
-    @Test
-    void testFailIfConfigYamlUnparseable() throws IOException {
-        writeConfigYaml("agent.key1: [unclosed");
-
-        assertThatThrownBy(() -> load(FLINK_2_3))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining(tmpDir.getAbsolutePath());
-    }
-
-    private AgentConfiguration load(String flinkVersion) {
-        return RemoteExecutionEnvironment.loadAgentConfiguration(
-                tmpDir.getAbsolutePath(), flinkVersion);
-    }
-
-    private void writeLegacyConf(String... lines) throws IOException {
-        Files.write(new File(tmpDir, LEGACY_FLINK_CONF_FILENAME).toPath(), Arrays.asList(lines));
-    }
-
-    private void writeConfigYaml(String... lines) throws IOException {
-        Files.write(new File(tmpDir, FLINK_CONF_FILENAME).toPath(), Arrays.asList(lines));
-    }
-
-    @Test
-    void testLoadAgentConfigurationFailIfNotLoaded() {
-        assertThatThrownBy(
-                        () ->
-                                RemoteExecutionEnvironment.loadAgentConfiguration(
-                                        "/some/path/" + UUID.randomUUID()))
-                .isInstanceOf(RuntimeException.class);
-    }
-
-    @Test
-    void testLoadAgentConfigurationFailIfNull() {
-        AgentConfiguration conf = RemoteExecutionEnvironment.loadAgentConfiguration(null);
-        assertThat(conf.getConfData()).isEmpty();
-    }
-
     @Test
     void testExecuteWithCustomJobNameDelegatesToStreamExecutionEnvironment() throws Exception {
         StreamExecutionEnvironment flinkEnv = mock(StreamExecutionEnvironment.class);

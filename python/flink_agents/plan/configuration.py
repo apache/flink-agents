@@ -15,10 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from pathlib import Path
-from typing import Any, Dict, Mapping, Type
+from typing import Any, Dict, Type
 
-import yaml
 from pydantic import BaseModel
 from typing_extensions import override
 
@@ -29,8 +27,6 @@ from flink_agents.api.configuration import (
 from flink_agents.api.trace_log import _parse_targets, _serialize_targets
 
 _TRACE_LOG_TARGETS_KEY = "trace-log.targets"
-_AGENT_CONFIG_SECTION = "agent"
-_AGENT_CONFIG_PREFIX = "agent."
 
 
 def _normalize_trace_log_targets(conf_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -42,93 +38,11 @@ def _normalize_trace_log_targets(conf_data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _flat_agent_options(config: Mapping[str, Any]) -> Dict[str, Any]:
-    """Collect top-level ``agent.<key>`` entries under ``<key>``.
-
-    Args:
-        config: A parsed configuration file, whose keys may carry the
-                ``agent.`` prefix.
-
-    Returns:
-        Dict[str, Any]: The entries with the prefix removed, in input order.
-    """
-    return {
-        key[len(_AGENT_CONFIG_PREFIX) :]: value
-        for key, value in config.items()
-        if isinstance(key, str) and key.startswith(_AGENT_CONFIG_PREFIX)
-    }
-
-
-def _extract_agent_config(raw_config: Any, config_path: str) -> Dict[str, Any]:
-    """Select agent settings from a parsed YAML configuration file.
-
-    Flink configuration files can declare agent settings either in a nested
-    ``agent`` mapping or as flat ``agent.<key>`` entries. Flat entries take
-    precedence over nested ones when the same key is declared in both forms,
-    matching the Java loader.
-
-    Args:
-        raw_config: The document returned by ``yaml.safe_load``.
-        config_path: Path of the configuration file, used in error messages.
-
-    Returns:
-        Dict[str, Any]: The agent configuration with the ``agent.`` prefix removed.
-    """
-    if raw_config is None:
-        return {}
-    if not isinstance(raw_config, dict):
-        msg = (
-            f"Invalid agent configuration file {config_path}: "
-            "expected a YAML mapping at the top level"
-        )
-        raise TypeError(msg)
-
-    nested = raw_config.get(_AGENT_CONFIG_SECTION, {})
-    if nested is None:
-        nested = {}
-    if not isinstance(nested, dict):
-        msg = (
-            f"Invalid agent configuration file {config_path}: "
-            f"'{_AGENT_CONFIG_SECTION}' must be a mapping"
-        )
-        raise TypeError(msg)
-
-    agent_config = dict(nested)
-    agent_config.update(_flat_agent_options(raw_config))
-    return agent_config
-
-
-def flatten_dict(d: Dict, parent_key: str = "", sep: str = ".") -> Dict[str, Any]:
-    """Flatten a nested dictionary into a single-level dictionary.
-
-    This function recursively traverses the dictionary, converting multi-level
-    nested key-value pairs into a single-level structure, where nested levels
-    are represented by joining key names with the specified separator.
-
-    Args:
-        d (Dict): The nested dictionary to be flattened
-        parent_key (str): The parent key name, used in recursion to track the
-                         upper-level key path. Defaults to an empty string.
-        sep (str): The separator used to join parent and child keys.
-                  Defaults to dot ('.').
-
-    Returns:
-        Dict[str, Any]: A flattened single-level dictionary where keys from
-                       the original nested structure are joined with the separator
-    """
-    items = {}
-    for k, v in d.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-        if isinstance(v, dict) and v:
-            items.update(flatten_dict(v, new_key, sep=sep))
-        else:
-            items[new_key] = v
-    return items
-
-
 class AgentConfiguration(BaseModel, Configuration):
-    """Base class for config objects in the system.
-    Provides a flat dict interface to access nested config values.
+    """Configuration entries keyed by their full option names.
+
+    Map and list values remain option values. YAML key expansion belongs to the
+    configuration loader.
     """
 
     conf_data: Dict[str, Any]
@@ -218,22 +132,6 @@ class AgentConfiguration(BaseModel, Configuration):
             if option.get_key() == _TRACE_LOG_TARGETS_KEY
             else value
         )
-
-    def load_from_file(self, config_path: str | None = None) -> None:
-        """Load configuration from a YAML file and update current configuration data.
-
-        Args:
-            config_path (str, optional): Path to the configuration file.
-        """
-        if config_path:
-            path = Path(config_path)
-            with path.open(encoding="utf-8") as f:
-                raw_config = yaml.safe_load(f)
-                self.conf_data.update(
-                    _normalize_trace_log_targets(
-                        flatten_dict(_extract_agent_config(raw_config, str(path)))
-                    )
-                )
 
     def get_conf_data(self) -> dict:
         """Get the configuration data dictionary.
