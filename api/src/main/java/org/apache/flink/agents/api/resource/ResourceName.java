@@ -259,6 +259,24 @@ public final class ResourceName {
         private VectorStore() {}
     }
 
+    // ==================== ModelRouter ====================
+    public static final class ModelRouter {
+
+        public static final String MODEL_ROUTER =
+                "org.apache.flink.agents.api.chat.model.routing.ModelRouter";
+
+        /** Python implementation of ModelRouter. */
+        public static final class Python {
+
+            public static final String MODEL_ROUTER =
+                    "flink_agents.api.chat_models.routing.ModelRouter";
+
+            private Python() {}
+        }
+
+        private ModelRouter() {}
+    }
+
     // ==================== MCP ====================
     public static final String MCP_SERVER = "DECIDE_IN_RUNTIME_MCPServer";
 }

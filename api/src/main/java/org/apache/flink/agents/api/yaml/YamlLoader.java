@@ -358,6 +358,8 @@ public final class YamlLoader {
         addSharedDescriptors(
                 sharedResources, ResourceType.VECTOR_STORE, doc.getVectorStores(), path);
         addSharedDescriptors(sharedResources, ResourceType.MCP_SERVER, doc.getMcpServers(), path);
+        addSharedDescriptors(
+                sharedResources, ResourceType.MODEL_ROUTER, doc.getModelRouters(), path);
         addSharedDescriptors(sharedResources, ResourceType.AGENT, doc.getSubagents(), path);
 
         for (ToolSpec t : doc.getTools()) {
@@ -490,6 +492,7 @@ public final class YamlLoader {
         addAgentDescriptors(agent, ResourceType.EMBEDDING_MODEL, spec.getEmbeddingModelSetups());
         addAgentDescriptors(agent, ResourceType.VECTOR_STORE, spec.getVectorStores());
         addAgentDescriptors(agent, ResourceType.MCP_SERVER, spec.getMcpServers());
+        addAgentDescriptors(agent, ResourceType.MODEL_ROUTER, spec.getModelRouters());
 
         for (ToolSpec t : spec.getTools()) {
             agent.addResource(t.getName(), ResourceType.TOOL, buildTool(t));

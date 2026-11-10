@@ -123,6 +123,7 @@ def get_python_resource_name_map(python_path: Path) -> dict:
             "DecisionModel",
             "EmbeddingModel",
             "VectorStore",
+            "ModelRouter",
         ]:
             if not hasattr(ResourceName, resource_name):
                 continue

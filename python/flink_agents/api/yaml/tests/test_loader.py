@@ -926,3 +926,128 @@ def test_build_agents_keeps_unknown_tool_injected_arg_for_plan_validation(
     tool = agent.resources[ResourceType.TOOL]["query_order"]
     assert isinstance(tool, FunctionTool)
     assert tool.injected_args == {"tenent_id": InjectedArg.from_config("tenant.id")}
+
+
+def test_model_router_declarations_keep_descriptor_arguments(tmp_path: Path) -> None:
+    source = tmp_path / "routers.yaml"
+    source.write_text(
+        "model_routers:\n"
+        "  - name: shared_router\n"
+        "    clazz: model_router\n"
+        "    candidates: [small, big]\n"
+        "    strategy_type: rule_based\n"
+        "    strategy_args:\n"
+        "      rules:\n"
+        "        big: sql\n"
+        "    default_model: small\n"
+        "agents:\n"
+        "  - name: routed\n"
+        "    model_routers:\n"
+        "      - name: local_router\n"
+        "        clazz: flink_agents.api.chat_models.routing.ModelRouter\n"
+        "        candidates: [small, big]\n"
+        "        candidate_descriptions:\n"
+        "          small: cheap model\n"
+        "          big: code model\n"
+        "        strategy_type: rule_based\n"
+        "        strategy_args:\n"
+        "          rules:\n"
+        "            big: code\n"
+        "        default_model: small\n"
+        "        fallback: true\n"
+    )
+    agents, shared, _ = build_agents(source)
+
+    shared_router = shared[ResourceType.MODEL_ROUTER]["shared_router"]
+    local_router = agents["routed"].resources[ResourceType.MODEL_ROUTER]["local_router"]
+    assert shared_router.language == local_router.language == "python"
+    for descriptor in (shared_router, local_router):
+        assert (
+            f"{descriptor.target_module}.{descriptor.target_clazz}"
+            == ResourceName.ModelRouter.MODEL_ROUTER
+        )
+    assert shared_router.arguments == {
+        "candidates": ["small", "big"],
+        "strategy_type": "rule_based",
+        "strategy_args": {"rules": {"big": "sql"}},
+        "default_model": "small",
+    }
+    assert local_router.arguments == {
+        "candidates": ["small", "big"],
+        "candidate_descriptions": {"small": "cheap model", "big": "code model"},
+        "strategy_type": "rule_based",
+        "strategy_args": {"rules": {"big": "code"}},
+        "default_model": "small",
+        "fallback": True,
+    }
+
+
+def test_load_yaml_registers_shared_model_router(tmp_path: Path) -> None:
+    env = _registration_env()
+    source = tmp_path / "shared.yaml"
+    source.write_text(
+        "model_routers:\n"
+        "  - name: shared_router\n"
+        "    clazz: model_router\n"
+        "    candidates: [small]\n"
+        "    strategy_type: rule_based\n"
+        "agents:\n"
+        "  - name: routed\n"
+    )
+    load_yaml(env, source)
+    assert "shared_router" in env.resources[ResourceType.MODEL_ROUTER]
+    assert "routed" in env._agents
+
+
+def test_model_router_yaml_rejects_java_implementations(tmp_path: Path) -> None:
+    source = tmp_path / "java-router.yaml"
+    source.write_text(
+        "model_routers:\n"
+        "  - name: router\n"
+        "    clazz: org.apache.flink.agents.api.chat.model.routing.ModelRouter\n"
+        "    type: java\n"
+        "    candidates: [small]\n"
+        "    strategy_type: rule_based\n"
+    )
+    with pytest.raises(
+        ValueError, match="type='java' is not supported for model_router"
+    ):
+        build_agents(source)
+
+
+def test_model_router_name_collision_matches_programmatic_registration(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "collision.yaml"
+    source.write_text(
+        "agents:\n"
+        "  - name: routed\n"
+        "    chat_model_setups:\n"
+        "      - name: same\n"
+        "        clazz: ollama\n"
+        "    model_routers:\n"
+        "      - name: same\n"
+        "        clazz: model_router\n"
+        "        candidates: [small]\n"
+        "        strategy_type: rule_based\n"
+    )
+    with pytest.raises(
+        ValueError, match="both a chat model and a model router"
+    ) as yaml_error:
+        build_agents(source)
+
+    agent = Agent()
+    agent.add_resource(
+        "same", ResourceType.CHAT_MODEL, ResourceDescriptor(clazz="some.Setup")
+    )
+    with pytest.raises(
+        ValueError, match="both a chat model and a model router"
+    ) as programmatic:
+        agent.add_resource(
+            "same",
+            ResourceType.MODEL_ROUTER,
+            ResourceDescriptor(
+                clazz="flink_agents.api.chat_models.routing.ModelRouter"
+            ),
+        )
+    assert str(yaml_error.value) == str(programmatic.value)

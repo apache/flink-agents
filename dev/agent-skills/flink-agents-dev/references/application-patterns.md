@@ -170,6 +170,7 @@ Skills, MCP, vector store, or Tool because it appeared in an example:
 | `embedding_model_setups` | vector-store `embedding_model` argument |
 | `vector_stores` | Action lookup; `ContextRetrievalRequestEvent` |
 | `mcp_servers` | dynamically discovered MCP prompts and Tools |
+| `model_routers` | `ChatRequestEvent.model`; candidate names refer to `chat_model_setups` |
 
 Treat each name as an API. Keep spelling and case identical at declaration and
 every reference. Separate a Skills Resource name from the individual Skill names

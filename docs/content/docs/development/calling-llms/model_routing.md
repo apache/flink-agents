@@ -40,11 +40,11 @@ The selected model uses its own prompt, tools, skills, and generation settings.
 Routing can also try another candidate if the initial model call fails.
 
 {{< hint info >}}
-Routers are declared with the Programmatic API in Java and Python: register them on
-an Agent or its execution environment. Python supports the rules and custom
-strategies; the LLM judge and decision model strategies are Java only. YAML router
-declarations, Java annotations, and Python decorators are not supported. The built-in `ReActAgent` does
-not accept a router in place of its chat model setup.
+Routers are declared with the Programmatic API or YAML in Java and Python.
+Register them on an Agent or its execution environment. Python supports the rules
+and custom strategies; the LLM judge and decision model strategies are Java only.
+Java annotations and Python decorators are not supported. The built-in `ReActAgent`
+does not accept a router in place of its chat model setup.
 {{< /hint >}}
 
 <span id="quick-start"></span>
@@ -102,9 +102,10 @@ public ModelRoutingAgent() {
 
 `ModelRouter.of(...).build()` returns a `ResourceDescriptor`. Register it as a
 `MODEL_ROUTER` Resource using the
-[Programmatic API]({{< ref "docs/development/create-agent/resources#programmatic-api" >}}).
-The complete [examples](#examples) demonstrate registration on the execution
-environment.
+[Programmatic API]({{< ref "docs/development/create-agent/resources#programmatic-api" >}})
+or the [YAML declaration](#yaml) below.
+The complete [examples](#examples) demonstrate programmatic registration on the
+execution environment.
 
 | Builder method | Required | Description |
 |----------------|----------|-------------|
@@ -116,6 +117,105 @@ environment.
 | `build()` | Required | Validate the declaration and produce the descriptor. |
 
 Python uses the same builder with `default_model(name)` and `fallback(enabled=...)`.
+
+<span id="yaml"></span>
+
+#### YAML
+
+Declare routers under `model_routers` on an agent or at the top level of the file.
+A top-level router is shared by every agent loaded into the environment. The
+section uses the same descriptor fields as other implementation-class resources:
+`name`, `clazz`, and optional `type`. The remaining fields are the descriptor
+arguments produced by the builder.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `candidates` | Required | Chat model setup names. Names must be non-empty and unique. Order is the fallback order. |
+| `strategy_type` | Required | `rule_based`, `custom`, or, on Java, `llm_judge` or `decision_model`. |
+| `strategy_args` | Depends on the strategy | Rule map, judge or decision-model settings, or custom executor arguments. |
+| `strategy_executor_class` | Custom only | Fully qualified custom executor class. |
+| `candidate_descriptions` | Optional | Map of candidate name to description. |
+| `default_model` | Optional | Candidate used when the strategy abstains. When omitted, the first candidate is used. |
+| `fallback` | Optional | Try the remaining candidates after the selected model fails. Defaults to `false`. |
+
+`clazz: model_router` selects the implementation for the loader's language. A fully
+qualified class name works as well. Model routers do not cross languages: Python
+YAML uses the default Python implementation, and Java YAML sets `type: java`.
+`strategy_args.rules` maps a candidate name to a regular expression. `judge_model`
+and `decision_model` name registered chat-model and decision-model setups.
+
+A declaration is checked when the agent plan is built. An invalid candidate list,
+rule, default model, or strategy fails with the same error as the same descriptor
+registered programmatically. A strategy the runtime does not support, such as
+`llm_judge` or `decision_model` on Python, fails at that same check.
+
+{{< tabs "YAML Router" >}}
+{{< tab "Python" >}}
+```yaml
+model_routers:
+  - name: router
+    clazz: model_router
+    candidates: [small, big]
+    candidate_descriptions:
+      small: Everyday requests
+      big: Code, SQL, and analysis
+    strategy_type: rule_based
+    strategy_args:
+      rules:
+        big: '\b(code|sql|program|analyze|prove)\b'
+    default_model: small
+    fallback: true
+
+agents:
+  - name: model_routing_agent
+    model_routers:
+      - name: local_router
+        clazz: model_router
+        candidates: [small, big]
+        strategy_type: rule_based
+        strategy_args:
+          rules:
+            big: '\b(code|sql)\b'
+        default_model: small
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```yaml
+model_routers:
+  - name: router
+    clazz: model_router
+    type: java
+    candidates: [small, big]
+    candidate_descriptions:
+      small: Everyday requests
+      big: Code, SQL, and analysis
+    strategy_type: rule_based
+    strategy_args:
+      rules:
+        big: '\b(code|sql|program|analyze|prove)\b'
+    default_model: small
+    fallback: true
+
+agents:
+  - name: model_routing_agent
+    model_routers:
+      - name: local_router
+        clazz: model_router
+        type: java
+        candidates: [small, big]
+        strategy_type: rule_based
+        strategy_args:
+          rules:
+            big: '\b(code|sql)\b'
+        default_model: small
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+Reference the router name from a `ChatRequestEvent` the same way as a programmatic
+router. Candidate names still refer to registered `CHAT_MODEL` resources. See
+[YAML]({{< ref "docs/development/create-agent/yaml" >}}) for where shared and
+agent-local sections are declared.
 
 A chat model and a model router registered on the same agent must have different
 names.

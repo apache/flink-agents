@@ -231,6 +231,17 @@ def test_resolve_clazz_covers_embedding_model_openai_in_both_languages() -> None
     assert java_setup.endswith("OpenAIEmbeddingModelSetup")
 
 
+def test_resolve_clazz_covers_model_router_in_both_languages() -> None:
+    assert (
+        resolve_clazz("model_router", ResourceType.MODEL_ROUTER, "python")
+        == ResourceName.ModelRouter.MODEL_ROUTER
+    )
+    assert (
+        resolve_clazz("model_router", ResourceType.MODEL_ROUTER, "java")
+        == ResourceName.ModelRouter.Java.MODEL_ROUTER
+    )
+
+
 def test_custom_java_resource_class_passes_through() -> None:
     assert (
         resolve_clazz("custom.models.Chat", ResourceType.CHAT_MODEL, "java")

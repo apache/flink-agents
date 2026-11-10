@@ -253,9 +253,9 @@ cross-language runtime requirements.
 
 **Resources configured by implementation class** — `chat_model_connections`,
 `chat_model_setups`, `decision_model_connections`, `decision_model_setups`,
-`embedding_model_connections`, `embedding_model_setups`, `vector_stores`, and
-`mcp_servers`, plus `subagents` for external sub-agents. Declare the implementation
-and its configuration using the fields below.
+`embedding_model_connections`, `embedding_model_setups`, `vector_stores`,
+`mcp_servers`, and `model_routers`, plus `subagents` for external sub-agents.
+Declare the implementation and its configuration using the fields below.
 This corresponds to a `ResourceDescriptor` in Java or Python; the framework creates the
 Resource instance at runtime.
 
@@ -279,6 +279,14 @@ mcp_servers:
     type: python
     endpoint: http://127.0.0.1:8000/mcp
 ```
+
+`model_routers` carries the same arguments as a programmatic `ModelRouter`
+descriptor: `candidates`, `candidate_descriptions`, `strategy_type`,
+`strategy_args`, `strategy_executor_class`, `default_model`, and `fallback`.
+Java YAML sets `type: java`. Python YAML omits `type` and uses the Python
+implementation. The plan checks the declaration when it is built. See
+[Model Routing]({{< ref "docs/development/calling-llms/model_routing#yaml" >}})
+for both languages and for which strategies each runtime accepts.
 
 **Sub-agents** are registered under `subagents` as `AGENT` Resources. Internal
 sub-agents reference another Agent in the same file or already loaded into the same
@@ -758,6 +766,12 @@ MCP-server aliases:
 | ----- | -------------- | ------------ |
 | `mcp` | MCP Server     | —            |
 
+Model-router alias:
+
+| Alias | `type: python` | `type: java` |
+| ----- | -------------- | ------------ |
+| `model_router` | ModelRouter | ModelRouter |
+
 The full alias tables live in `flink_agents.api.yaml.aliases` (Python) and `org.apache.flink.agents.api.yaml.Aliases` (Java).
 
 ### Cross-language agents
@@ -824,6 +838,7 @@ Cross-language support varies by component:
 
 - `actions`, `tools`, `chat_model_connections`, `chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, and `vector_stores` support both directions: `type: python` when loaded from Java, and `type: java` when loaded from Python.
 - `decision_model_connections`, `decision_model_setups`, and `mcp_servers` support only Java-to-Python cross-language use: Java-loaded YAML can use Python implementations, but Python-loaded YAML cannot use Java implementations.
+- `model_routers` do not support cross-language use. Java YAML sets `type: java`. Python YAML uses the default Python implementation. Declaring the other language fails when the file is loaded.
 - Other components, including external `subagents`, do not support cross-language use.
 
 ## YAML API Specification
