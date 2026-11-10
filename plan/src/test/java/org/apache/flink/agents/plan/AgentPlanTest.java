@@ -88,24 +88,6 @@ public class AgentPlanTest {
         }
     }
 
-    /** Test serializable chat model resource class. */
-    public static class TestSerializableChatModel extends SerializableResource {
-        private final String name;
-
-        public TestSerializableChatModel(String name) {
-            this.name = name;
-        }
-
-        public String getName() {
-            return name;
-        }
-
-        @Override
-        public ResourceType getResourceType() {
-            return ResourceType.CHAT_MODEL;
-        }
-    }
-
     /** Test agent class with annotated methods. */
     public static class TestAgent extends Agent {
 
@@ -134,8 +116,12 @@ public class AgentPlanTest {
         @Tool private TestTool myTool = new TestTool("myTool");
 
         @ChatModelSetup
-        private TestSerializableChatModel chatModel =
-                new TestSerializableChatModel("defaultChatModel");
+        public static ResourceDescriptor chatModel() {
+            return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
+                    .addInitialArgument("connection", "ollama")
+                    .addInitialArgument("model", "test-model")
+                    .build();
+        }
 
         @ChatModelSetup
         public static ResourceDescriptor pythonChatModel() {
@@ -516,7 +502,7 @@ public class AgentPlanTest {
         assertThat(toolProviders).containsKey("myTool");
         assertThat(toolProviders).containsKey("anotherTool");
 
-        // Verify that tool providers are JavaSerializableResourceProvider (non-serializable)
+        // Tool fields use JavaSerializableResourceProvider.
         ResourceProvider myToolProvider = toolProviders.get("myTool");
         assertThat(myToolProvider).isInstanceOf(JavaSerializableResourceProvider.class);
         assertThat(myToolProvider.getName()).isEqualTo("myTool");
@@ -531,26 +517,23 @@ public class AgentPlanTest {
         Map<String, ResourceProvider> chatModelProviders =
                 resourceProviders.get(ResourceType.CHAT_MODEL);
         assertThat(chatModelProviders).isNotNull();
-        assertThat(chatModelProviders).hasSize(2); // defaultChatModel (field name used as default)
+        assertThat(chatModelProviders).hasSize(2);
         assertThat(chatModelProviders).containsKey("chatModel");
         assertThat(chatModelProviders).containsKey("pythonChatModel");
 
-        // Verify that chat model provider is JavaSerializableResourceProvider
-        // (serializable)
+        // Chat model setup methods use descriptor-based providers.
         ResourceProvider chatModelProvider = chatModelProviders.get("chatModel");
-        assertThat(chatModelProvider).isInstanceOf(JavaSerializableResourceProvider.class);
+        assertThat(chatModelProvider).isInstanceOf(JavaResourceProvider.class);
         assertThat(chatModelProvider.getName()).isEqualTo("chatModel");
         assertThat(chatModelProvider.getType()).isEqualTo(ResourceType.CHAT_MODEL);
 
-        // Test JavaSerializableResourceProvider specific methods
-        JavaSerializableResourceProvider serializableProvider =
-                (JavaSerializableResourceProvider) chatModelProvider;
-        assertThat(serializableProvider.getModule())
-                .isEqualTo(TestAgentWithResources.class.getPackage().getName());
-        assertThat(serializableProvider.getClazz()).contains("TestSerializableChatModel");
+        ResourceDescriptor descriptor = ((JavaResourceProvider) chatModelProvider).getDescriptor();
+        assertThat(descriptor.getClazz()).isEqualTo(ResourceName.ChatModel.OLLAMA_SETUP);
+        assertThat(descriptor.getInitialArguments())
+                .containsEntry("connection", "ollama")
+                .containsEntry("model", "test-model");
 
-        // Verify that python chat model provider is PythonResourceProvider
-        // (serializable)
+        // Python descriptors still select PythonResourceProvider.
         ResourceProvider pythonChatModelProvider = chatModelProviders.get("pythonChatModel");
         assertThat(pythonChatModelProvider).isInstanceOf(PythonResourceProvider.class);
         assertThat(pythonChatModelProvider.getName()).isEqualTo("pythonChatModel");
@@ -617,9 +600,7 @@ public class AgentPlanTest {
         // SerializableResource for EMBEDDING_MODEL is illegal — only PROMPT / TOOL / SKILLS accept
         // non-descriptors. The new code path must reject it with a clear message instead of CCE.
         agent.addResource(
-                "badEmbedding",
-                ResourceType.EMBEDDING_MODEL,
-                new TestSerializableChatModel("badEmbedding"));
+                "badEmbedding", ResourceType.EMBEDDING_MODEL, new TestTool("badEmbedding"));
 
         Assertions.assertThrows(IllegalStateException.class, () -> new AgentPlan(agent));
     }

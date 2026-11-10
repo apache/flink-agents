@@ -95,6 +95,13 @@ Declare Resources on an Agent using Python decorators or Java annotations. The
 method name becomes the Resource name, and the setup refers to its connection by
 that name.
 
+In Java, `@ChatModelSetup`, `@VectorStore`, and `@Prompt` apply only to public
+static, zero-argument methods. Chat model setups and vector stores return a
+`ResourceDescriptor`; prompts return a `Prompt` instance. To migrate a field
+declaration, move its annotation to a static method that returns the appropriate
+value, keeping the method name equal to the desired Resource name. `@Tool` also
+supports fields containing serializable tool instances.
+
 {{< tabs "Resource Declaration API" >}}
 {{< tab "Python" >}}
 ```python

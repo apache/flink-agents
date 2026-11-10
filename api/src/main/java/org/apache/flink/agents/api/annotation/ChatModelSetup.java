@@ -24,11 +24,12 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Annotation to mark a field as a chat model resource that should be managed by the agent plan.
+ * Declares a chat model setup managed by the agent plan.
  *
- * <p>Fields annotated with @ChatModel will be scanned during agent plan creation and corresponding
- * resource providers will be created to manage the chat model instances.
+ * <p>Annotate a public static, zero-argument method returning a {@link
+ * org.apache.flink.agents.api.resource.ResourceDescriptor}. The method name becomes the resource
+ * name.
  */
-@Target({ElementType.FIELD, ElementType.METHOD})
+@Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface ChatModelSetup {}

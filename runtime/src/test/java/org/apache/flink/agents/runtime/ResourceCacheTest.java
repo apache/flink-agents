@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.Resource;
@@ -95,21 +96,20 @@ public class ResourceCacheTest {
         }
     }
 
-    /** Test serializable chat model resource class. */
-    public static class TestSerializableChatModel extends SerializableResource {
-        private final String name;
-
-        public TestSerializableChatModel(String name) {
-            this.name = name;
-        }
-
-        public String getName() {
-            return name;
+    /** Test chat model instantiated from a descriptor. */
+    public static class TestChatModel extends BaseChatModelSetup {
+        public TestChatModel(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
         }
 
         @Override
-        public ResourceType getResourceType() {
-            return ResourceType.CHAT_MODEL;
+        public void open() {
+            // No external connection is needed for resource-cache tests.
+        }
+
+        @Override
+        public Map<String, Object> getParameters() {
+            return Map.of();
         }
     }
 
@@ -140,8 +140,11 @@ public class ResourceCacheTest {
         @Tool private TestTool myTool = new TestTool("myTool");
 
         @ChatModelSetup
-        private TestSerializableChatModel chatModel =
-                new TestSerializableChatModel("defaultChatModel");
+        public static ResourceDescriptor chatModel() {
+            return ResourceDescriptor.Builder.newBuilder(TestChatModel.class.getName())
+                    .addInitialArgument("model", "test-model")
+                    .build();
+        }
 
         @Tool private TestTool anotherTool = new TestTool("anotherTool");
 
@@ -506,8 +509,10 @@ public class ResourceCacheTest {
         // Test getting a chat model resource
         Resource chatModel = cache.getResource("chatModel", ResourceType.CHAT_MODEL);
         assertThat(chatModel).isNotNull();
-        assertThat(chatModel).isInstanceOf(TestSerializableChatModel.class);
+        assertThat(chatModel).isInstanceOf(TestChatModel.class);
         assertThat(chatModel.getResourceType()).isEqualTo(ResourceType.CHAT_MODEL);
+        assertThat(((TestChatModel) chatModel).getModel()).isEqualTo("test-model");
+        assertThat(cache.getResource("chatModel", ResourceType.CHAT_MODEL)).isSameAs(chatModel);
 
         assertThatThrownBy(() -> cache.getResource("pythonChatModel", ResourceType.CHAT_MODEL))
                 .isInstanceOf(IllegalStateException.class)
