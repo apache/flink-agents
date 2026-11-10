@@ -152,9 +152,7 @@ class AliasesTest {
     void clazzAliasCoversModelRouterInBothLanguages() {
         assertThat(Aliases.resolveClazz("model_router", ResourceType.MODEL_ROUTER, Language.JAVA))
                 .isEqualTo(ResourceName.ModelRouter.MODEL_ROUTER);
-        assertThat(
-                        Aliases.resolveClazz(
-                                "model_router", ResourceType.MODEL_ROUTER, Language.PYTHON))
+        assertThat(Aliases.resolveClazz("model_router", ResourceType.MODEL_ROUTER, Language.PYTHON))
                 .isEqualTo(ResourceName.ModelRouter.Python.MODEL_ROUTER);
     }
 

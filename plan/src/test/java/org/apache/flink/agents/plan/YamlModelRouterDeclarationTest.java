@@ -139,7 +139,8 @@ class YamlModelRouterDeclarationTest {
         assertThat(metadata(abstained))
                 .containsEntry("decision_source", ModelRoutingEvent.SOURCE_DEFAULT);
 
-        ResolvedModelRoute custom = resolve(instantiate(plan, "custom_router"), "custom_router", "hello");
+        ResolvedModelRoute custom =
+                resolve(instantiate(plan, "custom_router"), "custom_router", "hello");
         assertThat(custom.getSelectedModel()).isEqualTo("big");
         assertThat(metadata(custom)).containsEntry("reason", "custom");
     }
@@ -155,8 +156,7 @@ class YamlModelRouterDeclarationTest {
                 "strategy_type: llm_judge\n"
                         + "        strategy_args:\n"
                         + "          judge_model: missing_judge\n",
-                "strategy_type: custom\n"
-                        + "        strategy_executor_class: missing.Executor\n",
+                "strategy_type: custom\n" + "        strategy_executor_class: missing.Executor\n",
                 "candidates: [small, big]\n"
             })
     void invalidYamlFailsLikeTheSameProgrammaticDescriptor(String strategyYaml) throws Exception {
@@ -189,7 +189,9 @@ class YamlModelRouterDeclarationTest {
                 org.assertj.core.api.Assertions.catchThrowable(() -> new AgentPlan(programmatic));
 
         assertThat(fromYaml).isInstanceOf(Exception.class);
-        assertThat(fromProgrammatic).isInstanceOf(fromYaml.getClass()).hasMessage(fromYaml.getMessage());
+        assertThat(fromProgrammatic)
+                .isInstanceOf(fromYaml.getClass())
+                .hasMessage(fromYaml.getMessage());
     }
 
     private static ModelRouter instantiate(AgentPlan plan, String name) throws Exception {
@@ -212,7 +214,8 @@ class YamlModelRouterDeclarationTest {
     }
 
     private static Map<String, Object> metadata(ResolvedModelRoute route) {
-        return route.buildResponseMetadata(route.getSelectedModel(), List.of(route.getSelectedModel()));
+        return route.buildResponseMetadata(
+                route.getSelectedModel(), List.of(route.getSelectedModel()));
     }
 
     private Path write(String yaml) throws Exception {
