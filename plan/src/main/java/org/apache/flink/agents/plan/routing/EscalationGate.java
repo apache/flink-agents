@@ -77,6 +77,11 @@ import java.util.UUID;
  * escalate:<router>:<candidate>}; a custom signal's outcome (verdict or failure) is persisted under
  * {@code escalate:<router>:<candidate>:<n>}. Both are reused on replay, so a recovered request
  * reaches the same tier without re-judging.
+ *
+ * <p>A round made only of tool calls (no text and no media) is not judged by a decision-model
+ * signal: the structural checks still apply to it, custom signals still run, and the decision model
+ * judges the answer the model writes once the tools have returned. Skipping a signal leaves the
+ * custom signals' durable ids unchanged.
  */
 public final class EscalationGate {
 
@@ -173,11 +178,25 @@ public final class EscalationGate {
         if (structural.isEscalate()) {
             return Optional.of(outcome(candidate, next.get(), STRUCTURAL, structural));
         }
+        boolean toolOnly = isToolOnlyRound(response);
         int index = 0;
         for (Escalation.Signal signal : policy.getSignals()) {
             QualityVerdict verdict;
             String name;
             if (Escalation.Signal.TYPE_DECISION_MODEL.equals(signal.getType())) {
+                if (toolOnly) {
+                    // The decision model judges answers, not tool requests: the round has nothing
+                    // to judge yet, and the structural checks have already vetted its calls. The
+                    // signal index still advances so the custom signals keep their durable ids.
+                    LOG.debug(
+                            "Request {} round on '{}' is tool calls only; decision model '{}' is"
+                                    + " not asked",
+                            requestId,
+                            candidate,
+                            signal.decisionModel());
+                    index++;
+                    continue;
+                }
                 name = Escalation.Signal.TYPE_DECISION_MODEL + ":" + signal.decisionModel();
                 verdict = decisionSignal(signal, context, router, candidate, ctx);
             } else {
@@ -264,6 +283,25 @@ public final class EscalationGate {
             }
         }
         return false;
+    }
+
+    /**
+     * True when the round only requests tools: at least one tool call and neither non-blank text
+     * nor media. Reasoning blocks do not count; a round of reasoning plus tool calls is tool-only.
+     * The decision-model signal is not consulted for such a round (see the class comment).
+     */
+    static boolean isToolOnlyRound(ChatResult response) {
+        boolean hasToolCall = false;
+        for (ContentBlock block : response.getBlocks()) {
+            if (block instanceof ToolCallBlock) {
+                hasToolCall = true;
+            } else if (block instanceof MediaBlock) {
+                return false;
+            } else if (block instanceof TextBlock && !((TextBlock) block).getText().isBlank()) {
+                return false;
+            }
+        }
+        return hasToolCall;
     }
 
     /**
@@ -356,6 +394,10 @@ public final class EscalationGate {
 
     // ---------------------------------------------------------------- decision-model signal
 
+    /**
+     * Asks the signal's decision model whether the round's answer satisfies the request. Called for
+     * rounds that carry an answer; {@link #check} does not call it for a tool-only round.
+     */
     private static QualityVerdict decisionSignal(
             Escalation.Signal signal,
             QualityContext context,

@@ -769,4 +769,86 @@ class ChatModelActionEscalationTest {
         assertThat((String) hops.get(0).get("reason"))
                 .contains("repeated with identical arguments");
     }
+
+    @Test
+    void aToolOnlyRoundSkipsTheVerifierAndTheAnswerAfterTheToolsIsJudged() throws Exception {
+        // Round 1: small only calls its tool. The structural checks pass and the verifier is not
+        // asked, so the tool is dispatched. Round 2: small's written answer is judged, rated 0.3
+        // and rejected; big answers with the tool result in hand.
+        FakeDecisionModel dm = new FakeDecisionModel(verdict(0.3));
+        ToolingChatModel small =
+                new ToolingChatModel(
+                        ChatFixtures.response("", LOOKUP_CALL), ChatFixtures.response("draft"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", dm)
+                        .register("small", small)
+                        .register("big", new FakeChatModel(ChatFixtures.response("final")));
+        send(ctx, "find it");
+        ToolRequestEvent toolRequest = ctx.toolRequestEvent();
+        assertThat(toolRequest).isNotNull();
+        assertThat(toolRequest.getModel()).isEqualTo("small");
+        assertThat(dm.callCount).isZero();
+        assertThat(ctx.durableCallIds).containsExactly("route:router", "chat:router:small");
+
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ToolResponseEvent(
+                        toolRequest.getId(),
+                        Map.of("call-1", ToolResponse.text("42")),
+                        Map.of("call-1", true),
+                        Map.of()),
+                ctx);
+
+        assertThat(dm.callCount).isEqualTo(1);
+        assertThat(dm.requests.get(0).getInput().toString())
+                .contains("ANSWER:\ndraft")
+                .doesNotContain("Tool call lookup");
+        ChatResponseEvent response = ctx.chatResponse();
+        assertThat(response.isFailed()).isFalse();
+        assertThat(response.getResponse().getText()).isEqualTo("final");
+        List<Map<String, Object>> hops =
+                (List<Map<String, Object>>) routing(response).get("escalations");
+        assertThat(hops).hasSize(1);
+        assertThat(hops.get(0))
+                .containsEntry("from", "small")
+                .containsEntry("to", "big")
+                .containsEntry("signal", "decision_model:dm")
+                .containsEntry("score", 0.3);
+        // No escalate record for the tool-only round; one for the judged answer.
+        assertThat(ctx.durableCallIds)
+                .containsExactly(
+                        "route:router",
+                        "chat:router:small",
+                        "chat",
+                        "escalate:router:small",
+                        "chat:router:big");
+    }
+
+    @Test
+    void aRoundWithTextBesideItsToolCallsIsJudgedBeforeTheToolsRun() throws Exception {
+        // small writes text and calls its tool in the same round: that is an answer, so the
+        // verifier judges it. Rejected, the round is discarded before the tool is dispatched.
+        FakeDecisionModel dm = new FakeDecisionModel(verdict(0.3));
+        ToolingChatModel small =
+                new ToolingChatModel(ChatFixtures.response("Let me look that up.", LOOKUP_CALL));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", dm)
+                        .register("small", small)
+                        .register("big", new FakeChatModel(ChatFixtures.response("final")));
+        send(ctx, "find it");
+
+        assertThat(dm.callCount).isEqualTo(1);
+        assertThat(dm.requests.get(0).getInput().toString())
+                .contains("ANSWER:\nLet me look that up.")
+                .contains("Tool call lookup(");
+        assertThat(ctx.toolRequestEvent()).isNull();
+        assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("final");
+        assertThat(ctx.durableCallIds)
+                .containsExactly(
+                        "route:router",
+                        "chat:router:small",
+                        "escalate:router:small",
+                        "chat:router:big");
+    }
 }

@@ -24,24 +24,39 @@ import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
+import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
+import org.apache.flink.agents.api.chat.model.routing.Escalation;
 import org.apache.flink.agents.api.chat.model.routing.QualityContext;
 import org.apache.flink.agents.api.chat.model.routing.QualitySignal;
 import org.apache.flink.agents.api.chat.model.routing.QualitySignals;
 import org.apache.flink.agents.api.chat.model.routing.QualityVerdict;
+import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
+import org.apache.flink.agents.plan.actions.ChatAttemptResults;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 /** The built-in structural checks and the signal plumbing of {@link EscalationGate}. */
 class EscalationGateTest {
@@ -90,6 +105,65 @@ class EscalationGateTest {
         public QualityVerdict evaluate(QualityContext context) {
             return QualityVerdict.accept();
         }
+    }
+
+    /** A custom signal that counts its evaluations and accepts. */
+    public static final class CountingSignal implements QualitySignal {
+        static final AtomicInteger EVALUATIONS = new AtomicInteger();
+
+        @Override
+        public QualityVerdict evaluate(QualityContext context) {
+            EVALUATIONS.incrementAndGet();
+            return QualityVerdict.accept();
+        }
+    }
+
+    /** The answering candidate as the gate sees it: it has the lookup tool and no prompt. */
+    static final class ToolingSetup extends BaseChatModelSetup {
+        ToolingSetup() {
+            super(new ResourceDescriptor("fake", Map.of()), null);
+        }
+
+        @Override
+        public Map<String, Object> getParameters() {
+            return Map.of();
+        }
+
+        @Override
+        public boolean willApplyNativeStructuredOutput(Object outputSchema) {
+            return false;
+        }
+
+        @Override
+        public ChatResult chat(
+                List<ChatMessage> messages,
+                Map<String, Object> promptArgs,
+                Map<String, Object> modelParams) {
+            throw new UnsupportedOperationException("the gate judges a finished round");
+        }
+
+        @Override
+        public List<Tool> getTools() {
+            return List.of(new LookupTool());
+        }
+    }
+
+    private static final Escalation VERIFIED_TIERS =
+            Escalation.tiers("small", "big").when(QualitySignals.decision("verifier", 0.7));
+
+    /** Runs the gate on a round answered by {@code small}, the first of two tiers. */
+    private static Optional<EscalationGate.Outcome> check(
+            Escalation policy, ChatResult response, RunnerContext ctx) throws Exception {
+        return EscalationGate.check(
+                policy,
+                UUID.randomUUID(),
+                "router",
+                "small",
+                0,
+                List.of(ChatMessage.user("find it")),
+                Map.of(),
+                ChatAttemptResults.of("small", new ToolingSetup(), response),
+                ctx);
     }
 
     private static QualityContext context(
@@ -381,5 +455,114 @@ class EscalationGateTest {
                         List.of());
         assertThat(EscalationGate.renderForVerifier(withSystem))
                 .contains("SYSTEM: You translate.\nRequest arguments:\ninput: Hello");
+    }
+
+    @Test
+    void aRoundMadeOnlyOfToolCallsIsToolOnlyUnlessItAlsoCarriesTextOrMedia() {
+        assertThat(EscalationGate.isToolOnlyRound(toolCall("lookup", Map.of("q", "x")))).isTrue();
+        ChatResult reasoningAndCall =
+                new ChatResult(
+                        ChatMessage.assistant(
+                                List.of(
+                                        new ReasoningBlock("I should look it up"),
+                                        new ToolCallBlock("call-1", "lookup", Map.of("q", "x")))));
+        assertThat(EscalationGate.isToolOnlyRound(reasoningAndCall)).isTrue();
+        ChatResult textAndCall =
+                new ChatResult(
+                        ChatMessage.assistant(
+                                List.of(
+                                        new TextBlock("Let me check."),
+                                        new ToolCallBlock("call-1", "lookup", Map.of("q", "x")))));
+        assertThat(EscalationGate.isToolOnlyRound(textAndCall)).isFalse();
+        ChatResult blankTextAndCall =
+                new ChatResult(
+                        ChatMessage.assistant(
+                                List.of(
+                                        new TextBlock("  "),
+                                        new ToolCallBlock("call-1", "lookup", Map.of("q", "x")))));
+        assertThat(EscalationGate.isToolOnlyRound(blankTextAndCall)).isTrue();
+        ChatResult imageAndCall =
+                new ChatResult(
+                        ChatMessage.assistant(
+                                List.of(
+                                        ImageBlock.fromBase64("image/png", "aGk="),
+                                        new ToolCallBlock("call-1", "lookup", Map.of("q", "x")))));
+        assertThat(EscalationGate.isToolOnlyRound(imageAndCall)).isFalse();
+        assertThat(EscalationGate.isToolOnlyRound(new ChatResult(ChatMessage.assistant("done"))))
+                .isFalse();
+        assertThat(EscalationGate.isToolOnlyRound(new ChatResult(ChatMessage.assistant(List.of()))))
+                .isFalse();
+    }
+
+    @Test
+    void aToolOnlyRoundIsAcceptedWithoutConsultingTheDecisionModel() throws Exception {
+        // The round passes the structural checks (the call names a tool the candidate has, with
+        // valid arguments) and carries no answer to judge: the gate accepts it without touching
+        // the runner context, so the verifier is neither resolved nor called.
+        RunnerContext ctx = mock(RunnerContext.class);
+        Optional<EscalationGate.Outcome> outcome =
+                check(VERIFIED_TIERS, toolCall("lookup", Map.of("q", "x")), ctx);
+        assertThat(outcome).isEmpty();
+        verifyNoInteractions(ctx);
+
+        // Reasoning beside the calls does not make the round an answer either.
+        ChatResult reasoningAndCall =
+                new ChatResult(
+                        ChatMessage.assistant(
+                                List.of(
+                                        new ReasoningBlock("I should look it up"),
+                                        new ToolCallBlock("call-1", "lookup", Map.of("q", "x")))));
+        assertThat(check(VERIFIED_TIERS, reasoningAndCall, ctx)).isEmpty();
+        verifyNoInteractions(ctx);
+    }
+
+    @Test
+    void aRoundWithTextBesideItsToolCallsIsSentToTheDecisionModel() throws Exception {
+        // The same policy, the same valid call, but the model also wrote text: the decision model
+        // is consulted. Its lookup is made to fail so the test sees the attempt without a provider.
+        RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getResource("verifier", ResourceType.DECISION_MODEL))
+                .thenThrow(new IllegalStateException("verifier offline"));
+        ChatResult textAndCall =
+                new ChatResult(
+                        ChatMessage.assistant(
+                                List.of(
+                                        new TextBlock("Let me check."),
+                                        new ToolCallBlock("call-1", "lookup", Map.of("q", "x")))));
+        assertThatThrownBy(() -> check(VERIFIED_TIERS, textAndCall, ctx))
+                .isInstanceOf(ModelRoutingResolver.RoutingFailure.class)
+                .hasMessageContaining("decision model 'verifier'")
+                .hasMessageContaining("could not be resolved")
+                .hasMessageContaining("verifier offline");
+        verify(ctx).getResource("verifier", ResourceType.DECISION_MODEL);
+    }
+
+    @Test
+    void theStructuralChecksAndCustomSignalsStillRunOnAToolOnlyRound() throws Exception {
+        // Skipping the decision model does not skip the rest: an unknown tool is still rejected,
+        // and a custom signal declared after the decision signal still runs under its own id.
+        RunnerContext ctx = mock(RunnerContext.class);
+        Optional<EscalationGate.Outcome> unknown =
+                check(VERIFIED_TIERS, toolCall("search", Map.of("q", "x")), ctx);
+        assertThat(unknown).isPresent();
+        assertThat(unknown.get().signal).isEqualTo(EscalationGate.STRUCTURAL);
+        assertThat(unknown.get().reason).contains("'search'").contains("does not have");
+        verifyNoInteractions(ctx);
+
+        Escalation withCustom = VERIFIED_TIERS.when(QualitySignals.custom(CountingSignal.class));
+        CountingSignal.EVALUATIONS.set(0);
+        List<String> durableIds = new java.util.ArrayList<>();
+        when(ctx.durableExecute(any()))
+                .thenAnswer(
+                        invocation -> {
+                            DurableCallable<?> callable = invocation.getArgument(0);
+                            durableIds.add(callable.getId());
+                            return callable.call();
+                        });
+        assertThat(check(withCustom, toolCall("lookup", Map.of("q", "x")), ctx)).isEmpty();
+        assertThat(CountingSignal.EVALUATIONS).hasValue(1);
+        // The custom signal is the second declared signal, so its durable id keeps index 1.
+        assertThat(durableIds).containsExactly("escalate:router:small:1");
+        verify(ctx, never()).getResource(any(), any());
     }
 }

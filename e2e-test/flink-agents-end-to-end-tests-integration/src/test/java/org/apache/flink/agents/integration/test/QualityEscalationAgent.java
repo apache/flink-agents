@@ -30,6 +30,7 @@ import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
@@ -69,16 +70,30 @@ import java.util.stream.Collectors;
  *
  * <p>The scripted {@code small} connection answers from the request text: {@code nothing} returns
  * an empty message (structural escalation), {@code lookup} first calls the {@code lookup} tool and
- * then answers {@code weak} (custom-signal escalation on the tool round), anything else echoes the
- * request. The verifier scores an answer that mentions {@code SQL} or {@code big down} at 0.3
- * (below the 0.7 minimum) and everything else at 0.95. The {@code big} connection echoes the
- * request and any tool result it was handed, and throws for {@code big down}.
+ * then answers {@code weak} (custom-signal escalation on the tool round), {@code unknown tool}
+ * calls a tool {@code search} that is not bound to it (structural escalation before dispatch),
+ * anything else echoes the request. Every {@code small} answer reports {@value
+ * #SMALL_PROMPT_TOKENS} prompt and {@value #SMALL_COMPLETION_TOKENS} completion tokens, so a
+ * discarded answer is worth {@value #SMALL_DISCARDED_TOKENS} tokens in the routing events, the
+ * response metadata and the counters. The verifier scores an answer that mentions {@code SQL} or
+ * {@code big down} at 0.3 (below the 0.7 minimum) and everything else at 0.95. The {@code big}
+ * connection echoes the request and any tool result it was handed, and throws for {@code big down}.
  */
 public class QualityEscalationAgent extends Agent {
+
+    /** Prompt tokens every scripted {@code small} answer reports. */
+    public static final long SMALL_PROMPT_TOKENS = 11L;
+
+    /** Completion tokens every scripted {@code small} answer reports. */
+    public static final long SMALL_COMPLETION_TOKENS = 4L;
+
+    /** Tokens one discarded {@code small} answer adds to {@code escalated_tokens}. */
+    public static final long SMALL_DISCARDED_TOKENS = SMALL_PROMPT_TOKENS + SMALL_COMPLETION_TOKENS;
 
     private static final AtomicInteger VERIFIER_CALLS = new AtomicInteger();
     private static final List<String> VERIFIER_INPUTS = new CopyOnWriteArrayList<>();
     private static final AtomicInteger TOOL_CALLS = new AtomicInteger();
+    private static final List<Map<?, ?>> ROUTING_BLOCKS = new CopyOnWriteArrayList<>();
 
     public static int verifierCalls() {
         return VERIFIER_CALLS.get();
@@ -92,10 +107,16 @@ public class QualityEscalationAgent extends Agent {
         return TOOL_CALLS.get();
     }
 
+    /** The {@code model_routing} block of every successful response, in arrival order. */
+    public static List<Map<?, ?>> routingBlocks() {
+        return List.copyOf(ROUTING_BLOCKS);
+    }
+
     public static void reset() {
         VERIFIER_CALLS.set(0);
         VERIFIER_INPUTS.clear();
         TOOL_CALLS.set(0);
+        ROUTING_BLOCKS.clear();
     }
 
     public QualityEscalationAgent() {
@@ -156,11 +177,20 @@ public class QualityEscalationAgent extends Agent {
             String toolResults = toolResults(messages);
             if ("small".equals(tag)) {
                 if (request.contains("nothing")) {
-                    return new ChatResult(ChatMessage.assistant(List.of()));
+                    return small(ChatMessage.assistant(List.of()));
+                }
+                if (request.contains("unknown tool")) {
+                    // "search" is not among small's tools: the gate rejects the round before
+                    // anything is dispatched.
+                    return small(
+                            ChatMessage.assistant(
+                                    List.of(
+                                            new ToolCallBlock(
+                                                    "call-2", "search", Map.of("q", request)))));
                 }
                 if (request.contains("lookup")) {
                     if (toolResults.isEmpty()) {
-                        return new ChatResult(
+                        return small(
                                 ChatMessage.assistant(
                                         List.of(
                                                 new ToolCallBlock(
@@ -168,15 +198,26 @@ public class QualityEscalationAgent extends Agent {
                                                         "lookup",
                                                         Map.of("q", request)))));
                     }
-                    return new ChatResult(ChatMessage.assistant("weak"));
+                    return small(ChatMessage.assistant("weak"));
                 }
-                return new ChatResult(ChatMessage.assistant("small:" + request));
+                return small(ChatMessage.assistant("small:" + request));
             }
             if (request.contains("big down")) {
                 throw new IllegalStateException("big is down");
             }
             String suffix = toolResults.isEmpty() ? "" : "+tool=" + toolResults;
             return new ChatResult(ChatMessage.assistant("big:" + request + suffix));
+        }
+
+        /** A {@code small} answer with the fixed token usage every small round reports. */
+        private static ChatResult small(ChatMessage message) {
+            return new ChatResult(
+                    message,
+                    "scripted-small",
+                    null,
+                    new TokenUsage(SMALL_PROMPT_TOKENS, SMALL_COMPLETION_TOKENS),
+                    "stop",
+                    Map.of());
         }
     }
 
@@ -280,6 +321,7 @@ public class QualityEscalationAgent extends Agent {
             return;
         }
         Map<?, ?> routing = (Map<?, ?>) event.getAttr("model_routing");
+        ROUTING_BLOCKS.add(routing);
         List<?> hops = (List<?>) routing.get("escalations");
         String rendered =
                 hops.stream()

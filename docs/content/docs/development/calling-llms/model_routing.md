@@ -575,7 +575,9 @@ verifier sees the conversation as the candidate received it, with the
 candidate's bound prompt rendered, and the candidate's answer; when no user
 message carries text, the prompt arguments are listed instead. A refusal or a
 non-predicate answer counts as acceptance, and a verifier that exhausts its
-retries fails the request.
+retries fails the request. By default the decision model is not asked about a
+round that only requests tools: the structural checks still vet those calls,
+and the model judges the answer written once the tools have returned.
 
 A **custom signal** implements `QualitySignal`. It receives a `QualityContext`
 with the request id, router, current tier, the conversation as the candidate

@@ -34,8 +34,9 @@ public final class QualitySignals {
      * answer satisfy the request?"); a {@code probability_true} below {@code minProbability}
      * escalates. The engine runs the call on its durable, metered path under the id {@code
      * escalate:<router>:<candidate>}, so a stored verdict is reused on replay. The reported
-     * probability becomes the verdict's score. Decision-model probabilities are not calibrated
-     * everywhere: choose the threshold from measurements on your own traffic.
+     * probability becomes the verdict's score. A round made only of tool calls is not judged by
+     * this signal; the structural checks still apply to it. Decision-model probabilities are not
+     * calibrated everywhere: choose the threshold from measurements on your own traffic.
      *
      * @param decisionModel the name of the registered decision model
      * @param minProbability the acceptance bound, in [0, 1]
