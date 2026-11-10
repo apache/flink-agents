@@ -107,14 +107,13 @@ public interface RunnerContext {
     Resource getResource(String name, ResourceType type) throws Exception;
 
     /**
-     * Checks whether a resource of the given name and type is registered, without creating it.
+     * Checks whether a resource of the given name and type is available, without creating it.
      *
-     * <p>Used, for example, to detect whether a requested chat-model name is actually a {@code
-     * MODEL_ROUTER}. Default returns {@code false} for contexts without resource support.
+     * <p>Default returns {@code false} for contexts without resource support.
      *
      * @param name the resource name
      * @param type the resource type
-     * @return true if such a resource is registered
+     * @return true if the resource is available
      */
     default boolean hasResource(String name, ResourceType type) {
         return false;
