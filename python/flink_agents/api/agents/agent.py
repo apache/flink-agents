@@ -23,7 +23,7 @@ from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceType,
     SerializableResource,
-    check_registrable_from_python,
+    check_model_name_collision,
 )
 
 STRUCTURED_OUTPUT = "structured_output"
@@ -169,7 +169,7 @@ class Agent(ABC):
         Agent
             The agent to add the resource.
         """
-        check_registrable_from_python(resource_type)
+        check_model_name_collision(name, resource_type, self._resources)
         if name in self._resources[resource_type]:
             msg = f"{resource_type.value} {name} already defined"
             raise ValueError(msg)

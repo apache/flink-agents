@@ -83,6 +83,7 @@ def _runner(chat_model: Any, max_retries: int = 0) -> tuple[MagicMock, list, _Me
     ctx.action_metric_group = None
     ctx.send_event = MagicMock(side_effect=sent.append)
     ctx.get_resource = MagicMock(return_value=chat_model)
+    ctx.has_resource = MagicMock(return_value=False)
     ctx.durable_execute = MagicMock(
         side_effect=lambda fn, *args, durable_id=None, **kwargs: fn(*args, **kwargs)
     )

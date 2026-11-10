@@ -35,15 +35,16 @@ use a smaller model for everyday requests. A **routing strategy** selects a
 candidate or **abstains** (makes no selection), in which case the router uses its
 default model.
 
-Use the router's resource name in a `ChatRequestEvent` or a Java `ctx.chat` call.
+Use the router's resource name in a `ChatRequestEvent` or a `ctx.chat` call.
 The selected model uses its own prompt, tools, skills, and generation settings.
 Routing can also try another candidate if the initial model call fails.
 
 {{< hint info >}}
-Routers currently support the Java Programmatic API: register them on an Agent or
-its execution environment. There is no router declaration annotation, Python
-registration API, or YAML router section. The built-in `ReActAgent` does not
-accept a router in place of its chat model setup.
+Routers are declared with the Programmatic API in Java and Python: register them on
+an Agent or its execution environment. Python supports the rules and custom
+strategies; the LLM judge and decision model strategies are Java only. YAML router
+declarations, Java annotations, and Python decorators are not supported. The built-in `ReActAgent` does
+not accept a router in place of its chat model setup.
 {{< /hint >}}
 
 <span id="quick-start"></span>
@@ -58,8 +59,29 @@ for registration methods and scopes.
 
 The example below assumes two setups named `small` and `big`. It sends requests
 mentioning code or SQL to `big` and uses `small` when no rule matches. Add this
-constructor to your Agent class:
+to your Agent class:
 
+{{< tabs "Register a Router" >}}
+{{< tab "Python" >}}
+```python
+from flink_agents.api.chat_models.routing import ModelRouter, Strategies
+from flink_agents.api.resource import ResourceType
+
+
+def __init__(self) -> None:
+    super().__init__()
+    self.add_resource(
+        "router",
+        ResourceType.MODEL_ROUTER,
+        ModelRouter.of("small", "big")
+        .strategy(Strategies.rules({"big": r"\b(code|sql|program|analyze|prove)\b"}))
+        .default_model("small")
+        .fallback(enabled=True)
+        .build(),
+    )
+```
+{{< /tab >}}
+{{< tab "Java" >}}
 ```java
 public ModelRoutingAgent() {
     Map<String, String> rules = new LinkedHashMap<>();
@@ -75,6 +97,8 @@ public ModelRoutingAgent() {
                     .build());
 }
 ```
+{{< /tab >}}
+{{< /tabs >}}
 
 `ModelRouter.of(...).build()` returns a `ResourceDescriptor`. Register it as a
 `MODEL_ROUTER` Resource using the
@@ -91,9 +115,20 @@ environment.
 | `fallback(boolean)` | Optional | Try remaining candidates after the selected model fails. Defaults to `false`. |
 | `build()` | Required | Validate the declaration and produce the descriptor. |
 
-A resource name cannot identify both a chat model and a router. Candidates and
-judges must be chat model setups; a router cannot serve as another router's
-candidate or judge, or as a chat model connection.
+Python uses the same builder with `default_model(name)` and `fallback(enabled=...)`.
+
+A chat model and a model router registered on the same agent must have different
+names.
+
+An internal sub-agent inherits resources, including chat models and routers,
+from its parent agent (the agent that contains it). If the sub-agent registers
+its own chat model or router with the same name, that definition takes precedence.
+For example, if the parent agent registers a router named `assistant` and the
+sub-agent registers a chat model named `assistant`, a chat request to `assistant`
+inside the sub-agent calls its own chat model without using the parent's router.
+
+Candidates and judges must be chat model setups; a router cannot serve as another
+router's candidate or judge, or as a chat model connection.
 
 ## Routing Strategies
 
@@ -103,17 +138,36 @@ use the same [selection and failure rules](#default-model-and-fallback).
 
 ### Rules
 
-`Strategies.rules(Map<String, String>)` maps candidate names to regular
+`Strategies.rules(...)` maps candidate names to regular
 expressions. It checks the **text of the most recent user message** in map
 iteration order and selects the first matching candidate. An empty rule map,
 an absent or empty user message, or no match causes abstention.
 
-Rules use Java `java.util.regex.Pattern` with `Pattern.CASE_INSENSITIVE`.
-Matching uses `Matcher.find()`: a matching substring is sufficient. Use `\A...\z`
-when the rule should match the whole message. Case-insensitive
-matching covers ASCII letters by default; add `(?u)` for Unicode case folding.
-Backslashes must be escaped in Java string literals: `"\\bcode\\b"` represents
-`\bcode\b`, matching `code` at word boundaries.
+A matching substring is sufficient; anchor the pattern (`\A...\z` in Java,
+`\A...\Z` in Python) when the rule should match the whole message. Matching
+is case-insensitive for ASCII letters.
+
+{{< tabs "Rules" >}}
+{{< tab "Python" >}}
+Rules use `re.search` with `re.IGNORECASE | re.ASCII`; a `dict` keeps rule order.
+Case folding is ASCII only; Unicode flags such as `(?u)` are rejected.
+Patterns must also be valid Java regular expressions, so avoid Python-only syntax
+such as named groups (`(?P<name>...)`).
+
+```python
+ModelRouter.of("small", "medium", "big").strategy(
+    Strategies.rules({
+        "big": r"\b(code|sql|program|analyze|prove)\b",
+        "medium": r"\b(summari[sz]e|translate)\b",
+    })
+).default_model("small").build()
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+Rules use `java.util.regex.Pattern` with `Pattern.CASE_INSENSITIVE` and
+`Matcher.find()`; add `(?u)` for Unicode case folding. Backslashes must be escaped
+in Java string literals: `"\\bcode\\b"` represents `\bcode\b`. `Map.of(...)`
+does not guarantee rule order.
 
 ```java
 // LinkedHashMap preserves priority when patterns overlap.
@@ -126,13 +180,17 @@ ModelRouter.of("small", "medium", "big")
         .defaultModel("small")
         .build();
 ```
+{{< /tab >}}
+{{< /tabs >}}
 
-This example also requires a registered `medium` setup. `Map.of(...)` does not
-guarantee rule order. Rules see user-message text before a candidate's prompt is
+This example also requires a registered `medium` setup. Rules see user-message
+text before a candidate's prompt is
 applied; use a [custom executor](#custom-executor) to route on prompt arguments.
 Invalid patterns and rule targets outside the candidate list fail validation.
 
 ### LLM Judge
+
+Python doesn't support this strategy yet.
 
 `Strategies.llm(judgeModel)` asks a registered chat model to choose a candidate
 based on the candidate descriptions and the request. The judge setup must have
@@ -186,6 +244,8 @@ text budget. This is not a token limit or a hard cap on total input.
 
 ### Decision Model
 
+Python doesn't support this strategy yet.
+
 `Strategies.decision(decisionModel)` asks a registered
 [decision model]({{< ref "docs/development/decision_models" >}}) one choice
 question: the options are the candidate names and the criteria are their
@@ -237,15 +297,53 @@ The decision model's `provider_confidence`, when the provider reports one, is
 recorded in the metadata but is not used for the threshold, since not every
 provider returns it. Built-in decision providers are Python, so a Java job that
 uses one needs the Python environment on the TaskManagers, as for any Java
-decision call. Like the other strategies, decision-model routing is available
-from the Java Programmatic API only.
+decision call.
 
 ### Custom Executor
 
-`Strategies.custom(...)` runs your own selection logic. Implement `CustomRoutingExecutor` as a public class with a public `(Map<String, Object>)` constructor that receives the declaration's arguments, or a public no-arg constructor. The class must be on the classpath of the client and the TaskManagers.
+`Strategies.custom(...)` runs your own selection logic. Implement `CustomRoutingExecutor` with a constructor that receives the declaration's arguments as a map, or a constructor with no arguments. The class must be available on the client and the TaskManagers.
 
 {{< tabs "Custom Routing Executor" >}}
+{{< tab "Python" >}}
+```python
+from typing import Any
 
+from flink_agents.api.chat_models.routing import (
+    CustomRoutingExecutor,
+    ModelRouter,
+    RoutingContext,
+    RoutingDecision,
+    RoutingStrategy,
+    Strategies,
+)
+
+
+class LengthRoutingExecutor(CustomRoutingExecutor):
+    def __init__(self, args: dict[str, Any]) -> None:
+        self.threshold = args.get("threshold", 400)
+
+    def route(
+        self, strategy: RoutingStrategy, context: RoutingContext
+    ) -> RoutingDecision:
+        length = len(context.last_user_message())
+        if length > self.threshold:
+            # The last declared candidate is the strongest model in this router.
+            return RoutingDecision(
+                context.candidates[-1].name,
+                reason=f"request longer than {self.threshold} characters",
+                score=length,
+            )
+        return RoutingDecision.abstain()
+
+
+# Declaration: the arguments are handed to the constructor.
+ModelRouter.of("small", "big").strategy(
+    Strategies.custom(LengthRoutingExecutor, {"threshold": 400})
+).default_model("small").build()
+```
+
+The class must be importable by its module and class name.
+{{< /tab >}}
 {{< tab "Java" >}}
 ```java
 public class LengthRoutingExecutor implements CustomRoutingExecutor {
@@ -279,13 +377,14 @@ ModelRouter.of("small", "big")
         .defaultModel("small")
         .build();
 ```
-{{< /tab >}}
 
+The class and its constructor must be public.
+{{< /tab >}}
 {{< /tabs >}}
 
-`RoutingContext` is a read-only view of the request: the messages, prompt arguments, last and first user message, the candidates with their descriptions, the default model, the router name, and the request ID. Put tenant or workload attributes in the prompt arguments when an executor should route on them. `RoutingDecision.of(name)` selects a candidate, `RoutingDecision.builder(name)` adds a reason, score, and metadata that appear on the routing event and the response, and `RoutingDecision.abstain()` defers to the default. An exception thrown by `route()` fails the request; the strategy itself is not retried.
+`RoutingContext` is a read-only view of the request: the messages, prompt arguments, last and first user message, the candidates with their descriptions, the default model, the router name, and the request ID. Put tenant or workload attributes in the prompt arguments when an executor should route on them. `RoutingDecision.of(name)` selects a candidate, `RoutingDecision.builder(name)` in Java or the `RoutingDecision(name, reason=..., score=..., metadata=...)` constructor in Python adds a reason, score, and metadata that appear on the routing event and the response, and `RoutingDecision.abstain()` defers to the default. An exception thrown by `route()` fails the request; the strategy itself is not retried.
 
-Custom executors must only select. The context exposes no chat API; when the decision should come from a model, use `Strategies.llm(...)` or `Strategies.decision(...)` so the call gets the framework's retries, metrics, and events. Keep constructors free of side effects: an executor may be constructed more than once, for example after recovery.
+Custom executors must only select. The context exposes no chat API; when the decision should come from a model, use `Strategies.llm(...)` or `Strategies.decision(...)` in Java so the call gets the framework's retries, metrics, and events. Keep constructors free of side effects: an executor may be constructed more than once, for example after recovery.
 
 ## Call a Router
 
@@ -293,23 +392,34 @@ Use the registered router name wherever a chat call takes a model name. The
 following fragments run inside an Action:
 
 {{< tabs "Call a Model Router" >}}
-{{< tab "Chat events" >}}
+{{< tab "Python" >}}
+```python
+# Chat event: handle the result in an Action subscribed to ChatResponseEvent.
+ctx.send_event(ChatRequestEvent(
+    model="router",
+    messages=[ChatMessage.user("Write a SQL query to count orders.")],
+))
+
+# ctx.chat: use the result in the same async Action.
+result = await ctx.chat(
+    "router", [ChatMessage.user("Write a SQL query to count orders.")]
+)
+```
+{{< /tab >}}
+{{< tab "Java" >}}
 ```java
+// Chat event: handle the result in an Action subscribed to ChatResponseEvent.
 ctx.sendEvent(new ChatRequestEvent(
         "router", List.of(ChatMessage.user("Write a SQL query to count orders."))));
-```
 
-Handle the result in an Action subscribed to `ChatResponseEvent`.
-{{< /tab >}}
-{{< tab "ctx.chat" >}}
-```java
+// ctx.chat: use the result in the same Action.
 ChatResult result = ctx.chat(
         "router", List.of(ChatMessage.user("Write a SQL query to count orders.")))
         .await();
 ```
 
-Use the result in the same Action. Java awaits require the runtime
-configuration described in [Using ctx.chat]({{< ref "docs/development/calling-llms/chat#using-ctx-chat" >}}).
+Java awaits require the runtime configuration described in
+[Using ctx.chat]({{< ref "docs/development/calling-llms/chat#using-ctx-chat" >}}).
 {{< /tab >}}
 {{< /tabs >}}
 
@@ -335,7 +445,7 @@ behaviors:
 | Decision model's chosen candidate has no reported probability and no `withMinProbability` is set | Call the chosen candidate; the routing event carries no `score`. |
 | Candidate call fails with fallback disabled | Fail the request after applicable retries. |
 | Candidate call fails with fallback enabled | Try the remaining candidates in declaration order, stopping at the first successful response. |
-| All attempted candidates fail | Fail the request with the last candidate's error; earlier errors remain in diagnostics. |
+| All attempted candidates fail | Fail the request. Java reports the last candidate's error and keeps earlier errors as suppressed exceptions; Python reports every attempted candidate's error in one message. |
 
 For candidates `[small, medium, big]`, selecting `big` with fallback enabled tries
 `big`, then `small`, then `medium`. Model-call retries run before fallback; see
@@ -361,7 +471,7 @@ abstention selects the default. If a later candidate successfully answers the
 initial call, it emits another event with `decision_source: fallback`. Failed
 candidate attempts do not each emit a routing event.
 
-For event-based requests, subscribe with `@Action(EventType.ModelRoutingEvent)`
+For event-based requests, subscribe an Action to `EventType.ModelRoutingEvent`
 or inspect [Trace Log]({{< ref "docs/operations/monitoring#trace-log" >}}).
 In Trace Log, these Events have `entityType: event` and
 `entityName: _model_routing_event`; their fields are under `attributes`.
@@ -386,6 +496,19 @@ with `selected_model`, `final_model`, `fallback_attempted`, and
 `fallback_models_tried`, plus the router and decision details. Failed responses
 do not carry this attribute. For example, in a response Action:
 
+{{< tabs "Routing Attribute" >}}
+{{< tab "Python" >}}
+```python
+response = ChatResponseEvent.from_event(event)
+if response.is_failed:
+    raise RuntimeError(response.error)
+routing = response.get_attr("model_routing")
+if routing is not None:
+    final_model = routing["final_model"]
+    # Use the registered name of the model that answered.
+```
+{{< /tab >}}
+{{< tab "Java" >}}
 ```java
 if (event.isFailed()) {
     throw new IllegalStateException(event.getError());
@@ -396,6 +519,8 @@ if (routing != null) {
     // Use the registered name of the model that answered.
 }
 ```
+{{< /tab >}}
+{{< /tabs >}}
 
 `ctx.chat` returns only `ChatResult`, without the response Event's routing
 attributes. Its internal routing events do not trigger the caller's Action
@@ -424,3 +549,4 @@ for the persistence and replay guarantees.
 - {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/openai/OpenAiDecisionRoutingExample.java" name="`OpenAiDecisionRoutingExample`" >}}: the same two OpenAI models routed by a decision model (the built-in Python OpenAI decision model, used through the cross-language API), with an agent that reports the selected model, decision source and score.
 
 All of them register their resources on the execution environment. The first three use the {{< gh_link file="examples/src/main/java/org/apache/flink/agents/examples/agents/ModelRoutingAgent.java" name="`ModelRoutingAgent`" >}} to send requests and handle responses.
+

@@ -178,6 +178,9 @@ class AgentPlan(BaseModel):
                 agent_name if agent_name is not None else agent.__class__.__name__
             )
             plan.config = config
+            from flink_agents.plan.routing.validation import validate_routing
+
+            validate_routing(resource_providers)
             return plan
         finally:
             if owner:
@@ -479,6 +482,7 @@ def _get_resource_providers(
         )
 
     for resource_type in [
+        ResourceType.MODEL_ROUTER,
         ResourceType.CHAT_MODEL,
         ResourceType.CHAT_MODEL_CONNECTION,
         ResourceType.DECISION_MODEL,
@@ -488,6 +492,12 @@ def _get_resource_providers(
         ResourceType.VECTOR_STORE,
     ]:
         for name, descriptor in agent.resources[resource_type].items():
+            if (
+                resource_type == ResourceType.MODEL_ROUTER
+                and descriptor.language != "python"
+            ):
+                msg = f"Model router '{name}' must use a Python descriptor in a Python agent."
+                raise TypeError(msg)
             provider = (
                 JavaResourceProvider
                 if descriptor.language == "java"

@@ -21,6 +21,7 @@ from typing import NoReturn
 import pytest
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.chat_models.routing import ModelRouter, Strategies
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceType
 
@@ -46,13 +47,23 @@ class _StubExecutionEnvironment(AgentsExecutionEnvironment):
     [Agent, _StubExecutionEnvironment],
     ids=["agent", "execution_environment"],
 )
-def test_python_model_router_registration_is_an_explicit_error(
-    registrar_type: type,
-) -> None:
-    """MODEL_ROUTER exists in the enum so Java plans deserialize, but Python-side
-    registration must fail loudly instead of dropping silently (see PR #964 review) —
-    at every entry point that registers resources (they share one guard helper).
-    """
+def test_python_model_router_registration(registrar_type: type) -> None:
     registrar = registrar_type()
-    with pytest.raises(NotImplementedError, match="Java side"):
-        registrar.add_resource("router", ResourceType.MODEL_ROUTER, object())
+    descriptor = ModelRouter.of("small").strategy(Strategies.rules({})).build()
+    registrar.add_resource("router", ResourceType.MODEL_ROUTER, descriptor)
+    assert registrar.resources[ResourceType.MODEL_ROUTER]["router"] == descriptor
+
+
+@pytest.mark.parametrize("registrar_type", [Agent, _StubExecutionEnvironment])
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (ResourceType.CHAT_MODEL, ResourceType.MODEL_ROUTER),
+        (ResourceType.MODEL_ROUTER, ResourceType.CHAT_MODEL),
+    ],
+)
+def test_chat_model_and_router_names_collide(registrar_type, first, second):
+    registrar = registrar_type()
+    registrar.add_resource("same", first, object())
+    with pytest.raises(ValueError, match="both a chat model and a model router"):
+        registrar.add_resource("same", second, object())

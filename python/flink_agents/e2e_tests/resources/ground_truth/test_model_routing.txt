@@ -1,0 +1,5 @@
+{"id": 1, "answer": "big: review this code", "selected_model": "big", "final_model": "big", "decision_source": "strategy", "fallback_models_tried": []}
+{"id": 2, "answer": "small: say hello", "selected_model": "small", "final_model": "small", "decision_source": "default", "fallback_models_tried": []}
+{"id": 3, "answer": "small: run this sql", "selected_model": "broken", "final_model": "small", "decision_source": "fallback", "fallback_models_tried": ["small"]}
+{"id": 4, "answer": "big: urgent outage", "selected_model": "big", "final_model": "big", "decision_source": "strategy", "fallback_models_tried": []}
+{"id": 5, "answer": "small: weekly report", "selected_model": "small", "final_model": "small", "decision_source": "default", "fallback_models_tried": []}

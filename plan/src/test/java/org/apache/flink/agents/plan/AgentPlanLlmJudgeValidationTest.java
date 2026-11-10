@@ -211,6 +211,64 @@ public class AgentPlanLlmJudgeValidationTest {
     }
 
     @Test
+    void pythonCustomExecutorIsValidatedByPythonInsteadOfClassForName() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
+        Map<String, Object> args =
+                Map.of(
+                        "candidates",
+                        List.of("small"),
+                        "strategy_type",
+                        "custom",
+                        "strategy_args",
+                        Map.of(),
+                        "strategy_executor_class",
+                        "example.routing.PythonExecutor");
+        providers
+                .get(ResourceType.MODEL_ROUTER)
+                .put(
+                        "router",
+                        new PythonResourceProvider(
+                                "router",
+                                ResourceType.MODEL_ROUTER,
+                                new PythonResourceDescriptor(
+                                        "flink_agents.api.chat_models.routing",
+                                        "ModelRouter",
+                                        args)));
+        assertThatCode(() -> new AgentPlan(Map.of(), providers)).doesNotThrowAnyException();
+        // The same path in a Java declaration still fails Java class validation.
+        setRouter(providers, new ResourceDescriptor(ModelRouter.class.getName(), args));
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("example.routing.PythonExecutor");
+    }
+
+    @Test
+    void pythonRulePatternsStillPassThroughJavaValidation() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
+        Map<String, Object> args =
+                Map.of(
+                        "candidates",
+                        List.of("small"),
+                        "strategy_type",
+                        "rule_based",
+                        "strategy_args",
+                        Map.of("rules", Map.of("small", "(?P<word>code)")));
+        providers
+                .get(ResourceType.MODEL_ROUTER)
+                .put(
+                        "router",
+                        new PythonResourceProvider(
+                                "router",
+                                ResourceType.MODEL_ROUTER,
+                                new PythonResourceDescriptor(
+                                        "flink_agents.api.chat_models.routing",
+                                        "ModelRouter",
+                                        args)));
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void pythonBackedPlainJudgePassesValidation() {
         Map<ResourceType, Map<String, ResourceProvider>> providers = providers(false);
         ResourceDescriptor plain = new PythonResourceDescriptor("pkg", "PyJudge", Map.of());

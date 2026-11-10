@@ -122,6 +122,35 @@ public class CompileUtilsTest {
         checkResult(resultList);
     }
 
+    @Test
+    void connectToAgentWithUidSetsUidOnAgentTransformation() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        KeyedStream<Long, Long> keyedInputStream = env.fromData(testSequence).keyBy(x -> x);
+
+        DataStream<Object> withUid =
+                CompileUtils.connectToAgent(keyedInputStream, TEST_AGENT_PLAN, "agent-uid");
+        DataStream<Object> withoutUid =
+                CompileUtils.connectToAgent(keyedInputStream, TEST_AGENT_PLAN);
+        DataStream<Object> nullUid =
+                CompileUtils.connectToAgent(keyedInputStream, TEST_AGENT_PLAN, null);
+
+        assertThat(withUid.getTransformation().getUid()).isEqualTo("agent-uid");
+        assertThat(withoutUid.getTransformation().getUid()).isNull();
+        assertThat(nullUid.getTransformation().getUid()).isNull();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", " ", "   "})
+    void connectToAgentRejectsBlankUid(String uid) {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        KeyedStream<Long, Long> keyedInputStream = env.fromData(testSequence).keyBy(x -> x);
+
+        assertThatThrownBy(
+                        () -> CompileUtils.connectToAgent(keyedInputStream, TEST_AGENT_PLAN, uid))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must not be empty or blank");
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     @Timeout(60)

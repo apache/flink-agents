@@ -15,12 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import json
-import tempfile
-from pathlib import Path
 
 import pytest
-import yaml
 
 from flink_agents.api.configuration import ConfigOption
 from flink_agents.api.core_options import (
@@ -32,73 +28,25 @@ from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
 
 
-def test_load_configuration_from_file() -> None:
-    """Test loading configuration from a YAML file."""
-    # Create a temporary YAML file with test data
-    test_data = {
-        "agent": {
-            "database": {
-                "host": "localhost",
-                "port": 5432,
-                "credentials": {"username": "admin", "password": "secret"},
-            },
-            "api": {"endpoint": "/api/v1", "timeout": 30.0},
-            "debug": True,
-        }
-    }
+def test_map_values_remain_intact_through_plan_json() -> None:
+    value = {"nested": {"value": 1}}
+    data = {"custom.option": value}
+    config = AgentConfiguration(data)
+    data["custom.option"] = "changed"
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        yaml.dump(test_data, f)
-        config_file = f.name
-
-    try:
-        # Load configuration
-        config = AgentConfiguration()
-        config.load_from_file(config_file)
-
-        # Test that nested configuration is properly flattened
-        assert config.get_str("database.host") == "localhost"
-        assert config.get_int("database.port") == 5432
-        assert config.get_str("database.credentials.username") == "admin"
-        assert config.get_str("database.credentials.password") == "secret"
-        assert config.get_str("api.endpoint") == "/api/v1"
-        assert config.get_float("api.timeout") == 30.0
-        assert config.get_bool("debug") is True
-    finally:
-        config_file = Path(config_file)
-        config_file.unlink()
+    assert config.get_conf_data() == {"custom.option": value}
+    plan = AgentPlan(actions={}, config=config)
+    restored = AgentPlan.model_validate_json(
+        plan.model_dump_json(serialize_as_any=True)
+    )
+    assert restored.config.get_conf_data() == config.get_conf_data()
 
 
-def test_load_configuration_without_path() -> None:
-    """Test loading configuration without a path (should not change _conf_data)."""
-    config = AgentConfiguration()
-    # Initially _conf_data should be empty or unchanged
-    original_conf_data = config.get_conf_data().copy()
-    config.load_from_file(None)
-    # _conf_data should remain unchanged
-    assert config.get_conf_data() == original_conf_data
-
-
-def test_load_configuration_with_invalid_file() -> None:
-    """Test loading configuration with a non-existent file."""
-    config = AgentConfiguration()
-    with pytest.raises(FileNotFoundError):
-        config.load_from_file("/path/to/nonexistent/file.yaml")
-
-
-def test_load_configuration_with_invalid_yaml() -> None:
-    """Test loading configuration with invalid YAML content."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write("invalid: yaml: content: [")
-        config_file = f.name
-
-    try:
-        config = AgentConfiguration()
-        with pytest.raises(yaml.YAMLError):
-            config.load_from_file(config_file)
-    finally:
-        config_file = Path(config_file)
-        config_file.unlink()
+def test_get_bool_converts_string_values() -> None:
+    """String booleans convert on read, including values loaded from legacy files."""
+    config = AgentConfiguration({"enabled": "true", "disabled": "false"})
+    assert config.get_bool("enabled") is True
+    assert config.get_bool("disabled") is False
 
 
 def test_get_int() -> None:
@@ -259,36 +207,6 @@ def test_get_with_null_and_default() -> None:
     assert config.get(nullable_str) == "default"
 
 
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        ("FILE", LoggerType.FILE),
-        ("file", LoggerType.FILE),
-        ("File", LoggerType.FILE),
-        ("SLF4J", LoggerType.SLF4J),
-        ("slf4j", LoggerType.SLF4J),
-        ("Slf4j", LoggerType.SLF4J),
-    ],
-)
-def test_trace_log_output_type_from_yaml(
-    tmp_path: Path, value: str, expected: LoggerType
-) -> None:
-    config_file = tmp_path / "agent.yaml"
-    config_file.write_text(
-        yaml.safe_dump({"agent": {"trace-log": {"output-type": value}}}),
-        encoding="utf-8",
-    )
-    config = AgentConfiguration()
-    config.load_from_file(str(config_file))
-    assert config.get(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE) is expected
-
-    config.set(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE, expected)
-    serialized = config.model_dump_json()
-    assert json.loads(serialized)["conf_data"]["trace-log.output-type"] == value.lower()
-    restored = AgentConfiguration.model_validate_json(serialized)
-    assert restored.get(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE) is expected
-
-
 @pytest.mark.parametrize("value", ["unknown", "", 123])
 def test_trace_log_output_type_rejects_invalid_values(value: object) -> None:
     config = AgentConfiguration({"trace-log.output-type": value})
@@ -308,52 +226,6 @@ def test_trace_log_defaults_and_empty_targets_survive_json() -> None:
     restored = AgentConfiguration.model_validate_json(config.model_dump_json())
     assert restored.get(AgentConfigOptions.TRACE_LOG_TARGETS) == []
     assert restored.get(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE) is LoggerType.FILE
-
-
-@pytest.mark.parametrize(
-    ("targets", "expected"),
-    [
-        (
-            [
-                {"scope": "ALL", "level": "OFF"},
-                {"scope": "EVENT_ONLY", "level": "STANDARD"},
-                {"scope": {"event": "com.foo.*"}, "level": "VERBOSE"},
-                {"scope": {"action": "process"}},
-                {"scope": {"tool": "*"}},
-                {"scope": {"entityType": "embedding", "entityName": "search"}},
-            ],
-            [
-                TraceLogTarget.all(TraceLogLevel.OFF),
-                TraceLogTarget.events(TraceLogLevel.STANDARD),
-                TraceLogTarget.event("com.foo.*", TraceLogLevel.VERBOSE),
-                TraceLogTarget.action("process"),
-                TraceLogTarget.tools(),
-                TraceLogTarget.entity("embedding", "search"),
-            ],
-        ),
-        ([], []),
-    ],
-)
-def test_trace_log_targets_survive_yaml_and_plan_json(
-    tmp_path: Path, targets: list[dict], expected: list[TraceLogTarget]
-) -> None:
-    config_file = tmp_path / "agent.yaml"
-    config_file.write_text(
-        yaml.safe_dump({"agent": {"trace-log": {"targets": targets}}}),
-        encoding="utf-8",
-    )
-    config = AgentConfiguration()
-    config.load_from_file(str(config_file))
-    assert config.get(AgentConfigOptions.TRACE_LOG_TARGETS) == expected
-
-    typed_config = AgentConfiguration()
-    typed_config.set(AgentConfigOptions.TRACE_LOG_TARGETS, expected)
-    assert config.get_conf_data() == typed_config.get_conf_data()
-    plan = AgentPlan(actions={}, config=config)
-    serialized = plan.model_dump_json(serialize_as_any=True)
-    restored = AgentPlan.model_validate_json(serialized)
-    assert restored.config.get(AgentConfigOptions.TRACE_LOG_TARGETS) == expected
-    assert json.loads(serialized)["config"]["conf_data"] == config.get_conf_data()
 
 
 @pytest.mark.parametrize(

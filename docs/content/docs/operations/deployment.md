@@ -120,6 +120,14 @@ For all available options, see the [Flink CLI documentation](https://nightlies.a
 
 Now you should see a Flink job submitted to the Flink Cluster in Flink web UI (typically accessible at http://&lt;jobmanagerHost&gt;:8081).
 
+### Set a stable operator UID
+
+Set a stable UID on the agent operator from the first deployment, so savepoints keep
+restoring to it when the job topology changes. Adding or changing the UID later may require
+migrating existing savepoints. See
+[Stable operator UID]({{< ref "docs/development/integrate_with_flink#stable-operator-uid" >}})
+for how to set it.
+
 
 <span id="exactly-once-output-consistency"></span>
 <span id="exactly-once-action-consistency"></span>

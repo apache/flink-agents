@@ -32,7 +32,7 @@ from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceType,
     SerializableResource,
-    check_registrable_from_python,
+    check_model_name_collision,
 )
 from flink_agents.api.version_compatibility import flink_version_manager
 
@@ -41,7 +41,7 @@ class AgentBuilder(ABC):
     """Builder for integrating agent with input and output."""
 
     @abstractmethod
-    def apply(self, agent: "Agent | str") -> "AgentBuilder":
+    def apply(self, agent: "Agent | str", uid: str | None = None) -> "AgentBuilder":
         """Set agent of AgentBuilder.
 
         Parameters
@@ -49,6 +49,11 @@ class AgentBuilder(ABC):
         agent : Agent | str
             Either an Agent instance, or the name of an agent registered
             on the environment (e.g. by ``load_yaml``).
+        uid : str | None
+            Optional stable UID of the agent operator, used by remote execution.
+            It identifies the operator in the job, so it must be unique there.
+            When omitted, no UID is set and Flink generates the operator ID. An
+            empty or blank UID is rejected.
         """
 
     @abstractmethod
@@ -258,7 +263,7 @@ class AgentsExecutionEnvironment(ABC):
         AgentsExecutionEnvironment
             The environment to register the resource.
         """
-        check_registrable_from_python(resource_type)
+        check_model_name_collision(name, resource_type, self._resources)
         if name in self._resources[resource_type]:
             msg = f"{resource_type.value} {name} already defined"
             raise ValueError(msg)

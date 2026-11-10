@@ -142,3 +142,53 @@ def test_child_provider_failure_does_not_silently_fall_back() -> None:
     root_provider.provide.assert_not_called()
     child.close()
     root.close()
+
+
+def test_has_resource_checks_inherited_declarations_without_construction():
+    provider = _provider(Mock(spec=Resource))
+    root = ResourceCache({ResourceType.MODEL_ROUTER: {"router": provider}})
+    child = ResourceCache({}, parent=root)
+    assert child.has_resource("router", ResourceType.MODEL_ROUTER)
+    assert not child.has_resource("router", ResourceType.CHAT_MODEL)
+    assert not root.has_resource("missing", ResourceType.MODEL_ROUTER)
+    provider.provide.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("local_type", "parent_type"),
+    [
+        (ResourceType.CHAT_MODEL, ResourceType.MODEL_ROUTER),
+        (ResourceType.MODEL_ROUTER, ResourceType.CHAT_MODEL),
+    ],
+)
+def test_nearest_model_declaration_shadows_both_types(local_type, parent_type):
+    parent_resource, local_resource = [Mock(spec=Resource) for _ in range(2)]
+    parent_provider = _provider(parent_resource)
+    local_provider = _provider(local_resource)
+    root = ResourceCache({parent_type: {"shared": parent_provider}})
+    child = ResourceCache({local_type: {"shared": local_provider}}, parent=root)
+    grandchild = ResourceCache({}, parent=child)
+    # The parent's already opened resource must not affect scoped name resolution.
+    assert root.get_resource("shared", parent_type) is parent_resource
+    for scope in (child, grandchild):
+        assert scope.has_resource("shared", local_type)
+        assert not scope.has_resource("shared", parent_type)
+        local_provider.provide.assert_not_called()
+        with pytest.raises(KeyError, match="Resource not found"):
+            scope.get_resource("shared", parent_type)
+    assert grandchild.get_resource("shared", local_type) is local_resource
+    local_provider.provide.assert_called_once()
+    grandchild.close()
+    child.close()
+    root.close()
+
+
+def test_unrelated_resource_type_does_not_shadow_inherited_router():
+    router, tool = [Mock(spec=Resource) for _ in range(2)]
+    root = ResourceCache({ResourceType.MODEL_ROUTER: {"shared": _provider(router)}})
+    child = ResourceCache({ResourceType.TOOL: {"shared": _provider(tool)}}, parent=root)
+    assert child.has_resource("shared", ResourceType.MODEL_ROUTER)
+    assert child.get_resource("shared", ResourceType.MODEL_ROUTER) is router
+    assert child.get_resource("shared", ResourceType.TOOL) is tool
+    child.close()
+    root.close()

@@ -15,9 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import logging
 import os
-from pathlib import Path
 from typing import Any, Callable, Dict
 
 import cloudpickle
@@ -43,6 +41,7 @@ from flink_agents.api.execution_environment import (
 from flink_agents.api.resource import ResourceType
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.runtime.agent_config_loader import load_agent_configuration
 from flink_agents.runtime.output_type_utils import (
     _unwrap_type_info,
     is_structured_declaration,
@@ -54,8 +53,6 @@ from flink_agents.runtime.output_type_utils import (
     to_row,
 )
 
-_CONFIG_FILE_NAME = "config.yaml"
-_LEGACY_CONFIG_FILE_NAME = "flink-conf.yaml"
 _AGENT_PLAN_JSON_VALIDATOR_CLASS = "org.apache.flink.agents.plan.AgentPlanJsonValidator"
 _AGENT_PLAN_JSON_VALIDATOR_METHOD = "validateAgentPlan"
 
@@ -76,6 +73,7 @@ class RemoteAgentBuilder(AgentBuilder):
 
     __input: DataStream
     __agent_plan_json: str | None = None
+    __agent_uid: str | None = None
     __raw_output: DataStream = None
     __t_env: StreamTableEnvironment
     __config: AgentConfiguration
@@ -106,7 +104,7 @@ class RemoteAgentBuilder(AgentBuilder):
             )
         return self.__t_env
 
-    def apply(self, agent: Agent | str) -> "AgentBuilder":
+    def apply(self, agent: Agent | str, uid: str | None = None) -> "AgentBuilder":
         """Set agent of execution environment.
 
         Parameters
@@ -114,10 +112,22 @@ class RemoteAgentBuilder(AgentBuilder):
         agent : Agent | str
             Either an Agent instance, or the name of an agent registered
             on the environment (e.g. by ``load_yaml``).
+        uid : str | None
+            Optional stable UID of the agent operator. It identifies the operator
+            in the job, so it must be unique there. When omitted, no UID is set
+            and the generated operator ID is unchanged. An empty or blank UID is
+            rejected.
         """
         if self.__agent_plan_json is not None:
             err_msg = "RemoteAgentBuilder doesn't support apply multiple agents yet."
             raise RuntimeError(err_msg)
+        if uid is not None and (not isinstance(uid, str) or not uid.strip()):
+            msg = (
+                "The agent operator UID must not be empty or blank; pass a "
+                "non-blank UID, or None to leave the UID unset and keep the "
+                "generated operator ID."
+            )
+            raise ValueError(msg)
         agent_name = None
         if isinstance(agent, str):
             agent_name = agent
@@ -150,6 +160,7 @@ class RemoteAgentBuilder(AgentBuilder):
         ).model_dump_json(serialize_as_any=True)
         self.__validate_agent_plan_json(agent_plan_json)
         self.__agent_plan_json = agent_plan_json
+        self.__agent_uid = uid
 
         return self
 
@@ -190,9 +201,11 @@ class RemoteAgentBuilder(AgentBuilder):
                 [
                     self.__input._j_data_stream,
                     self.__agent_plan_json,
+                    self.__agent_uid,
                 ],
                 [
                     "org.apache.flink.streaming.api.datastream.KeyedStream",
+                    "java.lang.String",
                     "java.lang.String",
                 ],
             )
@@ -437,44 +450,12 @@ class RemoteExecutionEnvironment(AgentsExecutionEnvironment):
         self.__env.execute(job_name=job_name)
 
     def __load_config_from_flink_conf_dir(self) -> None:
-        """Load agent configuration from FLINK_CONF_DIR if available."""
-        flink_conf_dir = os.environ.get("FLINK_CONF_DIR")
-        if flink_conf_dir is None:
-            return
+        """Load agent configuration from FLINK_CONF_DIR if available.
 
-        # Try to find config file, with fallback to legacy name
-        config_path = self.__find_config_file(flink_conf_dir)
-
-        if config_path is None:
-            logging.error(f"Config file not found in {flink_conf_dir}")
-        else:
-            self.__config.load_from_file(str(config_path))
-
-    def __find_config_file(self, flink_conf_dir: str) -> Path | None:
-        """Find config file in the given directory, checking both new and legacy names.
-
-        Parameters
-        ----------
-        flink_conf_dir : str
-            Directory to search for config files.
-
-        Returns:
-        -------
-        Path | None
-            Path to the config file if found, None otherwise.
+        The file is selected the way Flink itself does it, see
+        ``load_agent_configuration``.
         """
-        # Try legacy config file name first
-        legacy_config_path = Path(flink_conf_dir).joinpath(_LEGACY_CONFIG_FILE_NAME)
-        if legacy_config_path.exists():
-            logging.warning(f"Using legacy config file {_LEGACY_CONFIG_FILE_NAME}")
-            return legacy_config_path
-
-        # Try new config file name as fallback
-        primary_config_path = Path(flink_conf_dir).joinpath(_CONFIG_FILE_NAME)
-        if primary_config_path.exists():
-            return primary_config_path
-
-        return None
+        self.__config = load_agent_configuration(os.environ.get("FLINK_CONF_DIR"))
 
 
 def create_instance(

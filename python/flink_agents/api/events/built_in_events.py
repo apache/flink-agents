@@ -64,14 +64,15 @@ from flink_agents.api.events.memory_event import (
     ShortTermReadEvent,
     ShortTermWriteEvent,
 )
+from flink_agents.api.events.model_routing_event import ModelRoutingEvent
 from flink_agents.api.events.run_event import AgentRunBeginEvent
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 
 # Built-in event type -> concrete class whose ``from_event`` reconstructs it. The
 # memory observation types all dispatch through ``MemoryEvent.from_event``, which
-# selects the concrete subclass from the event type. ``ModelRoutingEvent`` is
-# intentionally absent: it is a Java-only built-in type with no Python counterpart.
+# selects the concrete subclass from the event type.
 REGISTRY: Dict[str, type[Event]] = {
+    ModelRoutingEvent.EVENT_TYPE: ModelRoutingEvent,
     InputEvent.EVENT_TYPE: InputEvent,
     OutputEvent.EVENT_TYPE: OutputEvent,
     ChatRequestEvent.EVENT_TYPE: ChatRequestEvent,

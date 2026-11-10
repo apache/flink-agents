@@ -24,7 +24,6 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.TokenUsage;
-import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -282,8 +281,6 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
             List<Tool> tools,
             Map<String, Object> modelParams,
             Object outputSchema) {
-        // Media blocks are not sent yet; fail rather than drop them (#1059).
-        UnsupportedContentBlockException.rejectMedia("Amazon Bedrock", messages);
         ConverseRequest request = buildRequest(messages, tools, modelParams, outputSchema);
         String modelId = request.modelId();
 

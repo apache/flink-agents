@@ -1404,7 +1404,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         ComponentExecutionListener metricListener =
                 builtInMetrics.createComponentMetricListener(
                         actionTask.getAction().getName(),
-                        name -> executionResources.hasResourceInHierarchy(name, ResourceType.TOOL));
+                        name -> executionResources.hasResource(name, ResourceType.TOOL));
         List<ComponentExecutionListener> listeners = new ArrayList<>();
         listeners.add(
                 record -> {

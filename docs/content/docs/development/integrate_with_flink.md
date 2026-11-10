@@ -257,6 +257,43 @@ Table outputTable =
 
 User should provide `KeySelector` in `from_table()` to tell how to convert the input `Table` to `KeyedStream` internally.
 
+## Stable operator UID
+
+The agent operator holds the agent's memory, pending actions and input events. By default,
+Flink derives its operator ID from the job topology, so some upstream changes can change the
+ID, and state in a savepoint no longer maps back to the operator on restore. Pass a UID to
+`apply` to pin the operator ID. The UID must be unique in the job; an empty or blank UID is
+rejected. When you omit it, the operator ID is generated as before.
+
+Supply the UID before obtaining the output stream or table. To use another agent or UID after
+the output has been built, create a new builder.
+
+{{< tabs "Stable operator UID" >}}
+
+{{< tab "Python" >}}
+```python
+agents_env.from_datastream(input_stream, key_selector=key_selector) \
+    .apply(your_agent, uid="my-agent-uid") \
+    .to_datastream()
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+agentsEnv
+        .fromDataStream(inputStream, keySelector)
+        .apply(yourAgent, "my-agent-uid")
+        .toDataStream();
+```
+
+An agent loaded from YAML takes the UID the same way: `apply("my-agent-name", "my-agent-uid")`.
+{{< /tab >}}
+
+{{< /tabs >}}
+
+Set the UID from the first deployment. Adding or changing it later changes the operator ID,
+so existing savepoints may need to be migrated before their state can be restored.
+
 ## Typed outputs
 
 `to_datastream()` / `toDataStream()` return an unrestricted stream whose elements are whatever the agent emitted (`Object` in Java). To give the output a concrete type, pass the type straight to the terminal: `to_datastream(output_type)` / `toDataStream(TypeInformation)` materialize a typed stream, and `to_table(output_type=...)` / `toTable(TypeInformation)` materialize a typed table. The unrestricted call stays available and unchanged:

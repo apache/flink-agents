@@ -29,6 +29,8 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
+import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
+import org.apache.flink.agents.api.chat.model.routing.Strategies;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
@@ -342,6 +344,55 @@ public class ChatCallTest {
                 ChatCallTest.class.getMethod("subagentCaller", Event.class, RunnerContext.class));
         assertThat(run(new AgentPlan(parent), "hello")).containsExactly("answer:hello");
         assertThat(MODEL_CALLS.get()).isEqualTo(1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"inheritedRouter", "localModel", "localRouter", "inheritedModel"})
+    void chatInsideSubagentUsesLocalModelsOrRoutersBeforeInheritedResources(String scenario)
+            throws Exception {
+        ResourceDescriptor model =
+                ResourceDescriptor.Builder.newBuilder(Model.class.getName()).build();
+        ResourceDescriptor router =
+                ModelRouter.of("candidate").strategy(Strategies.rules(Map.of())).build();
+        Agent child = new Agent();
+        child.addAction(
+                new String[] {InputEvent.EVENT_TYPE},
+                ChatCallTest.class.getMethod("caller", Event.class, RunnerContext.class));
+        Agent parent = new Agent();
+        if ("inheritedModel".equals(scenario)) {
+            parent.addResource("model", ResourceType.CHAT_MODEL, model);
+        } else if ("localRouter".equals(scenario)) {
+            // The router must select candidate, rather than calling the parent's same-name model.
+            parent.addResource(
+                    "model",
+                    ResourceType.CHAT_MODEL,
+                    ResourceDescriptor.Builder.newBuilder(UnusableModel.class.getName()).build());
+            child.addResource("model", ResourceType.MODEL_ROUTER, router);
+            child.addResource("candidate", ResourceType.CHAT_MODEL, model);
+        } else {
+            parent.addResource("model", ResourceType.MODEL_ROUTER, router);
+            if ("localModel".equals(scenario)) {
+                // No candidate is registered: mistakenly selecting the hidden parent router fails.
+                child.addResource("model", ResourceType.CHAT_MODEL, model);
+            } else {
+                parent.addResource("candidate", ResourceType.CHAT_MODEL, model);
+            }
+        }
+        parent.addResource("child", ResourceType.AGENT, child);
+        parent.addAction(
+                new String[] {InputEvent.EVENT_TYPE},
+                ChatCallTest.class.getMethod("subagentCaller", Event.class, RunnerContext.class));
+
+        assertThat(run(new AgentPlan(parent), "hello")).containsExactly("answer:hello");
+        assertThat(MODEL_CALLS.get()).isEqualTo(1);
+    }
+
+    /** Must never be constructed when a local router hides this parent model. */
+    public static class UnusableModel extends Model {
+        public UnusableModel(ResourceDescriptor descriptor, ResourceContext ctx) {
+            super(descriptor, ctx);
+            throw new IllegalStateException("hidden parent model was constructed");
+        }
     }
 
     @ParameterizedTest

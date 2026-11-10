@@ -40,6 +40,7 @@ public interface AgentBuilder {
      *
      * @param agent The agent user defined to run in execution environment.
      * @return A configured AgentBuilder for method chaining.
+     * @throws IllegalStateException if a remote builder has already built its output stream.
      */
     AgentBuilder apply(Agent agent);
 
@@ -56,6 +57,47 @@ public interface AgentBuilder {
     default AgentBuilder apply(String agentName) {
         throw new UnsupportedOperationException(
                 "apply(String) is not supported by this AgentBuilder; only Agent instances accepted.");
+    }
+
+    /**
+     * Set agent of AgentBuilder and pin a stable operator UID on the agent operator.
+     *
+     * <p>The UID identifies the agent operator in the job, so it must be unique there. Setting it
+     * keeps the operator's saved state mapped to the operator when upstream topology changes would
+     * otherwise change the generated operator ID. A {@code null} UID means no UID is set, and the
+     * graph is built as with {@link #apply(Agent)}; a blank UID is rejected. Set the UID before
+     * obtaining the output stream or table. A remote builder cannot be reconfigured after its
+     * output stream has been built.
+     *
+     * <p>Default implementation throws — concrete builders that support operator UIDs override
+     * this.
+     *
+     * @param agent The agent user defined to run in execution environment.
+     * @param uid The UID of the agent operator, or {@code null} to leave it unset.
+     * @return A configured AgentBuilder for method chaining.
+     */
+    default AgentBuilder apply(Agent agent, String uid) {
+        throw new UnsupportedOperationException(
+                "apply(Agent, String) is not supported by this AgentBuilder; operator UIDs are not available.");
+    }
+
+    /**
+     * Apply an agent previously registered on the environment by name, and pin a stable operator
+     * UID on the agent operator.
+     *
+     * <p>See {@link #apply(Agent, String)} for the UID semantics and {@link #apply(String)} for the
+     * name lookup.
+     *
+     * <p>Default implementation throws — concrete builders that support operator UIDs override
+     * this.
+     *
+     * @param agentName the name under which the agent was registered on the environment.
+     * @param uid The UID of the agent operator, or {@code null} to leave it unset.
+     * @return a configured AgentBuilder for method chaining.
+     */
+    default AgentBuilder apply(String agentName, String uid) {
+        throw new UnsupportedOperationException(
+                "apply(String, String) is not supported by this AgentBuilder; operator UIDs are not available.");
     }
 
     /**

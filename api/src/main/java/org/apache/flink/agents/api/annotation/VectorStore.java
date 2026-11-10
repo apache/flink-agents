@@ -24,13 +24,12 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Annotation to mark a field or method as a vector store resource that should be managed by the
- * agent plan.
+ * Declares a vector store managed by the agent plan.
  *
- * <p>Fields annotated with @VectorStore will be scanned during agent plan creation and
- * corresponding resource providers will be created to manage the vector store instances. Methods
- * annotated with @VectorStore must be static and will be wrapped as vector store resources.
+ * <p>Annotate a public static, zero-argument method returning a {@link
+ * org.apache.flink.agents.api.resource.ResourceDescriptor}. The method name becomes the resource
+ * name.
  */
-@Target({ElementType.FIELD, ElementType.METHOD})
+@Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface VectorStore {}

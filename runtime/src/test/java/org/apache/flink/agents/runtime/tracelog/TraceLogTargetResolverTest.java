@@ -18,9 +18,7 @@
 
 package org.apache.flink.agents.runtime.tracelog;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLogTarget;
@@ -62,8 +60,7 @@ class TraceLogTargetResolverTest {
                         resolver(),
                         resolver(target("ALL", "OFF")),
                         new TraceLogTargetResolver(
-                                new AgentConfiguration(
-                                                Map.of("trace-log", Map.of("targets", List.of())))
+                                new AgentConfiguration(Map.of("trace-log.targets", List.of()))
                                         .getConfData()))) {
             assertThat(resolver.resolve("event", "some.Event")).isNull();
             assertThat(resolver.resolve("action", "process")).isNull();
@@ -426,7 +423,7 @@ class TraceLogTargetResolverTest {
     }
 
     @Test
-    void typedTargetsAndYamlKeepTheSameInheritanceThroughPlanJson() throws Exception {
+    void typedTargetsAndFlatMapsKeepTheSameInheritanceThroughPlanJson() throws Exception {
         AgentConfiguration typed = new AgentConfiguration();
         typed.set(
                 AgentConfigOptions.TRACE_LOG_TARGETS,
@@ -438,24 +435,22 @@ class TraceLogTargetResolverTest {
                         TraceLogTarget.tool("com.foo.visible", TraceLogLevel.STANDARD),
                         TraceLogTarget.entity("custom", null, TraceLogLevel.VERBOSE),
                         TraceLogTarget.entity("custom", "step")));
-        String yaml =
-                "trace-log:\n"
-                        + "  targets:\n"
-                        + "    - scope: EVENT_ONLY\n      level: \"OFF\"\n"
-                        + "    - scope: {tool: \"*\"}\n      level: VERBOSE\n"
-                        + "    - scope: {tool: com.foo.*}\n      level: \"OFF\"\n"
-                        + "    - scope: {tool: com.foo.search}\n"
-                        + "    - scope: {tool: com.foo.visible}\n      level: STANDARD\n"
-                        + "    - scope: {entityType: custom}\n      level: VERBOSE\n"
-                        + "    - scope: {entityType: custom, entityName: step}\n";
-        AgentConfiguration fromYaml =
+        AgentConfiguration fromMap =
                 new AgentConfiguration(
-                        new ObjectMapper(new YAMLFactory())
-                                .readValue(yaml, new TypeReference<Map<String, Object>>() {}));
-        assertThat(fromYaml.get(AgentConfigOptions.TRACE_LOG_TARGETS))
+                        Map.of(
+                                "trace-log.targets",
+                                List.of(
+                                        target("EVENT_ONLY", "OFF"),
+                                        target(Map.of("tool", "*"), "VERBOSE"),
+                                        target(Map.of("tool", "com.foo.*"), "OFF"),
+                                        target(Map.of("tool", "com.foo.search"), null),
+                                        target(Map.of("tool", "com.foo.visible"), "STANDARD"),
+                                        entity("custom", null, "VERBOSE"),
+                                        entity("custom", "step", null))));
+        assertThat(fromMap.get(AgentConfigOptions.TRACE_LOG_TARGETS))
                 .isEqualTo(typed.get(AgentConfigOptions.TRACE_LOG_TARGETS));
         ObjectMapper mapper = new ObjectMapper();
-        for (AgentConfiguration config : List.of(typed, fromYaml)) {
+        for (AgentConfiguration config : List.of(typed, fromMap)) {
             AgentPlan restored =
                     mapper.readValue(
                             mapper.writeValueAsString(new AgentPlan(Map.of(), Map.of(), config)),
@@ -521,7 +516,6 @@ class TraceLogTargetResolverTest {
         return Stream.of(
                 Map.of("trace-log.targets", "not-a-list"),
                 Map.of("trace-log.targets", Map.of()),
-                Map.of("trace-log", Map.of("targets", Map.of())),
                 Map.of("trace-log.targets.scope", "ALL"),
                 Map.of("trace-log.targets", List.of("not-an-object")),
                 config(target("ALL", 42)),

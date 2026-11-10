@@ -163,6 +163,10 @@ class RunnerContext(ABC):
         """
 
     @abstractmethod
+    def has_resource(self, name: str, type: ResourceType) -> bool:
+        """Whether a resource is declared, without constructing or opening it."""
+
+    @abstractmethod
     def get_resource(
         self, name: str, type: ResourceType, metric_group: MetricGroup = None
     ) -> Resource:

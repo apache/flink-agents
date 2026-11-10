@@ -126,6 +126,14 @@ class AgentPlanCrossLanguageTest {
     // ── api → plan promotion (Java side) ───────────────────────────────────
 
     @Test
+    void pythonRulesRouterSnapshotPassesJavaValidation() throws Exception {
+        Path snapshot = snapshotDir.resolve("python/agent_plan_with_rules_router.json");
+        AgentPlan restored = MAPPER.readValue(Files.readString(snapshot), AgentPlan.class);
+        assertThat(restored.getResourceProviders().get(ResourceType.MODEL_ROUTER))
+                .containsKey("router");
+    }
+
+    @Test
     void compileAgentWithJavaFunctionDescriptor() throws Exception {
         AgentPlan plan = compileWithJavaAction();
 

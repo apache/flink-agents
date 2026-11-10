@@ -81,10 +81,28 @@ class ResourceCache:
         return self._resource_providers.get(type, {})
 
     def has_resource(self, name: str, type: ResourceType) -> bool:
-        """Whether a resource is declared or already cached, without creating it."""
+        """Check visible resources without opening one, matching ``get_resource``.
+
+        Chat models and routers share a namespace: either local declaration
+        shadows both types in parent scopes. Other resource types inherit by type.
+        """
+        return self._has_local_resource(name, type) or (
+            self._parent is not None
+            and self._can_inherit_resource(name, type)
+            and self._parent.has_resource(name, type)
+        )
+
+    def _has_local_resource(self, name: str, type: ResourceType) -> bool:
+        """Include declared providers and resources inserted through ``put``."""
         cached = self._cache.get(type, {})
         declared = self._resource_providers.get(type, {})
         return name in cached or name in declared
+
+    def _can_inherit_resource(self, name: str, type: ResourceType) -> bool:
+        model_types = (ResourceType.CHAT_MODEL, ResourceType.MODEL_ROUTER)
+        return type not in model_types or not any(
+            self._has_local_resource(name, kind) for kind in model_types
+        )
 
     def put(self, name: str, type: ResourceType, resource: Resource) -> None:
         """Cache an already built resource, so ``close()`` releases it."""
@@ -92,6 +110,9 @@ class ResourceCache:
 
     def get_resource(self, name: str, type: ResourceType) -> Resource:
         """Get resource by name and type, creating it from its provider if not cached.
+
+        Local chat-model/router names shadow both model types in parent scopes,
+        matching ``has_resource``. Other resource types fall back by type.
 
         Parameters
         ----------
@@ -105,7 +126,7 @@ class ResourceCache:
             return cached
         providers = self._resource_providers.get(type)
         if providers is None or name not in providers:
-            if self._parent is not None:
+            if self._parent is not None and self._can_inherit_resource(name, type):
                 return self._parent.get_resource(name, type)
             msg = f"Resource not found: '{name}' of type {type}"
             raise KeyError(msg)
