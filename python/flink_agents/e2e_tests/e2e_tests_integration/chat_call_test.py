@@ -45,6 +45,7 @@ from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.tools import InjectedArg
 from flink_agents.e2e_tests.e2e_tests_integration.internal_subagent_test import (
     InputKeySelector,
     _run_and_collect,
@@ -95,10 +96,11 @@ class ChatAgent(Agent):
             connection="unused",
         )
 
-    @tool
+    @tool(injected_args={"caller": InjectedArg.from_short_term_memory("caller")})
     @staticmethod
-    def echo(value: str) -> str:
+    def echo(value: str, caller: str) -> str:
         """Echo the supplied value."""
+        assert caller == "visible"
         return value
 
     @action(InputEvent.EVENT_TYPE)
@@ -106,11 +108,13 @@ class ChatAgent(Agent):
     async def run(event: Event, ctx: RunnerContext) -> None:
         """Exercise sequential calls and the locally cached handle."""
         ctx.short_term_memory.set("caller", "visible")
+        ctx.sensory_memory.set("caller", "private")
         ctx.chat("model", [ChatMessage.user("unused")])
         call = ctx.chat("model", [ChatMessage.user("hello")])
         result = await call
         assert (await call) is result
         assert ctx.short_term_memory.get("caller") == "visible"
+        assert set(ctx.sensory_memory.get_fields()) == {"caller"}
         with pytest.raises(ChatResponseError, match="provider refused"):
             await ctx.chat("model", [ChatMessage.user("fail")])
         ctx.send_event(OutputEvent(output=result.text))

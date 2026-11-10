@@ -41,6 +41,14 @@ public final class MemoryScope {
         return new MemoryScope(new IsolatedCachedMemoryStore(), new IsolatedCachedMemoryStore());
     }
 
+    /** Call-local stores with read-only access to the caller's memory. Used by chat graphs. */
+    public static MemoryScope readThrough(
+            CachedMemoryStore sensoryMemStore, CachedMemoryStore shortTermMemStore) {
+        return new MemoryScope(
+                new ReadThroughMemoryStore(sensoryMemStore),
+                new ReadThroughMemoryStore(shortTermMemStore));
+    }
+
     public CachedMemoryStore getSensoryMemStore() {
         return sensoryMemStore;
     }
