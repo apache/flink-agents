@@ -37,8 +37,12 @@ public class AgentConfiguration implements Configuration {
         this.confData = new HashMap<>();
     }
 
+    /**
+     * Copies configuration entries keyed by their full option names. Map and list values are
+     * retained as option values; YAML key expansion belongs to the configuration loader.
+     */
     public AgentConfiguration(Map<String, Object> confData) {
-        this.confData = flatten(confData, "", ".");
+        this.confData = new HashMap<>(confData);
         String targetsKey = AgentConfigOptions.TRACE_LOG_TARGETS.getKey();
         if (this.confData.containsKey(targetsKey)) {
             this.confData.put(targetsKey, traceLogTargetConfig(this.confData.get(targetsKey)));
@@ -180,24 +184,5 @@ public class AgentConfiguration implements Configuration {
         return TraceLogTarget.parseTargets(value).stream()
                 .map(TraceLogTarget::toConfig)
                 .collect(Collectors.toList());
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> flatten(
-            Map<String, Object> config, String keyPrefix, String keySeparator) {
-        final Map<String, Object> flattenedMap = new HashMap<>();
-
-        config.forEach(
-                (key, value) -> {
-                    String flattenedKey = keyPrefix + key;
-                    if (value instanceof Map && !((Map<?, ?>) value).isEmpty()) {
-                        Map<String, Object> e = (Map<String, Object>) value;
-                        flattenedMap.putAll(flatten(e, flattenedKey + keySeparator, keySeparator));
-                    } else {
-                        flattenedMap.put(flattenedKey, value);
-                    }
-                });
-
-        return flattenedMap;
     }
 }

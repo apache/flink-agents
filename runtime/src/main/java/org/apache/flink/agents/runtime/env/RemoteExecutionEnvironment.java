@@ -26,14 +26,11 @@ import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.CompileUtils;
 import org.apache.flink.agents.runtime.OutputTypeUtils;
-import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.configuration.ConfigConstants;
-import org.apache.flink.configuration.YamlParserUtils;
-import org.apache.flink.runtime.util.EnvironmentInformation;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -41,13 +38,9 @@ import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.types.Row;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
-import java.io.File;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -64,20 +57,12 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
 
     private final AgentConfiguration config;
 
-    private static final Logger LOG = LoggerFactory.getLogger(RemoteExecutionEnvironment.class);
-
-    public static final String FLINK_CONF_FILENAME = "config.yaml";
-
-    public static final String LEGACY_FLINK_CONF_FILENAME = "flink-conf.yaml";
-
-    private static final String AGENT_CONFIG_PREFIX = "agent";
-
     public RemoteExecutionEnvironment(
             StreamExecutionEnvironment env, @Nullable StreamTableEnvironment tEnv) {
         this.env = env;
         this.tEnv = tEnv;
         final String configDir = System.getenv(ConfigConstants.ENV_FLINK_CONF_DIR);
-        this.config = loadAgentConfiguration(configDir);
+        this.config = AgentConfigLoader.loadAgentConfiguration(configDir);
     }
 
     private StreamTableEnvironment getTableEnvironment() {
@@ -121,88 +106,6 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
     @Override
     public void execute(String jobName) throws Exception {
         env.execute(jobName);
-    }
-
-    public static AgentConfiguration loadAgentConfiguration(String configDir) {
-        return loadAgentConfiguration(configDir, EnvironmentInformation.getVersion());
-    }
-
-    /**
-     * Selects and parses the configuration file the way Flink's {@code GlobalConfiguration} does:
-     * on Flink 1.x the legacy {@code flink-conf.yaml} wins and is parsed with the legacy line-based
-     * rules, otherwise {@code config.yaml} is parsed as standard YAML; Flink 2.x reads only {@code
-     * config.yaml}.
-     */
-    @VisibleForTesting
-    @SuppressWarnings("unchecked")
-    static AgentConfiguration loadAgentConfiguration(
-            String configDir, @Nullable String flinkVersion) {
-        try {
-            if (configDir == null) {
-                return new AgentConfiguration();
-            }
-
-            File legacyConfigFile = new File(configDir, LEGACY_FLINK_CONF_FILENAME);
-            if (isFlink2OrLater(flinkVersion)) {
-                if (legacyConfigFile.exists()) {
-                    LOG.warn(
-                            "Ignoring {}: Flink {} reads only {}",
-                            legacyConfigFile,
-                            flinkVersion,
-                            FLINK_CONF_FILENAME);
-                }
-            } else if (legacyConfigFile.exists()) {
-                LOG.info(
-                        "Using legacy YAML parser to load Flink Agents configuration from {}",
-                        legacyConfigFile);
-                return new AgentConfiguration(
-                        flatAgentOptions(LegacyFlinkConfParser.parse(legacyConfigFile)));
-            }
-
-            final Map<String, Object> yaml =
-                    YamlParserUtils.loadYamlFile(new File(configDir, FLINK_CONF_FILENAME));
-            final Map<String, Object> configData = new HashMap<>();
-            Object nested = yaml.get(AGENT_CONFIG_PREFIX);
-            if (nested instanceof Map) {
-                configData.putAll((Map<String, Object>) nested);
-            }
-            configData.putAll(flatAgentOptions(yaml));
-
-            return new AgentConfiguration(configData);
-        } catch (Exception e) {
-            throw new RuntimeException(
-                    "Failed to load Flink Agents configuration from " + configDir, e);
-        }
-    }
-
-    /** Collects top-level {@code agent.<key>} entries under {@code <key>}. */
-    private static Map<String, Object> flatAgentOptions(Map<String, ?> config) {
-        String flatPrefix = AGENT_CONFIG_PREFIX + ".";
-        Map<String, Object> options = new HashMap<>();
-        config.forEach(
-                (key, value) -> {
-                    if (key.startsWith(flatPrefix)) {
-                        options.put(key.substring(flatPrefix.length()), value);
-                    }
-                });
-        return options;
-    }
-
-    /**
-     * Whether {@code version} names Flink 2.0 or later. Vendor suffixes after the first {@code -}
-     * are ignored; an unknown or unparseable version counts as 1.x, which tries both files.
-     */
-    @VisibleForTesting
-    static boolean isFlink2OrLater(@Nullable String version) {
-        if (version == null) {
-            return false;
-        }
-        String major = version.split("-", 2)[0].split("\\.", 2)[0];
-        try {
-            return Integer.parseInt(major.trim()) >= 2;
-        } catch (NumberFormatException e) {
-            return false;
-        }
     }
 
     /** Implementation of AgentBuilder for remote execution environment. */

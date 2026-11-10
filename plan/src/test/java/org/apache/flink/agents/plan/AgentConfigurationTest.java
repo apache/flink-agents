@@ -40,6 +40,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class AgentConfigurationTest {
 
     @Test
+    void mapValuesRemainIntactThroughPlanJson() throws Exception {
+        Map<String, Object> value = Map.of("nested", Map.of("value", 1));
+        Map<String, Object> data = new HashMap<>(Map.of("custom.option", value));
+        AgentConfiguration config = new AgentConfiguration(data);
+        data.put("custom.option", "changed");
+
+        assertEquals(Map.of("custom.option", value), config.getConfData());
+        ObjectMapper mapper = new ObjectMapper();
+        AgentPlan restored =
+                mapper.readValue(
+                        mapper.writeValueAsString(new AgentPlan(Map.of(), Map.of(), config)),
+                        AgentPlan.class);
+        assertEquals(config.getConfData(), restored.getConfig().getConfData());
+    }
+
+    @Test
     void testGetInt() {
         Map<String, Object> data = new HashMap<>();
         data.put("int_key", 42);
@@ -258,7 +274,7 @@ public class AgentConfigurationTest {
     }
 
     @Test
-    void traceLogTargetsSurviveNestedConfigurationAndPlanJson() throws Exception {
+    void traceLogTargetsSurviveConfigurationAndPlanJson() throws Exception {
         List<Map<String, Object>> targets =
                 List.of(
                         Map.of("scope", "ALL", "level", "OFF"),
@@ -270,8 +286,7 @@ public class AgentConfigurationTest {
                                 "VERBOSE"),
                         Map.of("scope", Map.of("entityType", "action", "entityName", "process")),
                         Map.of("scope", Map.of("entityType", "tool")));
-        AgentConfiguration config =
-                new AgentConfiguration(Map.of("trace-log", Map.of("targets", targets)));
+        AgentConfiguration config = new AgentConfiguration(Map.of("trace-log.targets", targets));
         List<TraceLogTarget> expected =
                 List.of(
                         TraceLogTarget.all(TraceLogLevel.OFF),
