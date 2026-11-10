@@ -15,13 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-"""Providers that send text only fail on media instead of dropping it.
-
-Covers the connections not yet migrated to multimodal requests (#1059). Each
-check runs before any client call, so no service is contacted.
-"""
-
-from typing import Callable, Dict
+"""Check that watsonx rejects media before sending a text request."""
 
 import pytest
 
@@ -32,27 +26,13 @@ from flink_agents.api.chat_message import (
     ToolResultBlock,
     UnsupportedContentBlockError,
 )
-from flink_agents.api.chat_models.chat_model import BaseChatModelConnection
-from flink_agents.integrations.chat_models.dashscope_chat_model import (
-    DashScopeChatModelConnection,
-)
 from flink_agents.integrations.chat_models.watsonx.watsonx_chat_model import (
     WatsonxChatModelConnection,
 )
 
-CONNECTIONS: Dict[str, Callable[[], BaseChatModelConnection]] = {
-    "DashScope": lambda: DashScopeChatModelConnection(api_key="fake-key"),
-    "IBM watsonx.ai": lambda: WatsonxChatModelConnection(
-        url="https://us-south.ml.cloud.ibm.com",
-        api_key="fake-key",
-        project_id="fake-project",
-    ),
-}
 
-
-@pytest.mark.parametrize("provider", list(CONNECTIONS))
 @pytest.mark.parametrize("tool_result", [False, True])
-def test_media_blocks_fail_explicitly(provider: str, tool_result: bool) -> None:
+def test_media_blocks_fail_explicitly(tool_result: bool) -> None:
     """A media block raises instead of being dropped from the request."""
     message = ChatMessage.user(
         [
@@ -66,10 +46,15 @@ def test_media_blocks_fail_explicitly(provider: str, tool_result: bool) -> None:
             ToolResultBlock(call_id="call", blocks=message.blocks)
         )
 
+    connection = WatsonxChatModelConnection(
+        url="https://us-south.ml.cloud.ibm.com",
+        api_key="fake-key",
+        project_id="fake-project",
+    )
     with pytest.raises(UnsupportedContentBlockError) as error:
-        CONNECTIONS[provider]().chat([message], model="m")
+        connection.chat([message], model="m")
 
     assert str(error.value) == (
-        f"{provider} cannot send an image block (image/png, base64 source): "
+        "IBM watsonx.ai cannot send an image block (image/png, base64 source): "
         "this integration sends text only."
     )

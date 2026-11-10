@@ -17,6 +17,7 @@
 #################################################################################
 import asyncio
 import os
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -27,6 +28,8 @@ from dashscope.api_entities.dashscope_response import (
     DashScopeAPIResponse,
     MultiModalConversationResponse,
 )
+from dashscope.client.base_api import BaseApi
+from dashscope.utils.oss_utils import OssUtils
 from pydantic import BaseModel
 
 from flink_agents.api.agents.types import OutputSchema
@@ -219,8 +222,13 @@ def test_default_model_when_omitted() -> None:
     assert setup.model == DEFAULT_MODEL
 
 
-def test_tool_call_ids_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The DashScope call id reaches both the assistant call and the tool result."""
+@pytest.mark.parametrize(
+    ("api_type", "model"), [("text", test_model), ("multimodal", "qwen3-vl-plus")]
+)
+def test_tool_call_ids_round_trip(
+    monkeypatch: pytest.MonkeyPatch, api_type: str, model: str
+) -> None:
+    """The DashScope call ID reaches both the assistant call and the tool result."""
     tool_call_response = SimpleNamespace(
         status_code=200,
         output={
@@ -228,7 +236,7 @@ def test_tool_call_ids_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
                 {
                     "message": {
                         "role": "assistant",
-                        "content": "",
+                        "content": [] if api_type == "multimodal" else "",
                         "tool_calls": [
                             {
                                 "id": "call_abc",
@@ -246,15 +254,17 @@ def test_tool_call_ids_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
         usage=SimpleNamespace(input_tokens=10, output_tokens=5),
     )
     mock_call = MagicMock(return_value=tool_call_response)
-    monkeypatch.setattr(
-        "flink_agents.integrations.chat_models.dashscope_chat_model.Generation.call",
-        mock_call,
-    )
+    api = MultiModalConversation if api_type == "multimodal" else Generation
+    monkeypatch.setattr(api, "call", mock_call)
     connection = DashScopeChatModelConnection(api_key="fake-key")
+    prompt = "What is 1 + 2?"
+    message = ChatMessage.user(prompt)
+    if api_type == "multimodal":
+        message = ChatMessage.user(
+            [ImageBlock.from_url("image/png", _IMAGE_URL), TextBlock(text=prompt)]
+        )
 
-    response = connection.chat(
-        [ChatMessage.of(MessageRole.USER, "What is 1 + 2?")], model=test_model
-    )
+    response = connection.chat([message], model=model, api_type=api_type)
     # The tool result uses the same call ID as the model's tool call.
     assert response.tool_calls[0].call_id == "call_abc"
 
@@ -265,12 +275,7 @@ def test_tool_call_ids_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
         )
     )
     connection.chat(
-        [
-            ChatMessage.of(MessageRole.USER, "What is 1 + 2?"),
-            response.message,
-            tool_result,
-        ],
-        model=test_model,
+        [message, response.message, tool_result], model=model, api_type=api_type
     )
 
     sent = mock_call.call_args.kwargs["messages"]
@@ -368,21 +373,60 @@ def test_dashscope_multimodal_chat_preserves_user_content_order(
     ]
 
 
+def test_dashscope_multimodal_chat_keeps_local_path_text_at_sdk_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    local_file = tmp_path / "fixture.txt"
+    local_file.write_text("This file must stay local.", encoding="utf-8")
+    call = MagicMock(
+        return_value=DashScopeAPIResponse(
+            status_code=200, output=_assistant_output([{"text": "response"}])
+        )
+    )
+    upload = MagicMock(side_effect=AssertionError("Unexpected upload"))
+    monkeypatch.setattr(BaseApi, "call", call)
+    monkeypatch.setattr(OssUtils, "upload", upload)
+    setup = _open_setup(model="qwen3-vl-plus", api_type="multimodal")
+    image = ImageBlock.from_url("image/png", _IMAGE_URL)
+
+    result = setup.chat([ChatMessage.user([image, TextBlock(text=str(local_file))])])
+
+    assert result.text == "response"
+    call.assert_called_once()
+    upload.assert_not_called()
+    assert call.call_args.kwargs["input"]["messages"][0]["content"] == [
+        {"image": _IMAGE_URL},
+        {"text": str(local_file)},
+    ]
+
+
 @pytest.mark.parametrize(
     ("role", "api_type", "error"),
     [
-        (MessageRole.USER, "text", "sends text only"),
+        (
+            MessageRole.USER,
+            "text",
+            r"the text interface accepts only text.*api_type='multimodal'",
+        ),
+        (MessageRole.TOOL, "text", "the text interface accepts only text"),
+        (MessageRole.USER, "auto", "the text interface accepts only text"),
         (MessageRole.ASSISTANT, "multimodal", "only user messages can carry media"),
     ],
 )
 def test_dashscope_chat_rejects_unsupported_media_before_request(
     chat_calls: dict[str, MagicMock], role: MessageRole, api_type: str, error: str
 ) -> None:
-    setup = _open_setup(model="qwen3-vl-plus", api_type=api_type)
+    model = "qwen-plus" if api_type == "auto" else "qwen3-vl-plus"
+    setup = _open_setup(model=model, api_type=api_type)
     image = ImageBlock.from_url("image/png", _IMAGE_URL)
+    message = (
+        ChatMessage.tool(ToolResultBlock(call_id="call", blocks=[image]))
+        if role == MessageRole.TOOL
+        else ChatMessage.of(role, [image])
+    )
 
     with pytest.raises(UnsupportedContentBlockError, match=error):
-        setup.chat([ChatMessage.of(role, [image])])
+        setup.chat([message])
 
     chat_calls["text"].assert_not_called()
     chat_calls["multimodal"].assert_not_called()
@@ -473,6 +517,41 @@ def test_dashscope_image_generation_can_edit_returned_image(
     ]
 
 
+@pytest.mark.parametrize(
+    ("model", "task", "content", "error"),
+    [
+        (
+            "qwen-image-3.0",
+            "image_generation",
+            [],
+            "must return a non-empty list",
+        ),
+        (
+            "qwen3-vl-plus",
+            None,
+            [{"text": "Description", "image": _IMAGE_URL}],
+            "only supports text response content",
+        ),
+    ],
+)
+def test_dashscope_chat_reports_invalid_multimodal_response(
+    chat_calls: dict[str, MagicMock],
+    model: str,
+    task: str | None,
+    content: list[dict[str, str]],
+    error: str,
+) -> None:
+    setup = _open_setup(model=model, task=task, api_type="multimodal")
+    chat_calls["multimodal"].return_value = _multimodal_response(
+        _assistant_output(content)
+    )
+
+    with pytest.raises(RuntimeError, match=error):
+        setup.chat([ChatMessage.user("Draw a circle.")])
+
+    chat_calls["multimodal"].assert_called_once()
+
+
 class _StructuredResponse(BaseModel):
     text: str
 
@@ -494,6 +573,16 @@ class _StructuredResponse(BaseModel):
             "image_generation",
             ChatMessage.user([ImageBlock.from_url("image/png", _IMAGE_URL)]),
             "one non-empty text prompt",
+        ),
+        (
+            "image_generation",
+            ChatMessage.user(
+                [
+                    TextBlock(text="Edit this."),
+                    AudioBlock.from_url("audio/mpeg", _AUDIO_URL),
+                ]
+            ),
+            "one non-empty text prompt and optional image blocks",
         ),
     ],
 )

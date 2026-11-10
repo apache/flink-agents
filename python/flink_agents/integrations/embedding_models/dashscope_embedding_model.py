@@ -17,7 +17,7 @@
 ################################################################################
 import os
 from http import HTTPStatus
-from typing import Any, Dict, Literal
+from typing import Any, Dict, Literal, Sequence, get_args
 from urllib.parse import urlsplit
 
 import dashscope
@@ -46,6 +46,7 @@ from flink_agents.api.embedding_models.embedding_model import (
 DEFAULT_REQUEST_TIMEOUT = 30.0
 DEFAULT_MODEL = "text-embedding-v4"
 DEFAULT_MULTIMODAL_MODEL = "qwen3-vl-embedding"
+_DashScopeApiType = Literal["text", "multimodal"]
 
 
 def _encode_embedding_content(content: str | DataContentBlock) -> dict[str, str]:
@@ -176,9 +177,17 @@ class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
     ) -> EmbeddingResult[list[float] | list[list[float]]]:
         """Generate embeddings and return DashScope token usage when available."""
         api_type = kwargs.pop("api_type", "text")
-        if api_type not in ("text", "multimodal"):
+        if api_type not in get_args(_DashScopeApiType):
             msg = "DashScope embedding api_type must be 'text' or 'multimodal'"
             raise ValueError(msg)
+        single = isinstance(content, str | TextBlock | MediaBlock)
+        if not single and not isinstance(content, Sequence):
+            msg = (
+                "Embedding content must be a string, a data content block, "
+                "or an ordered sequence of inputs"
+            )
+            raise TypeError(msg)
+
         multimodal = api_type == "multimodal"
         provider = (
             "DashScope MultiModalEmbedding" if multimodal else "DashScope TextEmbedding"
@@ -197,6 +206,7 @@ class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
 
         if dimension is not None:
             call_params["dimension"] = dimension
+        sdk_input: str | Sequence[str] | list[dict[str, str]]
         if multimodal:
             if text_type is not None:
                 msg = "DashScope text_type is only supported by the text embedding API"
@@ -207,23 +217,23 @@ class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
             if "input" in kwargs:
                 msg = "Pass the embedding input as content"
                 raise ValueError(msg)
-            single = isinstance(content, str | TextBlock | MediaBlock)
             items = [content] if single else content
             # DashScope requires every item in a mixed batch to use the object form.
-            contents = [_encode_embedding_content(item) for item in items]
-            if not contents:
+            sdk_input = [_encode_embedding_content(item) for item in items]
+            if not sdk_input:
                 return EmbeddingResult(embeddings=[])
-            call_params["input"] = contents
             call_params["enable_fusion"] = False
             api = _MultiModalEmbedding
         else:
-            text = _text_embedding_input(content, provider)
-            single = isinstance(text, str)
-            call_params["input"] = text
+            sdk_input = _text_embedding_input(content, provider)
+            if not single and any(not isinstance(item, str) for item in sdk_input):
+                msg = "Each embedding input must be a string or a data content block"
+                raise TypeError(msg)
             if text_type is not None:
                 call_params["text_type"] = text_type
             api = dashscope.TextEmbedding
 
+        call_params["input"] = sdk_input
         call_params.update(kwargs)
 
         response = api.call(**call_params)
@@ -250,7 +260,7 @@ class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
 
         entries = response.output["embeddings"]
         embeddings = (
-            _order_multimodal_embeddings(entries, len(contents))
+            _order_multimodal_embeddings(entries, len(sdk_input))
             if multimodal
             else [entry["embedding"] for entry in entries]
         )
@@ -281,7 +291,7 @@ class DashScopeEmbeddingModelSetup(BaseEmbeddingModelSetup):
         Additional parameters for the selected DashScope embedding API.
     """
 
-    api_type: Literal["text", "multimodal"] = Field(
+    api_type: _DashScopeApiType = Field(
         default="text",
         description="The DashScope embedding API to call.",
     )
@@ -303,7 +313,7 @@ class DashScopeEmbeddingModelSetup(BaseEmbeddingModelSetup):
         *,
         connection: str,
         model: str | None = None,
-        api_type: Literal["text", "multimodal"] = "text",
+        api_type: _DashScopeApiType = "text",
         text_type: str | None = None,
         dimension: int | None = None,
         additional_kwargs: Dict[str, Any] | None = None,

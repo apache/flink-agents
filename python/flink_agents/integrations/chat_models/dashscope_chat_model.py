@@ -18,7 +18,7 @@
 import json
 import os
 import uuid
-from typing import Any, Dict, List, Literal, Mapping, Sequence
+from typing import Any, Dict, List, Literal, Mapping, Sequence, get_args
 from urllib.parse import urlsplit
 
 from dashscope import Generation, MultiModalConversation
@@ -35,6 +35,7 @@ from flink_agents.api.chat_message import (
     Base64Source,
     ChatMessage,
     ImageBlock,
+    MediaBlock,
     MessageRole,
     ReasoningBlock,
     TextBlock,
@@ -52,6 +53,7 @@ from flink_agents.api.tools.tool import Tool, ToolMetadata
 
 DEFAULT_REQUEST_TIMEOUT = 60.0
 DEFAULT_MODEL = "qwen-plus"
+_DashScopeApiType = Literal["auto", "text", "multimodal"]
 _DashScopeTask = Literal["asr", "image_generation"]
 
 # JSON Schema capability is checked against the selected interface. Snapshots in
@@ -129,7 +131,7 @@ def _resolve_api_type(
     api_type: str, model: str | None, *, task: _DashScopeTask | None = None
 ) -> str:
     """Resolve the interface for the task or chat model."""
-    if api_type not in ("auto", "text", "multimodal"):
+    if api_type not in get_args(_DashScopeApiType):
         msg = (
             f"Invalid DashScope api_type {api_type!r}; "
             "expected 'auto', 'text', or 'multimodal'."
@@ -220,15 +222,15 @@ def _generated_image_blocks(content: Any) -> list[ImageBlock]:
         "DashScope image generation must return a non-empty list of HTTP(S) image URLs."
     )
     if not isinstance(content, list) or not content:
-        raise ValueError(msg)
+        raise RuntimeError(msg)
     blocks = []
     for part in content:
         source = part.get("image") if isinstance(part, dict) else None
         if not isinstance(source, str) or not source:
-            raise ValueError(msg)
+            raise RuntimeError(msg)
         url = urlsplit(source)
         if url.scheme not in {"http", "https"} or not url.netloc:
-            raise ValueError(msg)
+            raise RuntimeError(msg)
         blocks.append(ImageBlock.from_url("image/png", source))
     return blocks
 
@@ -482,16 +484,12 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         # Check native schema feasibility against the original request arguments.
         raw_kwargs = dict(kwargs)
 
-        dashscope_tools: List[Dict[str, Any]] | None = (
-            [to_dashscope_tool(tool.metadata) for tool in tools] if tools else None
-        )
-
         extract_reasoning = bool(kwargs.pop("extract_reasoning", False))
 
         req_api_key = kwargs.pop("api_key", self.api_key)
 
         task = kwargs.pop("task", None)
-        if task not in (None, "asr", "image_generation"):
+        if task is not None and task not in get_args(_DashScopeTask):
             msg = (
                 f"Invalid DashScope task {task!r}; "
                 "expected 'asr', 'image_generation', or None."
@@ -514,17 +512,17 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
                 media_type = audio.media_type.partition(";")[0].strip().lower()
                 subtype = media_type.rpartition("/")[2].removeprefix("x-")
                 kwargs["format"] = _ASR_FORMAT_ALIASES.get(media_type, subtype)
-
-        dashscope_messages = self.__convert_to_dashscope_messages(
-            messages, api_type, allow_audio=is_asr
-        )
-        if is_image_generation:
+        elif is_image_generation:
             _validate_image_generation_request(
                 messages, tools, output_schema, kwargs.get("response_format")
             )
-            content = dashscope_messages[0]["content"]
-            if isinstance(content, str):
-                dashscope_messages[0]["content"] = [{"text": content}]
+
+        dashscope_tools: List[Dict[str, Any]] | None = (
+            [to_dashscope_tool(tool.metadata) for tool in tools] if tools else None
+        )
+        dashscope_messages = self.__convert_to_dashscope_messages(
+            messages, api_type, task=task
+        )
 
         # The feasibility check is shared with the structured-output query rather than
         # restated, so the branch applies whenever the query answers other than
@@ -592,7 +590,7 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
                         or not isinstance(part["text"], str)
                     ):
                         msg = "DashScope multimodal chat only supports text response content."
-                        raise ValueError(msg)
+                        raise RuntimeError(msg)
                     blocks.append(TextBlock(text=part["text"]))
             elif content:
                 blocks.append(TextBlock(text=content))
@@ -629,12 +627,10 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         messages: Sequence[ChatMessage],
         api_type: str,
         *,
-        allow_audio: bool,
+        task: _DashScopeTask | None,
     ) -> List[Dict[str, Any]]:
-        """Keep text-only messages as strings and user media as ordered parts."""
+        """Use ordered parts for user media and image prompts."""
         provider = "DashScope"
-        if api_type == "text":
-            UnsupportedContentBlockError.reject_media(provider, messages)
         result = []
         for message in messages:
             blocks = (
@@ -647,12 +643,20 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
             for block in blocks:
                 if isinstance(block, TextBlock):
                     content.append({"text": block.text})
+                elif api_type == "text" and isinstance(block, MediaBlock):
+                    raise UnsupportedContentBlockError.for_block(
+                        provider,
+                        block,
+                        "the text interface accepts only text. For images or video, "
+                        "use api_type='multimodal' with a compatible model. For audio "
+                        "transcription, use task='asr' with a Qwen-Audio-ASR model",
+                    )
                 elif isinstance(block, ImageBlock | VideoBlock | AudioBlock):
                     if message.role != MessageRole.USER:
                         raise UnsupportedContentBlockError.for_block(
                             provider, block, "only user messages can carry media"
                         )
-                    if isinstance(block, AudioBlock) and not allow_audio:
+                    if isinstance(block, AudioBlock) and task != "asr":
                         raise UnsupportedContentBlockError.for_block(
                             provider,
                             block,
@@ -682,7 +686,7 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
             native = {
                 "role": message.role.value,
                 "content": content
-                if has_media
+                if has_media or task == "image_generation"
                 else "".join(p["text"] for p in content),
             }
             if message.tool_calls:
@@ -746,7 +750,7 @@ class DashScopeChatModelSetup(BaseChatModelSetup):
         default=False,
         description="If True, extracts reasoning content from the response and stores it.",
     )
-    api_type: Literal["auto", "text", "multimodal"] = Field(
+    api_type: _DashScopeApiType = Field(
         default="text",
         description="DashScope interface: text (default), multimodal, or auto.",
     )
@@ -762,7 +766,7 @@ class DashScopeChatModelSetup(BaseChatModelSetup):
         temperature: float = 0.7,
         additional_kwargs: Dict[str, Any] | None = None,
         extract_reasoning: bool | None = False,
-        api_type: Literal["auto", "text", "multimodal"] = "text",
+        api_type: _DashScopeApiType = "text",
         task: _DashScopeTask | None = None,
         **kwargs: Any,
     ) -> None:
@@ -799,6 +803,6 @@ class DashScopeChatModelSetup(BaseChatModelSetup):
     @override
     def _validate_structured_output_request(self) -> None:
         task = self.model_kwargs.get("task")
-        if task in ("asr", "image_generation"):
+        if task in get_args(_DashScopeTask):
             msg = f"DashScope task {task!r} does not support output_schema."
             raise ValueError(msg)

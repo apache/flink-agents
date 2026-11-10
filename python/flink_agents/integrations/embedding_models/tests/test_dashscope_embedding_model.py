@@ -22,7 +22,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from dashscope import TextEmbedding
+from dashscope import MultiModalEmbedding, TextEmbedding
 from dashscope.api_entities.dashscope_response import DashScopeAPIResponse
 from dashscope.client.base_api import BaseApi
 from dashscope.utils.oss_utils import OssUtils
@@ -299,6 +299,35 @@ def test_dashscope_embedding_without_api_key() -> None:
     finally:
         if original_api_key is not None:
             os.environ["DASHSCOPE_API_KEY"] = original_api_key
+
+
+@pytest.mark.parametrize(
+    ("api_type", "content", "error"),
+    [
+        (
+            "text",
+            [1, 2],
+            "Each embedding input must be a string or a data content block",
+        ),
+        ("text", {"text": "caption"}, "an ordered sequence of inputs"),
+        ("multimodal", {"text": "caption"}, "an ordered sequence of inputs"),
+    ],
+)
+def test_dashscope_embedding_rejects_invalid_content_before_request(
+    monkeypatch: pytest.MonkeyPatch,
+    api_type: str,
+    content: list[int] | dict[str, str],
+    error: str,
+) -> None:
+    call = MagicMock(side_effect=AssertionError("Invalid embedding input reached SDK"))
+    monkeypatch.setattr(TextEmbedding, "call", call)
+    monkeypatch.setattr(MultiModalEmbedding, "call", call)
+    connection = DashScopeEmbeddingModelConnection(api_key="fake-key")
+
+    with pytest.raises(TypeError, match=error):
+        connection.embed(content, api_type=api_type)
+
+    call.assert_not_called()
 
 
 @pytest.fixture
