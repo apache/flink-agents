@@ -495,7 +495,7 @@ public class AgentPlan implements Serializable {
         // non-deterministic across JDKs / class layouts).
         Map<String, Skills> annotationSkills = new java.util.TreeMap<>();
 
-        // Scan all fields in the agent class for @Tool and @ChatModel annotations
+        // Scan fields for @Tool resources.
         for (Field field : agentClass.getDeclaredFields()) {
             field.setAccessible(true); // Allow access to private fields
 
@@ -521,31 +521,9 @@ public class AgentPlan implements Serializable {
                     throw new Exception(errMsg, e);
                 }
             }
-
-            // Check for @ChatModel annotation
-            if (field.isAnnotationPresent(ChatModelSetup.class)) {
-                ChatModelSetup chatModelAnnotation = field.getAnnotation(ChatModelSetup.class);
-                String resourceName = field.getName();
-
-                try {
-                    Object fieldValue = field.get(agent);
-                    if (fieldValue instanceof Resource) {
-                        Resource resource = (Resource) fieldValue;
-                        ResourceProvider provider =
-                                createResourceProvider(
-                                        resourceName,
-                                        ResourceType.CHAT_MODEL,
-                                        resource,
-                                        agentClass);
-                        addResourceProvider(provider);
-                    }
-                } catch (IllegalAccessException e) {
-                    throw new Exception(errMsg, e);
-                }
-            }
         }
 
-        // Scan static methods annotated with @Tool, @Prompt, @ChatModel .etc
+        // Scan static methods annotated with @Tool, @Prompt, @ChatModelSetup, etc.
         for (Method method : agentClass.getDeclaredMethods()) {
             if (method.isAnnotationPresent(Tool.class)
                     && Modifier.isStatic(method.getModifiers())) {

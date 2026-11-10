@@ -24,11 +24,11 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Annotation to mark a field as a prompt resource that should be managed by the agent plan.
+ * Declares a prompt managed by the agent plan.
  *
- * <p>Fields annotated with @Prompt will be scanned during agent plan creation and corresponding
- * resource providers will be created to manage the prompt instances.
+ * <p>Annotate a public static, zero-argument method returning a {@link
+ * org.apache.flink.agents.api.prompt.Prompt} instance. The method name becomes the resource name.
  */
-@Target({ElementType.FIELD, ElementType.METHOD})
+@Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Prompt {}
