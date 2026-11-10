@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 from pathlib import Path
-from typing import Any, Dict, Type
+from typing import Any, Dict, Mapping, Type
 
 import yaml
 from pydantic import BaseModel
@@ -29,6 +29,8 @@ from flink_agents.api.configuration import (
 from flink_agents.api.trace_log import _parse_targets, _serialize_targets
 
 _TRACE_LOG_TARGETS_KEY = "trace-log.targets"
+_AGENT_CONFIG_SECTION = "agent"
+_AGENT_CONFIG_PREFIX = "agent."
 
 
 def _normalize_trace_log_targets(conf_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -38,6 +40,62 @@ def _normalize_trace_log_targets(conf_data: Dict[str, Any]) -> Dict[str, Any]:
         **conf_data,
         _TRACE_LOG_TARGETS_KEY: _serialize_targets(conf_data[_TRACE_LOG_TARGETS_KEY]),
     }
+
+
+def _flat_agent_options(config: Mapping[str, Any]) -> Dict[str, Any]:
+    """Collect top-level ``agent.<key>`` entries under ``<key>``.
+
+    Args:
+        config: A parsed configuration file, whose keys may carry the
+                ``agent.`` prefix.
+
+    Returns:
+        Dict[str, Any]: The entries with the prefix removed, in input order.
+    """
+    return {
+        key[len(_AGENT_CONFIG_PREFIX) :]: value
+        for key, value in config.items()
+        if isinstance(key, str) and key.startswith(_AGENT_CONFIG_PREFIX)
+    }
+
+
+def _extract_agent_config(raw_config: Any, config_path: str) -> Dict[str, Any]:
+    """Select agent settings from a parsed YAML configuration file.
+
+    Flink configuration files can declare agent settings either in a nested
+    ``agent`` mapping or as flat ``agent.<key>`` entries. Flat entries take
+    precedence over nested ones when the same key is declared in both forms,
+    matching the Java loader.
+
+    Args:
+        raw_config: The document returned by ``yaml.safe_load``.
+        config_path: Path of the configuration file, used in error messages.
+
+    Returns:
+        Dict[str, Any]: The agent configuration with the ``agent.`` prefix removed.
+    """
+    if raw_config is None:
+        return {}
+    if not isinstance(raw_config, dict):
+        msg = (
+            f"Invalid agent configuration file {config_path}: "
+            "expected a YAML mapping at the top level"
+        )
+        raise TypeError(msg)
+
+    nested = raw_config.get(_AGENT_CONFIG_SECTION, {})
+    if nested is None:
+        nested = {}
+    if not isinstance(nested, dict):
+        msg = (
+            f"Invalid agent configuration file {config_path}: "
+            f"'{_AGENT_CONFIG_SECTION}' must be a mapping"
+        )
+        raise TypeError(msg)
+
+    agent_config = dict(nested)
+    agent_config.update(_flat_agent_options(raw_config))
+    return agent_config
 
 
 def flatten_dict(d: Dict, parent_key: str = "", sep: str = ".") -> Dict[str, Any]:
@@ -101,6 +159,11 @@ class AgentConfiguration(BaseModel, Configuration):
             return default
 
         try:
+            if config_type is bool and isinstance(value, str):
+                # The legacy flink-conf.yaml keeps values as strings and Flink
+                # converts them when an option is read, accepting "true"
+                # case-insensitively, so "false" must not stay truthy.
+                return value.strip().lower() == "true"
             return config_type(value)
         except (ValueError, TypeError) as e:
             msg = f"Invalid value for {key}: {value}"
@@ -164,11 +227,11 @@ class AgentConfiguration(BaseModel, Configuration):
         """
         if config_path:
             path = Path(config_path)
-            with path.open() as f:
+            with path.open(encoding="utf-8") as f:
                 raw_config = yaml.safe_load(f)
                 self.conf_data.update(
                     _normalize_trace_log_targets(
-                        flatten_dict(raw_config.get("agent", {}))
+                        flatten_dict(_extract_agent_config(raw_config, str(path)))
                     )
                 )
 

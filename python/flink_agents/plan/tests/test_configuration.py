@@ -101,6 +101,98 @@ def test_load_configuration_with_invalid_yaml() -> None:
         config_file.unlink()
 
 
+def test_load_configuration_from_flat_agent_keys(tmp_path: Path) -> None:
+    """Flat agent.* keys are read and stripped of their prefix."""
+    config_file = tmp_path / "flink-conf.yaml"
+    config_file.write_text(
+        "parallelism.default: 2\n"
+        "agent.job-identifier: my-job\n"
+        "agent.tool-call.async: false\n"
+        "agent.trace-log.base-dir: /tmp/agent-logs\n"
+    )
+
+    config = AgentConfiguration()
+    config.load_from_file(str(config_file))
+
+    assert config.get_conf_data() == {
+        "job-identifier": "my-job",
+        "tool-call.async": False,
+        "trace-log.base-dir": "/tmp/agent-logs",
+    }
+
+
+def test_flat_agent_keys_override_nested_agent_section(tmp_path: Path) -> None:
+    """A flat key wins over the same key in the nested agent mapping."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "agent:\n  job-identifier: nested\n  debug: true\nagent.job-identifier: flat\n"
+    )
+
+    config = AgentConfiguration()
+    config.load_from_file(str(config_file))
+
+    assert config.get_str("job-identifier") == "flat"
+    assert config.get_bool("debug") is True
+
+
+def test_get_bool_converts_string_values(tmp_path: Path) -> None:
+    """Boolean options given as strings follow Flink's conversion rules.
+
+    The legacy flink-conf.yaml keeps every value as a string, so "false" must
+    not stay truthy the way Python's bool() would leave it.
+    """
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("agent.enabled: 'true'\nagent.disabled: 'false'\n")
+
+    config = AgentConfiguration()
+    config.load_from_file(str(config_file))
+
+    assert config.get_bool("enabled") is True
+    assert config.get_bool("disabled") is False
+
+
+def test_load_empty_configuration_file(tmp_path: Path) -> None:
+    """An empty configuration file contributes no agent settings."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("")
+
+    config = AgentConfiguration()
+    config.load_from_file(str(config_file))
+
+    assert config.get_conf_data() == {}
+
+
+def test_load_configuration_with_empty_agent_section(tmp_path: Path) -> None:
+    """An agent section without entries contributes no agent settings."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("agent:\n")
+
+    config = AgentConfiguration()
+    config.load_from_file(str(config_file))
+
+    assert config.get_conf_data() == {}
+
+
+def test_load_configuration_rejects_non_mapping_document(tmp_path: Path) -> None:
+    """A configuration file must contain a YAML mapping at the top level."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("- job-identifier\n")
+
+    config = AgentConfiguration()
+    with pytest.raises(TypeError, match="expected a YAML mapping at the top level"):
+        config.load_from_file(str(config_file))
+
+
+def test_load_configuration_rejects_non_mapping_agent_section(tmp_path: Path) -> None:
+    """The nested agent section must be a YAML mapping."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("agent: not-a-mapping\n")
+
+    config = AgentConfiguration()
+    with pytest.raises(TypeError, match="'agent' must be a mapping"):
+        config.load_from_file(str(config_file))
+
+
 def test_get_int() -> None:
     """Test get_int method with various inputs."""
     config = AgentConfiguration(
