@@ -66,6 +66,14 @@ class AliasesTest {
     }
 
     @Test
+    void clazzAliasCoversPythonMediaAndRerank() {
+        assertThat(Aliases.resolveClazz("dashscope", ResourceType.MEDIA_MODEL, Language.PYTHON))
+                .isEqualTo(ResourceName.MediaModel.Python.DASHSCOPE);
+        assertThat(Aliases.resolveClazz("dashscope", ResourceType.RERANK_MODEL, Language.PYTHON))
+                .isEqualTo(ResourceName.RerankModel.Python.DASHSCOPE);
+    }
+
+    @Test
     void clazzAliasCoversPythonMCPServer() {
         String fqn = Aliases.resolveClazz("mcp", ResourceType.MCP_SERVER, Language.PYTHON);
         assertThat(fqn).isEqualTo("flink_agents.integrations.mcp.mcp.MCPServer");
