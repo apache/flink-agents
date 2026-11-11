@@ -93,7 +93,7 @@ public final class ChatSubgraphDefinition implements SubgraphDefinition<ChatResp
         return delegate;
     }
 
-    /** A chat graph runs in its caller's environment and reads its caller's memory. */
+    /** A chat graph uses its caller's resources and reads memory through a call-local cache. */
     @Override
     public SubgraphInvocation<ChatResponseEvent> newInvocation(
             RunnerContextImpl context, String id, @Nullable Object key) {
@@ -102,7 +102,7 @@ public final class ChatSubgraphDefinition implements SubgraphDefinition<ChatResp
                 id,
                 key,
                 this,
-                new MemoryScope(memory.getSensoryMemStore(), memory.getShortTermMemStore()),
+                MemoryScope.readThrough(memory.getSensoryMemStore(), memory.getShortTermMemStore()),
                 context.getResourceScope());
     }
 
