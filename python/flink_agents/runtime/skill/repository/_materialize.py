@@ -31,8 +31,7 @@ from typing import TYPE_CHECKING, BinaryIO
 from urllib.parse import urljoin
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from flink_agents.api.core_options import AgentConfigOptions
-from flink_agents.api.skills import redact_skill_url, validate_skill_url
+from flink_agents.api.skills import SkillOptions, redact_skill_url, validate_skill_url
 
 if TYPE_CHECKING:
     from typing import Any
@@ -129,7 +128,7 @@ def _read_strict_int(
 
 
 def limits_from_config(config: ReadableConfiguration | None) -> MaterializerLimits:
-    """Build :class:`MaterializerLimits` from the ``skill.source.url.max-*`` options.
+    """Build :class:`MaterializerLimits` from the :class:`SkillOptions` options.
 
     Mirrors Java's ``SkillMaterializer.Limits.fromConfig``: a ``None`` config
     gives :data:`DEFAULT_LIMITS`, and an absent key falls back to its default.
@@ -144,22 +143,22 @@ def limits_from_config(config: ReadableConfiguration | None) -> MaterializerLimi
     return MaterializerLimits(
         max_download_bytes=_read_strict_int(
             config,
-            AgentConfigOptions.SKILL_SOURCE_URL_MAX_DOWNLOAD_BYTES,
+            SkillOptions.URL_MAX_DOWNLOAD_BYTES,
             _JAVA_LONG_RANGE,
         ),
         max_extract_entry_bytes=_read_strict_int(
             config,
-            AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_ENTRY_BYTES,
+            SkillOptions.MAX_EXTRACT_ENTRY_BYTES,
             _JAVA_LONG_RANGE,
         ),
         max_extract_total_bytes=_read_strict_int(
             config,
-            AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_TOTAL_BYTES,
+            SkillOptions.MAX_EXTRACT_TOTAL_BYTES,
             _JAVA_LONG_RANGE,
         ),
         max_extract_entries=_read_strict_int(
             config,
-            AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_ENTRIES,
+            SkillOptions.MAX_EXTRACT_ENTRIES,
             _JAVA_INT_RANGE,
         ),
     )
@@ -551,7 +550,7 @@ def download_to_tempfile(
                 _check_download_size(written, len(chunk), limits)
                 out.write(chunk)
                 written += len(chunk)
-    except BaseException:
+    except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
     return tmp_path

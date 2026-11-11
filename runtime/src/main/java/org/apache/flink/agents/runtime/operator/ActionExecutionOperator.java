@@ -34,7 +34,6 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.subagent.InternalSubagentPlans;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
-import org.apache.flink.agents.runtime.JavaMCPResourceDiscovery;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
@@ -365,8 +364,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 new ResourceCache(
                         agentPlan.getResourceProviders(),
                         getRuntimeContext().getUserCodeClassLoader(),
-                        pythonBridge::getPythonInterpreterManager,
-                        agentPlan.getConfig());
+                        pythonBridge::getPythonInterpreterManager);
 
         metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
         builtInMetrics =

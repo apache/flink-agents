@@ -18,8 +18,8 @@
 
 package org.apache.flink.agents.runtime.skill.repository;
 
-import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+import org.apache.flink.agents.api.skills.SkillOptions;
 import org.apache.flink.agents.api.skills.SkillUrlUtils;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.slf4j.Logger;
@@ -130,8 +130,8 @@ public final class SkillMaterializer {
         }
 
         /**
-         * Build a {@code Limits} from the four {@code skill.source.url.max-*} agent config options.
-         * Any key that is absent falls back to its default, and a {@code null} config yields {@link
+         * Build a {@code Limits} from the four {@link SkillOptions} agent config options. Any key
+         * that is absent falls back to its default, and a {@code null} config yields {@link
          * #DEFAULT}.
          *
          * @throws IllegalArgumentException if a configured value is not strictly positive.
@@ -141,10 +141,10 @@ public final class SkillMaterializer {
                 return DEFAULT;
             }
             return new Limits(
-                    config.get(AgentConfigOptions.SKILL_SOURCE_URL_MAX_DOWNLOAD_BYTES),
-                    config.get(AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_ENTRY_BYTES),
-                    config.get(AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_TOTAL_BYTES),
-                    config.get(AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_ENTRIES));
+                    config.get(SkillOptions.URL_MAX_DOWNLOAD_BYTES),
+                    config.get(SkillOptions.MAX_EXTRACT_ENTRY_BYTES),
+                    config.get(SkillOptions.MAX_EXTRACT_TOTAL_BYTES),
+                    config.get(SkillOptions.MAX_EXTRACT_ENTRIES));
         }
     }
 
@@ -157,10 +157,10 @@ public final class SkillMaterializer {
      */
     public static final class Materialized implements AutoCloseable {
         private final Path dir;
-        @Nullable private final Thread hook;
+        @javax.annotation.Nullable private final Thread hook;
         private final AtomicBoolean closed = new AtomicBoolean(false);
 
-        private Materialized(Path dir, @Nullable Thread hook) {
+        private Materialized(Path dir, @javax.annotation.Nullable Thread hook) {
             this.dir = dir;
             this.hook = hook;
         }
@@ -264,19 +264,16 @@ public final class SkillMaterializer {
      */
     public static Materialized extractZipSafely(Path zipPath, Limits limits) throws IOException {
         Path extractDir = Files.createTempDirectory(TEMP_DIR_PREFIX);
+        // Register cleanup before validation so the empty tempdir is always reclaimed,
+        // even if validation raises.
         Thread hook = registerCleanup(extractDir);
         Materialized materialized = new Materialized(extractDir, hook);
-
         try {
             extractZipSafelyInto(zipPath, extractDir, limits);
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException | Error e) {
             materialized.close();
             throw e;
-        } catch (Exception e) {
-            materialized.close();
-            throw new IOException(e.getMessage(), e);
         }
-
         return materialized;
     }
 
@@ -448,16 +445,19 @@ public final class SkillMaterializer {
         if (jarUrls == null || jarUrls.isEmpty()) {
             throw new IllegalArgumentException("jarUrls must be non-empty");
         }
-
         Path extractDir = Files.createTempDirectory(TEMP_DIR_PREFIX);
         Thread hook = registerCleanup(extractDir);
         String prefix = resourcePrefix.endsWith("/") ? resourcePrefix : resourcePrefix + "/";
-
-        for (URL jarUrl : jarUrls) {
-            copyJarEntries(jarUrl, prefix, extractDir);
+        Materialized materialized = new Materialized(extractDir, hook);
+        try {
+            for (URL jarUrl : jarUrls) {
+                copyJarEntries(jarUrl, prefix, extractDir);
+            }
+            return materialized;
+        } catch (IOException | RuntimeException | Error e) {
+            materialized.close();
+            throw e;
         }
-
-        return new Materialized(extractDir, hook);
     }
 
     /**
@@ -476,10 +476,8 @@ public final class SkillMaterializer {
                 sep >= 0
                         ? spec.substring(JAR_URL_PREFIX_LEN, sep)
                         : spec.substring(JAR_URL_PREFIX_LEN);
-
         URL innerUrl = new URL(innerSpec);
         File jarFileObj;
-
         try {
             jarFileObj = LocalUrls.toLocalFile(innerUrl);
         } catch (IOException e) {
@@ -488,34 +486,25 @@ public final class SkillMaterializer {
             // IOException for graceful failure handling see it.
             throw new IOException("Invalid JAR URL: " + jarUrl, e);
         }
-
         try (JarFile jarFile = new JarFile(jarFileObj)) {
             Enumeration<JarEntry> entries = jarFile.entries();
-
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-
                 if (!entry.getName().startsWith(prefix)) {
                     continue;
                 }
-
                 String rel = entry.getName().substring(prefix.length());
-
                 if (rel.isEmpty()) {
                     continue;
                 }
-
                 Path target = extractDir.resolve(rel).normalize();
-
                 if (!target.startsWith(extractDir)) {
                     throw new IOException("Unsafe jar entry: " + entry.getName());
                 }
-
                 if (entry.isDirectory()) {
                     Files.createDirectories(target);
                 } else {
                     Files.createDirectories(target.getParent());
-
                     if (Files.exists(target)) {
                         LOG.warn(
                                 "Classpath entry {} from {} overwrites a previously merged entry"
@@ -523,9 +512,8 @@ public final class SkillMaterializer {
                                 entry.getName(),
                                 jarUrl);
                     }
-
                     try (InputStream in = jarFile.getInputStream(entry)) {
-                        Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+                        Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                     }
                 }
             }
@@ -580,47 +568,35 @@ public final class SkillMaterializer {
     public static Path downloadToTempFile(
             String url, int timeoutMs, boolean allowInsecureHttp, Limits limits)
             throws IOException {
-
         URL u;
-
         try {
             u = new URL(url);
         } catch (MalformedURLException ignored) {
             throw new IOException("Invalid skill URL: " + SkillUrlUtils.redact(url));
         }
-
         String initialProtocol = requireValidDownloadUrl(u, allowInsecureHttp);
         boolean followRedirects = HttpURLConnection.getFollowRedirects();
-
         Path tmpZip = Files.createTempFile(TEMP_DIR_PREFIX, ".zip");
         HttpURLConnection conn = null;
-
         try {
             URL effectiveUrl = u;
             int redirects = 0;
-
             while (true) {
                 conn = (HttpURLConnection) effectiveUrl.openConnection();
                 conn.setConnectTimeout(timeoutMs);
                 conn.setReadTimeout(timeoutMs);
                 conn.setRequestMethod("GET");
-
                 // Validate each redirect ourselves before opening its target. This also preserves
                 // the JVM-wide switch that lets deployments disable redirects.
                 conn.setInstanceFollowRedirects(false);
-
                 int responseCode = conn.getResponseCode();
-
                 if (isRedirectStatus(responseCode)) {
                     String location = conn.getHeaderField("Location");
-
                     if (location == null) {
                         throw new IOException(
                                 "Skill URL returned an invalid redirect to: <redacted>");
                     }
-
                     URL redirectUrl;
-
                     try {
                         redirectUrl = new URL(effectiveUrl, location);
                     } catch (MalformedURLException ignored) {
@@ -628,32 +604,26 @@ public final class SkillMaterializer {
                                 "Skill URL returned an invalid redirect to: "
                                         + SkillUrlUtils.redact(location));
                     }
-
                     if (!followRedirects) {
                         throw new IOException(
                                 "Skill URL returned an unsupported redirect to: "
                                         + SkillUrlUtils.redact(redirectUrl.toExternalForm()));
                     }
-
                     String redirectProtocol = requireValidDownloadUrl(redirectUrl, true);
-
                     if (!redirectProtocol.equals(initialProtocol)) {
                         throw new IOException(
                                 "Skill URL returned an unsupported redirect to: "
                                         + SkillUrlUtils.redact(redirectUrl.toExternalForm()));
                     }
-
                     if (redirects >= MAX_REDIRECTS) {
                         throw new IOException("Skill URL returned too many redirects");
                     }
-
                     redirects++;
                     conn.disconnect();
                     conn = null;
                     effectiveUrl = redirectUrl;
                     continue;
                 }
-
                 if (responseCode < 200 || responseCode >= 300) {
                     throw new IOException(
                             "Skill URL returned HTTP "
@@ -707,7 +677,6 @@ public final class SkillMaterializer {
                         written += n;
                     }
                 }
-
                 break;
             }
         } catch (IOException e) {
@@ -718,7 +687,6 @@ public final class SkillMaterializer {
                 conn.disconnect();
             }
         }
-
         return tmpZip;
     }
 
@@ -743,7 +711,6 @@ public final class SkillMaterializer {
         if (!Files.exists(path)) {
             return;
         }
-
         try (Stream<Path> walk = Files.walk(path)) {
             walk.sorted(Comparator.reverseOrder())
                     .forEach(

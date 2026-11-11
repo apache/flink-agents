@@ -31,6 +31,8 @@ import org.apache.logging.log4j.core.layout.PatternLayout;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import javax.annotation.Nullable;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -559,6 +561,55 @@ class SkillMaterializerTest {
     }
 
     @Test
+    void extractClasspathFromJarsCleansUpWhenALaterJarFails(@TempDir Path tempDir)
+            throws IOException {
+        Path good = tempDir.resolve("good.jar");
+        Path bad = tempDir.resolve("bad.jar");
+        writeJar(good, Map.of("skills/skill-a/SKILL.md", "---\nname: skill-a\n---\nbody"));
+        writeJar(bad, Map.of("skills/../../escape.txt", "pwn"));
+
+        URL goodUrl = new URL("jar:" + good.toUri() + "!/skills");
+        URL badUrl = new URL("jar:" + bad.toUri() + "!/skills");
+        long before = countSkillTempDirs();
+        IOException e =
+                assertThrows(
+                        IOException.class,
+                        () ->
+                                SkillMaterializer.extractClasspathFromJars(
+                                        List.of(goodUrl, badUrl), "skills"));
+        assertTrue(e.getMessage().contains("Unsafe jar entry"), e.getMessage());
+        assertEquals(
+                before,
+                countSkillTempDirs(),
+                "files extracted from the first jar must be removed when a later jar fails");
+    }
+
+    @Test
+    void extractZipSafelyCleansUpAndRethrowsUncheckedExceptionsUnchanged(@TempDir Path tempDir)
+            throws IOException {
+        Path zip = tempDir.resolve("skills.zip");
+        writeZip(zip, Map.of("skill-a/SKILL.md", "---\nname: skill-a\n---\nbody"));
+
+        long before = countSkillTempDirs();
+        // Null limits fail inside extraction with a NullPointerException, which must propagate
+        // as-is (not wrapped in IOException) after the temp dir is cleaned up.
+        assertThrows(
+                NullPointerException.class, () -> SkillMaterializer.extractZipSafely(zip, null));
+        assertEquals(before, countSkillTempDirs(), "failed extraction must not leave a temp dir");
+    }
+
+    /** Number of skill temp dirs currently in {@code java.io.tmpdir}. */
+    private static long countSkillTempDirs() throws IOException {
+        try (Stream<Path> ls = Files.list(Path.of(System.getProperty("java.io.tmpdir")))) {
+            return ls.filter(
+                            p ->
+                                    p.getFileName().toString().startsWith("flink-agents-skills-")
+                                            && Files.isDirectory(p))
+                    .count();
+        }
+    }
+
+    @Test
     void closeRemovesTempDirAndDeregistersHook(@TempDir Path tempDir) throws IOException {
         Path zip = tempDir.resolve("skills.zip");
         writeZip(zip, Map.of("skill-a/SKILL.md", "---\nname: skill-a\n---\nbody"));
@@ -603,6 +654,77 @@ class SkillMaterializerTest {
     // Download size cap tests
     // -------------------------------------------------------
 
+    /** Limits with the given download cap; the extraction caps never bind in download tests. */
+    private static SkillMaterializer.Limits downloadCap(long cap) {
+        return new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
+    }
+
+    /**
+     * Starts a server that answers 200 with a chunked body ({@code sendResponseHeaders(200, 0)}) of
+     * {@code bytesToStream} bytes, adding a {@code Content-Length} header when {@code
+     * declaredContentLength} is not null. Writing stops once the client hangs up.
+     */
+    private static HttpServer startStreamingServer(
+            @Nullable Long declaredContentLength, long bytesToStream) throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext(
+                "/",
+                exchange -> {
+                    if (declaredContentLength != null) {
+                        exchange.getResponseHeaders()
+                                .add("Content-Length", String.valueOf(declaredContentLength));
+                    }
+                    exchange.sendResponseHeaders(200, 0);
+                    OutputStream body = exchange.getResponseBody();
+                    byte[] chunk = new byte[65536];
+                    Arrays.fill(chunk, (byte) 'x');
+                    long remaining = bytesToStream;
+                    while (remaining > 0) {
+                        int toWrite = (int) Math.min(chunk.length, remaining);
+                        try {
+                            body.write(chunk, 0, toWrite);
+                            body.flush();
+                        } catch (IOException ignored) {
+                            break;
+                        }
+                        remaining -= toWrite;
+                    }
+                    exchange.close();
+                });
+        server.setExecutor(null);
+        server.start();
+        return server;
+    }
+
+    /** Asserts that a download from {@code server} fails with a message containing {@code text}. */
+    private static void assertDownloadRejected(
+            HttpServer server, SkillMaterializer.Limits limits, String text) {
+        int port = server.getAddress().getPort();
+        IOException ex =
+                assertThrows(
+                        IOException.class,
+                        () ->
+                                SkillMaterializer.downloadToTempFile(
+                                        "http://127.0.0.1:" + port + "/skill.zip",
+                                        5_000,
+                                        true,
+                                        limits));
+        assertTrue(
+                ex.getMessage().contains(text),
+                "error must mention the limit, got: " + ex.getMessage());
+    }
+
+    /** Number of downloaded skill temp files currently in {@code java.io.tmpdir}. */
+    private static long countSkillTempZipFiles() throws IOException {
+        try (Stream<Path> ls = Files.list(Path.of(System.getProperty("java.io.tmpdir")))) {
+            return ls.filter(
+                            p ->
+                                    p.getFileName().toString().startsWith("flink-agents-skills-")
+                                            && p.getFileName().toString().endsWith(".zip"))
+                    .count();
+        }
+    }
+
     /**
      * Server declares a Content-Length larger than the injected cap. The pre-flight check must
      * reject before reading any body bytes.
@@ -610,35 +732,9 @@ class SkillMaterializerTest {
     @Test
     void rejectsDeclaredContentLengthOverCap() throws IOException {
         long cap = 1024L;
-        SkillMaterializer.Limits limits =
-                new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
-
-        long overCap = cap + 1;
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext(
-                "/",
-                exchange -> {
-                    exchange.getResponseHeaders().add("Content-Length", String.valueOf(overCap));
-                    exchange.sendResponseHeaders(200, 0);
-                    exchange.getResponseBody().close();
-                    exchange.close();
-                });
-        server.setExecutor(null);
-        server.start();
+        HttpServer server = startStreamingServer(cap + 1, 0);
         try {
-            int port = server.getAddress().getPort();
-            IOException ex =
-                    assertThrows(
-                            IOException.class,
-                            () ->
-                                    SkillMaterializer.downloadToTempFile(
-                                            "http://127.0.0.1:" + port + "/skill.zip",
-                                            5_000,
-                                            true,
-                                            limits));
-            assertTrue(
-                    ex.getMessage().contains("exceeding the limit"),
-                    "error must mention the limit, got: " + ex.getMessage());
+            assertDownloadRejected(server, downloadCap(cap), "exceeding the limit");
         } finally {
             server.stop(0);
         }
@@ -654,105 +750,28 @@ class SkillMaterializerTest {
     @Test
     void rejectsChunkedBodyOverCapDespiteSmallDeclaredContentLength() throws IOException {
         long cap = 1024L;
-        SkillMaterializer.Limits limits =
-                new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
-
-        int declaredLength = 100;
-        long actualBytes = cap + 1;
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext(
-                "/",
-                exchange -> {
-                    exchange.getResponseHeaders()
-                            .add("Content-Length", String.valueOf(declaredLength));
-                    exchange.sendResponseHeaders(200, 0);
-                    OutputStream body = exchange.getResponseBody();
-                    byte[] chunk = new byte[65536];
-                    Arrays.fill(chunk, (byte) 'x');
-                    long remaining = actualBytes;
-                    while (remaining > 0) {
-                        int toWrite = (int) Math.min(chunk.length, remaining);
-                        try {
-                            body.write(chunk, 0, toWrite);
-                            body.flush();
-                        } catch (IOException ignored) {
-                            break;
-                        }
-                        remaining -= toWrite;
-                    }
-                    exchange.close();
-                });
-        server.setExecutor(null);
-        server.start();
+        HttpServer server = startStreamingServer(100L, cap + 1);
         try {
-            int port = server.getAddress().getPort();
-            IOException ex =
-                    assertThrows(
-                            IOException.class,
-                            () ->
-                                    SkillMaterializer.downloadToTempFile(
-                                            "http://127.0.0.1:" + port + "/skill.zip",
-                                            5_000,
-                                            true,
-                                            limits));
-            assertTrue(
-                    ex.getMessage().contains("exceeded the limit"),
-                    "error must mention the limit, got: " + ex.getMessage());
+            assertDownloadRejected(server, downloadCap(cap), "exceeded the limit");
         } finally {
             server.stop(0);
         }
     }
 
     /**
-     * Server streams past the cap with no Content-Length header at all. The byte counter must catch
-     * it.
+     * Server streams {@code cap + 1} bytes with no Content-Length header at all, so the pre-flight
+     * check cannot fire and only the streaming byte counter can reject the download. Boundary pair
+     * of {@link #acceptsBodyExactlyAtDownloadCap()}: together they prove the cap is enforced at
+     * exactly the right byte.
      *
      * <p>Uses a 1 KiB injectable cap so the test streams only 1,025 bytes.
      */
     @Test
     void rejectsStreamWithNoContentLengthAndBodyOverCap() throws IOException {
         long cap = 1024L;
-        SkillMaterializer.Limits limits =
-                new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
-
-        long actualBytes = cap + 1;
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext(
-                "/",
-                exchange -> {
-                    exchange.sendResponseHeaders(200, 0);
-                    OutputStream body = exchange.getResponseBody();
-                    byte[] chunk = new byte[65536];
-                    Arrays.fill(chunk, (byte) 'x');
-                    long remaining = actualBytes;
-                    while (remaining > 0) {
-                        int toWrite = (int) Math.min(chunk.length, remaining);
-                        try {
-                            body.write(chunk, 0, toWrite);
-                            body.flush();
-                        } catch (IOException ignored) {
-                            break;
-                        }
-                        remaining -= toWrite;
-                    }
-                    exchange.close();
-                });
-        server.setExecutor(null);
-        server.start();
+        HttpServer server = startStreamingServer(null, cap + 1);
         try {
-            int port = server.getAddress().getPort();
-            IOException ex =
-                    assertThrows(
-                            IOException.class,
-                            () ->
-                                    SkillMaterializer.downloadToTempFile(
-                                            "http://127.0.0.1:" + port + "/skill.zip",
-                                            5_000,
-                                            true,
-                                            limits));
-            assertTrue(
-                    ex.getMessage().contains("exceeded the limit"),
-                    "error must mention the limit, got: " + ex.getMessage());
+            assertDownloadRejected(server, downloadCap(cap), "exceeded the limit");
         } finally {
             server.stop(0);
         }
@@ -765,8 +784,7 @@ class SkillMaterializerTest {
     @Test
     void acceptsBodyExactlyAtDownloadCap() throws IOException {
         long cap = 1024L;
-        SkillMaterializer.Limits limits =
-                new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
+        SkillMaterializer.Limits limits = downloadCap(cap);
 
         byte[] body = new byte[(int) cap];
         Arrays.fill(body, (byte) 'z');
@@ -786,96 +804,16 @@ class SkillMaterializerTest {
         }
     }
 
-    /**
-     * A body of {@code cap + 1} bytes must be rejected. Paired with {@link
-     * #acceptsBodyExactlyAtDownloadCap()} to prove the boundary is enforced at exactly the right
-     * byte.
-     *
-     * <p>The server intentionally omits {@code Content-Length} so the pre-flight check cannot fire;
-     * only the streaming counter can reject the download. This isolates the counter under test.
-     */
-    @Test
-    void rejectsBodyOneByteOverDownloadCap() throws IOException {
-        long cap = 1024L;
-        SkillMaterializer.Limits limits =
-                new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
-
-        long actualBytes = cap + 1;
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext(
-                "/",
-                exchange -> {
-                    // sendResponseHeaders with 0 = chunked / no Content-Length header,
-                    // so only the streaming byte counter can reject the download.
-                    exchange.sendResponseHeaders(200, 0);
-                    OutputStream out = exchange.getResponseBody();
-                    byte[] chunk = new byte[(int) actualBytes];
-                    Arrays.fill(chunk, (byte) 'z');
-                    try {
-                        out.write(chunk);
-                        out.flush();
-                    } catch (IOException ignored) {
-                        // client closed early after limit hit - expected
-                    }
-                    exchange.close();
-                });
-        server.setExecutor(null);
-        server.start();
-        try {
-            int port = server.getAddress().getPort();
-            IOException ex =
-                    assertThrows(
-                            IOException.class,
-                            () ->
-                                    SkillMaterializer.downloadToTempFile(
-                                            "http://127.0.0.1:" + port + "/skill.zip",
-                                            5_000,
-                                            true,
-                                            limits));
-            assertTrue(
-                    ex.getMessage().contains("exceeded the limit"),
-                    "error must mention the limit, got: " + ex.getMessage());
-        } finally {
-            server.stop(0);
-        }
-    }
-
     /** After a download size rejection the temp file must not exist. */
     @Test
     void cleanupOnDownloadFailure() throws IOException {
         long cap = 1024L;
-        SkillMaterializer.Limits limits =
-                new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
+        SkillMaterializer.Limits limits = downloadCap(cap);
 
-        long overCap = cap + 1;
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        Path tmpDir = Path.of(System.getProperty("java.io.tmpdir"));
-
-        server.createContext(
-                "/",
-                exchange -> {
-                    exchange.getResponseHeaders().add("Content-Length", String.valueOf(overCap));
-                    exchange.sendResponseHeaders(200, 0);
-                    exchange.getResponseBody().close();
-                    exchange.close();
-                });
-        server.setExecutor(null);
-        server.start();
+        HttpServer server = startStreamingServer(cap + 1, 0);
         try {
             int port = server.getAddress().getPort();
-            long before;
-            try (Stream<Path> ls = Files.list(tmpDir)) {
-                before =
-                        ls.filter(
-                                        p ->
-                                                p.getFileName()
-                                                                .toString()
-                                                                .startsWith("flink-agents-skills-")
-                                                        && p.getFileName()
-                                                                .toString()
-                                                                .endsWith(".zip"))
-                                .count();
-            }
+            long before = countSkillTempZipFiles();
 
             assertThrows(
                     IOException.class,
@@ -886,20 +824,10 @@ class SkillMaterializerTest {
                                     true,
                                     limits));
 
-            long after;
-            try (Stream<Path> ls = Files.list(tmpDir)) {
-                after =
-                        ls.filter(
-                                        p ->
-                                                p.getFileName()
-                                                                .toString()
-                                                                .startsWith("flink-agents-skills-")
-                                                        && p.getFileName()
-                                                                .toString()
-                                                                .endsWith(".zip"))
-                                .count();
-            }
-            assertEquals(before, after, "failed download must not leave a temp file behind");
+            assertEquals(
+                    before,
+                    countSkillTempZipFiles(),
+                    "failed download must not leave a temp file behind");
         } finally {
             server.stop(0);
         }
@@ -1079,33 +1007,12 @@ class SkillMaterializerTest {
         Path zip = tempDir.resolve("test.zip");
         forgeDeclaredSizesForAllEntries(zip, 1L);
 
-        Path tmpDir = Path.of(System.getProperty("java.io.tmpdir"));
-        long before;
-        try (Stream<Path> ls = Files.list(tmpDir)) {
-            before =
-                    ls.filter(
-                                    p ->
-                                            p.getFileName()
-                                                            .toString()
-                                                            .startsWith("flink-agents-skills-")
-                                                    && Files.isDirectory(p))
-                            .count();
-        }
+        long before = countSkillTempDirs();
 
         assertThrows(IOException.class, () -> SkillMaterializer.extractZipSafely(zip, limits));
 
-        long after;
-        try (Stream<Path> ls = Files.list(tmpDir)) {
-            after =
-                    ls.filter(
-                                    p ->
-                                            p.getFileName()
-                                                            .toString()
-                                                            .startsWith("flink-agents-skills-")
-                                                    && Files.isDirectory(p))
-                            .count();
-        }
-        assertEquals(before, after, "failed extraction must not leave a temp dir behind");
+        assertEquals(
+                before, countSkillTempDirs(), "failed extraction must not leave a temp dir behind");
     }
 
     /**
@@ -1227,33 +1134,12 @@ class SkillMaterializerTest {
             }
         }
 
-        Path tmpDir = Path.of(System.getProperty("java.io.tmpdir"));
-        long before;
-        try (Stream<Path> ls = Files.list(tmpDir)) {
-            before =
-                    ls.filter(
-                                    p ->
-                                            p.getFileName()
-                                                            .toString()
-                                                            .startsWith("flink-agents-skills-")
-                                                    && Files.isDirectory(p))
-                            .count();
-        }
+        long before = countSkillTempDirs();
 
         assertThrows(IOException.class, () -> SkillMaterializer.extractZipSafely(zip, limits));
 
-        long after;
-        try (Stream<Path> ls = Files.list(tmpDir)) {
-            after =
-                    ls.filter(
-                                    p ->
-                                            p.getFileName()
-                                                            .toString()
-                                                            .startsWith("flink-agents-skills-")
-                                                    && Files.isDirectory(p))
-                            .count();
-        }
-        assertEquals(before, after, "failed extraction must not leave a temp dir behind");
+        assertEquals(
+                before, countSkillTempDirs(), "failed extraction must not leave a temp dir behind");
     }
 
     /**
@@ -1266,56 +1152,15 @@ class SkillMaterializerTest {
         Path zip = tempDir.resolve("slip.zip");
         writeZip(zip, Map.of("../escape.txt", "pwn"));
 
-        Path tmpDir = Path.of(System.getProperty("java.io.tmpdir"));
-        long before;
-        try (Stream<Path> ls = Files.list(tmpDir)) {
-            before =
-                    ls.filter(
-                                    p ->
-                                            p.getFileName()
-                                                            .toString()
-                                                            .startsWith("flink-agents-skills-")
-                                                    && Files.isDirectory(p))
-                            .count();
-        }
+        long before = countSkillTempDirs();
 
         assertThrows(IOException.class, () -> SkillMaterializer.extractZipSafely(zip));
 
-        long after;
-        try (Stream<Path> ls = Files.list(tmpDir)) {
-            after =
-                    ls.filter(
-                                    p ->
-                                            p.getFileName()
-                                                            .toString()
-                                                            .startsWith("flink-agents-skills-")
-                                                    && Files.isDirectory(p))
-                            .count();
-        }
-        assertEquals(before, after, "zip-slip failure must not leave a temp dir behind");
+        assertEquals(
+                before, countSkillTempDirs(), "zip-slip failure must not leave a temp dir behind");
     }
 
-    /**
-     * A valid archive must still extract correctly — no regressions. Reuses the existing
-     * extractsTopLevelEntries test logic but explicitly confirms the new passes don't break the
-     * happy path.
-     */
-    @Test
-    void happyPathExtractionUnchanged(@TempDir Path tempDir) throws IOException {
-        Path zip = tempDir.resolve("ok.zip");
-        writeZip(
-                zip,
-                Map.of(
-                        "skill-a/SKILL.md", "---\nname: skill-a\n---\nbody",
-                        "skill-b/SKILL.md", "---\nname: skill-b\n---\nbody"));
-
-        try (SkillMaterializer.Materialized m = SkillMaterializer.extractZipSafely(zip)) {
-            assertTrue(Files.isRegularFile(m.getDir().resolve("skill-a/SKILL.md")));
-            assertTrue(Files.isRegularFile(m.getDir().resolve("skill-b/SKILL.md")));
-        }
-    }
-
-    // --- Limits.fromConfig: the four skill.source.url.max-* agent config options ---
+    // --- Limits.fromConfig: the four SkillOptions agent config options ---
 
     @Test
     void limitsFromConfigNullReturnsDefault() {
@@ -1337,9 +1182,9 @@ class SkillMaterializerTest {
     void limitsFromConfigReadsAllFourKeys() {
         AgentConfiguration config = new AgentConfiguration();
         config.setLong("skill.source.url.max-download-bytes", 11L);
-        config.setLong("skill.source.url.max-extract-entry-bytes", 22L);
-        config.setLong("skill.source.url.max-extract-total-bytes", 33L);
-        config.setInt("skill.source.url.max-extract-entries", 44);
+        config.setLong("skill.source.max-extract-entry-bytes", 22L);
+        config.setLong("skill.source.max-extract-total-bytes", 33L);
+        config.setInt("skill.source.max-extract-entries", 44);
 
         SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
 
@@ -1350,9 +1195,25 @@ class SkillMaterializerTest {
     }
 
     @Test
-    void limitsFromConfigSetsOneKeyAndDefaultsTheRest() {
+    void limitsFromConfigIgnoresPreRenameUrlExtractKeys() {
         AgentConfiguration config = new AgentConfiguration();
         config.setInt("skill.source.url.max-extract-entries", 7);
+        config.setLong("skill.source.url.max-extract-entry-bytes", 7L);
+        config.setLong("skill.source.url.max-extract-total-bytes", 7L);
+
+        SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
+
+        assertEquals(SkillMaterializer.Limits.DEFAULT.maxExtractEntries, limits.maxExtractEntries);
+        assertEquals(
+                SkillMaterializer.Limits.DEFAULT.maxExtractEntryBytes, limits.maxExtractEntryBytes);
+        assertEquals(
+                SkillMaterializer.Limits.DEFAULT.maxExtractTotalBytes, limits.maxExtractTotalBytes);
+    }
+
+    @Test
+    void limitsFromConfigSetsOneKeyAndDefaultsTheRest() {
+        AgentConfiguration config = new AgentConfiguration();
+        config.setInt("skill.source.max-extract-entries", 7);
 
         SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
 
@@ -1368,8 +1229,8 @@ class SkillMaterializerTest {
     void limitsFromConfigRejectsZeroAndNegativeForEveryKey() {
         String[] longKeys = {
             "skill.source.url.max-download-bytes",
-            "skill.source.url.max-extract-entry-bytes",
-            "skill.source.url.max-extract-total-bytes"
+            "skill.source.max-extract-entry-bytes",
+            "skill.source.max-extract-total-bytes"
         };
         for (String key : longKeys) {
             for (long bad : new long[] {0L, -1L}) {
@@ -1383,7 +1244,7 @@ class SkillMaterializerTest {
         }
         for (int bad : new int[] {0, -1}) {
             AgentConfiguration config = new AgentConfiguration();
-            config.setInt("skill.source.url.max-extract-entries", bad);
+            config.setInt("skill.source.max-extract-entries", bad);
             assertThrows(
                     IllegalArgumentException.class,
                     () -> SkillMaterializer.Limits.fromConfig(config),
@@ -1395,9 +1256,9 @@ class SkillMaterializerTest {
     void limitsFromConfigParsesStringValues() {
         AgentConfiguration config = new AgentConfiguration();
         config.setStr("skill.source.url.max-download-bytes", "11");
-        config.setStr("skill.source.url.max-extract-entry-bytes", "22");
-        config.setStr("skill.source.url.max-extract-total-bytes", "33");
-        config.setStr("skill.source.url.max-extract-entries", "44");
+        config.setStr("skill.source.max-extract-entry-bytes", "22");
+        config.setStr("skill.source.max-extract-total-bytes", "33");
+        config.setStr("skill.source.max-extract-entries", "44");
 
         SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
 
@@ -1411,9 +1272,9 @@ class SkillMaterializerTest {
     void limitsFromConfigAcceptsMinimumOfOne() {
         AgentConfiguration config = new AgentConfiguration();
         config.setLong("skill.source.url.max-download-bytes", 1L);
-        config.setLong("skill.source.url.max-extract-entry-bytes", 1L);
-        config.setLong("skill.source.url.max-extract-total-bytes", 1L);
-        config.setInt("skill.source.url.max-extract-entries", 1);
+        config.setLong("skill.source.max-extract-entry-bytes", 1L);
+        config.setLong("skill.source.max-extract-total-bytes", 1L);
+        config.setInt("skill.source.max-extract-entries", 1);
 
         SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
 
@@ -1425,7 +1286,7 @@ class SkillMaterializerTest {
     void limitsFromConfigAcceptsJavaTypeMaximum() {
         AgentConfiguration config = new AgentConfiguration();
         config.setStr("skill.source.url.max-download-bytes", String.valueOf(Long.MAX_VALUE));
-        config.setStr("skill.source.url.max-extract-entries", String.valueOf(Integer.MAX_VALUE));
+        config.setStr("skill.source.max-extract-entries", String.valueOf(Integer.MAX_VALUE));
 
         SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
 
@@ -1440,7 +1301,7 @@ class SkillMaterializerTest {
     @Test
     void limitsFromConfigRejectsValuesTooLargeForType() {
         AgentConfiguration entries = new AgentConfiguration();
-        entries.setStr("skill.source.url.max-extract-entries", "3000000000");
+        entries.setStr("skill.source.max-extract-entries", "3000000000");
         assertThrows(
                 NumberFormatException.class, () -> SkillMaterializer.Limits.fromConfig(entries));
 

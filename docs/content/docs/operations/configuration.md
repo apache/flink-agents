@@ -259,10 +259,10 @@ initialized, and an archive that exceeds one fails loading. See
 
 | Key | Default | Type | Description |
 | --- | --- | --- | --- |
+| `skill.source.max-extract-entries` | 1000 | int | Maximum number of entries in one skill archive. |
+| `skill.source.max-extract-entry-bytes` | 67108864 (64 MiB) | long | Maximum uncompressed size of a single archive entry. |
+| `skill.source.max-extract-total-bytes` | 268435456 (256 MiB) | long | Maximum combined uncompressed size of all entries in one archive. |
 | `skill.source.url.max-download-bytes` | 67108864 (64 MiB) | long | Maximum bytes downloaded for one skill archive over HTTP(S). |
-| `skill.source.url.max-extract-entries` | 1000 | int | Maximum number of entries in one skill archive. |
-| `skill.source.url.max-extract-entry-bytes` | 67108864 (64 MiB) | long | Maximum uncompressed size of a single archive entry. |
-| `skill.source.url.max-extract-total-bytes` | 268435456 (256 MiB) | long | Maximum combined uncompressed size of all entries in one archive. |
 
 ### Memory
 

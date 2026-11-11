@@ -72,9 +72,9 @@ public class ResourceContextImpl implements ResourceContext, AutoCloseable {
     }
 
     /**
-     * Also takes the agent configuration that supplies the {@code skill.source.url.max-*} download
-     * and extraction limits when the {@link SkillManager} is created. A {@code null} config means
-     * the default limits.
+     * Also takes the agent configuration that supplies the {@code SkillOptions} download and
+     * extraction limits when the {@link SkillManager} is created. A {@code null} config means the
+     * default limits.
      */
     public ResourceContextImpl(
             BiFunction<String, ResourceType, Resource> getResource,

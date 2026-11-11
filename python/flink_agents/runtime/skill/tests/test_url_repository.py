@@ -229,7 +229,11 @@ class TestURLSkillRepositoryLimits:
         with pytest.raises(ValueError, match=f"limit of {size - 1} bytes"):
             URLSkillRepository(url, allow_insecure_http=True, limits=limits)
         # Control: the same archive loads with the default limits.
-        assert URLSkillRepository(url, allow_insecure_http=True).get_skills()
+        repo = URLSkillRepository(url, allow_insecure_http=True)
+        try:
+            assert repo.get_skills()
+        finally:
+            repo.close()
 
     def test_extraction_uses_given_limits(
         self, zip_server: "tuple[str, type[_ZipHandler]]"

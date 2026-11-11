@@ -44,9 +44,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Integration tests for the {@code skill.source.url.max-*} agent config options: a limit set only
- * in the agent configuration must take effect at the bottom of the real path ({@code ResourceCache}
- * -> {@code ResourceContextImpl} -> {@code SkillManager} -> {@code URLSkillRepository} / {@code
+ * Integration tests for the {@code SkillOptions} agent config options: a limit set only in the
+ * agent configuration must take effect at the bottom of the real path ({@code ResourceCache} ->
+ * {@code ResourceContextImpl} -> {@code SkillManager} -> {@code URLSkillRepository} / {@code
  * FileSystemSkillRepository} -> {@code SkillMaterializer}).
  *
  * <p>Every rejection test has a matching control that uses the same archive with no limit set, so a
@@ -125,7 +125,7 @@ class SkillLimitsConfigIntegrationTest {
         Path zip = tempDir.resolve("skills.zip");
         Files.write(zip, skillZip(3));
         AgentConfiguration config = new AgentConfiguration();
-        config.setInt("skill.source.url.max-extract-entries", 2);
+        config.setInt("skill.source.max-extract-entries", 2);
 
         try (ResourceCache cache = cacheWith(Skills.fromLocalDir(zip.toString()), config)) {
             Exception ex =
@@ -144,7 +144,7 @@ class SkillLimitsConfigIntegrationTest {
         Path zip = tempDir.resolve("skills.zip");
         Files.write(zip, skillZip(3));
         AgentConfiguration config = new AgentConfiguration();
-        config.setInt("skill.source.url.max-extract-entries", 3);
+        config.setInt("skill.source.max-extract-entries", 3);
 
         try (ResourceCache cache = cacheWith(Skills.fromLocalDir(zip.toString()), config)) {
             assertEquals(3, cache.getResourceContext().getSkillManager().getAllSkillNames().size());
@@ -156,7 +156,7 @@ class SkillLimitsConfigIntegrationTest {
         Path zip = tempDir.resolve("skills.zip");
         Files.write(zip, skillZip(1));
         AgentConfiguration config = new AgentConfiguration();
-        config.setLong("skill.source.url.max-extract-entry-bytes", 5L);
+        config.setLong("skill.source.max-extract-entry-bytes", 5L);
 
         try (ResourceCache cache = cacheWith(Skills.fromLocalDir(zip.toString()), config)) {
             Exception ex =
@@ -174,7 +174,7 @@ class SkillLimitsConfigIntegrationTest {
         Path zip = tempDir.resolve("skills.zip");
         Files.write(zip, skillZip(3));
         AgentConfiguration config = new AgentConfiguration();
-        config.setLong("skill.source.url.max-extract-total-bytes", 10L);
+        config.setLong("skill.source.max-extract-total-bytes", 10L);
 
         try (ResourceCache cache = cacheWith(Skills.fromLocalDir(zip.toString()), config)) {
             Exception ex =
@@ -192,7 +192,7 @@ class SkillLimitsConfigIntegrationTest {
         Path zip = tempDir.resolve("skills.zip");
         Files.write(zip, skillZip(1));
         AgentConfiguration config = new AgentConfiguration();
-        config.setInt("skill.source.url.max-extract-entries", 0);
+        config.setInt("skill.source.max-extract-entries", 0);
 
         try (ResourceCache cache = cacheWith(Skills.fromLocalDir(zip.toString()), config)) {
             Exception ex =
@@ -254,7 +254,7 @@ class SkillLimitsConfigIntegrationTest {
     void configuredEntryLimitRejectsUrlSource() throws Exception {
         HttpServer server = serve(skillZip(3));
         AgentConfiguration config = new AgentConfiguration();
-        config.setInt("skill.source.url.max-extract-entries", 2);
+        config.setInt("skill.source.max-extract-entries", 2);
 
         try (ResourceCache cache = cacheWith(Skills.fromUrlUnsafe(url(server)), config)) {
             Exception ex =
@@ -272,7 +272,7 @@ class SkillLimitsConfigIntegrationTest {
     void configuredEntryByteLimitRejectsUrlSource() throws Exception {
         HttpServer server = serve(skillZip(1));
         AgentConfiguration config = new AgentConfiguration();
-        config.setLong("skill.source.url.max-extract-entry-bytes", 5L);
+        config.setLong("skill.source.max-extract-entry-bytes", 5L);
 
         try (ResourceCache cache = cacheWith(Skills.fromUrlUnsafe(url(server)), config)) {
             Exception ex =
@@ -291,7 +291,7 @@ class SkillLimitsConfigIntegrationTest {
     void configuredTotalByteLimitRejectsUrlSource() throws Exception {
         HttpServer server = serve(skillZip(3));
         AgentConfiguration config = new AgentConfiguration();
-        config.setLong("skill.source.url.max-extract-total-bytes", 10L);
+        config.setLong("skill.source.max-extract-total-bytes", 10L);
 
         try (ResourceCache cache = cacheWith(Skills.fromUrlUnsafe(url(server)), config)) {
             Exception ex =
@@ -312,7 +312,7 @@ class SkillLimitsConfigIntegrationTest {
         Path zip = tempDir.resolve("skills.zip");
         Files.write(zip, skillZip(3));
         AgentConfiguration config = new AgentConfiguration();
-        config.setInt("skill.source.url.max-extract-entries", 2);
+        config.setInt("skill.source.max-extract-entries", 2);
 
         try (ResourceCache root = cacheWith(Skills.fromLocalDir(zip.toString()), config);
                 ResourceCache child =
@@ -335,9 +335,9 @@ class SkillLimitsConfigIntegrationTest {
         Path zip = tempDir.resolve("skills.zip");
         Files.write(zip, skillZip(3));
         AgentConfiguration rootConfig = new AgentConfiguration();
-        rootConfig.setInt("skill.source.url.max-extract-entries", 2);
+        rootConfig.setInt("skill.source.max-extract-entries", 2);
         AgentConfiguration childConfig = new AgentConfiguration();
-        childConfig.setInt("skill.source.url.max-extract-entries", 3);
+        childConfig.setInt("skill.source.max-extract-entries", 3);
 
         try (ResourceCache root = cacheWith(Skills.fromLocalDir(zip.toString()), rootConfig);
                 ResourceCache child =

@@ -44,9 +44,9 @@ from flink_agents.runtime.skill.repository._materialize import (
 
 _LIMIT_KEYS = (
     ("skill.source.url.max-download-bytes", "max_download_bytes"),
-    ("skill.source.url.max-extract-entry-bytes", "max_extract_entry_bytes"),
-    ("skill.source.url.max-extract-total-bytes", "max_extract_total_bytes"),
-    ("skill.source.url.max-extract-entries", "max_extract_entries"),
+    ("skill.source.max-extract-entry-bytes", "max_extract_entry_bytes"),
+    ("skill.source.max-extract-total-bytes", "max_extract_total_bytes"),
+    ("skill.source.max-extract-entries", "max_extract_entries"),
 )
 
 
@@ -61,6 +61,15 @@ def _small_limits(*, entry: int, total: int) -> MaterializerLimits:
         max_download_bytes=DEFAULT_LIMITS.max_download_bytes,
         max_extract_entry_bytes=entry,
         max_extract_total_bytes=total,
+        max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
+    )
+
+
+def _download_cap(cap: int) -> MaterializerLimits:
+    return MaterializerLimits(
+        max_download_bytes=cap,
+        max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
+        max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
         max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
     )
 
@@ -443,10 +452,9 @@ def _make_zip_with_patched_declared_sizes(
     header (LFH, ``PK\x03\x04``) and the central directory header (CDH, ``PK\x01\x02``)
     for every entry.
 
-    Patching only the CDH is insufficient for the per-entry streaming test: Python's
-    ``zipfile`` reads the LFH declared size to bound how many bytes it decompresses, so
-    leaving the LFH intact causes a CRC mismatch before the byte counter is reached.
-    Patching both headers lets the full real payload flow through the streaming counter.
+    A declared size below the real one passes the size pre-check, and the forged-size
+    tests expect CRC validation to reject the archive. The byte counters are tested
+    through ``_bounded_copy``.
     """
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for name, content in entries.items():
@@ -492,12 +500,7 @@ def _make_zip_with_patched_declared_sizes(
 class TestDownloadSizeCap:
     def test_rejects_declared_content_length_over_cap(self) -> None:
         cap = 1024
-        limits = MaterializerLimits(
-            max_download_bytes=cap,
-            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
-            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
-            max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
-        )
+        limits = _download_cap(cap)
         url, server = _make_streaming_server(
             declared_content_length=cap + 1, bytes_to_stream=0
         )
@@ -511,12 +514,7 @@ class TestDownloadSizeCap:
 
     def test_accepts_declared_content_length_exactly_at_cap(self) -> None:
         cap = 1024
-        limits = MaterializerLimits(
-            max_download_bytes=cap,
-            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
-            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
-            max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
-        )
+        limits = _download_cap(cap)
         url, server = _make_streaming_server(
             declared_content_length=cap, bytes_to_stream=cap
         )
@@ -533,17 +531,12 @@ class TestDownloadSizeCap:
 
     def test_rejects_stream_with_no_content_length_and_body_over_cap(self) -> None:
         cap = 1024
-        limits = MaterializerLimits(
-            max_download_bytes=cap,
-            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
-            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
-            max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
-        )
+        limits = _download_cap(cap)
         url, server = _make_streaming_server(
             declared_content_length=None, bytes_to_stream=cap + 1
         )
         try:
-            with pytest.raises(ValueError, match="exceeded the limit"):
+            with pytest.raises(ValueError, match=f"exceeded the limit of {cap} bytes"):
                 download_to_tempfile(
                     url, timeout=10, allow_insecure_http=True, limits=limits
                 )
@@ -554,12 +547,7 @@ class TestDownloadSizeCap:
         self, static_server: "tuple[str, type[_StaticHandler]]"
     ) -> None:
         cap = 1024
-        limits = MaterializerLimits(
-            max_download_bytes=cap,
-            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
-            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
-            max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
-        )
+        limits = _download_cap(cap)
         base_url, handler = static_server
         handler.payload = b"z" * cap
         handler.status = 200
@@ -571,33 +559,9 @@ class TestDownloadSizeCap:
         finally:
             path.unlink(missing_ok=True)
 
-    def test_rejects_body_one_byte_over_download_cap(self) -> None:
-        cap = 1024
-        limits = MaterializerLimits(
-            max_download_bytes=cap,
-            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
-            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
-            max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
-        )
-        url, server = _make_streaming_server(
-            declared_content_length=None, bytes_to_stream=cap + 1
-        )
-        try:
-            with pytest.raises(ValueError, match=str(cap)):
-                download_to_tempfile(
-                    url, timeout=10, allow_insecure_http=True, limits=limits
-                )
-        finally:
-            server.shutdown()
-
     def test_cleanup_on_download_failure(self) -> None:
         cap = 1024
-        limits = MaterializerLimits(
-            max_download_bytes=cap,
-            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
-            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
-            max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
-        )
+        limits = _download_cap(cap)
         url, server = _make_streaming_server(
             declared_content_length=cap + 1, bytes_to_stream=0
         )
@@ -691,19 +655,10 @@ class TestExtractionSizeCap:
             for i in range(3):
                 zf.writestr(f"e{i}.txt", "")
         tmp_dir = Path(tempfile.gettempdir())
-        before = sum(
-            1
-            for p in tmp_dir.iterdir()
-            if p.name.startswith("flink-agents-skills-") and p.is_dir()
-        )
+        before = _count_skill_temp_dirs(tmp_dir)
         with pytest.raises(ValueError):
             extract_zip_safely(zip_path, limits=limits)
-        after = sum(
-            1
-            for p in tmp_dir.iterdir()
-            if p.name.startswith("flink-agents-skills-") and p.is_dir()
-        )
-        assert before == after
+        assert _count_skill_temp_dirs(tmp_dir) == before
 
 
 class TestBoundedCopy:
@@ -735,6 +690,7 @@ class TestBoundedCopy:
                 max_total_bytes=1000,
                 chunk_size=7,
             )
+        # Checked before writing: nothing past the last full chunk under the limit.
         assert len(dst.getvalue()) <= 100
 
     def test_rejects_cumulative_total_from_earlier_entries(self) -> None:
@@ -765,6 +721,9 @@ class TestBoundedCopy:
     def test_extraction_uses_running_total_not_declared_sizes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # rob-9: a valid zip where each file fits but the total exceeds the cap.
+        # Disable the declared-size pre-check so only the streaming counter can
+        # reject it, and assert the counter's specific message.
         import flink_agents.runtime.skill.repository._materialize as materialize
 
         monkeypatch.setattr(
@@ -782,7 +741,7 @@ class TestBoundedCopy:
 
 
 class TestLimitsFromConfig:
-    """``limits_from_config`` builds the limits from the skill.source.url.max-* keys."""
+    """``limits_from_config`` builds the limits from the ``SkillOptions`` keys."""
 
     def test_none_config_returns_defaults(self) -> None:
         assert limits_from_config(None) is DEFAULT_LIMITS
@@ -803,6 +762,18 @@ class TestLimitsFromConfig:
         assert limits.max_extract_entry_bytes == 12
         assert limits.max_extract_total_bytes == 13
         assert limits.max_extract_entries == 14
+
+    def test_ignores_pre_rename_url_extract_keys(self) -> None:
+        config = AgentConfiguration(
+            {
+                "skill.source.url.max-extract-entry-bytes": 7,
+                "skill.source.url.max-extract-total-bytes": 7,
+                "skill.source.url.max-extract-entries": 7,
+            }
+        )
+        limits = limits_from_config(config)
+        for _key, attr in _LIMIT_KEYS:
+            assert getattr(limits, attr) == getattr(DEFAULT_LIMITS, attr)
 
     @pytest.mark.parametrize(("key", "attr"), _LIMIT_KEYS)
     def test_one_key_set_and_the_rest_default(self, key: str, attr: str) -> None:
@@ -826,7 +797,7 @@ class TestLimitsFromConfig:
         config = AgentConfiguration(
             {
                 "skill.source.url.max-download-bytes": "1024",
-                "skill.source.url.max-extract-entries": "+5",
+                "skill.source.max-extract-entries": "+5",
             }
         )
         limits = limits_from_config(config)
@@ -839,10 +810,10 @@ class TestLimitsFromConfig:
     def test_rejects_non_integer_values_like_java(self, value: object) -> None:
         # Java parses with Long.parseLong / Integer.parseInt, which reject all of
         # these, so the same config value must not load in one runtime only.
-        config = AgentConfiguration({"skill.source.url.max-extract-entries": value})
+        config = AgentConfiguration({"skill.source.max-extract-entries": value})
         with pytest.raises(
             ValueError,
-            match=r"Invalid value for skill\.source\.url\.max-extract-entries",
+            match=r"Invalid value for skill\.source\.max-extract-entries",
         ):
             limits_from_config(config)
 
@@ -851,16 +822,16 @@ class TestLimitsFromConfig:
         [
             ("skill.source.url.max-download-bytes", "max_download_bytes", 2**63 - 1),
             (
-                "skill.source.url.max-extract-entry-bytes",
+                "skill.source.max-extract-entry-bytes",
                 "max_extract_entry_bytes",
                 2**63 - 1,
             ),
             (
-                "skill.source.url.max-extract-total-bytes",
+                "skill.source.max-extract-total-bytes",
                 "max_extract_total_bytes",
                 2**63 - 1,
             ),
-            ("skill.source.url.max-extract-entries", "max_extract_entries", 2**31 - 1),
+            ("skill.source.max-extract-entries", "max_extract_entries", 2**31 - 1),
         ],
     )
     def test_accepts_java_type_maximum(
@@ -874,15 +845,17 @@ class TestLimitsFromConfig:
         ("key", "too_large"),
         [
             ("skill.source.url.max-download-bytes", 2**63),
-            ("skill.source.url.max-extract-entry-bytes", 2**63),
-            ("skill.source.url.max-extract-total-bytes", 2**63),
-            ("skill.source.url.max-extract-entries", 2**31),
-            ("skill.source.url.max-extract-entries", 3_000_000_000),
+            ("skill.source.max-extract-entry-bytes", 2**63),
+            ("skill.source.max-extract-total-bytes", 2**63),
+            ("skill.source.max-extract-entries", 2**31),
+            ("skill.source.max-extract-entries", 3_000_000_000),
         ],
     )
     def test_rejects_values_too_large_for_java_type(
         self, key: str, too_large: int
     ) -> None:
+        # Java's Long.parseLong / Integer.parseInt reject these, so they must
+        # not load in Python only.
         for value in (too_large, str(too_large)):
             with pytest.raises(
                 ValueError, match=f"Invalid value for {key}: {too_large}"
@@ -894,21 +867,22 @@ class TestLimitsFromConfig:
         [
             ("skill.source.url.max-download-bytes", "max_download_bytes", -(2**63)),
             (
-                "skill.source.url.max-extract-entry-bytes",
+                "skill.source.max-extract-entry-bytes",
                 "max_extract_entry_bytes",
                 -(2**63),
             ),
             (
-                "skill.source.url.max-extract-total-bytes",
+                "skill.source.max-extract-total-bytes",
                 "max_extract_total_bytes",
                 -(2**63),
             ),
-            ("skill.source.url.max-extract-entries", "max_extract_entries", -(2**31)),
+            ("skill.source.max-extract-entries", "max_extract_entries", -(2**31)),
         ],
     )
     def test_java_type_minimum_parses_then_fails_positivity(
         self, key: str, attr: str, java_min: int
     ) -> None:
+        # Java parses its type's minimum and then rejects it as not positive.
         with pytest.raises(ValueError, match=f"{attr} must be a strictly positive"):
             limits_from_config(AgentConfiguration({key: java_min}))
 
@@ -916,9 +890,9 @@ class TestLimitsFromConfig:
         ("key", "too_small"),
         [
             ("skill.source.url.max-download-bytes", -(2**63) - 1),
-            ("skill.source.url.max-extract-entry-bytes", -(2**63) - 1),
-            ("skill.source.url.max-extract-total-bytes", -(2**63) - 1),
-            ("skill.source.url.max-extract-entries", -(2**31) - 1),
+            ("skill.source.max-extract-entry-bytes", -(2**63) - 1),
+            ("skill.source.max-extract-total-bytes", -(2**63) - 1),
+            ("skill.source.max-extract-entries", -(2**31) - 1),
         ],
     )
     def test_rejects_values_too_small_for_java_type(

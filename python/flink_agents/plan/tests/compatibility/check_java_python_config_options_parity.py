@@ -42,6 +42,7 @@ from flink_agents.api.core_options import (
     TraceLogLevel,
     TraceLogScope,
 )
+from flink_agents.api.skills import SkillOptions
 from flink_agents.api.trace_log import TraceLogTarget, _serialize_targets
 
 _JAVA_PRIMITIVE_TYPE_TO_PYTHON: dict[str, type] = {
@@ -331,6 +332,9 @@ def main() -> None:
     java_memory_event_options = class_loader.loadClass(
         "org.apache.flink.agents.api.configuration.MemoryEventOptions"
     )
+    java_skill_options = class_loader.loadClass(
+        "org.apache.flink.agents.api.skills.SkillOptions"
+    )
 
     assert_options_class_matches_java(
         AgentConfigOptions, java_agent_config_options, jvm
@@ -341,6 +345,7 @@ def main() -> None:
     assert_options_class_matches_java(
         MemoryEventOptions, java_memory_event_options, jvm
     )
+    assert_options_class_matches_java(SkillOptions, java_skill_options, jvm)
     assert_trace_log_target_factories_match_java(jvm)
     assert_trace_log_target_validation_matches_java(jvm)
     for python_enum in (TraceLogLevel, TraceLogScope):

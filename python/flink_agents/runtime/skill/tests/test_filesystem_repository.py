@@ -155,7 +155,11 @@ class TestFileSystemSkillRepositoryZip:
         with pytest.raises(ValueError, match="exceeding the limit of 1"):
             FileSystemSkillRepository(skills_zip, limits=limits)
         # Control: the same zip loads with the default limits.
-        assert FileSystemSkillRepository(skills_zip).get_skills()
+        repo = FileSystemSkillRepository(skills_zip)
+        try:
+            assert repo.get_skills()
+        finally:
+            repo.close()
 
     def test_directory_ignores_limits(self) -> None:
         skills_dir = Path(__file__).parent / "resources" / "skills"
