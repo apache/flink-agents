@@ -76,23 +76,37 @@ class ResourceCache:
 
         self._j_resource_adapter = JavaResourceAdapterImpl(j_resource_adapter)
 
+    def get_resource_providers(self, type: ResourceType) -> Dict[str, ResourceProvider]:
+        """Return the providers declared for ``type``, keyed by resource name."""
+        return self._resource_providers.get(type, {})
+
     def has_resource(self, name: str, type: ResourceType) -> bool:
-        """Check visible declarations without opening a resource.
+        """Check visible resources without opening one, matching ``get_resource``.
 
         Chat models and routers share a namespace: either local declaration
         shadows both types in parent scopes. Other resource types inherit by type.
         """
-        return name in self._resource_providers.get(type, {}) or (
+        return self._has_local_resource(name, type) or (
             self._parent is not None
             and self._can_inherit_resource(name, type)
             and self._parent.has_resource(name, type)
         )
 
+    def _has_local_resource(self, name: str, type: ResourceType) -> bool:
+        """Include declared providers and resources inserted through ``put``."""
+        cached = self._cache.get(type, {})
+        declared = self._resource_providers.get(type, {})
+        return name in cached or name in declared
+
     def _can_inherit_resource(self, name: str, type: ResourceType) -> bool:
         model_types = (ResourceType.CHAT_MODEL, ResourceType.MODEL_ROUTER)
         return type not in model_types or not any(
-            name in self._resource_providers.get(kind, {}) for kind in model_types
+            self._has_local_resource(name, kind) for kind in model_types
         )
+
+    def put(self, name: str, type: ResourceType, resource: Resource) -> None:
+        """Cache an already built resource, so ``close()`` releases it."""
+        self._cache.setdefault(type, {})[name] = resource
 
     def get_resource(self, name: str, type: ResourceType) -> Resource:
         """Get resource by name and type, creating it from its provider if not cached.

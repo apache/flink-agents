@@ -215,7 +215,11 @@ class MCPServer(Resource, ABC):
                 sse_read_timeout=timedelta(seconds=self.sse_read_timeout),
                 auth=self.auth,
             ) as (read, write, _),
-            ClientSession(read, write) as session,
+            # Bound every request by ``timeout``: without it a server that accepts
+            # the connection but never answers would hang discovery at startup.
+            ClientSession(
+                read, write, read_timeout_seconds=timedelta(seconds=self.timeout)
+            ) as session,
         ):
             await session.initialize()
             yield session

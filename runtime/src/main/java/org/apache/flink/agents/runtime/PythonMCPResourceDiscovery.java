@@ -19,6 +19,7 @@
 package org.apache.flink.agents.runtime;
 
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.plan.resource.python.PythonMCPPrompt;
 import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
 import org.apache.flink.agents.plan.resource.python.PythonMCPTool;
@@ -26,7 +27,9 @@ import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 
+import java.util.HashMap;
 import java.util.Map;
+import java.util.TreeMap;
 
 import static org.apache.flink.agents.api.resource.ResourceType.MCP_SERVER;
 import static org.apache.flink.agents.api.resource.ResourceType.PROMPT;
@@ -63,7 +66,9 @@ public class PythonMCPResourceDiscovery {
             return;
         }
 
-        for (ResourceProvider rp : servers.values()) {
+        Map<String, String> toolOwners = new HashMap<>();
+        Map<String, String> promptOwners = new HashMap<>();
+        for (ResourceProvider rp : new TreeMap<>(servers).values()) {
             if (!(rp instanceof PythonResourceProvider)) {
                 continue;
             }
@@ -74,10 +79,25 @@ public class PythonMCPResourceDiscovery {
             cache.put(provider.getName(), MCP_SERVER, server);
 
             for (PythonMCPTool tool : server.listTools(provider.getName())) {
+                if (tool.getName().startsWith(SubagentSetup.CALLABLE_NAME_PREFIX)) {
+                    throw new IllegalArgumentException(
+                            "MCP server '"
+                                    + provider.getName()
+                                    + "' advertised a tool with reserved prefix '"
+                                    + SubagentSetup.CALLABLE_NAME_PREFIX
+                                    + "': "
+                                    + tool.getName());
+                }
+                JavaMCPResourceDiscovery.checkNameFree(
+                        cache, TOOL, tool.getName(), provider.getName(), toolOwners);
                 cache.put(tool.getName(), TOOL, tool);
+                toolOwners.put(tool.getName(), provider.getName());
             }
             for (PythonMCPPrompt prompt : server.listPrompts()) {
+                JavaMCPResourceDiscovery.checkNameFree(
+                        cache, PROMPT, prompt.getName(), provider.getName(), promptOwners);
                 cache.put(prompt.getName(), PROMPT, prompt);
+                promptOwners.put(prompt.getName(), provider.getName());
             }
         }
     }

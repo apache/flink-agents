@@ -28,6 +28,17 @@ under the License.
 
 MCP (Model Context Protocol) is a standardized protocol for integrating AI applications with external data sources and tools. Flink Agents provides the support for using prompts and tools from MCP server.
 
+MCP tools and prompts are discovered when the operator starts, including for
+internal sub-agents. Building or serializing an agent plan does not contact the
+server. This also applies to MCP servers declared in YAML.
+
+Discovery fails startup if a server cannot respond within its configured
+timeout (and Java retry policy), or if it advertises a duplicate tool/prompt
+name. Tool names beginning with `_subagent_` are reserved and are rejected.
+The operator closes discovered servers when it stops, even when a server has
+no tools or prompts. Changes to a server's advertised resources are picked up
+on the next operator start; they are not refreshed while the operator runs.
+
 ## Declare MCP Server in Agent
 
 Register the server as an `MCP_SERVER` Resource. The example below uses the

@@ -42,6 +42,9 @@ import org.apache.flink.agents.api.logger.TraceLoggerFactory;
 import org.apache.flink.agents.api.logger.TraceLoggerOpenParams;
 import org.apache.flink.agents.api.memory.MemorySet;
 import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
+import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
@@ -54,6 +57,7 @@ import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.actions.ToolCallAction;
 import org.apache.flink.agents.plan.actions.Utils;
+import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
@@ -5439,6 +5443,101 @@ public class ActionExecutionOperatorTest {
         assertThat(mailbox.size()).isEqualTo(expectedSize);
         for (int i = 0; i < expectedSize; i++) {
             mailbox.take(TaskMailbox.MIN_PRIORITY).run();
+        }
+    }
+
+    /**
+     * Stand-in for a Java MCP server, built reflectively by a {@code JavaResourceProvider}. It has
+     * no tools and no prompts, so only the operator's own lifecycle keeps it from leaking.
+     */
+    public static class RecordingMCPServer extends Resource {
+        static final AtomicInteger LIST_TOOLS_CALLS = new AtomicInteger();
+        static final AtomicInteger CLOSE_CALLS = new AtomicInteger();
+        static volatile boolean unreachable;
+
+        public RecordingMCPServer(ResourceDescriptor descriptor, ResourceContext context) {}
+
+        public List<Resource> listTools() {
+            LIST_TOOLS_CALLS.incrementAndGet();
+            if (unreachable) {
+                throw new IllegalStateException("connection refused");
+            }
+            return List.of();
+        }
+
+        public boolean supportsPrompts() {
+            return false;
+        }
+
+        @Override
+        public ResourceType getResourceType() {
+            return ResourceType.MCP_SERVER;
+        }
+
+        @Override
+        public void close() {
+            CLOSE_CALLS.incrementAndGet();
+        }
+    }
+
+    private static AgentPlan planWithRecordingMCPServer() throws Exception {
+        AgentPlan base = TestAgent.getAgentPlan(false);
+        Map<String, ResourceProvider> servers = new HashMap<>();
+        servers.put(
+                "mcp",
+                new JavaResourceProvider(
+                        "mcp",
+                        ResourceType.MCP_SERVER,
+                        new ResourceDescriptor(
+                                RecordingMCPServer.class.getName(), new HashMap<>())));
+        Map<ResourceType, Map<String, ResourceProvider>> resourceProviders = new HashMap<>();
+        resourceProviders.put(ResourceType.MCP_SERVER, servers);
+        return new AgentPlan(base.getActions(), resourceProviders, base.getConfig());
+    }
+
+    @Test
+    void testOpenDiscoversJavaMCPServerAndCloseReleasesIt() throws Exception {
+        RecordingMCPServer.LIST_TOOLS_CALLS.set(0);
+        RecordingMCPServer.CLOSE_CALLS.set(0);
+        RecordingMCPServer.unreachable = false;
+        AgentPlan plan = planWithRecordingMCPServer();
+
+        // Building the plan must not have contacted the server.
+        assertThat(RecordingMCPServer.LIST_TOOLS_CALLS.get()).isZero();
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(plan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+
+            assertThat(RecordingMCPServer.LIST_TOOLS_CALLS.get()).isEqualTo(1);
+            assertThat(RecordingMCPServer.CLOSE_CALLS.get()).isZero();
+        }
+
+        // The server found nothing to register, yet closing the operator still closes it.
+        assertThat(RecordingMCPServer.CLOSE_CALLS.get()).isEqualTo(1);
+    }
+
+    @Test
+    void testOpenFailsWhenJavaMCPServerIsUnreachable() throws Exception {
+        RecordingMCPServer.LIST_TOOLS_CALLS.set(0);
+        RecordingMCPServer.CLOSE_CALLS.set(0);
+        RecordingMCPServer.unreachable = true;
+        AgentPlan plan = planWithRecordingMCPServer();
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(plan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            assertThatThrownBy(testHarness::open)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("MCP server 'mcp'")
+                    .hasRootCauseMessage("connection refused");
+        } finally {
+            RecordingMCPServer.unreachable = false;
         }
     }
 }

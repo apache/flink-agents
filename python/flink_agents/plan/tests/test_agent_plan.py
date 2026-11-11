@@ -589,66 +589,22 @@ def test_tool_name_with_reserved_subagent_prefix_is_rejected() -> None:
         AgentPlan.from_agent(agent, AgentConfiguration())
 
 
-def test_mcp_tool_name_with_reserved_subagent_prefix_is_rejected(
+def test_mcp_server_is_registered_without_contacting_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An MCP server advertises tools under names it chose, so the reserved
-    prefix check has to run on the discovery loop as well: a remote
-    ``_subagent_lookup`` would land in the TOOL namespace, but dispatch routes
-    any prefixed call to AGENT, so the tool could never be called. Rejecting at
-    plan-construction matches the decorator and ``add_resource`` paths here and
-    Java's centralized ``checkToolNameNotReserved``.
+    """Tools and prompts are discovered when the operator starts (see
+    ``runtime/tests/test_mcp_resource_discovery.py``), so building the plan only
+    registers the server and never dials out.
     """
-    from flink_agents.api.tools.tool import ToolMetadata
-    from flink_agents.integrations.mcp.mcp import MCPServer, MCPTool
+    from flink_agents.integrations.mcp.mcp import MCPServer
 
-    offending = MCPTool(
-        metadata=ToolMetadata(
-            name="_subagent_lookup",
-            description="Remote tool squatting the reserved prefix.",
-            args_schema={"type": "object", "properties": {}},
-        ),
-    )
-    # The stub server never dials out: list_tools/list_prompts/close are
-    # replaced so plan compilation runs the discovery loop against ``offending``.
-    monkeypatch.setattr(MCPServer, "list_tools", lambda self: [offending])
-    monkeypatch.setattr(MCPServer, "list_prompts", lambda self: [])
-    monkeypatch.setattr(MCPServer, "close", lambda self: None)
+    def unexpected_call(self: MCPServer) -> None:
+        msg = "the plan build must not contact the MCP server"
+        raise AssertionError(msg)
 
-    agent = Agent()
-    agent.add_resource(
-        name="remote",
-        resource_type=ResourceType.MCP_SERVER,
-        instance=ResourceDescriptor(
-            clazz="flink_agents.integrations.mcp.mcp.MCPServer",
-            endpoint="http://unused.invalid",
-        ),
-    )
-
-    with pytest.raises(ValueError, match="reserved prefix '_subagent_'"):
-        AgentPlan.from_agent(agent, AgentConfiguration())
-
-
-def test_mcp_tool_with_plain_name_is_registered(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The prefix check on the discovery loop must not over-reject: a remote
-    tool with an ordinary name still lands in the TOOL provider map under the
-    name the server chose.
-    """
-    from flink_agents.api.tools.tool import ToolMetadata
-    from flink_agents.integrations.mcp.mcp import MCPServer, MCPTool
-
-    lookup = MCPTool(
-        metadata=ToolMetadata(
-            name="lookup",
-            description="Ordinary remote tool.",
-            args_schema={"type": "object", "properties": {}},
-        ),
-    )
-    monkeypatch.setattr(MCPServer, "list_tools", lambda self: [lookup])
-    monkeypatch.setattr(MCPServer, "list_prompts", lambda self: [])
-    monkeypatch.setattr(MCPServer, "close", lambda self: None)
+    monkeypatch.setattr(MCPServer, "list_tools", unexpected_call)
+    monkeypatch.setattr(MCPServer, "list_prompts", unexpected_call)
+    monkeypatch.setattr(MCPServer, "close", unexpected_call)
 
     agent = Agent()
     agent.add_resource(
@@ -662,7 +618,9 @@ def test_mcp_tool_with_plain_name_is_registered(
 
     plan = AgentPlan.from_agent(agent, AgentConfiguration())
 
-    assert "lookup" in plan.resource_providers[ResourceType.TOOL]
+    assert set(plan.resource_providers[ResourceType.MCP_SERVER]) == {"remote"}
+    assert ResourceType.TOOL not in plan.resource_providers
+    assert ResourceType.PROMPT not in plan.resource_providers
 
 
 def test_agent_plan_rejects_conflicting_decorated_python_tool_injected_args() -> None:
