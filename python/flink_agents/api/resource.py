@@ -437,5 +437,15 @@ class ResourceName:
             # PostgreSQL pgvector
             PGVECTOR_VECTOR_STORE = "org.apache.flink.agents.integrations.vectorstores.pgvector.PgVectorVectorStore"
 
+    class ModelRouter:
+        """ModelRouter resource names."""
+
+        MODEL_ROUTER = "flink_agents.api.chat_models.routing.ModelRouter"
+
+        class Java:
+            """Java implementation of ModelRouter."""
+
+            MODEL_ROUTER = "org.apache.flink.agents.api.chat.model.routing.ModelRouter"
+
     # MCP resource names
     MCP_SERVER = "flink_agents.integrations.mcp.mcp.MCPServer"

@@ -40,11 +40,11 @@ The selected model uses its own prompt, tools, skills, and generation settings.
 Routing can also try another candidate if the initial model call fails.
 
 {{< hint info >}}
-Routers are declared with the Programmatic API in Java and Python: register them on
-an Agent or its execution environment. Python supports the rules and custom
-strategies; the LLM judge and decision model strategies are Java only. YAML router
-declarations, Java annotations, and Python decorators are not supported. The built-in `ReActAgent` does
-not accept a router in place of its chat model setup.
+Routers are declared with the Programmatic API or YAML in Java and Python.
+Register them on an Agent or its execution environment. Python supports the rules
+and custom strategies; the LLM judge and decision model strategies are Java only.
+Java annotations and Python decorators are not supported. The built-in `ReActAgent`
+does not accept a router in place of its chat model setup.
 {{< /hint >}}
 
 <span id="quick-start"></span>
@@ -56,6 +56,8 @@ and their connections first. Candidate names refer to `CHAT_MODEL` Resources
 available to the Agent, including those registered on its execution environment.
 See [Resources]({{< ref "docs/development/create-agent/resources#registering-resources" >}})
 for registration methods and scopes.
+
+### Programmatic API
 
 The example below assumes two setups named `small` and `big`. It sends requests
 mentioning code or SQL to `big` and uses `small` when no rule matches. Add this
@@ -102,9 +104,10 @@ public ModelRoutingAgent() {
 
 `ModelRouter.of(...).build()` returns a `ResourceDescriptor`. Register it as a
 `MODEL_ROUTER` Resource using the
-[Programmatic API]({{< ref "docs/development/create-agent/resources#programmatic-api" >}}).
-The complete [examples](#examples) demonstrate registration on the execution
-environment.
+[Programmatic API]({{< ref "docs/development/create-agent/resources#programmatic-api" >}})
+or the [YAML declaration](#yaml) below.
+The complete [examples](#examples) demonstrate programmatic registration on the
+execution environment.
 
 | Builder method | Required | Description |
 |----------------|----------|-------------|
@@ -116,6 +119,51 @@ environment.
 | `build()` | Required | Validate the declaration and produce the descriptor. |
 
 Python uses the same builder with `default_model(name)` and `fallback(enabled=...)`.
+
+<span id="yaml"></span>
+
+### YAML API
+
+Declare a router under `model_routers`, with `clazz` set to `router`. The
+following fields configure its routing behavior.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `candidates` | Required | Chat model setup names. Names must be non-empty and unique. Order is the fallback order. |
+| `strategy_type` | Required | `rule_based`, `custom`, or, on Java, `llm_judge` or `decision_model`. |
+| `strategy_args` | Depends on the strategy | Rule map, judge or decision-model settings, or custom executor arguments. |
+| `strategy_executor_class` | Custom only | Fully qualified custom executor class. |
+| `candidate_descriptions` | Optional | Map of candidate name to description. |
+| `default_model` | Optional | Candidate used when the strategy abstains. When omitted, the first candidate is used. |
+| `fallback` | Optional | Try the remaining candidates after the selected model fails. Defaults to `false`. |
+
+A declaration is checked when the agent plan is built. An invalid candidate list,
+rule, default model, or strategy fails with the same error as the same descriptor
+registered programmatically. A strategy the runtime does not support, such as
+`llm_judge` or `decision_model` on Python, fails at that same check.
+
+Java YAML requires `type: java`.
+
+```yaml
+agents:
+  - name: model_routing_agent
+    model_routers:
+      - name: router
+        clazz: router
+        candidates: [small, big]
+        candidate_descriptions:
+          small: Everyday requests
+          big: Code, SQL, and analysis
+        strategy_type: rule_based
+        strategy_args:
+          rules:
+            big: '\b(code|sql|program|analyze|prove)\b'
+        default_model: small
+        fallback: true
+```
+
+See [YAML]({{< ref "docs/development/create-agent/yaml" >}}) for the general
+declaration rules.
 
 A chat model and a model router registered on the same agent must have different
 names.
@@ -141,7 +189,8 @@ use the same [selection and failure rules](#default-model-and-fallback).
 `Strategies.rules(...)` maps candidate names to regular
 expressions. It checks the **text of the most recent user message** in map
 iteration order and selects the first matching candidate. An empty rule map,
-an absent or empty user message, or no match causes abstention.
+an absent or empty user message, or no match causes abstention. In YAML,
+`strategy_args.rules` maps a candidate name to a regular expression.
 
 A matching substring is sufficient; anchor the pattern (`\A...\z` in Java,
 `\A...\Z` in Python) when the rule should match the whole message. Matching
@@ -191,6 +240,8 @@ Invalid patterns and rule targets outside the candidate list fail validation.
 ### LLM Judge
 
 Python doesn't support this strategy yet.
+
+In YAML, `strategy_args.judge_model` names a registered chat-model setup.
 
 `Strategies.llm(judgeModel)` asks a registered chat model to choose a candidate
 based on the candidate descriptions and the request. The judge setup must have
@@ -245,6 +296,8 @@ text budget. This is not a token limit or a hard cap on total input.
 ### Decision Model
 
 Python doesn't support this strategy yet.
+
+In YAML, `strategy_args.decision_model` names a registered decision-model setup.
 
 `Strategies.decision(decisionModel)` asks a registered
 [decision model]({{< ref "docs/development/decision_models" >}}) one choice

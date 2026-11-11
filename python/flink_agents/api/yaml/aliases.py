@@ -163,6 +163,14 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "mcp": ResourceName.MCP_SERVER,
         },
     },
+    ResourceType.MODEL_ROUTER: {
+        "python": {
+            "router": ResourceName.ModelRouter.MODEL_ROUTER,
+        },
+        "java": {
+            "router": ResourceName.ModelRouter.Java.MODEL_ROUTER,
+        },
+    },
 }
 
 

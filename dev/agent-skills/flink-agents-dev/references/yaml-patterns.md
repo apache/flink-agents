@@ -31,7 +31,7 @@ The valid top-level sections are:
 ```text
 agents, actions, chat_model_connections, chat_model_setups,
 embedding_model_connections, embedding_model_setups, prompts, tools,
-skills, vector_stores, mcp_servers
+skills, vector_stores, mcp_servers, model_routers
 ```
 
 Top-level Resources and Actions are shared. The same sections nested under an
@@ -283,8 +283,10 @@ Missing `type` means `python` for both loaders. Mark each Action, Tool, and
 descriptor-backed Resource with its own implementation language rather than copying
 one application-wide value. The bundled snapshot supports bidirectional bridging
 for chat-model connections/setups, embedding-model connections/setups, and vector
-stores. Consult the target version's YAML docs and plan compiler before assuming
-that another Resource type bridges languages.
+stores. `model_routers` do not bridge: Java YAML sets `type: java`, and Python
+YAML keeps the default Python implementation. Consult the target version's YAML
+docs and plan compiler before assuming that another Resource type bridges
+languages.
 
 The schema default is not a product decision. For a new application, first confirm
 the Flink Agents/Flink pair and then the YAML API choice. Only then ask the user to
@@ -317,7 +319,9 @@ Before loading, build and check this graph:
 - setup `skills[]` -> individual runtime Skill frontmatter name;
 - embedding setup `connection` -> embedding connection name;
 - vector-store `embedding_model` -> embedding setup name;
-- `ChatRequestEvent.model` in implementation code -> chat setup name;
+- `model_routers` `candidates`, `default_model`, and description keys -> chat setup names;
+- `strategy_args.judge_model` -> chat setup name; `strategy_args.decision_model` -> decision setup name;
+- `ChatRequestEvent.model` in implementation code -> chat setup or model router name;
 - Action and Tool `function` -> importable Python callable or Java static method.
 
 Schema validation cannot prove every dynamic name or provider argument. Run the

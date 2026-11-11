@@ -149,6 +149,18 @@ class AliasesTest {
     }
 
     @Test
+    void clazzAliasCoversModelRouterInBothLanguages() {
+        assertThat(Aliases.resolveClazz("router", ResourceType.MODEL_ROUTER, Language.JAVA))
+                .isEqualTo(ResourceName.ModelRouter.MODEL_ROUTER);
+        assertThat(Aliases.resolveClazz("router", ResourceType.MODEL_ROUTER, Language.PYTHON))
+                .isEqualTo(ResourceName.ModelRouter.Python.MODEL_ROUTER);
+        assertThat(Aliases.resolveClazz("model_router", ResourceType.MODEL_ROUTER, Language.JAVA))
+                .isEqualTo("model_router");
+        assertThat(Aliases.resolveClazz("model_router", ResourceType.MODEL_ROUTER, Language.PYTHON))
+                .isEqualTo("model_router");
+    }
+
+    @Test
     void clazzAliasMissPassesThrough() {
         String fqn =
                 Aliases.resolveClazz(

@@ -179,6 +179,13 @@ public final class Aliases {
                 buildLangBuckets(
                         Map.of(), Map.of("mcp", "flink_agents.integrations.mcp.mcp.MCPServer")));
 
+        // MODEL_ROUTER. Each loader accepts only its own implementation.
+        ca.put(
+                ResourceType.MODEL_ROUTER,
+                buildLangBuckets(
+                        Map.of("router", ResourceName.ModelRouter.MODEL_ROUTER),
+                        Map.of("router", ResourceName.ModelRouter.Python.MODEL_ROUTER)));
+
         CLAZZ_ALIASES = Collections.unmodifiableMap(ca);
     }
 

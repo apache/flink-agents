@@ -50,9 +50,12 @@ the following type names:
 | `MODEL_ROUTER` | Select a chat model from configured candidates for a request. | [Model Routing]({{< ref "docs/development/calling-llms/model_routing" >}}) |
 | `AGENT` | Expose an internal or external sub-agent for delegation or direct calls. | [Sub-agents]({{< ref "docs/development/multi-agent/subagents" >}}) |
 
-Registration support varies by type. In particular, `MODEL_ROUTER` currently
-supports the Java programmatic API only; Python registration and YAML declarations
-are not available. Refer to each guide for its supported APIs and configuration.
+Registration support varies by type. `MODEL_ROUTER` can be registered with the
+programmatic API in Java and Python, and with YAML `model_routers` in both
+loaders. Java annotations and Python decorators are not available. Python
+supports the rules and custom strategies; the LLM judge and decision-model
+strategies are Java only. Refer to each guide for its supported APIs and
+configuration.
 
 [Memory]({{< ref "docs/development/memory/overview" >}}) has a separate API and is
 not a Resource type.

@@ -145,6 +145,13 @@
           "title": "Mcp Servers",
           "type": "array"
         },
+        "model_routers": {
+          "items": {
+            "$ref": "#/$defs/DescriptorSpec"
+          },
+          "title": "Model Routers",
+          "type": "array"
+        },
         "name": {
           "title": "Name",
           "type": "string"
@@ -625,6 +632,13 @@
         "$ref": "#/$defs/DescriptorSpec"
       },
       "title": "Mcp Servers",
+      "type": "array"
+    },
+    "model_routers": {
+      "items": {
+        "$ref": "#/$defs/DescriptorSpec"
+      },
+      "title": "Model Routers",
       "type": "array"
     },
     "prompts": {
