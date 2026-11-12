@@ -25,6 +25,8 @@ import org.apache.flink.agents.runtime.subgraph.SubgraphDefinition;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.Test;
 
@@ -124,7 +126,9 @@ class RunnerContextPendingEventsContractTest {
                         () -> {},
                         new AgentPlan(new HashMap<>(), new HashMap<>()),
                         null,
-                        "job");
+                        "job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         context.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         return context;
     }

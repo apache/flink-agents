@@ -29,6 +29,7 @@ import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.context.TimerMode;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
@@ -47,6 +48,8 @@ import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -145,6 +148,24 @@ public class ToolCallActionTest {
         FakeRunnerContext withShortTermMemory(Map<String, Object> values) {
             this.shortTermMemory = new FakeMemoryObject(values);
             return this;
+        }
+
+        @Override
+        public void registerTimer(String timerId, Duration delay, Event event, TimerMode mode) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
+        }
+
+        @Override
+        public void registerTimerAt(String timerId, Instant deadline, Event event, TimerMode mode) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
+        }
+
+        @Override
+        public void cancelTimer(String timerId) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
         }
 
         @Override

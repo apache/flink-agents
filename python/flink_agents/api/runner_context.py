@@ -17,6 +17,8 @@
 #################################################################################
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Dict, Generic, TypeVar
 
 from flink_agents.api.agents.types import OutputSchema
@@ -33,12 +35,25 @@ __all__ = [
     "DurableFuture",
     "Outcome",
     "RunnerContext",
+    "TimerMode",
 ]
 
 T = TypeVar("T")
 
 if TYPE_CHECKING:
     from flink_agents.api.memory_object import MemoryObject
+
+
+class TimerMode(Enum):
+    """Control how a delayed Event is executed relative to the current agent run.
+
+    TRIGGER_AFTER_CURRENT_RUN queues the Event to start a new run with fresh
+    sensory memory. The current run can finish without waiting for the timer,
+    allowing subsequent inputs with the same key to proceed. The timer does not
+    preempt an active run.
+    """
+
+    TRIGGER_AFTER_CURRENT_RUN = "trigger_after_current_run"
 
 
 @dataclass(frozen=True)
@@ -165,6 +180,43 @@ class RunnerContext(ABC):
     @abstractmethod
     def has_resource(self, name: str, type: ResourceType) -> bool:
         """Whether a resource is declared, without constructing or opening it."""
+
+    @abstractmethod
+    def register_timer(
+        self, timer_id: str, delay: timedelta, event: Event, mode: TimerMode
+    ) -> None:
+        """Deliver an Event after this Action completes plus a non-negative delay.
+
+        Set mode to TimerMode.TRIGGER_AFTER_CURRENT_RUN to start a new run
+        using the Actions bound to the Event type. Registration copies the Event;
+        the delay is rounded up to milliseconds. Events in TRIGGER_AFTER_CURRENT_RUN
+        mode must not carry attachments; use serializable attributes to pass data
+        between runs.
+        Registering the same ID replaces a pending timer for this business key.
+        Awaiting work does not commit a timer. Failed Actions do not register timers.
+
+        Raises:
+            ValueError: If the Event carries attachments in
+                TRIGGER_AFTER_CURRENT_RUN mode.
+        """
+
+    @abstractmethod
+    def register_timer_at(
+        self, timer_id: str, deadline: datetime, event: Event, mode: TimerMode
+    ) -> None:
+        """Register an absolute deadline; commit when the Action completes.
+
+        Set mode to TimerMode.TRIGGER_AFTER_CURRENT_RUN. Events in this mode must
+        not carry attachments; use serializable attributes to pass data between runs.
+
+        Raises:
+            ValueError: If the Event carries attachments in
+                TRIGGER_AFTER_CURRENT_RUN mode.
+        """
+
+    @abstractmethod
+    def cancel_timer(self, timer_id: str) -> None:
+        """Cancel at completion; ignore absent IDs and already delivered Events."""
 
     @abstractmethod
     def get_resource(

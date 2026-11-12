@@ -74,11 +74,11 @@ public class JavaActionTaskTest {
         invokedAttachment = null;
         continuationExecutor = new ContinuationActionExecutor(1);
         durableExecutionManager = new DurableExecutionManager(new InMemoryActionStateStore(false));
-        runnerContext = createContext();
-        action = createAction();
         eventSerializer =
                 TypeInformation.of(Event.class)
                         .createSerializer(new ExecutionConfig().getSerializerConfig());
+        runnerContext = createContext();
+        action = createAction();
     }
 
     @AfterEach
@@ -131,7 +131,8 @@ public class JavaActionTaskTest {
                         new AgentPlan(new HashMap<>(), new HashMap<>()),
                         null,
                         "test-job",
-                        continuationExecutor);
+                        continuationExecutor,
+                        eventSerializer);
         context.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         context.setContinuationContext(new ContinuationContext());
         context.switchActionContext(

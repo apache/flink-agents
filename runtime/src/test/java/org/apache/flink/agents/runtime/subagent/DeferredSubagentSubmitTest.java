@@ -34,6 +34,8 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
@@ -76,7 +78,9 @@ public class DeferredSubagentSubmitTest {
                         () -> {},
                         new AgentPlan(new HashMap<>(), new HashMap<>()),
                         null,
-                        "job");
+                        "job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
 
         assertThatThrownBy(() -> setup.submit(withoutIds, "ping", "sid-1"))
                 .isInstanceOf(NullPointerException.class)

@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.context;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.agents.api.trace.TraceRecord;
@@ -24,6 +25,8 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl.ExecutionReportingContext;
 import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -45,7 +48,14 @@ class RunnerContextImplExecutionReporterTest {
             throws Exception {
         List<TraceRecord> records = new ArrayList<>();
         RunnerContextImpl runnerContext =
-                new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
+                new RunnerContextImpl(
+                        null,
+                        () -> {},
+                        emptyAgentPlan(),
+                        null,
+                        "job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         switchToChatModelAction(runnerContext, List.of(records::add));
 
         // A terminal report does not need an earlier creation or start report.
@@ -83,7 +93,14 @@ class RunnerContextImplExecutionReporterTest {
     void reportsRetainCallerIdentityAndContextAsMetadataChanges() throws Exception {
         List<TraceRecord> records = new ArrayList<>();
         RunnerContextImpl runnerContext =
-                new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
+                new RunnerContextImpl(
+                        null,
+                        () -> {},
+                        emptyAgentPlan(),
+                        null,
+                        "job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         TraceContext actionContext = switchToChatModelAction(runnerContext, List.of(records::add));
 
         Map<String, Object> metadata = new LinkedHashMap<>(Map.of("temperature", 0.7));
@@ -142,7 +159,14 @@ class RunnerContextImplExecutionReporterTest {
     void failedReportResolvesRootCauseTypeAndMessage() throws Exception {
         List<TraceRecord> records = new ArrayList<>();
         RunnerContextImpl runnerContext =
-                new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
+                new RunnerContextImpl(
+                        null,
+                        () -> {},
+                        emptyAgentPlan(),
+                        null,
+                        "job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         TraceContext actionContext = switchToChatModelAction(runnerContext, List.of(records::add));
 
         runnerContext.reportExecutionFailedAt(
@@ -176,7 +200,14 @@ class RunnerContextImplExecutionReporterTest {
     void interleavedCallsWithIdenticalMetadataKeepSeparateIdentities() throws Exception {
         List<TraceRecord> records = new ArrayList<>();
         RunnerContextImpl runnerContext =
-                new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
+                new RunnerContextImpl(
+                        null,
+                        () -> {},
+                        emptyAgentPlan(),
+                        null,
+                        "job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         switchToChatModelAction(runnerContext, List.of(records::add));
 
         runnerContext.reportExecutionStartedAt(
@@ -225,7 +256,14 @@ class RunnerContextImplExecutionReporterTest {
     void invalidObservationDoesNotFailReportingOrPreventLaterReports() throws Exception {
         List<TraceRecord> records = new ArrayList<>();
         RunnerContextImpl runnerContext =
-                new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
+                new RunnerContextImpl(
+                        null,
+                        () -> {},
+                        emptyAgentPlan(),
+                        null,
+                        "job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         switchToChatModelAction(runnerContext, List.of(records::add));
 
         assertThatCode(
@@ -287,7 +325,14 @@ class RunnerContextImplExecutionReporterTest {
                     throw new IllegalStateException("listener boom");
                 };
         RunnerContextImpl runnerContext =
-                new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
+                new RunnerContextImpl(
+                        null,
+                        () -> {},
+                        emptyAgentPlan(),
+                        null,
+                        "job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         switchToChatModelAction(runnerContext, List.of(first::add, thrower, last::add));
 
         assertThatCode(
@@ -329,7 +374,14 @@ class RunnerContextImplExecutionReporterTest {
     @Test
     void reportingWithoutListenersIsANoOp() throws Exception {
         RunnerContextImpl runnerContext =
-                new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
+                new RunnerContextImpl(
+                        null,
+                        () -> {},
+                        emptyAgentPlan(),
+                        null,
+                        "job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         runnerContext.switchActionContext(
                 "chat_model_action",
                 null,
@@ -360,7 +412,14 @@ class RunnerContextImplExecutionReporterTest {
     void pythonReporterBridgePreservesMetadataAndPythonErrorFields() throws Exception {
         List<TraceRecord> records = new ArrayList<>();
         PythonRunnerContextImpl runnerContext =
-                new PythonRunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
+                new PythonRunnerContextImpl(
+                        null,
+                        () -> {},
+                        emptyAgentPlan(),
+                        null,
+                        "job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         switchToChatModelAction(runnerContext, List.of(records::add));
 
         String metadata = "{\"toolCallId\":\"call-1\",\"toolType\":\"function\"}";
@@ -416,7 +475,14 @@ class RunnerContextImplExecutionReporterTest {
     void pythonReporterWithoutTimestampsUsesTheSameLifecycleAndErrorSchema() throws Exception {
         List<TraceRecord> records = new ArrayList<>();
         PythonRunnerContextImpl runnerContext =
-                new PythonRunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
+                new PythonRunnerContextImpl(
+                        null,
+                        () -> {},
+                        emptyAgentPlan(),
+                        null,
+                        "job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         switchToChatModelAction(runnerContext, List.of(records::add));
 
         runnerContext.reportExecutionStartedJson(

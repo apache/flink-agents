@@ -284,6 +284,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
             actionState.addEvent(outputEvent);
         }
         actionState.markCompleted();
+        actionState.getTimerOperations().addAll(context.getTimerOperations());
 
         actionStateStore.put(key, sequenceNum, action, event, actionState);
 

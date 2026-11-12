@@ -288,6 +288,9 @@ class EventTest {
         event.setSourceTimestamp(123456789L);
         assertTrue(event.hasSourceTimestamp());
         assertEquals(123456789L, event.getSourceTimestamp());
+        event.setSourceTimestamp(null);
+        assertFalse(event.hasSourceTimestamp());
+        assertNull(event.getSourceTimestamp());
     }
 
     @Test

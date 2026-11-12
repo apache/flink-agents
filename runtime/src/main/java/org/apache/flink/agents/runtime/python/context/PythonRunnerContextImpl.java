@@ -21,16 +21,19 @@ package org.apache.flink.agents.runtime.python.context;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.context.TimerMode;
 import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.api.trace.TraceRecords;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 
 import javax.annotation.concurrent.NotThreadSafe;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -55,8 +58,15 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
             Runnable mailboxThreadChecker,
             AgentPlan agentPlan,
             ResourceCache resourceCache,
-            String jobIdentifier) {
-        super(agentMetricGroup, mailboxThreadChecker, agentPlan, resourceCache, jobIdentifier);
+            String jobIdentifier,
+            TypeSerializer<Event> eventSerializer) {
+        super(
+                agentMetricGroup,
+                mailboxThreadChecker,
+                agentPlan,
+                resourceCache,
+                jobIdentifier,
+                eventSerializer);
     }
 
     /**
@@ -71,6 +81,24 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
     public void sendEventJson(String eventJson) throws IOException {
         Event event = Event.fromJson(eventJson);
         sendEvent(event);
+    }
+
+    public void registerTimerJson(String timerId, long delayMillis, String eventJson, String mode)
+            throws IOException {
+        registerTimer(
+                timerId,
+                Duration.ofMillis(delayMillis),
+                Event.fromJson(eventJson),
+                TimerMode.valueOf(mode));
+    }
+
+    public void registerTimerAtJson(
+            String timerId, long deadlineMillis, String eventJson, String mode) throws IOException {
+        registerTimerAt(
+                timerId,
+                Instant.ofEpochMilli(deadlineMillis),
+                Event.fromJson(eventJson),
+                TimerMode.valueOf(mode));
     }
 
     public void reportExecutionCreatedJson(

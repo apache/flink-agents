@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.agents.runtime.timer.TimerOperation;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapState;
@@ -63,6 +64,7 @@ import static org.apache.flink.agents.runtime.utils.StateUtil.*;
  *   <li>Keyed list state of pending {@link Event}s buffered while another input is processing.
  *   <li>Keyed value state holding the per-key message sequence number.
  *   <li>Keyed map states for sensory and short-term memory.
+ *   <li>Keyed map state of timer registrations and their Event payloads.
  *   <li>Operator union-list state of keys currently being processed (used after rescale to recover
  *       in-flight work).
  * </ul>
@@ -78,11 +80,11 @@ import static org.apache.flink.agents.runtime.utils.StateUtil.*;
  * which takes a {@link DurableExecutionManager} as an argument rather than holding one).
  */
 class OperatorStateManager {
-
     static final String MESSAGE_SEQUENCE_NUMBER_STATE_NAME = "messageSequenceNumber";
     static final String ACTION_TASK_STATE_NAME = "actionTasks";
     static final String IN_FLIGHT_ACTION_TASK_STATE_NAME = "inFlightActionTasks";
     static final String PENDING_INPUT_EVENT_STATE_NAME = "pendingInputEvents";
+    static final String TIMER_REGISTRATIONS_STATE_NAME = "timerRegistrations";
 
     private ListState<ActionTask> actionTasksKState;
     private MapState<Long, ActionTask> inFlightActionTasksKState;
@@ -91,6 +93,7 @@ class OperatorStateManager {
     private ValueState<Long> sequenceNumberKState;
     private MapState<String, MemoryObjectImpl.MemoryItem> sensoryMemState;
     private MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState;
+    private MapState<String, TimerOperation> timerRegistrations;
 
     OperatorStateManager() {}
 
@@ -98,8 +101,9 @@ class OperatorStateManager {
      * Registers all keyed-state descriptors against the operator's runtime context.
      *
      * <p>Registers: sensory memory map state, short-term memory map state, the per-key message
-     * sequence-number value state, the per-key list of pending {@link ActionTask}s, and the per-key
-     * list of buffered {@link Event}s. Called from the operator's {@code open()} method.
+     * sequence-number value state, the per-key list of pending {@link ActionTask}s, the per-key
+     * list of buffered {@link Event}s, and the timer-registration map state. Called from the
+     * operator's {@code open()} method.
      *
      * @param runtimeContext the operator's runtime context, used to obtain keyed state handles.
      */
@@ -139,6 +143,14 @@ class OperatorStateManager {
                 runtimeContext.getListState(
                         new ListStateDescriptor<>(
                                 PENDING_INPUT_EVENT_STATE_NAME, TypeInformation.of(Event.class)));
+
+        // init timer registrations
+        timerRegistrations =
+                runtimeContext.getMapState(
+                        new MapStateDescriptor<>(
+                                TIMER_REGISTRATIONS_STATE_NAME,
+                                String.class,
+                                TimerOperation.class));
     }
 
     /**
@@ -354,6 +366,10 @@ class OperatorStateManager {
         return shortTermMemState;
     }
 
+    MapState<String, TimerOperation> getTimerRegistrations() {
+        return timerRegistrations;
+    }
+
     KeyGroupRange getCurrentSubtaskKeyGroupRange(
             int maxParallelism,
             org.apache.flink.api.common.functions.RuntimeContext runtimeContext) {
@@ -404,6 +420,21 @@ class OperatorStateManager {
                         VoidNamespaceSerializer.INSTANCE,
                         new ListStateDescriptor<>(
                                 ACTION_TASK_STATE_NAME, TypeInformation.of(ActionTask.class)),
+                        function);
+    }
+
+    /** Applies a function to the timer-registration map state for every key in the backend. */
+    @SuppressWarnings("unchecked")
+    void forEachTimerKey(
+            KeyedStateBackend<?> keyedStateBackend,
+            KeyedStateFunction<Object, MapState<String, TimerOperation>> function)
+            throws Exception {
+        ((KeyedStateBackend<Object>) keyedStateBackend)
+                .applyToAllKeys(
+                        VoidNamespace.INSTANCE,
+                        VoidNamespaceSerializer.INSTANCE,
+                        new MapStateDescriptor<>(
+                                TIMER_REGISTRATIONS_STATE_NAME, String.class, TimerOperation.class),
                         function);
     }
 }

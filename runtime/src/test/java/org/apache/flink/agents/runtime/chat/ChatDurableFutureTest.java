@@ -38,6 +38,8 @@ import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -226,7 +228,9 @@ class ChatDurableFutureTest {
                         new AgentPlan(new HashMap<>(), new HashMap<>()),
                         null,
                         "job",
-                        executor);
+                        executor,
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         context.switchActionContext(
                 "action",
                 new RunnerContextImpl.MemoryContext(null, null),

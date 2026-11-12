@@ -1870,7 +1870,12 @@ public class ActionExecutionOperatorTest {
                         1,
                         60000);
         ActionTaskContextManager contexts =
-                new ActionTaskContextManager(operator, components.durableExecManager, 1);
+                new ActionTaskContextManager(
+                        operator,
+                        components.durableExecManager,
+                        1,
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         Field executorField =
                 ActionTaskContextManager.class.getDeclaredField("continuationActionExecutor");
         executorField.setAccessible(true);

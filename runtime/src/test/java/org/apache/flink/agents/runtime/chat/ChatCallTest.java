@@ -41,6 +41,8 @@ import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 import org.apache.flink.agents.runtime.utils.IdAllocatorSource;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledForJreRange;
@@ -296,7 +298,9 @@ class ChatCallTest {
                         new AgentPlan(new HashMap<>(), new HashMap<>()),
                         null,
                         "job",
-                        null);
+                        null,
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         bindChatIds(context, "key", new Event("input"));
         return context;
     }
@@ -313,7 +317,9 @@ class ChatCallTest {
                             new AgentPlan(new HashMap<>(), new HashMap<>()),
                             null,
                             "job",
-                            executor);
+                            executor,
+                            TypeInformation.of(Event.class)
+                                    .createSerializer(new SerializerConfigImpl()));
             context.setContinuationContext(new ContinuationContext());
             assertThatThrownBy(() -> context.chat("model", List.of()).await())
                     .isInstanceOf(UnsupportedOperationException.class)
@@ -332,7 +338,9 @@ class ChatCallTest {
                         () -> {},
                         new AgentPlan(new HashMap<>(), new HashMap<>()),
                         null,
-                        "job");
+                        "job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         context.switchActionContext(
                 "action",
                 new RunnerContextImpl.MemoryContext(null, null),

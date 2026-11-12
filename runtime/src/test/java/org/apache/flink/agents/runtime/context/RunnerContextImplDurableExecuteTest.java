@@ -27,6 +27,8 @@ import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.operator.parallel.ActionTaskLifecycleException;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -578,7 +580,9 @@ class RunnerContextImplDurableExecuteTest {
                         () -> {},
                         new AgentPlan(new HashMap<>(), new HashMap<>()),
                         null,
-                        "test-job");
+                        "test-job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         ActionStatePersister persister =
                 (key, sequenceNumber, action, event, state) -> {
                     persistCallCount.incrementAndGet();

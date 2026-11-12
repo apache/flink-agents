@@ -41,6 +41,8 @@ import org.apache.flink.agents.runtime.operator.ActionTask;
 import org.apache.flink.agents.runtime.operator.JavaActionTask;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
@@ -301,7 +303,9 @@ public class BaseSubagentSetupTest {
                         () -> {},
                         new AgentPlan(new HashMap<>(), new HashMap<>()),
                         null,
-                        "job");
+                        "job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         Map<String, DeterministicIdAllocator> byTarget = new HashMap<>();
         ctx.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         ctx.setIdAllocatorSource(

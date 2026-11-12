@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
@@ -35,6 +36,8 @@ import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.agents.runtime.python.utils.PythonResourceAdapterImpl;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import org.mockito.MockedConstruction;
@@ -137,7 +140,8 @@ class PythonBridgeManagerTest {
                     /* metricGroup */ null,
                     /* mailboxThreadChecker */ () -> {},
                     /* jobIdentifier */ "job-1",
-                    /* userCodeClassLoader */ Thread.currentThread().getContextClassLoader());
+                    /* userCodeClassLoader */ Thread.currentThread().getContextClassLoader(),
+                    TypeInformation.of(Event.class).createSerializer(new SerializerConfigImpl()));
 
             // No-op contract: nothing initialized, no Pemja interpreter created.
             assertThat(bridge.isInitialized()).isFalse();
@@ -248,7 +252,10 @@ class PythonBridgeManagerTest {
                                                 /* mailboxThreadChecker */ () -> {},
                                                 /* jobIdentifier */ "job-1",
                                                 /* userCodeClassLoader */
-                                                Thread.currentThread().getContextClassLoader()))
+                                                Thread.currentThread().getContextClassLoader(),
+                                                TypeInformation.of(Event.class)
+                                                        .createSerializer(
+                                                                new SerializerConfigImpl())))
                         .isInstanceOf(IllegalStateException.class)
                         .hasMessage("python-bootstrap-reached");
             }
