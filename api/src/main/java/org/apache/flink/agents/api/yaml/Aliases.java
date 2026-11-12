@@ -173,6 +173,18 @@ public final class Aliases {
         vsPython.put("mem0", ResourceName.VectorStore.Python.MEM0_VECTOR_STORE);
         ca.put(ResourceType.VECTOR_STORE, buildLangBuckets(vsJava, vsPython));
 
+        // MEDIA_MODEL
+        ca.put(
+                ResourceType.MEDIA_MODEL,
+                buildLangBuckets(
+                        Map.of(), Map.of("dashscope", ResourceName.MediaModel.Python.DASHSCOPE)));
+
+        // RERANK_MODEL
+        ca.put(
+                ResourceType.RERANK_MODEL,
+                buildLangBuckets(
+                        Map.of(), Map.of("dashscope", ResourceName.RerankModel.Python.DASHSCOPE)));
+
         // MCP_SERVER
         ca.put(
                 ResourceType.MCP_SERVER,

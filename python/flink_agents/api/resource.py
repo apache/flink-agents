@@ -32,7 +32,8 @@ class ResourceType(Enum):
     """Type enum of resource.
 
     Currently, support chat_model, decision_model, tool, embedding_model,
-    vector_store, prompt, mcp_server, skills, model_router, agent.
+    vector_store, media_model, rerank_model, prompt, mcp_server, skills,
+    model_router, agent.
     """
 
     CHAT_MODEL = "chat_model"
@@ -43,6 +44,8 @@ class ResourceType(Enum):
     EMBEDDING_MODEL = "embedding_model"
     EMBEDDING_MODEL_CONNECTION = "embedding_model_connection"
     VECTOR_STORE = "vector_store"
+    MEDIA_MODEL = "media_model"
+    RERANK_MODEL = "rerank_model"
     PROMPT = "prompt"
     MCP_SERVER = "mcp_server"
     SKILLS = "skills"
@@ -446,6 +449,18 @@ class ResourceName:
             """Java implementation of ModelRouter."""
 
             MODEL_ROUTER = "org.apache.flink.agents.api.chat.model.routing.ModelRouter"
+
+    class MediaModel:
+        """MediaModel resource names."""
+
+        # DashScope
+        DASHSCOPE = "flink_agents.integrations.media_models.dashscope_media_model.DashScopeMediaModel"
+
+    class RerankModel:
+        """RerankModel resource names."""
+
+        # DashScope
+        DASHSCOPE = "flink_agents.integrations.rerank_models.dashscope_rerank_model.DashScopeRerankModel"
 
     # MCP resource names
     MCP_SERVER = "flink_agents.integrations.mcp.mcp.MCPServer"

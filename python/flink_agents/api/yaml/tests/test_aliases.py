@@ -214,6 +214,15 @@ def test_resolve_clazz_covers_vector_store_java_and_python() -> None:
     )
 
 
+def test_resolve_clazz_covers_media_and_rerank_dashscope() -> None:
+    assert resolve_clazz("dashscope", ResourceType.MEDIA_MODEL).endswith(
+        "dashscope_media_model.DashScopeMediaModel"
+    )
+    assert resolve_clazz("dashscope", ResourceType.RERANK_MODEL).endswith(
+        "dashscope_rerank_model.DashScopeRerankModel"
+    )
+
+
 def test_resolve_clazz_covers_embedding_model_openai_in_both_languages() -> None:
     assert resolve_clazz("openai", ResourceType.EMBEDDING_MODEL_CONNECTION).endswith(
         "openai_embedding_model.OpenAIEmbeddingModelConnection"

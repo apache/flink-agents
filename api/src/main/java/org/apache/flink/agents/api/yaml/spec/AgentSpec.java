@@ -41,6 +41,8 @@ public final class AgentSpec {
     private final List<DescriptorSpec> embeddingModelConnections;
     private final List<DescriptorSpec> embeddingModelSetups;
     private final List<DescriptorSpec> vectorStores;
+    private final List<DescriptorSpec> mediaModels;
+    private final List<DescriptorSpec> rerankModels;
     private final List<DescriptorSpec> mcpServers;
     private final List<DescriptorSpec> modelRouters;
     private final List<SubagentSpec> subagents;
@@ -62,6 +64,8 @@ public final class AgentSpec {
                     List<DescriptorSpec> embeddingModelConnections,
             @JsonProperty("embedding_model_setups") List<DescriptorSpec> embeddingModelSetups,
             @JsonProperty("vector_stores") List<DescriptorSpec> vectorStores,
+            @JsonProperty("media_models") List<DescriptorSpec> mediaModels,
+            @JsonProperty("rerank_models") List<DescriptorSpec> rerankModels,
             @JsonProperty("mcp_servers") List<DescriptorSpec> mcpServers,
             @JsonProperty("model_routers") List<DescriptorSpec> modelRouters,
             @JsonProperty("subagents") List<SubagentSpec> subagents) {
@@ -78,6 +82,8 @@ public final class AgentSpec {
         this.embeddingModelConnections = orEmpty(embeddingModelConnections);
         this.embeddingModelSetups = orEmpty(embeddingModelSetups);
         this.vectorStores = orEmpty(vectorStores);
+        this.mediaModels = orEmpty(mediaModels);
+        this.rerankModels = orEmpty(rerankModels);
         this.mcpServers = orEmpty(mcpServers);
         this.modelRouters = orEmpty(modelRouters);
         this.subagents = orEmpty(subagents);
@@ -137,6 +143,14 @@ public final class AgentSpec {
 
     public List<DescriptorSpec> getVectorStores() {
         return vectorStores;
+    }
+
+    public List<DescriptorSpec> getMediaModels() {
+        return mediaModels;
+    }
+
+    public List<DescriptorSpec> getRerankModels() {
+        return rerankModels;
     }
 
     public List<DescriptorSpec> getMcpServers() {

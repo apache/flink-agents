@@ -19,18 +19,24 @@ import importlib
 import json
 import typing
 from asyncio import CancelledError as AsyncCancelledError
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import CancelledError
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Dict, cast
 
 import cloudpickle
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import ChatMessage, DataContentBlock, MessageRole
 from flink_agents.api.decision_models import DecisionRequest
 from flink_agents.api.events.event import Event, InputEvent
+from flink_agents.api.media_models.media_model import (
+    MediaJob,
+    MediaJobError,
+    MediaJobTimeoutError,
+)
 from flink_agents.api.memory.long_term_memory import MemorySet, MemorySetItem
+from flink_agents.api.rerank_models.rerank_model import RerankDocument, RerankQuery
 from flink_agents.api.resource import Resource, ResourceType, get_resource_class
 from flink_agents.api.tools.tool import Tool, ToolMetadata
 from flink_agents.api.vector_stores.vector_store import (
@@ -480,3 +486,126 @@ def materialize_package_skills(package: str, resource: str, target_dir: str) -> 
     )
 
     materialize_package(package, resource, target_dir)
+
+
+_CONTENT = TypeAdapter(list[DataContentBlock])
+_QUERY = TypeAdapter(RerankQuery)
+_DOCUMENTS = TypeAdapter(list[RerankDocument])
+
+
+def _parameters(parameters: Mapping[str, Any] | None) -> dict[str, Any]:
+    return dict(parameters or {})
+
+
+def _media_failure(error: MediaJobError) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": "TIMEOUT" if isinstance(error, MediaJobTimeoutError) else "JOB_ERROR",
+        "job": error.job.model_dump_json(),
+        "job_status": error.status.value,
+        "code": error.code,
+        "message": error.message,
+    }
+    if isinstance(error, MediaJobTimeoutError):
+        payload["timeout"] = error.timeout
+    return payload
+
+
+def _invocation_success(value: Any) -> dict[str, Any]:
+    """Wrap a finished Python result for the Java bridge."""
+    result = None if value is None else value.model_dump_json()
+    return {"status": "SUCCESS", "result": result}
+
+
+def _resource_outcome(
+    function: Callable[..., Any], *args: Any, **kwargs: Any
+) -> dict[str, Any]:
+    """Preserve native Python cancellation signals across Pemja."""
+    try:
+        return _invocation_success(function(*args, **kwargs))
+    except InterruptedError as error:
+        return {"status": "INTERRUPTED", "message": str(error)}
+    except (CancelledError, AsyncCancelledError) as error:
+        return {"status": "CANCELLED", "message": str(error)}
+
+
+def _media_outcome(
+    function: Callable[..., Any], *args: Any, **kwargs: Any
+) -> dict[str, Any]:
+    """Preserve media job failures as structured outcomes for the Java bridge."""
+    try:
+        return _resource_outcome(function, *args, **kwargs)
+    except MediaJobError as error:
+        return _media_failure(error)
+
+
+def call_media_generate(
+    resource: Any,
+    content_json: str,
+    timeout: float | None,
+    parameters: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Generate media and return a tagged JSON result for the Java bridge."""
+    content = _CONTENT.validate_json(content_json)
+    return _media_outcome(
+        resource.generate, content, timeout=timeout, **_parameters(parameters)
+    )
+
+
+def media_supports_async_task(resource: Any) -> bool:
+    """Return whether the Python media model can submit a task."""
+    return bool(resource.supports_async_task())
+
+
+def call_media_submit(
+    resource: Any,
+    content_json: str,
+    parameters: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Submit a media task and return a tagged JSON job for the Java bridge."""
+    content = _CONTENT.validate_json(content_json)
+    return _media_outcome(resource.submit, content, **_parameters(parameters))
+
+
+def call_media_fetch(resource: Any, job_json: str) -> dict[str, Any]:
+    """Fetch a media job and return a tagged JSON state for the Java bridge."""
+    job = MediaJob.model_validate_json(job_json)
+    return _media_outcome(resource.fetch, job)
+
+
+def call_media_wait(
+    resource: Any, job_json: str, timeout: float | None
+) -> dict[str, Any]:
+    """Wait for a media job and return a tagged JSON result for the Java bridge."""
+    job = MediaJob.model_validate_json(job_json)
+    return _media_outcome(resource.wait, job, timeout=timeout)
+
+
+def call_media_cancel(resource: Any, job_json: str) -> dict[str, Any]:
+    """Cancel a media job and return a tagged outcome for the Java bridge."""
+    job = MediaJob.model_validate_json(job_json)
+    return _media_outcome(resource.cancel, job)
+
+
+def call_rerank_model(
+    resource: Any,
+    query_json: str,
+    documents_json: str,
+    top_n: int | None,
+    return_documents: bool | None,
+    instruct: str | None,
+    timeout: float | None,
+    parameters: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Rerank documents and return a tagged JSON result for the Java bridge."""
+    query = _QUERY.validate_json(query_json)
+    documents = _DOCUMENTS.validate_json(documents_json)
+    return _resource_outcome(
+        resource.rerank,
+        query,
+        documents,
+        top_n=top_n,
+        return_documents=return_documents,
+        instruct=instruct,
+        timeout=timeout,
+        **_parameters(parameters),
+    )
