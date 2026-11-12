@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.actions;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.configuration.DurationFormat;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.decision.BaseDecisionModelSetup;
@@ -34,6 +35,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 
@@ -111,8 +113,9 @@ public final class DecisionModelInvoker {
                 ctx.getConfig().get(AgentExecutionOptions.DECISION_ASYNC)
                         && setup.supportsAsyncExecution();
         int maxRetries = Math.max(0, ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES));
-        int waitInterval =
-                Math.max(0, ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+        Duration waitInterval =
+                DurationFormat.zeroIfNegative(
+                        ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
         FlinkAgentsMetricGroup actionMetrics = ctx.getActionMetricGroup();
         FlinkAgentsMetricGroup resourceMetrics =
                 actionMetrics == null
@@ -189,23 +192,24 @@ public final class DecisionModelInvoker {
                 if (retryCount == maxRetries) {
                     return new DecisionAttemptResult(null, outcome.error, retryCount, totalWaitSec);
                 }
-                int waitSec = waitInterval * (1 << retryCount);
+                Duration currentWait = waitInterval.multipliedBy(1L << retryCount);
+                long waitMillis = Math.max(0L, currentWait.toMillis());
                 retryCount++;
                 LOG.warn(
-                        "Decision request {} failed with error: {}, retrying {} / {}, waiting {} s.",
+                        "Decision request {} failed with error: {}, retrying {} / {}, waiting {}.",
                         label,
                         outcome.error,
                         retryCount,
                         maxRetries,
-                        waitSec);
-                if (waitSec > 0) {
+                        DurationFormat.format(currentWait));
+                if (waitMillis > 0) {
                     try {
-                        Thread.sleep(waitSec * 1000L);
+                        Thread.sleep(waitMillis);
                     } catch (InterruptedException error) {
                         Thread.currentThread().interrupt();
                         throw error;
                     }
-                    totalWaitSec += waitSec;
+                    totalWaitSec += (int) Math.min(Integer.MAX_VALUE, waitMillis / 1000L);
                 }
             }
         } finally {

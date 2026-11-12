@@ -20,13 +20,20 @@ package org.apache.flink.agents.api.agents;
 
 import org.apache.flink.agents.api.configuration.ConfigOption;
 
+import java.time.Duration;
+
 public class AgentExecutionOptions {
 
     public static final ConfigOption<Integer> MAX_RETRIES =
             new ConfigOption<>("max-retries", Integer.class, 0);
 
-    public static final ConfigOption<Integer> RETRY_WAIT_INTERVAL =
-            new ConfigOption<>("retry-wait-interval", Integer.class, 1);
+    /**
+     * Base wait between retries controlled by {@link #MAX_RETRIES}. The wait before retry N is this
+     * duration multiplied by {@code 2^(N-1)}. A zero or negative duration retries without waiting.
+     * In YAML, write a duration such as {@code 1 s}.
+     */
+    public static final ConfigOption<Duration> RETRY_WAIT_INTERVAL =
+            new ConfigOption<>("retry-wait-interval", Duration.class, Duration.ofSeconds(1));
 
     public static final ConfigOption<Integer> NUM_ASYNC_THREADS =
             new ConfigOption<>(
@@ -78,8 +85,9 @@ public class AgentExecutionOptions {
                     Runtime.getRuntime().availableProcessors());
 
     /**
-     * Overall timeout for one async batch composed with RunnerContext.gather, in milliseconds.
-     * Applies to ordinary, durable, and built-in tool calls. Non-positive values disable it.
+     * Overall timeout for one async batch composed with RunnerContext.gather. Applies to ordinary,
+     * durable, and built-in tool calls. A zero or negative duration disables it. The default {@code
+     * -1 ms} disables it. In YAML, write a duration such as {@code 30 s}.
      *
      * <p>Completed calls keep their outcomes; unfinished calls receive timeout failures. For
      * durable calls, started calls are finalized as failures while unstarted calls remain pending
@@ -89,8 +97,8 @@ public class AgentExecutionOptions {
      * callback occupies its worker until it returns, so blocking operations should also set their
      * own timeouts, such as an HTTP client read timeout.
      */
-    public static final ConfigOption<Long> ASYNC_BATCH_TIMEOUT_MS =
-            new ConfigOption<>("async.batch.timeout.ms", Long.class, -1L);
+    public static final ConfigOption<Duration> ASYNC_BATCH_TIMEOUT =
+            new ConfigOption<>("async.batch.timeout", Duration.class, Duration.ofMillis(-1));
 
     public static final ConfigOption<Boolean> RAG_ASYNC =
             new ConfigOption<>("rag.async", Boolean.class, true);
@@ -99,9 +107,12 @@ public class AgentExecutionOptions {
     public static final ConfigOption<Boolean> AGENT_RUN_BEGIN_EVENT =
             new ConfigOption<>("agent-run.begin-event", Boolean.class, false);
 
-    /** Set to a positive value in milliseconds to enable short-term memory TTL; 0 disables it. */
-    public static final ConfigOption<Long> SHORT_TERM_MEMORY_STATE_TTL_MS =
-            new ConfigOption<>("short-term-memory.state-ttl.ms", Long.class, 0L);
+    /**
+     * Short-term memory time-to-live. A positive duration enables expiration; a zero or negative
+     * duration disables it. In YAML, write a duration such as {@code 1 min}.
+     */
+    public static final ConfigOption<Duration> SHORT_TERM_MEMORY_STATE_TTL =
+            new ConfigOption<>("short-term-memory.state-ttl", Duration.class, Duration.ZERO);
 
     /** Update policy for short-term memory TTL, consulted only when TTL is enabled. */
     public static final ConfigOption<ShortTermMemoryTtlUpdate>

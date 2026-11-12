@@ -19,14 +19,17 @@
 package org.apache.flink.agents.plan;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions.ConditionEvaluationFailureStrategy;
 import org.apache.flink.agents.api.configuration.ConfigOption;
+import org.apache.flink.agents.api.configuration.DurationFormat;
 import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLogTarget;
 import org.junit.jupiter.api.*;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -346,5 +349,98 @@ public class AgentConfigurationTest {
                 () ->
                         new AgentConfiguration(
                                 java.util.Collections.singletonMap("trace-log.targets", null)));
+    }
+
+    @Test
+    void durationOptionsUseDefaultsAndCanonicalStrings() throws Exception {
+        AgentConfiguration config = new AgentConfiguration();
+        assertEquals(Duration.ofSeconds(1), config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+        assertEquals(Duration.ofMillis(-1), config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT));
+        assertEquals(Duration.ZERO, config.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL));
+        assertFalse(
+                DurationFormat.isPositive(config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)));
+        assertFalse(
+                DurationFormat.isPositive(
+                        config.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL)));
+
+        config.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, Duration.ofSeconds(30));
+        config.set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMinutes(5));
+        config.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL, Duration.ZERO);
+        assertEquals("30 s", config.getConfData().get("retry-wait-interval"));
+        assertEquals("5 min", config.getConfData().get("async.batch.timeout"));
+        assertEquals("0 ms", config.getConfData().get("short-term-memory.state-ttl"));
+        assertEquals(Duration.ofSeconds(30), config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+        assertEquals(Duration.ofMinutes(5), config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT));
+        assertFalse(
+                DurationFormat.isPositive(
+                        config.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL)));
+
+        ObjectMapper mapper = new ObjectMapper();
+        AgentPlan restored =
+                mapper.readValue(
+                        mapper.writeValueAsString(new AgentPlan(Map.of(), Map.of(), config)),
+                        AgentPlan.class);
+        assertEquals(
+                Duration.ofMinutes(5),
+                restored.getConfig().get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT));
+        assertEquals(config.getConfData(), restored.getConfig().getConfData());
+    }
+
+    @Test
+    void durationStringsKeepDisableSentinelsAndRejectBareNumbers() {
+        AgentConfiguration disabled =
+                new AgentConfiguration(
+                        Map.of(
+                                "async.batch.timeout",
+                                "-1 ms",
+                                "short-term-memory.state-ttl",
+                                "0 s",
+                                "retry-wait-interval",
+                                "0 s"));
+        assertFalse(
+                DurationFormat.isPositive(disabled.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)));
+        assertFalse(
+                DurationFormat.isPositive(
+                        disabled.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL)));
+        assertEquals(
+                Duration.ZERO,
+                DurationFormat.zeroIfNegative(
+                        disabled.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)));
+
+        AgentConfiguration enabled =
+                new AgentConfiguration(Map.of("async.batch.timeout", "100 ms"));
+        assertEquals(
+                Duration.ofMillis(100), enabled.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT));
+        assertTrue(
+                DurationFormat.isPositive(enabled.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)));
+
+        IllegalArgumentException bareNumber =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                new AgentConfiguration(Map.of("retry-wait-interval", 1))
+                                        .get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+        assertTrue(bareNumber.getMessage().contains("retry-wait-interval"));
+        assertTrue(bareNumber.getMessage().contains("30 s"));
+    }
+
+    @Test
+    void removedDurationKeysAreRejected() {
+        IllegalArgumentException error =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                new AgentConfiguration(
+                                        Map.of(
+                                                "async.batch.timeout.ms",
+                                                100,
+                                                "short-term-memory.state-ttl.ms",
+                                                1000)));
+        assertTrue(error.getMessage().contains("async.batch.timeout.ms"));
+        assertTrue(error.getMessage().contains("async.batch.timeout"));
+        assertTrue(error.getMessage().contains("short-term-memory.state-ttl.ms"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new AgentConfiguration().setStr("async.batch.timeout.ms", "100 ms"));
     }
 }

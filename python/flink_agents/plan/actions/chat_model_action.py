@@ -36,6 +36,7 @@ from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
 )
+from flink_agents.api.duration import format_duration, zero_if_negative
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event
 from flink_agents.api.events.model_routing_event import ModelRoutingEvent
@@ -679,8 +680,8 @@ async def _chat_with_retries(
         chat_async = False
 
     num_retries = max(0, ctx.config.get(AgentExecutionOptions.MAX_RETRIES))
-    retry_wait_interval_sec = max(
-        0, ctx.config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)
+    retry_wait_interval = zero_if_negative(
+        ctx.config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)
     )
 
     response = None
@@ -713,15 +714,16 @@ async def _chat_with_retries(
             final_error = error
             return False
         actual_retry_count = attempt + 1
-        current_wait_sec = retry_wait_interval_sec * (1 << (actual_retry_count - 1))
+        current_wait = retry_wait_interval * (1 << (actual_retry_count - 1))
+        wait_seconds = current_wait.total_seconds()
         _logger.warning(
             f"Chat request {initial_request_id} failed with error: {error}, "
             f"retrying {actual_retry_count} / {num_retries}, "
-            f"waiting {current_wait_sec} s."
+            f"waiting {format_duration(current_wait)}."
         )
-        if current_wait_sec > 0:
-            time.sleep(current_wait_sec)
-            total_wait_time_sec += current_wait_sec
+        if wait_seconds > 0:
+            time.sleep(wait_seconds)
+            total_wait_time_sec += int(wait_seconds)
         return True
 
     try:

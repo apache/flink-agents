@@ -60,6 +60,7 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.mockito.invocation.Invocation;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -616,7 +617,8 @@ class ChatModelActionRetryTest {
 
     @Test
     void retryWaitIntervalDefaultValue() {
-        assertThat(AgentExecutionOptions.RETRY_WAIT_INTERVAL.getDefaultValue()).isEqualTo(1);
+        assertThat(AgentExecutionOptions.RETRY_WAIT_INTERVAL.getDefaultValue())
+                .isEqualTo(Duration.ofSeconds(1));
     }
 
     @Test
@@ -1586,7 +1588,9 @@ class ChatModelActionRetryTest {
             int maxRetries, int retryWaitIntervalSec, boolean async) {
         AgentConfiguration config = new AgentConfiguration();
         config.set(AgentExecutionOptions.MAX_RETRIES, maxRetries);
-        config.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, retryWaitIntervalSec);
+        config.set(
+                AgentExecutionOptions.RETRY_WAIT_INTERVAL,
+                Duration.ofSeconds(retryWaitIntervalSec));
         config.set(AgentExecutionOptions.CHAT_ASYNC, async);
         return config;
     }

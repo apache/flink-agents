@@ -49,6 +49,7 @@ import pemja.core.object.PyObject;
 
 import javax.annotation.Nullable;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -381,7 +382,8 @@ class DecisionModelActionTest {
     @ValueSource(ints = {1, 2})
     void interruptedBackoffPreservesAccumulatedRetryMetrics(int failedAttempt) throws Exception {
         Harness h = new Harness(false, 3);
-        when(h.ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)).thenReturn(1);
+        when(h.ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL))
+                .thenReturn(Duration.ofSeconds(1));
         when(h.model.decide(any(), anyMap()))
                 .thenThrow(new IllegalStateException("provider unavailable"));
         doAnswer(
@@ -559,7 +561,7 @@ class DecisionModelActionTest {
             ReadableConfiguration config = mock(ReadableConfiguration.class);
             when(config.get(AgentExecutionOptions.DECISION_ASYNC)).thenReturn(async);
             when(config.get(AgentExecutionOptions.MAX_RETRIES)).thenReturn(retries);
-            when(config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)).thenReturn(0);
+            when(config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)).thenReturn(Duration.ZERO);
             when(ctx.getConfig()).thenReturn(config);
             when(ctx.getResource(MODEL, ResourceType.DECISION_MODEL)).thenReturn(model);
             when(model.supportsAsyncExecution()).thenReturn(true);

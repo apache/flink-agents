@@ -18,6 +18,7 @@
 import os
 import sysconfig
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -102,7 +103,10 @@ def run_scenario(
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
     agents_config = agents_env.get_config()
     if configure_ttl_ms:
-        agents_config.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, ttl_ms)
+        agents_config.set(
+            AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL,
+            timedelta(milliseconds=ttl_ms),
+        )
     if configure_ttl_options:
         agents_config.set(
             AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE,

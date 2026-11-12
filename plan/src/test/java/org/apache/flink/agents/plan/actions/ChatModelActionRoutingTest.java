@@ -64,6 +64,7 @@ import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -285,7 +286,8 @@ public class ChatModelActionRoutingTest {
 
         FakeRunnerContext withRetryBudget(int maxRetries, int waitIntervalSec) {
             config.set(AgentExecutionOptions.MAX_RETRIES, maxRetries);
-            config.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, waitIntervalSec);
+            config.set(
+                    AgentExecutionOptions.RETRY_WAIT_INTERVAL, Duration.ofSeconds(waitIntervalSec));
             return this;
         }
 

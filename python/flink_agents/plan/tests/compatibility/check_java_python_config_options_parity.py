@@ -24,6 +24,7 @@ using ``get_gateway()`` here is intentional and separate from runtime import
 safety.
 """
 
+from datetime import timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,7 @@ _JAVA_PRIMITIVE_TYPE_TO_PYTHON: dict[str, type] = {
     "java.lang.Boolean": bool,
     "java.lang.Float": float,
     "java.lang.Double": float,
+    "java.time.Duration": timedelta,
     "java.util.List": list,
 }
 
@@ -130,6 +132,12 @@ def normalize_java_default(
 
     if python_config_type is int and isinstance(java_default, int | float):
         return int(java_default)
+
+    if java_type_name == "java.time.Duration":
+        return timedelta(
+            seconds=int(java_default.getSeconds()),
+            microseconds=int(java_default.getNano()) // 1000,
+        )
 
     return java_default
 
