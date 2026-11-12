@@ -15,4 +15,4 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-"""Examples that make a product teaser from a key frame, a clip, and a voiceover."""
+"""Examples using media model resources in Flink Agents."""

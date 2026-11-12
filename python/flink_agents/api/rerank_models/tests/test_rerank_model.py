@@ -43,14 +43,6 @@ def test_rerank_decorator_is_registered() -> None:
     assert provider.descriptor.arguments["model"] == "qwen3-rerank"
 
 
-def test_rerank_decorator_marks_the_function() -> None:
-    @rerank_model
-    def rank() -> None:
-        return None
-
-    assert rank._is_rerank_model is True
-
-
 def test_rerank_result_json_roundtrip_keeps_the_document() -> None:
     result = RerankResult(
         results=[RerankHit(index=1, relevance_score=0.5, document=TextBlock(text="b"))],

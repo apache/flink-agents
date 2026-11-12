@@ -21,7 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from flink_agents.api.chat_message import TextBlock
+from flink_agents.api.chat_message import TextBlock, VideoBlock
 from flink_agents.api.media_models.media_model import (
     MediaJob,
     MediaJobError,
@@ -53,6 +53,8 @@ class _Media:
     def generate(self, content, *, timeout=None, **kwargs: object) -> MediaResult:
         assert timeout == 1.5
         assert kwargs == {"size": "512*512"}
+        assert isinstance(content[0], TextBlock)
+        assert isinstance(content[1], VideoBlock)
         return MediaResult(content=list(content), usage={"images": 1})
 
     def fetch(self, job: MediaJob) -> None:
@@ -79,12 +81,20 @@ class _Rerank:
 def test_call_media_generate_returns_json() -> None:
     """The Java bridge receives the finished media result as JSON."""
     outcome = call_media_generate(
-        _Media(), '[{"type": "text", "text": "A notebook."}]', 1.5, {"size": "512*512"}
+        _Media(),
+        '[{"type":"text","text":"A notebook."},'
+        '{"type":"video","media_type":"video/mp4",'
+        '"source":{"type":"url","url":"https://example.test/out.mp4"}}]',
+        1.5,
+        {"size": "512*512"},
     )
 
     assert outcome["status"] == "SUCCESS"
     result = MediaResult.model_validate_json(outcome["result"])
-    assert result.content[0].text == "A notebook."
+    assert result.content == [
+        TextBlock(text="A notebook."),
+        VideoBlock.from_url("video/mp4", "https://example.test/out.mp4"),
+    ]
     assert result.usage == {"images": 1}
 
 

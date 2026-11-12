@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -38,20 +39,6 @@ _IMAGE = "https://example.test/source.png"
 _RESULT = "https://oss.example/out.png?Expires=1700000000"
 
 
-def _queue(
-    model: DashScopeMediaModel, *responses: httpx.Response
-) -> list[dict[str, Any]]:
-    pending = list(responses)
-    calls: list[dict[str, Any]] = []
-
-    def request(method: str, path: str, **kwargs: Any) -> httpx.Response:
-        calls.append({"method": method, "path": path, **kwargs})
-        return pending.pop(0)
-
-    model._client().transport.request = request
-    return calls
-
-
 def _model(**overrides: Any) -> DashScopeMediaModel:
     values: dict[str, Any] = {
         "model": "qwen-image-3.0",
@@ -63,9 +50,11 @@ def _model(**overrides: Any) -> DashScopeMediaModel:
     return DashScopeMediaModel(**values)
 
 
-def test_submit_sends_text_and_images_in_order() -> None:
+def test_submit_sends_text_and_images_in_order(
+    task_responses: Callable[..., list[dict[str, Any]]],
+) -> None:
     model = _model(parameters={"n": 1})
-    calls = _queue(
+    calls = task_responses(
         model,
         httpx.Response(
             200, json={"output": {"task_id": "job-1", "task_status": "PENDING"}}
@@ -131,11 +120,12 @@ def test_submit_rejects_missing_text_and_non_images() -> None:
     ],
 )
 def test_fetch_reads_image_urls(
+    task_responses: Callable[..., list[dict[str, Any]]],
     second_url: str,
     expires_at_ms: int | None,
 ) -> None:
     model = _model()
-    _queue(
+    task_responses(
         model,
         httpx.Response(200, json={"output": {"task_id": "job-1"}}),
         httpx.Response(

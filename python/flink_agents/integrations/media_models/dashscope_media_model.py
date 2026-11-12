@@ -18,7 +18,7 @@
 import os
 import time
 from dataclasses import dataclass, replace
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 from urllib.parse import parse_qs, urlparse
 
 import dashscope
@@ -29,11 +29,9 @@ from typing_extensions import override
 
 from flink_agents.api.chat_message import (
     AudioBlock,
-    Base64Source,
     DataContentBlock,
     DocumentBlock,
     ImageBlock,
-    MediaBlock,
     TextBlock,
     UnsupportedContentBlockError,
     UrlSource,
@@ -48,7 +46,14 @@ from flink_agents.api.media_models.media_model import (
     MediaResult,
     MediaTask,
 )
-from flink_agents.integrations.dashscope_utils import create_client, usage_counters
+from flink_agents.integrations.dashscope_utils import (
+    create_client,
+    media_source_url,
+    usage_counters,
+)
+
+if TYPE_CHECKING:
+    from flink_agents.api.chat_message import MediaBlock
 
 DEFAULT_REQUEST_TIMEOUT = 60.0
 DEFAULT_REGION = "cn-beijing"
@@ -618,17 +623,6 @@ def _optional_prompt(texts: Sequence[TextBlock], *, task: str) -> str | None:
     return texts[0].text
 
 
-def _block_url(block: MediaBlock) -> str:
-    """Encode one media block as its URL or an inline data URI."""
-    source = block.source
-    if isinstance(source, UrlSource):
-        return source.url
-    if isinstance(source, Base64Source):
-        return f"data:{block.media_type};base64,{source.data}"
-    msg = "A media block requires a URL or Base64 source."
-    raise TypeError(msg)
-
-
 def _transcription_file_url(content: Sequence[DataContentBlock]) -> str:
     """The single http or https file accepted by one transcription request."""
     if len(content) != 1:
@@ -709,7 +703,7 @@ def _video_input(
         msg = "video_media_roles must have one entry for each media block."
         raise ValueError(msg)
     return prompt, [
-        {"type": role, "url": _block_url(block)}
+        {"type": role, "url": media_source_url(block)}
         for role, block in zip(roles, media, strict=True)
     ]
 
@@ -732,7 +726,7 @@ def _image_generation_content(
     if not prompt:
         msg = "Image generation requires a text block."
         raise ValueError(msg)
-    parts = [{"image": _block_url(image)} for image in images]
+    parts = [{"image": media_source_url(image)} for image in images]
     parts.append({"text": prompt})
     return parts
 

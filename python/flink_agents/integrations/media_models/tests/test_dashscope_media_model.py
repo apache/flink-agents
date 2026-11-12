@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 
@@ -40,29 +41,6 @@ _JOB = MediaJob(
     job_id="job-1",
     submitted_at_ms=1_700_000_000_000,
 )
-
-
-class _Jobs:
-    def __init__(self) -> None:
-        self.created: list[dict[str, Any]] = []
-
-    def create(self, **kwargs: Any) -> SimpleNamespace:
-        self.created.append(kwargs)
-        return SimpleNamespace(task_id="job-1")
-
-
-def _queue(
-    model: DashScopeMediaModel, *responses: httpx.Response
-) -> list[dict[str, Any]]:
-    pending = list(responses)
-    calls: list[dict[str, Any]] = []
-
-    def request(method: str, path: str, **kwargs: Any) -> httpx.Response:
-        calls.append({"method": method, "path": path, **kwargs})
-        return pending.pop(0)
-
-    model._client().transport.request = request
-    return calls
 
 
 def _model(**overrides: object) -> DashScopeMediaModel:
@@ -158,7 +136,9 @@ def test_invalid_region_is_rejected() -> None:
 
 
 @pytest.mark.parametrize("fields_at_top", [False, True])
-def test_fetch_returns_failed_state(fields_at_top: bool) -> None:
+def test_fetch_returns_failed_state(
+    task_responses: Callable[..., list[dict[str, Any]]], fields_at_top: bool
+) -> None:
     error = {"code": "InvalidParameter", "message": "bad input"}
     output = {"task_status": "FAILED"}
     body = {"output": output}
@@ -167,7 +147,7 @@ def test_fetch_returns_failed_state(fields_at_top: bool) -> None:
     else:
         output.update(error)
     model = _model()
-    _queue(model, httpx.Response(200, json=body))
+    task_responses(model, httpx.Response(200, json=body))
 
     state = model.fetch(_JOB)
 
@@ -177,16 +157,22 @@ def test_fetch_returns_failed_state(fields_at_top: bool) -> None:
     assert state.error_message == "bad input"
 
 
-def test_fetch_maps_suspended_to_pending() -> None:
+def test_fetch_maps_suspended_to_pending(
+    task_responses: Callable[..., list[dict[str, Any]]],
+) -> None:
     model = _model()
-    _queue(model, httpx.Response(200, json={"output": {"task_status": "SUSPENDED"}}))
+    task_responses(
+        model, httpx.Response(200, json={"output": {"task_status": "SUSPENDED"}})
+    )
 
     assert model.fetch(_JOB).status is MediaJobStatus.PENDING
 
 
-def test_fetch_raises_the_query_error() -> None:
+def test_fetch_raises_the_query_error(
+    task_responses: Callable[..., list[dict[str, Any]]],
+) -> None:
     model = _model()
-    _queue(
+    task_responses(
         model,
         httpx.Response(401, json={"code": "InvalidApiKey", "message": "bad key"}),
     )
@@ -198,9 +184,11 @@ def test_fetch_raises_the_query_error() -> None:
     assert exc_info.value.status_code == 401
 
 
-def test_cancel_uses_the_task_api() -> None:
+def test_cancel_uses_the_task_api(
+    task_responses: Callable[..., list[dict[str, Any]]],
+) -> None:
     model = _model()
-    calls = _queue(
+    calls = task_responses(
         model, httpx.Response(200, json={"output": {"task_status": "CANCELED"}})
     )
 
@@ -230,11 +218,12 @@ def test_cancel_uses_the_task_api() -> None:
     ],
 )
 def test_cancel_rejection_reports_the_observed_status(
+    task_responses: Callable[..., list[dict[str, Any]]],
     query_response: httpx.Response,
     status: MediaJobStatus,
 ) -> None:
     model = _model()
-    calls = _queue(
+    calls = task_responses(
         model,
         httpx.Response(
             400,
@@ -255,12 +244,15 @@ def test_cancel_rejection_reports_the_observed_status(
     ]
 
 
-def test_generate_submits_once_and_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generate_submits_once_and_waits(
+    sdk_jobs: SimpleNamespace,
+    task_responses: Callable[..., list[dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     model = _model(model="happyhorse-1.1-t2v", task=MediaTask.VIDEO_GENERATION)
-    jobs = _Jobs()
-    model._client().videos.jobs = jobs
+    model._client().videos.jobs = sdk_jobs
     video_url = "https://oss.example/out.mp4"
-    calls = _queue(
+    calls = task_responses(
         model,
         httpx.Response(200, json={"output": {"task_status": "PENDING"}}),
         httpx.Response(
@@ -274,7 +266,7 @@ def test_generate_submits_once_and_waits(monkeypatch: pytest.MonkeyPatch) -> Non
 
     result = model.generate([TextBlock(text="a cat")])
 
-    assert len(jobs.created) == 1
+    assert len(sdk_jobs.created) == 1
     assert result.content[0].source.url == video_url
     assert result.expires_at_ms is None
     assert [(call["method"], call["path"]) for call in calls] == [
@@ -283,16 +275,17 @@ def test_generate_submits_once_and_waits(monkeypatch: pytest.MonkeyPatch) -> Non
     ]
 
 
-def test_generate_rejects_non_finite_wait_timeout_before_submitting() -> None:
+def test_generate_rejects_non_finite_wait_timeout_before_submitting(
+    sdk_jobs: SimpleNamespace,
+) -> None:
     model = _model()
-    jobs = _Jobs()
-    model._client().audio.asr.jobs = jobs
+    model._client().audio.asr.jobs = sdk_jobs
     audio = AudioBlock.from_url("audio/wav", "https://example.test/a.wav")
 
     with pytest.raises(ValueError, match="wait timeout must be finite"):
         model.generate([audio], timeout=float("nan"))
 
-    assert jobs.created == []
+    assert sdk_jobs.created == []
 
 
 def test_client_does_not_take_max_retries_from_the_environment(

@@ -24,7 +24,6 @@ from pydantic import Field, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.chat_message import (
-    Base64Source,
     ImageBlock,
     TextBlock,
     UnsupportedContentBlockError,
@@ -38,7 +37,11 @@ from flink_agents.api.rerank_models.rerank_model import (
     RerankQuery,
     RerankResult,
 )
-from flink_agents.integrations.dashscope_utils import create_client, usage_counters
+from flink_agents.integrations.dashscope_utils import (
+    create_client,
+    media_source_url,
+    usage_counters,
+)
 
 DEFAULT_REQUEST_TIMEOUT = 60.0
 DEFAULT_REGION = "cn-beijing"
@@ -227,7 +230,7 @@ def _query_value(query: RerankQuery) -> str | dict[str, str]:
             raise ValueError(msg)
         return query.text
     if isinstance(query, ImageBlock):
-        return {"image": _block_url(query)}
+        return {"image": media_source_url(query)}
     reason = "rerank accepts a text or image query"
     raise UnsupportedContentBlockError.for_block(_PROVIDER_LABEL, query, reason)
 
@@ -239,21 +242,11 @@ def _document_value(document: RerankDocument) -> str | dict[str, str]:
             raise ValueError(msg)
         return document.text
     if isinstance(document, ImageBlock):
-        return {"image": _block_url(document)}
+        return {"image": media_source_url(document)}
     if isinstance(document, VideoBlock):
         return {"video": _video_url(document)}
     reason = "rerank accepts text, image, and video documents"
     raise UnsupportedContentBlockError.for_block(_PROVIDER_LABEL, document, reason)
-
-
-def _block_url(block: ImageBlock) -> str:
-    source = block.source
-    if isinstance(source, UrlSource):
-        return source.url
-    if isinstance(source, Base64Source):
-        return f"data:{block.media_type};base64,{source.data}"
-    msg = "An image requires a URL or Base64 source."
-    raise TypeError(msg)
 
 
 def _video_url(block: VideoBlock) -> str:
@@ -273,37 +266,24 @@ def _result_from_sdk(
     *,
     return_documents: bool | None,
 ) -> RerankResult:
-    hits = [
-        _hit(
-            item.index,
-            item.relevance_score,
-            documents,
-            return_documents=return_documents,
+    hits = []
+    for item in created.results:
+        index = item.index
+        if not 0 <= index < len(documents):
+            msg = (
+                f"A rerank result returned document index {index}, but the request "
+                f"contained {len(documents)} documents."
+            )
+            raise ValueError(msg)
+        hits.append(
+            RerankHit(
+                index=index,
+                relevance_score=item.relevance_score,
+                document=documents[index] if return_documents else None,
+            )
         )
-        for item in created.results
-    ]
     return RerankResult(
         results=hits,
         usage=usage_counters(created.usage),
         request_id=created.request_id or None,
-    )
-
-
-def _hit(
-    index: int,
-    score: float,
-    documents: Sequence[RerankDocument],
-    *,
-    return_documents: bool | None,
-) -> RerankHit:
-    if not 0 <= index < len(documents):
-        msg = (
-            f"A rerank result returned document index {index}, but the request "
-            f"contained {len(documents)} documents."
-        )
-        raise ValueError(msg)
-    return RerankHit(
-        index=index,
-        relevance_score=score,
-        document=documents[index] if return_documents else None,
     )

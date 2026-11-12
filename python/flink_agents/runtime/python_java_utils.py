@@ -528,6 +528,16 @@ def _resource_outcome(
         return {"status": "CANCELLED", "message": str(error)}
 
 
+def _media_outcome(
+    function: Callable[..., Any], *args: Any, **kwargs: Any
+) -> dict[str, Any]:
+    """Preserve media job failures as structured outcomes for the Java bridge."""
+    try:
+        return _resource_outcome(function, *args, **kwargs)
+    except MediaJobError as error:
+        return _media_failure(error)
+
+
 def call_media_generate(
     resource: Any,
     content_json: str,
@@ -536,12 +546,9 @@ def call_media_generate(
 ) -> dict[str, Any]:
     """Generate media and return a tagged JSON result for the Java bridge."""
     content = _CONTENT.validate_json(content_json)
-    try:
-        return _resource_outcome(
-            resource.generate, content, timeout=timeout, **_parameters(parameters)
-        )
-    except MediaJobError as error:
-        return _media_failure(error)
+    return _media_outcome(
+        resource.generate, content, timeout=timeout, **_parameters(parameters)
+    )
 
 
 def media_supports_async_task(resource: Any) -> bool:
@@ -556,19 +563,13 @@ def call_media_submit(
 ) -> dict[str, Any]:
     """Submit a media task and return a tagged JSON job for the Java bridge."""
     content = _CONTENT.validate_json(content_json)
-    try:
-        return _resource_outcome(resource.submit, content, **_parameters(parameters))
-    except MediaJobError as error:
-        return _media_failure(error)
+    return _media_outcome(resource.submit, content, **_parameters(parameters))
 
 
 def call_media_fetch(resource: Any, job_json: str) -> dict[str, Any]:
     """Fetch a media job and return a tagged JSON state for the Java bridge."""
     job = MediaJob.model_validate_json(job_json)
-    try:
-        return _resource_outcome(resource.fetch, job)
-    except MediaJobError as error:
-        return _media_failure(error)
+    return _media_outcome(resource.fetch, job)
 
 
 def call_media_wait(
@@ -576,19 +577,13 @@ def call_media_wait(
 ) -> dict[str, Any]:
     """Wait for a media job and return a tagged JSON result for the Java bridge."""
     job = MediaJob.model_validate_json(job_json)
-    try:
-        return _resource_outcome(resource.wait, job, timeout=timeout)
-    except MediaJobError as error:
-        return _media_failure(error)
+    return _media_outcome(resource.wait, job, timeout=timeout)
 
 
 def call_media_cancel(resource: Any, job_json: str) -> dict[str, Any]:
     """Cancel a media job and return a tagged outcome for the Java bridge."""
     job = MediaJob.model_validate_json(job_json)
-    try:
-        return _resource_outcome(resource.cancel, job)
-    except MediaJobError as error:
-        return _media_failure(error)
+    return _media_outcome(resource.cancel, job)
 
 
 def call_rerank_model(

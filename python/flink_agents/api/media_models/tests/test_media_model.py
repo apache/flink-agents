@@ -20,7 +20,7 @@ import pickle
 from typing import Any, Sequence
 
 import pytest
-from pydantic import Field, TypeAdapter
+from pydantic import Field
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import DataContentBlock, TextBlock, VideoBlock
@@ -366,11 +366,3 @@ def test_media_job_state_json_roundtrip() -> None:
 
     assert restored == state
     assert restored.result is None
-
-
-def test_content_block_union_accepts_media_result_payload() -> None:
-    """The bridge rebuilds content with the shared block union."""
-    adapter = TypeAdapter(list[DataContentBlock])
-    dumped = _RESULT.model_dump(mode="json")["content"]
-
-    assert adapter.validate_python(dumped) == _RESULT.content

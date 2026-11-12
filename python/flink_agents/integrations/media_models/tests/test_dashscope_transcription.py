@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 
@@ -44,15 +45,6 @@ _TRANSCRIPT = {
         {"channel_id": 1, "text": "world"},
     ],
 }
-
-
-class _Jobs:
-    def __init__(self) -> None:
-        self.created: list[dict[str, Any]] = []
-
-    def create(self, **kwargs: Any) -> SimpleNamespace:
-        self.created.append(kwargs)
-        return SimpleNamespace(task_id="job-1")
 
 
 def _model(**overrides: Any) -> DashScopeMediaModel:
@@ -85,28 +77,9 @@ def _task_body(
     return body
 
 
-def _queue(
-    model: DashScopeMediaModel, *responses: httpx.Response
-) -> list[dict[str, Any]]:
-    pending = list(responses)
-    calls: list[dict[str, Any]] = []
-
-    def request(method: str, path: str, **kwargs: Any) -> httpx.Response:
-        calls.append({"method": method, "path": path, **kwargs})
-        return pending.pop(0)
-
-    model._client().transport.request = request
-    return calls
-
-
-def _install(model: DashScopeMediaModel, jobs: _Jobs) -> None:
-    model._client().audio.asr.jobs = jobs
-
-
-def test_submit_sends_one_https_file_and_parameters() -> None:
+def test_submit_sends_one_https_file_and_parameters(sdk_jobs: SimpleNamespace) -> None:
     model = _model(parameters={"channel_id": [1], "format": "wav"})
-    jobs = _Jobs()
-    _install(model, jobs)
+    model._client().audio.asr.jobs = sdk_jobs
 
     job = model.submit([_audio()], channel_id=[0], language_hints=["zh"])
 
@@ -114,7 +87,7 @@ def test_submit_sends_one_https_file_and_parameters() -> None:
     assert job.provider == "dashscope"
     assert job.task is MediaTask.TRANSCRIPTION
     assert job.expires_at_ms == job.submitted_at_ms + 24 * 60 * 60 * 1000
-    assert jobs.created == [
+    assert sdk_jobs.created == [
         {
             "model": "fun-asr",
             "file_urls": [_FILE_URL],
@@ -138,20 +111,24 @@ def test_submit_sends_one_https_file_and_parameters() -> None:
         ([_audio("oss://bucket/audio.wav")], ValueError),
     ],
 )
-def test_submit_rejects_invalid_input(content: list, error: type[Exception]) -> None:
+def test_submit_rejects_invalid_input(
+    sdk_jobs: SimpleNamespace, content: list, error: type[Exception]
+) -> None:
     model = _model()
-    _install(model, _Jobs())
+    model._client().audio.asr.jobs = sdk_jobs
 
     with pytest.raises(error):
         model.submit(content)
 
 
 def test_fetch_downloads_transcription_without_dashscope_credentials(
+    sdk_jobs: SimpleNamespace,
+    task_responses: Callable[..., list[dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = _model(request_timeout=12)
-    _install(model, _Jobs())
-    calls = _queue(
+    model._client().audio.asr.jobs = sdk_jobs
+    calls = task_responses(
         model,
         httpx.Response(
             200,
@@ -195,9 +172,11 @@ def test_fetch_downloads_transcription_without_dashscope_credentials(
     assert state.result.expires_at_ms is None
 
 
-def test_fetch_and_cancel_report_failed_transcription_subtask() -> None:
+def test_fetch_and_cancel_report_failed_transcription_subtask(
+    sdk_jobs: SimpleNamespace, task_responses: Callable[..., list[dict[str, Any]]]
+) -> None:
     model = _model()
-    _install(model, _Jobs())
+    model._client().audio.asr.jobs = sdk_jobs
     failed_transcription = _task_body(
         "SUCCEEDED",
         {
@@ -210,7 +189,7 @@ def test_fetch_and_cancel_report_failed_transcription_subtask() -> None:
             ]
         },
     )
-    calls = _queue(
+    calls = task_responses(
         model,
         httpx.Response(200, json=failed_transcription),
         httpx.Response(

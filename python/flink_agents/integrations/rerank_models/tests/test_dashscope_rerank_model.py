@@ -141,9 +141,10 @@ def test_multimodal_documents_use_rerank_create(
     video = VideoBlock.from_url("video/mp4", "https://example.test/clip.mp4")
     picture = ImageBlock.from_base64("image/jpeg", "YQ==")
 
+    documents = [TextBlock(text="Caption of the reference picture."), picture, video]
     result = _model(model="qwen3-vl-rerank").rerank(
         image,
-        [TextBlock(text="Caption of the reference picture."), picture, video],
+        documents,
         return_documents=True,
         fps=0.25,
     )
@@ -158,10 +159,9 @@ def test_multimodal_documents_use_rerank_create(
         {"video": "https://example.test/clip.mp4"},
     ]
     assert body["parameters"] == {"return_documents": True, "fps": 0.25}
-    assert result.results[0].document is video
-    assert result.results[1].document == TextBlock(
-        text="Caption of the reference picture."
-    )
+    assert [hit.index for hit in result.results] == [2, 0]
+    assert result.results[0].document is documents[2]
+    assert result.results[1].document is documents[0]
 
 
 def test_text_query_is_an_object_when_a_document_is_media(
@@ -230,17 +230,3 @@ def test_out_of_range_response_index_is_rejected(
             [TextBlock(text="first"), TextBlock(text="second")],
             return_documents=return_documents,
         )
-
-
-def test_returned_documents_follow_original_indices(
-    http_calls: tuple[list[httpx.Request], list[httpx.Response]],
-) -> None:
-    _, responses = http_calls
-    responses.append(httpx.Response(200, json=_ranked(1, 0)))
-    documents = [TextBlock(text="first"), TextBlock(text="second")]
-
-    result = _model().rerank(TextBlock(text="query"), documents, return_documents=True)
-
-    assert [hit.index for hit in result.results] == [1, 0]
-    assert result.results[0].document is documents[1]
-    assert result.results[1].document is documents[0]

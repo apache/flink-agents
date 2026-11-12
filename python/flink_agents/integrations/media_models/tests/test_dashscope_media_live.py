@@ -58,8 +58,8 @@ def test_transcription_returns_text() -> None:
 
 
 @pytest.mark.skipif(not _api_key_available, reason="DashScope API key is not set")
-def test_transcription_cancel_is_only_accepted_while_pending() -> None:
-    """Cancel either stops a pending task or reports that it is no longer pending."""
+def test_transcription_cancel_returns_or_reports_rejection() -> None:
+    """Cancel returns successfully or reports UnsupportedOperation."""
     model = _model(MediaTask.TRANSCRIPTION, "fun-asr")
     job = model.submit([AudioBlock.from_url("audio/mpeg", _AUDIO)])
     rejected: MediaJobError | None = None

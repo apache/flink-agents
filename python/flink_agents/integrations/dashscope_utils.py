@@ -22,6 +22,19 @@ from typing import Any
 
 import dashscope
 
+from flink_agents.api.chat_message import Base64Source, MediaBlock, UrlSource
+
+
+def media_source_url(block: MediaBlock) -> str:
+    """Return a media URL or encode Base64 content as an inline data URI."""
+    source = block.source
+    if isinstance(source, UrlSource):
+        return source.url
+    if isinstance(source, Base64Source):
+        return f"data:{block.media_type};base64,{source.data}"
+    msg = "A media block requires a URL or Base64 source."
+    raise TypeError(msg)
+
 
 def create_client(
     *,
