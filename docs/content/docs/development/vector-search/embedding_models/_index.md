@@ -33,7 +33,9 @@ Built-in embedding models accept text.
 
 ## Overview
 
-Embedding models convert text and supported media into high-dimensional vectors that capture semantic meaning, enabling powerful semantic search and retrieval capabilities. These vector representations allow agents to understand and work with text similarity, semantic search, and knowledge retrieval patterns.
+Embedding models convert text and supported media into vectors that represent
+their meaning. Agents can compare these vectors to find similar content or
+retrieve relevant information.
 
 In Flink Agents, embedding models are essential for:
 - **Semantic Search**: Finding relevant documents or information based on meaning rather than exact keyword matches
@@ -198,17 +200,19 @@ public class MyAgent extends Agent {
 
 ## Inputs and Results
 
-The selected provider and model determine which blocks and media sources you can
-pass. See [Chat Messages]({{< ref "docs/development/calling-llms/chat#message-content-blocks" >}})
-for the shared text and media blocks.
+Supported inputs depend on the provider and model. See
+[Chat Messages]({{< ref "docs/development/calling-llms/chat#message-content-blocks" >}})
+for block types and media sources.
 
 | Operation | Python | Java |
 |---|---|---|
 | Embed a string | `embed("text")` returns one vector | `embed("text")` returns one `float[]` |
-| Embed one block | `embed(block)` returns one vector | `embedBlocksWithUsage(List.of(block))` returns a result with one vector |
-| Embed a batch | `embed([text, image, video])` returns a list of vectors | `embedBlocksWithUsage(List.of(textBlock, image, video))` returns a result with a list of vectors |
+| Embed a batch of strings | `embed(["first", "second"])` returns a list of vectors | `embed(List.of("first", "second"))` returns a `List<float[]>` |
+| Embed one block | `embed(block)` returns one vector | `embedBlocksWithUsage(List.of(block))` returns an `EmbeddingResult` containing a list with one vector |
+| Embed a batch containing media | `embed([text, image, video])` returns a list of vectors | `embedBlocksWithUsage(List.of(textBlock, image, video))` returns an `EmbeddingResult` containing a list of vectors |
 
-Each input in a batch produces one vector. The result preserves input order.
+A batch returns one vector per input, in input order.
+
 Use `embed_with_usage` (Python), `embedWithUsage` for strings (Java), or
 `embedBlocksWithUsage` for blocks (Java) to also read token usage when the provider
 reports it.
@@ -244,9 +248,9 @@ class MyEmbeddingConnection(BaseEmbeddingModelConnection):
         ...
 ```
 
-`EmbeddingContent`, imported from
-`flink_agents.api.embedding_models.embedding_model`, represents a string, a data
-content block, or a sequence of either.
+Import `EmbeddingContent` from `flink_agents.api.embedding_models.embedding_model`.
+An input can be a string, a data content block, or a sequence containing either
+or both.
 
 {{< /tab >}}
 

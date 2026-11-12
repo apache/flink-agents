@@ -218,11 +218,11 @@ Native path:  ChatRequestEvent → model call (tool loop, no schema)
 | Gemini | Java | `gemini-*` text models. Image, TTS, audio, live, transcribe, embedding and omni variants are excluded. | The request binds tools. The schema has a `JsonNode` field. |
 | Ollama | Java, Python | Any model | |
 | watsonx | Java, Python | Any model | |
-| DashScope | Python | Depends on both the model and the selected `api_type`; see the [model/interface table]({{< ref "docs/development/calling-llms/chat-models/providers#interface-selection" >}}). | |
+| DashScope | Python | Models such as `qwen3.7-max`, `qwen3.7-plus`, `qwen3.7-flash`, `qwen3.8-max`, and `qwen3.8-flash`. See [DashScope's JSON Schema support](https://help.aliyun.com/en/model-studio/qwen-structured-output) and [Flink Agents usage requirements]({{< ref "docs/development/calling-llms/chat-models/providers#dashscope-structured-output" >}}). | |
 
 Notes:
 
-- **DashScope ASR and image generation/editing require a request without an output schema.** Omit `output_schema` for these tasks in Java and Python, regardless of the structured-output strategy.
+- **DashScope speech recognition and image generation or editing do not accept `output_schema`.** This applies to Java and Python, regardless of the structured-output strategy.
 - **Azure OpenAI** matches `model_of_azure_deployment`, not the deployment name, because a deployment name can be anything. If you do not set it, `AUTO` stays on the prompt path (`NATIVE` still goes native). Set it to get `AUTO` native on Azure, as in the example below.
 - **Gemini** blocks native output when the request binds tools. The conversion call is tool-free, so this only affects direct connection calls. A newer model that does not support the schema field fails with `400 INVALID_ARGUMENT`. Constraints such as `pattern` and `minLength` are ignored by the server.
 - **Ollama** needs a server at v0.5.0 or later. Ollama Cloud and the MLX runner accept the schema but do not enforce it.

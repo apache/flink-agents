@@ -71,8 +71,8 @@ class MyAgent(Agent):
 
 #### Multimodal Embeddings
 
-Set `api_type="multimodal"` to use the multimodal API. The default model is
-`qwen3-vl-embedding`. Use the same model and dimensions for indexing and search.
+Set `api_type="multimodal"` and omit `text_type`. Choose a compatible
+multimodal model, or omit `model` to use `qwen3-vl-embedding`.
 
 | Input | Supported forms |
 |---|---|
@@ -87,12 +87,12 @@ already have Base64 data. The
 lists model-specific format, size, and batch limits.
 
 A batch can mix text, images, and videos. It returns one independent vector per
-input, in the same order. For multimodal requests, omit `text_type` and leave
-`enable_fusion` unset or set it to `False`.
+input, in input order. The integration does not combine inputs into a single
+fused vector; leave `enable_fusion` unset or set it to `False`.
 
 Use `embed` or `embed_with_usage` in Python. In Java, pass a list of blocks to
 `embedBlocksWithUsage`. See [Inputs and Results]({{< ref "docs/development/vector-search/embedding_models#inputs-and-results" >}})
-for the input and result shapes.
+for accepted inputs and return values.
 
 #### DashScopeEmbeddingModelConnection Parameters
 
@@ -106,7 +106,7 @@ for the input and result shapes.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | str | Required | Registered connection Resource name |
-| `api_type` | str | `"text"` | Selects the `"text"` or `"multimodal"` embedding API |
+| `api_type` | str | `"text"` | SDK interface: `text` uses `TextEmbedding`; `multimodal` uses `MultiModalEmbedding` |
 | `model` | str | `"text-embedding-v4"` for text, `"qwen3-vl-embedding"` for multimodal | Embedding model name |
 | `text_type` | str | None | `"query"` or `"document"` for the text API |
 | `dimension` | int | None | Output vector dimensions (model-dependent) |
@@ -114,9 +114,11 @@ for the input and result shapes.
 
 #### Available Models
 
-See the [DashScope text embedding API](https://help.aliyun.com/en/model-studio/text-embedding-synchronous-api) for text models and limits.
+See the [text embedding API](https://help.aliyun.com/en/model-studio/text-embedding-synchronous-api)
+and [multimodal embedding API](https://help.aliyun.com/en/model-studio/multimodal-embedding-api-reference)
+for available models and limits.
 
-Some popular options include:
+Text models include:
 - **text-embedding-v4** (default, recommended)
 - **text-embedding-v3**
 - **text-embedding-v2**
