@@ -15,30 +15,59 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, Sequence
+from typing import Any, Dict
 
 from typing_extensions import override
 
+from flink_agents.api.chat_message import MediaBlock, TextBlock
 from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelConnection,
     BaseEmbeddingModelSetup,
+    EmbeddingContent,
     EmbeddingResult,
     EmbeddingTokenUsage,
 )
 from flink_agents.plan.resource.java.java_resource_adapter import JavaResourceAdapter
 
 
-def _from_java_embedding_result(
-    j_result: Any, text: str | Sequence[str]
+def _call_java_embedding(
+    resource: Any,
+    adapter: JavaResourceAdapter,
+    content: EmbeddingContent,
+    kwargs: Dict[str, Any],
+    *,
+    with_usage: bool,
 ) -> EmbeddingResult[list[float] | list[list[float]]]:
-    """Convert a Java EmbeddingResult into the Python result contract."""
-    j_embeddings = j_result.getEmbeddings()
+    """Call the Java model and adapt its result to the Python input shape."""
+    single = isinstance(content, str | TextBlock | MediaBlock)
+    inputs = [content] if single else list(content)
+    argument = content if single else inputs
+    j_result = None
+
+    if any(isinstance(item, TextBlock | MediaBlock) for item in inputs):
+        blocks = [
+            TextBlock(text=item) if isinstance(item, str) else item for item in inputs
+        ]
+        java_blocks = [
+            adapter.fromPythonDataContentBlock(block.model_dump(mode="json"))
+            for block in blocks
+        ]
+        j_result = resource.embedBlocksWithUsage(java_blocks, kwargs)
+        j_embeddings = j_result.getEmbeddings()
+        if single:
+            j_embeddings = j_embeddings[0]
+    elif with_usage:
+        j_result = resource.embedWithUsage(argument, kwargs)
+        j_embeddings = j_result.getEmbeddings()
+    else:
+        j_embeddings = resource.embed(argument, kwargs)
+
     embeddings = (
         list(j_embeddings)
-        if isinstance(text, str)
+        if single
         else [list(embedding) for embedding in j_embeddings]
     )
-    j_usage = j_result.getTokenUsage()
+    j_usage = j_result.getTokenUsage() if with_usage else None
     token_usage = (
         None
         if j_usage is None
@@ -81,30 +110,25 @@ class JavaEmbeddingModelConnection(BaseEmbeddingModelConnection):
         self._j_resource_adapter.set_metric_group(self._j_resource, metric_group)
 
     def embed(
-        self, text: str | Sequence[str], **kwargs: Any
+        self, content: EmbeddingContent, **kwargs: Any
     ) -> list[float] | list[list[float]]:
-        """Generate embedding vector for a single text input.
-        Converts the input text into a high-dimensional vector representation
-        suitable for semantic similarity search and retrieval operations.
-
-        Args:
-            text: The text string to convert into an embedding vector.
-            **kwargs: Additional parameters passed to the embedding model.
-        """
-        result = self._j_resource.embed(
-            text if isinstance(text, str) else list(text), kwargs
-        )
-        return list(result) if isinstance(text, str) else [list(emb) for emb in result]
+        """Generate vectors for one input or an ordered batch through Java."""
+        return _call_java_embedding(
+            self._j_resource,
+            self._j_resource_adapter,
+            content,
+            kwargs,
+            with_usage=False,
+        ).embeddings
 
     @override
     def embed_with_usage(
-        self, text: str | Sequence[str], **kwargs: Any
+        self, content: EmbeddingContent, **kwargs: Any
     ) -> EmbeddingResult[list[float] | list[list[float]]]:
         """Generate embeddings through Java and preserve provider token usage."""
-        result = self._j_resource.embedWithUsage(
-            text if isinstance(text, str) else list(text), kwargs
+        return _call_java_embedding(
+            self._j_resource, self._j_resource_adapter, content, kwargs, with_usage=True
         )
-        return _from_java_embedding_result(result, text)
 
 
 class JavaEmbeddingModelSetup(BaseEmbeddingModelSetup):
@@ -156,27 +180,22 @@ class JavaEmbeddingModelSetup(BaseEmbeddingModelSetup):
         self._j_resource.open()
 
     def embed(
-        self, text: str | Sequence[str], **kwargs: Any
+        self, content: EmbeddingContent, **kwargs: Any
     ) -> list[float] | list[list[float]]:
-        """Generate embedding vector for a single text query.
-        Converts the input text into a high-dimensional vector representation
-        suitable for semantic similarity search and retrieval operations.
-
-        Args:
-            text: The text string to convert into an embedding vector.
-            **kwargs: Additional parameters passed to the embedding model.
-        """
-        result = self._j_resource.embed(
-            text if isinstance(text, str) else list(text), kwargs
-        )
-        return list(result) if isinstance(text, str) else [list(emb) for emb in result]
+        """Generate vectors for one input or an ordered batch through Java."""
+        return _call_java_embedding(
+            self._j_resource,
+            self._j_resource_adapter,
+            content,
+            kwargs,
+            with_usage=False,
+        ).embeddings
 
     @override
     def embed_with_usage(
-        self, text: str | Sequence[str], **kwargs: Any
+        self, content: EmbeddingContent, **kwargs: Any
     ) -> EmbeddingResult[list[float] | list[list[float]]]:
         """Generate embeddings through Java and preserve provider token usage."""
-        result = self._j_resource.embedWithUsage(
-            text if isinstance(text, str) else list(text), kwargs
+        return _call_java_embedding(
+            self._j_resource, self._j_resource_adapter, content, kwargs, with_usage=True
         )
-        return _from_java_embedding_result(result, text)

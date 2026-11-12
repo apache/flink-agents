@@ -18,9 +18,10 @@
 import json
 import os
 import uuid
-from typing import Any, Dict, List, Mapping, Sequence
+from typing import Any, Dict, List, Literal, Mapping, Sequence, get_args
+from urllib.parse import urlsplit
 
-from dashscope import Generation
+from dashscope import Generation, MultiModalConversation
 from pydantic import Field
 from typing_extensions import override
 
@@ -30,12 +31,17 @@ from flink_agents.api.agents.types import (
     render_output_schema,
 )
 from flink_agents.api.chat_message import (
+    AudioBlock,
+    Base64Source,
     ChatMessage,
+    ImageBlock,
+    MediaBlock,
     MessageRole,
     ReasoningBlock,
     TextBlock,
     ToolCallBlock,
     UnsupportedContentBlockError,
+    VideoBlock,
 )
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -47,29 +53,186 @@ from flink_agents.api.tools.tool import Tool, ToolMetadata
 
 DEFAULT_REQUEST_TIMEOUT = 60.0
 DEFAULT_MODEL = "qwen-plus"
+_DashScopeApiType = Literal["auto", "text", "multimodal"]
+_DashScopeTask = Literal["asr", "image_generation"]
 
-# Models with documented json_schema support that are also served on the
-# text-generation interface this connection calls. json_schema support is documented
-# per family, but the interface is documented per model and differs inside a family:
-# the Qwen3.7-Plus, Qwen3.7-Flash, Qwen3.8-Flash and Qwen3.8-Max families and the
-# qwen3.7-max-2026-06-08 snapshot are served on the multimodal interface and answer
-# Generation.call with "url error". Names are therefore matched exactly against the
-# Qwen3.7-Max members served on the text interface.
-# json_schema model list and mode semantics:
-#   https://help.aliyun.com/zh/model-studio/json-mode
-# text- vs multimodal-interface routing:
-#   https://help.aliyun.com/zh/model-studio/text-generation
-#
-# A name outside the set reports not-capable, which the structured-output query
-# reports as FEASIBLE rather than NATIVE_RECOMMENDED.
-_NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
-    {
-        "qwen3.7-max",
-        "qwen3.7-max-preview",
-        "qwen3.7-max-2026-05-17",
-        "qwen3.7-max-2026-05-20",
-    }
+# JSON Schema capability is checked against the selected interface. Snapshots in
+# the same family can use different interfaces, so names are matched exactly.
+# https://help.aliyun.com/zh/model-studio/qwen-structured-output
+# https://help.aliyun.com/zh/model-studio/text-generation
+_NATIVE_STRUCTURED_OUTPUT_MODELS = {
+    "text": frozenset(
+        {
+            "qwen3.7-max",
+            "qwen3.7-max-preview",
+            "qwen3.7-max-2026-05-17",
+            "qwen3.7-max-2026-05-20",
+        }
+    ),
+    "multimodal": frozenset(
+        {
+            "qwen3.7-plus",
+            "qwen3.7-plus-2026-05-26",
+            "qwen3.7-flash",
+            "qwen3.7-flash-2026-07-15",
+            "qwen3.7-max-2026-06-08",
+            "qwen3.8-max",
+            "qwen3.8-max-0902",
+            "qwen3.8-flash",
+        }
+    ),
+}
+# Match a family name or its hyphenated variants. Keep chat families specific:
+# embedding, rerank, OCR and realtime models have different request contracts.
+# https://help.aliyun.com/zh/model-studio/vision
+# https://help.aliyun.com/zh/model-studio/text-generation
+# https://help.aliyun.com/zh/model-studio/web-search
+_MULTIMODAL_MODEL_FAMILIES = (
+    "qwen-vl-plus",
+    "qwen-vl-max",
+    "qwen3-vl-plus",
+    "qwen3-vl-flash",
+    "qwen3.5-plus",
+    "qwen3.5-flash",
+    "qwen3.6-plus",
+    "qwen3.6-flash",
+    "qwen3.7-plus",
+    "qwen3.7-flash",
+    "qwen3.8-max",
+    "qwen3.8-flash",
+    "qvq",
 )
+# Size-based chat names start with a parameter size after these prefixes,
+# e.g. qwen3-vl-8b-instruct or qwen3.8-2.4t-a95b. Requiring a leading digit
+# avoids classifying qwen3-vl-embedding or qwen3.6-max-preview as MMC chat.
+_MULTIMODAL_MODEL_SIZE_PREFIXES = (
+    "qwen2-vl-",
+    "qwen2.5-vl-",
+    "qwen3-vl-",
+    "qwen3.5-",
+    "qwen3.6-",
+    "qwen3.8-",
+)
+# The older Qwen3.7-Max snapshots use text generation; only this snapshot uses
+# MMC. Kimi uses an exact name rather than assuming every Kimi model uses MMC.
+# https://help.aliyun.com/en/model-studio/kimi-api
+_MULTIMODAL_MODELS = frozenset({"qwen3.7-max-2026-06-08", "kimi-k2.5"})
+_ASR_FORMAT_ALIASES = {
+    "audio/mpeg": "mp3",
+    "audio/x-ms-wma": "wma",
+    "video/quicktime": "mov",
+    "video/x-matroska": "mkv",
+    "video/x-msvideo": "avi",
+    "video/x-ms-wmv": "wmv",
+}
+
+
+def _resolve_api_type(
+    api_type: str, model: str | None, *, task: _DashScopeTask | None = None
+) -> str:
+    """Resolve the interface for the task or chat model."""
+    if api_type not in get_args(_DashScopeApiType):
+        msg = (
+            f"Invalid DashScope api_type {api_type!r}; "
+            "expected 'auto', 'text', or 'multimodal'."
+        )
+        raise ValueError(msg)
+    if task is not None:
+        return "multimodal"
+    if api_type != "auto":
+        return api_type
+    if not isinstance(model, str):
+        return "text"
+    if (
+        model in _MULTIMODAL_MODELS
+        or any(
+            model == family or model.startswith(f"{family}-")
+            for family in _MULTIMODAL_MODEL_FAMILIES
+        )
+        or any(
+            model.startswith(prefix) and model.removeprefix(prefix)[:1].isdigit()
+            for prefix in _MULTIMODAL_MODEL_SIZE_PREFIXES
+        )
+    ):
+        return "multimodal"
+    return "text"
+
+
+def _validate_asr_request(
+    messages: Sequence[ChatMessage],
+    tools: List[Tool] | None,
+    output_schema: OutputSchema | None,
+    response_format: Any,
+) -> AudioBlock:
+    """Return the single recording in a transcription request."""
+    if tools or output_schema is not None or response_format is not None:
+        msg = (
+            "DashScope ASR only transcribes audio; tools, output_schema and "
+            "response_format are not supported. Use a text model to process "
+            "the transcription afterward."
+        )
+        raise ValueError(msg)
+    if (
+        len(messages) != 1
+        or messages[0].role != MessageRole.USER
+        or len(messages[0].blocks) != 1
+        or not isinstance(messages[0].blocks[0], AudioBlock)
+    ):
+        msg = (
+            "DashScope ASR requires one user message containing exactly one AudioBlock."
+        )
+        raise ValueError(msg)
+    return messages[0].blocks[0]
+
+
+def _validate_image_generation_request(
+    messages: Sequence[ChatMessage],
+    tools: List[Tool] | None,
+    output_schema: OutputSchema | None,
+    response_format: Any,
+) -> None:
+    """Require a single user prompt with optional reference images."""
+    if tools or output_schema is not None or response_format is not None:
+        msg = (
+            "DashScope image generation and editing do not support tools, "
+            "output_schema or response_format."
+        )
+        raise ValueError(msg)
+    if len(messages) != 1 or messages[0].role != MessageRole.USER:
+        msg = "DashScope image generation and editing require one user message."
+        raise ValueError(msg)
+
+    blocks = messages[0].blocks
+    prompts = [block for block in blocks if isinstance(block, TextBlock)]
+    if (
+        len(prompts) != 1
+        or not prompts[0].text.strip()
+        or any(not isinstance(block, TextBlock | ImageBlock) for block in blocks)
+    ):
+        msg = (
+            "DashScope image generation and editing require one non-empty text "
+            "prompt and optional image blocks."
+        )
+        raise ValueError(msg)
+
+
+def _generated_image_blocks(content: Any) -> list[ImageBlock]:
+    """Decode the ordered PNG URLs returned by the synchronous image models."""
+    msg = (
+        "DashScope image generation must return a non-empty list of HTTP(S) image URLs."
+    )
+    if not isinstance(content, list) or not content:
+        raise RuntimeError(msg)
+    blocks = []
+    for part in content:
+        source = part.get("image") if isinstance(part, dict) else None
+        if not isinstance(source, str) or not source:
+            raise RuntimeError(msg)
+        url = urlsplit(source)
+        if url.scheme not in {"http", "https"} or not url.netloc:
+            raise RuntimeError(msg)
+        blocks.append(ImageBlock.from_url("image/png", source))
+    return blocks
 
 
 def _native_response_format(
@@ -119,6 +282,17 @@ def to_dashscope_tool(
             "parameters": metadata.get_parameters_dict(),
         },
     }
+
+
+class _MultiModalConversation(MultiModalConversation):
+    @classmethod
+    @override
+    def _preprocess_messages(
+        cls, model: str, messages: List[Dict[str, Any]], api_key: str
+    ) -> bool:
+        # Media are already HTTP(S) URLs or inline data. SDK preprocessing also
+        # treats text parts as local paths, which can change text or upload files.
+        return False
 
 
 class DashScopeChatModelConnection(BaseChatModelConnection):
@@ -172,37 +346,38 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         """``INFEASIBLE`` exactly when ``chat`` skips its native branch.
 
         Feasibility is the helper the native branch asks; capability only separates
-        ``FEASIBLE`` from ``NATIVE_RECOMMENDED``, judged on the ``model`` parameter,
-        or ``DEFAULT_MODEL`` when it is absent.
+        ``FEASIBLE`` from ``NATIVE_RECOMMENDED``, judged on the effective model and
+        the selected interface. An omitted interface uses text generation.
         """
         if not self._can_apply_native_structured_output(
             output_schema, tools, model_kwargs
         ):
             return NativeStructuredOutputSupport.INFEASIBLE
-        if self._model_supports_native_structured_output(
-            self._effective_model_for(model_kwargs)
-        ):
+        model = self._effective_model_for(model_kwargs)
+        api_type = _resolve_api_type(
+            (model_kwargs or {}).get("api_type", "text"), model
+        )
+        if self._model_supports_native_structured_output(model, api_type):
             return NativeStructuredOutputSupport.NATIVE_RECOMMENDED
         return NativeStructuredOutputSupport.FEASIBLE
 
     def _model_supports_native_structured_output(
-        self, effective_model: str | None
+        self, effective_model: str | None, api_type: str
     ) -> bool:
-        """Whether DashScope documents structured output for ``effective_model``.
+        """Whether the model supports JSON Schema on the resolved interface.
 
-        See the module-level allowlist for the source of truth and for why names are
-        matched exactly. A name outside it reports ``False``. The answer shapes only
-        the structured-output query; the request carries a schema it is handed
-        whatever this reports.
+        An unlisted model/interface pair is not recommended for native output.
+        This recommendation does not prevent a caller from sending a native schema.
 
         Args:
             effective_model: The model the request will be issued against, may be
                 ``None``.
+            api_type: The resolved interface, ``text`` or ``multimodal``.
 
         Returns:
-            ``True`` if a schema can be applied natively for ``effective_model``.
+            Whether native JSON Schema is recommended for this model/interface pair.
         """
-        return effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS
+        return effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS[api_type]
 
     def _effective_model_for(
         self, model_kwargs: Mapping[str, Any] | None
@@ -241,9 +416,8 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         unconstrained request. Rendering raises likewise, on a ``BaseModel`` that
         carries no JSON Schema, so a ``True`` is not a promise the call succeeds.
 
-        Neither the tools nor the parameters are read: this connection sends a native
-        schema alongside bound tools, and the one parameter that would bear on the
-        answer is the model, which is the capability question this excludes.
+        The ASR and image generation tasks bypass native schema rendering.
+        For chat, bound tools can accompany a native schema.
 
         Parameters
         ----------
@@ -253,14 +427,16 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         tools : List[Tool] | None
             Not read; bound tools do not stop this connection sending a native schema.
         model_kwargs : Mapping[str, Any] | None
-            Not read.
+            Used to determine the task.
 
         Returns:
         -------
         bool
-            ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass.
+            ``True`` if the task is chat and the schema wraps a ``BaseModel`` subclass.
         """
-        return native_output_model(output_schema) is not None
+        return (model_kwargs or {}).get("task") is None and native_output_model(
+            output_schema
+        ) is not None
 
     def chat(
         self,
@@ -282,36 +458,71 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
             unconstrained response. Native structured output is applied for a
             ``BaseModel`` schema whatever the model; a ``RowTypeInfo`` schema keeps the
             prompt-engineering fallback. A ``response_format`` supplied alongside a
-            schema is refused rather than resolved.
+            schema is refused rather than resolved. ASR, image generation and image
+            editing requests reject output schemas.
         **kwargs : Any
-            Additional parameters passed to the model service (e.g., temperature,
-            max_tokens, etc.)
+            ``api_type`` selects ``text`` (default), ``multimodal``, or ``auto``.
+            Auto uses the multimodal interface for documented model names and text
+            otherwise. Both interfaces accept text messages and tool calls. The
+            multimodal interface accepts user images and video files from HTTP(S)
+            URLs or Base64 sources. Set ``task="asr"`` with a Qwen-Audio-ASR model
+            to transcribe one user AudioBlock through MMC. The audio format is
+            inferred from the media type unless ``format`` is supplied. ASR does
+            not accept tools or structured output.
+            Set ``task="image_generation"`` with a Qwen-Image model to generate
+            or edit images through MMC. This task accepts a single user prompt
+            with optional image blocks and returns images. It does not accept
+            tools or structured output. Media inputs in assistant or tool messages
+            are unsupported. Multimodal calls must be non-streaming.
+            Other parameters are passed to the model service.
 
         Returns:
         -------
         ChatResult
             Model response message.
         """
-        # Media blocks are not sent yet; fail rather than drop them (#1059).
-        UnsupportedContentBlockError.reject_media("DashScope", messages)
-        # Snapshotted before the pops below, so the feasibility check is asked with
-        # the parameters as they arrived rather than with a mapping this path has
-        # already stripped. No term of today's answer reads them; the shape is what
-        # keeps a term added later from answering about a request other than the one
-        # being built.
+        # Check native schema feasibility against the original request arguments.
         raw_kwargs = dict(kwargs)
-
-        dashscope_messages = self.__convert_to_dashscope_messages(messages)
-
-        dashscope_tools: List[Dict[str, Any]] | None = (
-            [to_dashscope_tool(tool.metadata) for tool in tools] if tools else None
-        )
 
         extract_reasoning = bool(kwargs.pop("extract_reasoning", False))
 
         req_api_key = kwargs.pop("api_key", self.api_key)
 
+        task = kwargs.pop("task", None)
+        if task is not None and task not in get_args(_DashScopeTask):
+            msg = (
+                f"Invalid DashScope task {task!r}; "
+                "expected 'asr', 'image_generation', or None."
+            )
+            raise ValueError(msg)
+        is_asr = task == "asr"
+        is_image_generation = task == "image_generation"
         model_name = kwargs.pop("model", DEFAULT_MODEL)
+        api_type = _resolve_api_type(
+            kwargs.pop("api_type", "text"), model_name, task=task
+        )
+        if api_type == "multimodal" and kwargs.get("stream"):
+            msg = "DashScope multimodal chat requires stream=False."
+            raise ValueError(msg)
+        if is_asr:
+            audio = _validate_asr_request(
+                messages, tools, output_schema, kwargs.get("response_format")
+            )
+            if kwargs.get("format") is None:
+                media_type = audio.media_type.partition(";")[0].strip().lower()
+                subtype = media_type.rpartition("/")[2].removeprefix("x-")
+                kwargs["format"] = _ASR_FORMAT_ALIASES.get(media_type, subtype)
+        elif is_image_generation:
+            _validate_image_generation_request(
+                messages, tools, output_schema, kwargs.get("response_format")
+            )
+
+        dashscope_tools: List[Dict[str, Any]] | None = (
+            [to_dashscope_tool(tool.metadata) for tool in tools] if tools else None
+        )
+        dashscope_messages = self.__convert_to_dashscope_messages(
+            messages, api_type, task=task
+        )
 
         # The feasibility check is shared with the structured-output query rather than
         # restated, so the branch applies whenever the query answers other than
@@ -337,13 +548,16 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
                 raise ValueError(msg)
             kwargs["response_format"] = _native_response_format(output_schema)
 
-        response = Generation.call(
+        api = Generation if api_type == "text" else _MultiModalConversation
+        chat_options = (
+            {} if is_asr else {"tools": dashscope_tools, "result_format": "message"}
+        )
+        response = api.call(
             model=model_name,
             messages=dashscope_messages,
-            tools=dashscope_tools,
-            result_format="message",
             timeout=self.request_timeout,
             api_key=req_api_key,
+            **chat_options,
             **kwargs,
         )
 
@@ -351,41 +565,72 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
             msg = f"DashScope call failed: {response.message}"
             raise RuntimeError(msg)
 
-        choice = response.output["choices"][0]
-        message = choice["message"]
         blocks = []
-        if extract_reasoning and message.get("reasoning_content"):
-            blocks.append(ReasoningBlock(text=message["reasoning_content"]))
-        if message.get("content"):
-            blocks.append(TextBlock(text=message["content"]))
-        for call in message.get("tool_calls") or []:
-            function = call["function"]
-            arguments = function.get("arguments") or {}
-            if isinstance(arguments, str):
-                arguments = json.loads(arguments)
-            blocks.append(
-                ToolCallBlock(
-                    call_id=call.get("id") or str(uuid.uuid4()),
-                    name=function["name"],
-                    input=arguments,
+        if is_asr:
+            text = (response.output or {}).get("text")
+            if not isinstance(text, str):
+                msg = "DashScope ASR response did not contain a transcript in output.text."
+                raise RuntimeError(msg)
+            blocks.append(TextBlock(text=text))
+            finish_reason = response.output.get("finish_reason")
+        else:
+            choice = response.output["choices"][0]
+            finish_reason = choice.get("finish_reason")
+            message = choice["message"]
+            if extract_reasoning and message.get("reasoning_content"):
+                blocks.append(ReasoningBlock(text=message["reasoning_content"]))
+            content = message.get("content")
+            if is_image_generation:
+                blocks.extend(_generated_image_blocks(content))
+            elif api_type == "multimodal" and isinstance(content, list):
+                for part in content:
+                    if (
+                        not isinstance(part, dict)
+                        or set(part) != {"text"}
+                        or not isinstance(part["text"], str)
+                    ):
+                        msg = "DashScope multimodal chat only supports text response content."
+                        raise RuntimeError(msg)
+                    blocks.append(TextBlock(text=part["text"]))
+            elif content:
+                blocks.append(TextBlock(text=content))
+            for call in message.get("tool_calls") or []:
+                function = call["function"]
+                arguments = function.get("arguments") or {}
+                if isinstance(arguments, str):
+                    arguments = json.loads(arguments)
+                blocks.append(
+                    ToolCallBlock(
+                        call_id=call.get("id") or str(uuid.uuid4()),
+                        name=function["name"],
+                        input=arguments,
+                    )
                 )
+        usage = response.usage
+        token_usage = None
+        # The SDK fills absent token counts with zeros when a task reports only
+        # audio duration or image count.
+        if usage and (task is None or usage.input_tokens or usage.output_tokens):
+            token_usage = TokenUsage(
+                prompt_tokens=usage.input_tokens,
+                completion_tokens=usage.output_tokens,
             )
         return ChatResult(
             message=ChatMessage.assistant(blocks),
             model=str(model_name) if model_name is not None else None,
-            usage=TokenUsage(
-                prompt_tokens=response.usage.input_tokens,
-                completion_tokens=response.usage.output_tokens,
-            )
-            if response.usage
-            else None,
-            finish_reason=choice.get("finish_reason"),
+            usage=token_usage,
+            finish_reason=finish_reason,
         )
 
     @staticmethod
     def __convert_to_dashscope_messages(
         messages: Sequence[ChatMessage],
+        api_type: str,
+        *,
+        task: _DashScopeTask | None,
     ) -> List[Dict[str, Any]]:
+        """Use ordered parts for user media and image prompts."""
+        provider = "DashScope"
         result = []
         for message in messages:
             blocks = (
@@ -393,15 +638,56 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
                 if message.role == MessageRole.TOOL
                 else message.blocks
             )
+            content = []
+            has_media = False
             for block in blocks:
-                if not isinstance(block, TextBlock | ReasoningBlock | ToolCallBlock):
-                    provider = "DashScope"
+                if isinstance(block, TextBlock):
+                    content.append({"text": block.text})
+                elif api_type == "text" and isinstance(block, MediaBlock):
+                    raise UnsupportedContentBlockError.for_block(
+                        provider,
+                        block,
+                        "the text interface accepts only text. For images or video, "
+                        "use api_type='multimodal' with a compatible model. For audio "
+                        "transcription, use task='asr' with a Qwen-Audio-ASR model",
+                    )
+                elif isinstance(block, ImageBlock | VideoBlock | AudioBlock):
+                    if message.role != MessageRole.USER:
+                        raise UnsupportedContentBlockError.for_block(
+                            provider, block, "only user messages can carry media"
+                        )
+                    if isinstance(block, AudioBlock) and task != "asr":
+                        raise UnsupportedContentBlockError.for_block(
+                            provider,
+                            block,
+                            "audio input requires task='asr'",
+                        )
+                    if isinstance(block.source, Base64Source):
+                        source = f"data:{block.media_type};base64,{block.source.data}"
+                    else:
+                        source = block.source.url
+                        if urlsplit(source).scheme not in {"http", "https"}:
+                            raise UnsupportedContentBlockError.for_block(
+                                provider,
+                                block,
+                                "media sources must be HTTP(S) URLs or Base64 data",
+                            )
+                    if isinstance(block, AudioBlock):
+                        content.append(
+                            {"type": "input_audio", "input_audio": {"data": source}}
+                        )
+                    else:
+                        content.append({block.type: source})
+                    has_media = True
+                elif not isinstance(block, ReasoningBlock | ToolCallBlock):
                     raise UnsupportedContentBlockError.for_block(
                         provider, block, "unsupported message content"
                     )
             native = {
                 "role": message.role.value,
-                "content": "".join(b.text for b in blocks if isinstance(b, TextBlock)),
+                "content": content
+                if has_media or task == "image_generation"
+                else "".join(p["text"] for p in content),
             }
             if message.tool_calls:
                 native["tool_calls"] = [
@@ -443,6 +729,11 @@ class DashScopeChatModelSetup(BaseChatModelSetup):
     extract_reasoning : bool
         If True, extracts reasoning content from the response and stores it
         in additional_kwargs.
+    api_type : Literal["auto", "text", "multimodal"]
+        Interface selection. Defaults to text generation. Auto selects the
+        multimodal interface only for documented model names.
+    task : Literal["asr", "image_generation"] | None
+        Select synchronous transcription or image generation and editing through MMC.
     """
 
     temperature: float = Field(
@@ -459,6 +750,14 @@ class DashScopeChatModelSetup(BaseChatModelSetup):
         default=False,
         description="If True, extracts reasoning content from the response and stores it.",
     )
+    api_type: _DashScopeApiType = Field(
+        default="text",
+        description="DashScope interface: text (default), multimodal, or auto.",
+    )
+    task: _DashScopeTask | None = Field(
+        default=None,
+        description="Select 'asr' for transcription or 'image_generation' for images.",
+    )
 
     def __init__(
         self,
@@ -467,6 +766,8 @@ class DashScopeChatModelSetup(BaseChatModelSetup):
         temperature: float = 0.7,
         additional_kwargs: Dict[str, Any] | None = None,
         extract_reasoning: bool | None = False,
+        api_type: _DashScopeApiType = "text",
+        task: _DashScopeTask | None = None,
         **kwargs: Any,
     ) -> None:
         """Init method."""
@@ -478,6 +779,8 @@ class DashScopeChatModelSetup(BaseChatModelSetup):
             temperature=temperature,
             additional_kwargs=additional_kwargs,
             extract_reasoning=extract_reasoning,
+            api_type=api_type,
+            task=task,
             **kwargs,
         )
 
@@ -488,8 +791,18 @@ class DashScopeChatModelSetup(BaseChatModelSetup):
             "model": self.model,
             "temperature": self.temperature,
             "extract_reasoning": self.extract_reasoning,
+            "api_type": self.api_type,
         }
+        if self.task is not None:
+            base_kwargs["task"] = self.task
         return {
             **base_kwargs,
             **self.additional_kwargs,
         }
+
+    @override
+    def _validate_structured_output_request(self) -> None:
+        task = self.model_kwargs.get("task")
+        if task in get_args(_DashScopeTask):
+            msg = f"DashScope task {task!r} does not support output_schema."
+            raise ValueError(msg)

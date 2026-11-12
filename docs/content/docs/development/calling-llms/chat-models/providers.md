@@ -43,13 +43,14 @@ For which providers and models enforce an `output_schema` natively, see [Structu
 {{< hint warning >}}
 A content block that Flink Agents can represent is not necessarily supported by
 the selected provider integration or model. The table describes the Flink Agents
-0.4 integrations, not every capability of the upstream services. The selected
-model, deployment, and server must also support the requested input and tool calling.
+integrations on this page, not every capability of the upstream services.
+The selected model, deployment, and server must also support the requested
+input and tool calling.
 {{< /hint >}}
 
 | Integration | Implementation language | Media input accepted by the integration |
 |---|---|---|
-| [Alibaba Cloud Model Studio (DashScope)](#alibaba-cloud-model-studio-dashscope) | Python | No media input; media blocks are rejected. |
+| [Alibaba Cloud Model Studio (DashScope)](#alibaba-cloud-model-studio-dashscope) | Python | User messages: images, video files, and audio for speech recognition. |
 | [OpenAI Chat Completions](#multimodal-input), [Azure OpenAI](#azure-openai), [vLLM](#vllm) | Java, Python | User messages: images by URL or Base64; WAV/MP3 audio and documents by Base64. See the conversion and model restrictions below. |
 | [OpenAI Responses](#responses-api) | Java | User messages: images by URL or Base64; documents by URL or Base64. No audio or video. |
 | [Anthropic](#anthropic) | Java, Python | User messages: JPEG/PNG/GIF/WebP images and PDF documents by URL or Base64; plain-text documents by Base64. |
@@ -110,10 +111,12 @@ The DashScope integration currently has a Python implementation only. To use it 
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | str | `"qwen-plus"` | Name of the chat model to use (an `output_schema` is enforced natively only on `qwen3.7-max`, `qwen3.7-max-preview`, `qwen3.7-max-2026-05-17` and `qwen3.7-max-2026-05-20`, the schema-capable models DashScope serves on the text-generation interface this connection calls; every other model, the `qwen-plus` default included, falls back to prompting) |
+| `model` | str | `"qwen-plus"` | Name of the chat model to use. See [Structured Output](#dashscope-structured-output) for native `output_schema` support. |
+| `api_type` | str | `"text"` | SDK interface for chat: `text` uses `Generation`; `multimodal` uses `MultiModalConversation`; `auto` selects by model name. See [Interface Selection](#interface-selection). |
+| `task` | str | `None` | Omit for chat and media understanding. Set `asr` for speech recognition or `image_generation` for image generation and editing; both select `MultiModalConversation`, so `api_type` can be omitted. |
 | `temperature` | float | `0.7` | Sampling temperature (0.0 to 2.0) |
 | `extract_reasoning` | bool | `False` | Extract reasoning content from response |
-| `additional_kwargs` | dict | `{}` | Additional DashScope API parameters. A `response_format` supplied here is rejected only when it would be overwritten, that is when an `output_schema` carrying a Pydantic model is set on a model that applies it natively; otherwise it is passed through unchanged |
+| `additional_kwargs` | dict | `{}` | Additional parameters passed to the DashScope API. |
 
 #### Usage Example
 
@@ -143,9 +146,142 @@ class MyAgent(Agent):
     ...
 ```
 
+#### Interface Selection
+
+The setup options below apply to Python, Java, and YAML configurations.
+Adding media to a message does not automatically select the multimodal interface.
+
+| Operation | Configuration |
+|---|---|
+| Chat with text, [images](#image-input), or [video](#video-input) | Leave `task` unset. Select `api_type="text"` or `"multimodal"` as required by the model, or use `"auto"` for model-name routing. |
+| [Speech recognition](#audio-input-speech-recognition) | Set `task="asr"` and a compatible model such as `qwen-audio-3.1-asr-flash`; `api_type` can be omitted. |
+| [Image generation and editing](#synchronous-image-generation-and-editing) | Set `task="image_generation"` and a compatible model such as `qwen-image-3.0`; `api_type` can be omitted. |
+
+Chat defaults to `api_type="text"` and `model="qwen-plus"`. Image and video
+inputs require the multimodal interface and a compatible model, such as
+`qwen3.7-plus`. Select `api_type="multimodal"` explicitly, or use `auto` when
+the model name matches the [multimodal routing rules](#automatic-routing).
+
+Setting `task="asr"` or `task="image_generation"` selects `MultiModalConversation`,
+even when `api_type` is set to `text` or `auto`.
+
+This integration supports only non-streaming calls to `MultiModalConversation`.
+Models or configurations that require streaming cannot be used. See
+[DashScope streaming output](https://help.aliyun.com/en/model-studio/stream)
+and [deep thinking](https://help.aliyun.com/en/model-studio/deep-thinking) for
+model-specific requirements.
+
+#### Automatic Routing
+
+With `task` unset, `api_type="auto"` selects `multimodal` when the model name
+matches the integration's built-in routing rules. Otherwise, it selects `text`.
+For example, `qwen3.7-plus` selects `multimodal`, while `qwen-plus` selects `text`.
+
+When you know which interface your model requires, set `api_type="text"` or
+`api_type="multimodal"` explicitly. This also works for deployment aliases.
+Routing selects the SDK interface; it does not verify model availability or
+capabilities.
+
+See {{< gh_link file="python/flink_agents/integrations/chat_models/dashscope_chat_model.py" name="Complete automatic routing rules" >}}.
+
+#### Image Input
+
+Use `ImageBlock` in a user message with a compatible model on the
+[multimodal interface](#interface-selection). The message can contain multiple
+image and text blocks in the order you want the model to read them. Supply images
+as HTTP(S) URLs or inline Base64 data. To use a local image, read it as bytes and
+call `ImageBlock.from_bytes`. See
+[DashScope image understanding](https://help.aliyun.com/en/model-studio/vision#multiple-image-inputs)
+for model-specific format and size limits.
+
+#### Video Input
+
+Send a `VideoBlock` in a user message with a video-capable model on the
+[multimodal interface](#interface-selection). Use an HTTP(S) video file URL or
+inline Base64 data. To use a local video, read it as bytes and call
+`VideoBlock.from_bytes`. You can mix text, images, and video in the same message.
+
+The integration uses DashScope's default frame sampling. It does not expose
+per-video sampling options or accept lists of video frames. Video understanding
+analyzes the visual frames. See
+[DashScope video understanding](https://help.aliyun.com/en/model-studio/vision#video-understanding-2)
+for supported formats and limits.
+
+#### Audio Input: Speech Recognition
+
+Set `task="asr"` with a Qwen-Audio-ASR model such as
+`qwen-audio-3.1-asr-flash`; `api_type` can be omitted. Send one user message
+containing only an `AudioBlock`. Provide the audio as an HTTP(S) URL or inline
+Base64 data. Read the transcript from
+`ChatResult.text` in Python or `ChatResult.getText()` in Java.
+
+For this task, leave `prompt`, `tools`, `skills`, and `subagents` unset on
+the setup and omit `output_schema` and `response_format`.
+
+The connection infers the audio format from the block's media type, such as
+`mp3` for `audio/mpeg`. If the media type does not identify the format, set
+`format` in `additional_kwargs` or as a keyword argument to `chat()`. See
+[DashScope non-streaming ASR](https://help.aliyun.com/en/model-studio/qwen-audio-asr-http-api#non-streaming-h4)
+for supported formats and recording limits.
+
+#### Synchronous Image Generation and Editing
+
+Set `task="image_generation"` with a compatible model such as
+`qwen-image-3.0`; `api_type` can be omitted. Send one user message with one
+non-empty text prompt. For editing, include reference images as `ImageBlock`
+values with HTTP(S) URLs or inline Base64 data.
+
+For this task, leave `prompt`, `tools`, `skills`, and `subagents` unset on
+the setup and omit `output_schema` and `response_format`.
+
+The result contains `ImageBlock` values in the order returned by DashScope.
+Read them from `ChatResult.blocks` in Python or `ChatResult.getBlocks()` in Java. You can reuse
+the blocks as editing references. DashScope's image URLs expire after 24 hours,
+so save any images you need to keep. See the
+[DashScope synchronous image API](https://help.aliyun.com/en/model-studio/qwen-image-generation-and-editing-api-reference#dashscope-synchronous-api-recommended).
+
+#### Structured Output {#dashscope-structured-output}
+
+Use `output_schema` to request structured results for text chat, image
+understanding, or video understanding. See
+[Structured Output]({{< ref "docs/development/calling-llms/structured-output" >}})
+for how to define a schema, choose a strategy, and read the result.
+
+Speech recognition (`task="asr"`) and image generation or editing
+(`task="image_generation"`) do not accept `output_schema`.
+
+To use `structured_output_strategy="NATIVE"`, choose a model that supports
+JSON Schema. For supported models and versions, see
+[DashScope structured output](https://help.aliyun.com/en/model-studio/qwen-structured-output).
+
+Native structured output is supported in Python with a Pydantic schema.
+Java callers using a cross-language setup use prompting with `AUTO` or `PROMPT`.
+The bridge cannot pass a schema for native output, so selecting `NATIVE` raises
+an error.
+
+For native structured output, Flink Agents builds `response_format` from
+`output_schema`. Setting `response_format` yourself, either in `additional_kwargs`
+or as a keyword argument to `chat()`, causes an error. When native structured
+output is not used for chat or media understanding, Flink Agents passes through
+any supplied `response_format` unchanged.
+
+#### Run the DashScope Example
+
+After [setting up PyFlink]({{< ref "docs/get-started/setup" >}}), activate the
+Python environment and set `DASHSCOPE_API_KEY`. Run
+{{< gh_link file="python/flink_agents/examples/dashscope_multimodal_example.py" name="`dashscope_multimodal_example.py`" >}} with the following command.
+
+```shell
+python -m flink_agents.examples.dashscope_multimodal_example
+```
+
+The job sends an image URL and a text prompt to `qwen3-vl-plus` and prints the
+description. See [Chat with Models]({{< ref "docs/development/calling-llms/chat" >}})
+for how to call a chat model and handle its responses.
+
 #### Available Models
 
-Visit the [Alibaba Cloud Model Studio models documentation](https://help.aliyun.com/zh/dashscope/developer-reference/model-introduction) for the complete and up-to-date list of available chat models.
+See the [Alibaba Cloud Model Studio model catalog](https://help.aliyun.com/en/model-studio/models) for available models.
 
 Some popular options include:
 - **qwen-plus**

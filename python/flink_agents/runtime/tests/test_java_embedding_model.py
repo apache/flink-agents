@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from flink_agents.api.chat_message import ImageBlock, TextBlock
 from flink_agents.plan.resource.java.java_embedding_model import (
     JavaEmbeddingModelConnection,
     JavaEmbeddingModelSetup,
@@ -68,3 +69,33 @@ def test_java_embedding_wrappers_preserve_usage(
     j_resource.embedWithUsage.assert_called_once_with(
         ["first", "second"], {"batch_size": 2}
     )
+
+
+def test_java_embedding_setup_preserves_block_order_and_result_shape() -> None:
+    """Mixed batches keep one vector per input and a single block returns one vector."""
+    j_resource = MagicMock()
+    adapter = MagicMock()
+    adapter.fromPythonDataContentBlock.side_effect = lambda block: block
+    setup = JavaEmbeddingModelSetup(
+        j_resource, adapter, connection="connection", model="test-model"
+    )
+    image = ImageBlock.from_base64("image/png", "aGk=")
+    j_resource.embedBlocksWithUsage.return_value = _JavaEmbeddingResult()
+
+    result = setup.embed_with_usage(["caption", image], dimension=2)
+
+    assert result.embeddings == [[0.1, 0.2], [0.3, 0.4]]
+    assert result.token_usage is not None
+    assert result.token_usage.total_tokens == 9
+    j_resource.embedBlocksWithUsage.assert_called_once_with(
+        [
+            TextBlock(text="caption").model_dump(mode="json"),
+            image.model_dump(mode="json"),
+        ],
+        {"dimension": 2},
+    )
+
+    single_result = MagicMock()
+    single_result.getEmbeddings.return_value = [[0.1, 0.2]]
+    j_resource.embedBlocksWithUsage.return_value = single_result
+    assert setup.embed(image) == [0.1, 0.2]

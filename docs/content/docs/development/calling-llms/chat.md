@@ -51,7 +51,7 @@ carries additional message attributes.
 |---|---|---|
 | `system` | Instructions or context for the model; accepts text only. | `ChatMessage.system(...)` |
 | `user` | User input, containing text or supported media. | `ChatMessage.user(...)` |
-| `assistant` | A model response, which may include text, reasoning, or tool calls. | Returned by the model, or `ChatMessage.assistant(...)` for conversation history. |
+| `assistant` | A model response, which may include text, reasoning, tool calls, or generated media when supported. | Returned by the model, or `ChatMessage.assistant(...)` for conversation history. |
 | `tool` | The result of one tool call. | Created by the tool-calling flow, or `ChatMessage.tool(...)` with a `ToolResultBlock`. |
 
 For text messages, pass a string to the factory method. It creates a message

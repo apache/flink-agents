@@ -39,7 +39,7 @@ from flink_agents.api.events.event import Event
 from flink_agents.api.tools import InjectedArg, ToolResponse
 from flink_agents.runtime.python_java_utils import (
     call_decision_model,
-    call_embedding_with_usage,
+    call_embedding,
     convert_to_python_key_text,
     get_python_tool_metadata,
     invoke_python_tool,
@@ -149,8 +149,11 @@ class _UsageAwareEmbeddingModel:
 
 
 def test_call_embedding_with_usage_returns_pemja_safe_primitives() -> None:
-    result = call_embedding_with_usage(
-        _UsageAwareEmbeddingModel(), {"text": "hello", "model": "test-model"}
+    result = call_embedding(
+        _UsageAwareEmbeddingModel(),
+        "embed_with_usage",
+        "hello",
+        {"model": "test-model"},
     )
 
     assert result == {

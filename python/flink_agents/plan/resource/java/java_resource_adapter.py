@@ -38,6 +38,10 @@ class JavaResourceAdapter(Protocol):
         """Create a Java message from Python values."""
         ...
 
+    def fromPythonDataContentBlock(self, block: dict) -> Any:
+        """Create a Java data content block from Python values."""
+        ...
+
     def fromPythonDocument(
         self, content: str, metadata: dict, document_id: str, embedding: Any, score: Any
     ) -> Any:
