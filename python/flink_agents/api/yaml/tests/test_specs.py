@@ -22,6 +22,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from flink_agents.api.chat_message import ImageBlock, TextBlock
 from flink_agents.api.tools import InjectedArg
 from flink_agents.api.yaml.specs import (
     ActionSpec,
@@ -162,6 +163,37 @@ def test_prompt_spec_with_messages() -> None:
     assert spec.messages is not None
     assert spec.messages[0].role == MessageRole.SYSTEM
     assert spec.text is None
+
+
+def test_prompt_message_with_content_blocks() -> None:
+    msg = PromptMessage.model_validate(
+        yaml.safe_load(
+            "content:\n"
+            "  - {type: text, text: 'Describe {subject}.'}\n"
+            "  - type: image\n"
+            "    media_type: image/png\n"
+            "    source: {type: url, url: 'https://example.com/cat.png'}\n"
+        )
+    )
+    assert msg.content == [
+        TextBlock(text="Describe {subject}."),
+        ImageBlock.from_url("image/png", "https://example.com/cat.png"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        [],
+        [{"type": "reasoning", "text": "thinking"}],
+        [{"type": "image", "media_type": "image/png"}],
+        {"text": "hi"},
+        None,
+    ],
+)
+def test_prompt_message_rejects_invalid_content(content: object) -> None:
+    with pytest.raises(ValidationError):
+        PromptMessage.model_validate({"content": content})
 
 
 def test_prompt_spec_requires_text_xor_messages() -> None:

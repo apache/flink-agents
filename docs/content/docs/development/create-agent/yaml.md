@@ -136,7 +136,7 @@ or `add_resource` / `addResource`. Actions can get their instances through
 |-------|----------|-------------|
 | `name` | Required | Prompt name (referenced by chat-model setups). |
 | `text` | Required if `messages` is unset or empty | Non-empty string prompt template. Corresponds to `Prompt.from_text` / `Prompt.fromText`. |
-| `messages` | Required if `text` is unset or empty | Non-empty list of message templates. Corresponds to `Prompt.from_messages` / `Prompt.fromMessages`. Each entry has `role` (`system` / `user` / `assistant` / `tool`) and `content`. |
+| `messages` | Required if `text` is unset or empty | Non-empty list of message templates. Corresponds to `Prompt.from_messages` / `Prompt.fromMessages`. Each entry has `role` (`system` / `user` / `assistant` / `tool`) and `content`: text, or a non-empty list of content blocks (see below). |
 
 Omitted or `null` fields, `text: ""`, and `messages: []` are treated as unset.
 If both alternatives are non-empty, or neither is non-empty, YAML loading fails
@@ -150,6 +150,29 @@ prompts:
       - {role: user,   content: "{input}"}
   - name: prompt2
     text: "this is the {value}"
+```
+
+A message's `content` can also be a list of content blocks, in the same shape a
+`ChatMessage` block takes in JSON: `text` blocks with `text`, and `image`, `audio`,
+`video` or `document` blocks with `media_type` and a `source` of `{type: url, url: ...}`
+or `{type: base64, data: ...}` (optionally `name`). Placeholders are substituted in
+`text` blocks only; media blocks are passed through as written. The role rules of
+`ChatMessage` apply when the file is loaded, so media is accepted in `user` messages
+but a `system` message takes text only. Whether the media reaches the model depends
+on the chat model integration; see
+[Provider Capabilities]({{< ref "docs/development/calling-llms/chat-models/providers#provider-capabilities" >}}).
+
+```yaml
+prompts:
+  - name: describe_image
+    messages:
+      - {role: system, content: "You describe {kind}."}
+      - role: user
+        content:
+          - {type: text, text: "Describe {subject}."}
+          - type: image
+            media_type: image/png
+            source: {type: url, url: "https://example.com/cat.png"}
 ```
 
 `{variable_name}` is the only substitution syntax, and there is no `{{` / `}}` escape — write JSON examples in prompt `content` with single braces. See [Brace Handling]({{< ref "docs/development/calling-llms/prompts#brace-handling" >}}).
