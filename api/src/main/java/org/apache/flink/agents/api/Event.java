@@ -158,8 +158,9 @@ public class Event {
         return sourceTimestamp;
     }
 
+    /** Sets the source timestamp, or clears it when {@code timestamp} is null. */
     @JsonIgnore
-    public void setSourceTimestamp(long timestamp) {
+    public void setSourceTimestamp(Long timestamp) {
         this.sourceTimestamp = timestamp;
     }
 

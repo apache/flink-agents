@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.actionstate;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.MemoryUpdate;
+import org.apache.flink.agents.runtime.timer.TimerOperation;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +31,7 @@ public class ActionState {
     private final List<MemoryUpdate> sensoryMemoryUpdates;
     private final List<MemoryUpdate> shortTermMemoryUpdates;
     private final List<Event> outputEvents;
+    private final List<TimerOperation> timerOperations = new ArrayList<>();
 
     /**
      * Records of completed durable_execute/durable_execute_async calls for fine-grained recovery.
@@ -92,6 +94,10 @@ public class ActionState {
 
     public List<Event> getOutputEvents() {
         return outputEvents;
+    }
+
+    public List<TimerOperation> getTimerOperations() {
+        return timerOperations;
     }
 
     /** Setters for the fields */
@@ -203,6 +209,7 @@ public class ActionState {
         result = 31 * result + (outputEvents.isEmpty() ? 0 : outputEvents.hashCode());
         result = 31 * result + (callResults.isEmpty() ? 0 : callResults.hashCode());
         result = 31 * result + (completed ? 1 : 0);
+        result = 31 * result + timerOperations.hashCode();
         return result;
     }
 
@@ -216,6 +223,7 @@ public class ActionState {
         }
         ActionState that = (ActionState) o;
         return completed == that.completed
+                && java.util.Objects.equals(timerOperations, that.timerOperations)
                 && java.util.Objects.equals(taskEvent, that.taskEvent)
                 && java.util.Objects.equals(sensoryMemoryUpdates, that.sensoryMemoryUpdates)
                 && java.util.Objects.equals(shortTermMemoryUpdates, that.shortTermMemoryUpdates)

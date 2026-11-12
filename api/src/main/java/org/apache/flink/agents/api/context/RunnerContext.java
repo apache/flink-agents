@@ -28,6 +28,8 @@ import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -43,6 +45,46 @@ public interface RunnerContext {
      * @param event the event to be sent
      */
     void sendEvent(Event event);
+
+    /**
+     * Registers a processing-time timer for the current business key. The Event starts a new run
+     * and is handled by the Actions already bound to its type in the Agent plan.
+     *
+     * <p>The registration takes effect only when this Action completes successfully. The delay
+     * starts at that point, including when the Action awaits asynchronous work. A pending timer
+     * with the same ID is replaced. The Event is copied at this call. Events that start a new run
+     * must not carry attachments; use serializable attributes to pass data between runs.
+     *
+     * @param timerId non-blank identifier scoped to this operator and business key
+     * @param delay non-negative delay, rounded up to milliseconds
+     * @param event event to deliver after the delay
+     * @param mode execution mode; currently {@link TimerMode#TRIGGER_AFTER_CURRENT_RUN}
+     * @throws IllegalArgumentException if the Event carries attachments in {@link
+     *     TimerMode#TRIGGER_AFTER_CURRENT_RUN} mode
+     */
+    void registerTimer(String timerId, Duration delay, Event event, TimerMode mode);
+
+    /**
+     * Registers a timer at an absolute processing-time deadline, rounded up to milliseconds. Like
+     * {@link #registerTimer}, registration is committed when the Action completes. A past deadline
+     * becomes eligible after completion and never invokes an Action inline. Events in {@link
+     * TimerMode#TRIGGER_AFTER_CURRENT_RUN} mode must not carry attachments; use serializable
+     * attributes to pass data between runs.
+     *
+     * @param timerId non-blank identifier scoped to this operator and business key
+     * @param deadline absolute processing-time deadline
+     * @param event event to deliver at the deadline
+     * @param mode execution mode; currently {@link TimerMode#TRIGGER_AFTER_CURRENT_RUN}
+     * @throws IllegalArgumentException if the Event carries attachments in {@link
+     *     TimerMode#TRIGGER_AFTER_CURRENT_RUN} mode
+     */
+    void registerTimerAt(String timerId, Instant deadline, Event event, TimerMode mode);
+
+    /**
+     * Cancels a pending timer when this Action completes. Missing IDs are ignored. Cancellation
+     * does not retract an Event that has already been delivered to the run queue.
+     */
+    void cancelTimer(String timerId);
 
     /**
      * Gets the sensory memory.

@@ -39,6 +39,7 @@ import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.subgraph.SubgraphCallManager;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
+import org.apache.flink.agents.runtime.timer.TimerOperation;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 import org.apache.flink.agents.runtime.utils.IdAllocatorSource;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
@@ -161,6 +162,7 @@ class ActionTaskContextManager implements AutoCloseable {
         @Nullable private SubgraphInvocation<?> subgraphInvocation;
         private List<Event> pendingEvents = new ArrayList<>();
         private RuntimeIdentity.OutputIdentityAllocator outputIdentities;
+        private List<TimerOperation> timerOperations = new ArrayList<>();
         @Nullable private ExecutionReportingContext executionReportingContext;
         @Nullable private String contextKey;
 
@@ -411,6 +413,7 @@ class ActionTaskContextManager implements AutoCloseable {
         // Applied on every switch (possibly null): the shared context must not inherit the scope
         // of whichever task was wired on previously.
         context.setResourceScope(getResourceScope(actionTask));
+        context.setTimerOperations(taskContexts.timerOperations);
         context.setIdAllocatorSource(taskContexts.idAllocators);
         context.setOutputIdentities(taskContexts.outputIdentities);
         context.setSubgraphCalls(subgraphCalls);
@@ -463,6 +466,7 @@ class ActionTaskContextManager implements AutoCloseable {
                 MemoryEvent.isMemoryType(actionTask.event.getType()),
                 requireContexts(actionTask).executionReportingContext);
         context.setResourceScope(getResourceScope(actionTask));
+        context.setTimerOperations(requireContexts(actionTask).timerOperations);
         context.setIdAllocatorSource(requireContexts(actionTask).idAllocators);
         context.setOutputIdentities(requireContexts(actionTask).outputIdentities);
         context.setSubgraphCalls(subgraphCalls);
@@ -529,6 +533,7 @@ class ActionTaskContextManager implements AutoCloseable {
         // outlives the removed contexts, so events emitted before a suspend survive into the
         // generated task.
         requireContexts(toTask).pendingEvents = fromTask.getRunnerContext().getPendingEvents();
+        requireContexts(toTask).timerOperations = fromTask.getRunnerContext().getTimerOperations();
         // Retain the parent Action context and listeners for reports emitted after suspension.
         requireContexts(toTask).executionReportingContext =
                 fromTask.getRunnerContext().getExecutionReportingContext();

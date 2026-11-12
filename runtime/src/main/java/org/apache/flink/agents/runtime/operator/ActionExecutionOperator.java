@@ -62,6 +62,8 @@ import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.agents.runtime.subgraph.SubgraphFailureEvent;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
+import org.apache.flink.agents.runtime.timer.GuardedProcessingTimeService;
+import org.apache.flink.agents.runtime.timer.TimerOperation;
 import org.apache.flink.agents.runtime.trace.TraceTaskLifecycleListener;
 import org.apache.flink.agents.runtime.tracelog.TraceLogWriter;
 import org.apache.flink.agents.runtime.utils.EventUtil;
@@ -70,6 +72,7 @@ import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.runtime.checkpoint.CheckpointOptions;
 import org.apache.flink.runtime.state.CheckpointStreamFactory;
 import org.apache.flink.runtime.state.KeyGroupRange;
@@ -79,9 +82,12 @@ import org.apache.flink.streaming.api.graph.StreamConfig;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
 import org.apache.flink.streaming.api.operators.BoundedOneInput;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
+import org.apache.flink.streaming.api.operators.InternalTimer;
+import org.apache.flink.streaming.api.operators.InternalTimerService;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
 import org.apache.flink.streaming.api.operators.OperatorSnapshotFutures;
 import org.apache.flink.streaming.api.operators.Output;
+import org.apache.flink.streaming.api.operators.Triggerable;
 import org.apache.flink.streaming.api.operators.sorted.state.BatchExecutionKeyedStateBackend;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
@@ -127,7 +133,7 @@ import static org.apache.flink.util.Preconditions.checkState;
  * and the resulting output event is collected for further processing.
  */
 public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT>
-        implements OneInputStreamOperator<IN, OUT>, BoundedOneInput {
+        implements OneInputStreamOperator<IN, OUT>, BoundedOneInput, Triggerable<Object, String> {
 
     private static final long serialVersionUID = 1L;
     private static final String AGENT_RUN_BEGIN_ACTION_NAME = "agent_run_begin_action";
@@ -289,6 +295,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient OperatorStateManager stateManager;
 
+    private transient InternalTimerService<String> timerService;
+
+    private final Set<Object> recoveringTimerKeys = new LinkedHashSet<>();
+
     private transient TypeSerializer<Event> eventSerializer;
 
     private transient boolean usesBatchExecutionKeyedStateBackend;
@@ -319,7 +329,17 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             MailboxExecutor mailboxExecutor,
             ActionStateStore actionStateStore) {
         this.agentPlan = agentPlan;
-        this.processingTimeService = processingTimeService;
+        this.processingTimeService =
+                new GuardedProcessingTimeService(
+                        processingTimeService,
+                        (callback, timestamp) -> {
+                            if (parallelExecutionWithoutCoroutineEnabled) {
+                                runWithParallelExecutionLock(
+                                        () -> callback.onProcessingTime(timestamp));
+                            } else {
+                                callback.onProcessingTime(timestamp);
+                            }
+                        });
         this.mailboxExecutor = mailboxExecutor;
         this.inputIsJava = inputIsJava;
         this.pythonKeyIsPickled = pythonKeyIsPickled;
@@ -353,6 +373,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         stateManager.initializeKeyedStates(getRuntimeContext(), agentPlan.getConfig());
         stateManager.initializeOperatorStates(getOperatorStateBackend());
+        timerService = getInternalTimerService("timers", StringSerializer.INSTANCE, this);
 
         // ResourceCache constructs its own long-lived ResourceContextImpl internally; on
         // close() the cache cascades close to it and to the cached SkillManager, covering
@@ -552,10 +573,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void processElementInternal(StreamRecord<IN> record) throws Exception {
-        // Every admitted input record consumes one unit of in-flight budget, regardless of whether
-        // it activates a new key or queues behind an in-flight record for an already-active key.
-        // The matching decrement happens when that record's processing finishes.
-        inFlightInputRecords++;
         IN input = record.getValue();
         LOG.debug("Receive an element {}", input);
 
@@ -565,6 +582,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (record.hasTimestamp()) {
             inputEvent.setSourceTimestamp(record.getTimestamp());
         }
+        admitRunEvent(inputEvent);
+    }
+
+    private void admitRunEvent(Event inputEvent) throws Exception {
+        // Each admitted Event consumes in-flight budget until its run finishes, including timer
+        // Events and Events queued behind an active run for the same key.
+        inFlightInputRecords++;
         builtInMetrics.markInputEventReceived(inputEvent);
 
         Object key = getCurrentKey();
@@ -609,6 +633,52 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
     }
 
+    private void applyActionStateUpdates(RunnerContextImpl context) throws Exception {
+        context.persistMemory();
+        applyTimerOperations(context.getTimerOperations());
+    }
+
+    private void applyTimerOperations(List<TimerOperation> operations) throws Exception {
+        for (TimerOperation operation : operations) {
+            String id = operation.getTimerId();
+            TimerOperation previous = stateManager.getTimerRegistrations().get(id);
+            if (previous != null) {
+                timerService.deleteProcessingTimeTimer(id, previous.getTime());
+            }
+            if (operation.getEventBytes() == null) {
+                stateManager.getTimerRegistrations().remove(id);
+            } else {
+                checkState(
+                        !operation.isRelative(), "Timer deadline must be resolved before commit");
+                stateManager.getTimerRegistrations().put(id, operation);
+                timerService.registerProcessingTimeTimer(id, operation.getTime());
+            }
+        }
+    }
+
+    @Override
+    public void onProcessingTime(InternalTimer<Object, String> timer) throws Exception {
+        TimerOperation registration =
+                stateManager.getTimerRegistrations().get(timer.getNamespace());
+        if (registration == null || registration.getTime() != timer.getTimestamp()) {
+            return;
+        }
+        // A restored Action can still replay a cancellation or replacement. Leave the
+        // registration in managed state until that restored run has finished.
+        if (recoveringTimerKeys.contains(timer.getKey())) {
+            return;
+        }
+        Event event = registration.restoreEvent();
+        stateManager.getTimerRegistrations().remove(timer.getNamespace());
+        admitRunEvent(event);
+    }
+
+    @Override
+    public void onEventTime(InternalTimer<Object, String> timer) {
+        throw new UnsupportedOperationException(
+                "Event-time timers are not supported by Flink Agents.");
+    }
+
     /** Resolves one context key for an input and reuses it for the entire agent run. */
     private void processInputEvent(Object key, Event inputEvent) throws Exception {
         final String contextKey;
@@ -629,7 +699,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                             inputEvent.getId().toString(),
                             null,
                             null);
-            processEvent(key, contextKey, inputEvent, eventTraceContext);
+            processEvent(key, contextKey, inputEvent, eventTraceContext, true);
         } catch (Exception e) {
             builtInMetrics.markInputRunFailed(inputRunContext.getInputRunId());
             throw e;
@@ -673,6 +743,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private void processEvent(
             Object key, String contextKey, Event event, TraceContext eventTraceContext)
             throws Exception {
+        processEvent(key, contextKey, event, eventTraceContext, false);
+    }
+
+    private void processEvent(
+            Object key,
+            String contextKey,
+            Event event,
+            TraceContext eventTraceContext,
+            boolean rootEvent)
+            throws Exception {
         eventRouter.notifyEventProcessed(event, eventTraceContext);
 
         if (event instanceof SubgraphEvent) {
@@ -691,7 +771,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             return;
         }
 
-        boolean isInputEvent = EventUtil.isInputEvent(event);
+        boolean isInputEvent = rootEvent || EventUtil.isInputEvent(event);
         if (EventUtil.isOutputEvent(event)) {
             // If the event is an OutputEvent, we send it downstream.
             OUT outputData =
@@ -887,6 +967,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
             ActionTask actionTask = pollNextActionTask();
             if (actionTask == null) {
+                stateManager.getSensoryMemState().clear();
                 // This record triggered no action but was still admitted, so it retires the way a
                 // round that ran retires: close the bracket, give back the in-flight budget, mark
                 // the input run completed. A round whose only task was the internal noop, which the
@@ -979,6 +1060,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             MemoryUpdateReplayer.replay(
                     actionTask.getRunnerContext().getSensoryMemory(),
                     actionState.getSensoryMemoryUpdates());
+            actionTask
+                    .getRunnerContext()
+                    .getTimerOperations()
+                    .addAll(actionState.getTimerOperations());
             notifyActionReused(actionTask);
             contextManager.removeContexts(actionTask);
         } else {
@@ -1053,6 +1138,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     // Notify before persisting the result, so listeners observe the task
                     // before its completion becomes durable.
                     notifyActionFinishing(actionTask);
+                    actionTask
+                            .getRunnerContext()
+                            .resolveTimerOperations(timerService.currentProcessingTime());
                 }
                 for (Event emitted : actionTaskResult.getOutputEvents()) {
                     if (emitted.getOccurrenceId() == null) {
@@ -1098,8 +1186,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     .markActionExecuted(actionTask.action.getName());
             currentInputEventFinished = !stateManager.hasMoreActionTasks();
 
-            // Persist memory to the Flink state when the action task is finished.
-            actionTask.getRunnerContext().persistMemory();
+            // Apply memory and timer updates to Flink state when the action task is finished.
+            applyActionStateUpdates(actionTask.getRunnerContext());
         } else {
             checkState(
                     generatedActionTaskOpt.isPresent(),
@@ -1547,10 +1635,20 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
     }
 
-    private void notifyRecordFinished(Object key) {
+    private void notifyRecordFinished(Object key) throws Exception {
         contextManager.getSubgraphCalls().finishRecord(key);
         for (TaskLifecycleListener listener : taskLifecycleListeners) {
             listener.onRecordFinished(key);
+        }
+        if (recoveringTimerKeys.remove(key)) {
+            rearmCurrentKeyTimers();
+        }
+    }
+
+    private void rearmCurrentKeyTimers() throws Exception {
+        for (Map.Entry<String, TimerOperation> entry :
+                stateManager.getTimerRegistrations().entries()) {
+            timerService.registerProcessingTimeTimer(entry.getKey(), entry.getValue().getTime());
         }
     }
 
@@ -1669,6 +1767,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 if (!ownedKeys.add(key)) {
                     continue;
                 }
+                recoveringTimerKeys.add(key);
                 eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
                 recordPriorities.put(key, new RecordPriority(nextRecordIndex++));
                 // Align with the task-level replay: re-emit the record start for the resumed round
@@ -1716,6 +1815,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                                     .addKeyToLastSegment(key);
                                         }));
         builtInMetrics.restorePendingInputEvents(pendingInputEvents[0]);
+        // Re-arm registrations whose native callback was consumed while waiting for restored
+        // Actions. Flink deduplicates registrations whose native timer already survived.
+        stateManager.forEachTimerKey(
+                getKeyedStateBackend(),
+                (key, state) -> {
+                    setCurrentKey(key);
+                    rearmCurrentKeyTimers();
+                });
     }
 
     private void runWithParallelExecutionLock(ThrowingRunnable<? extends Exception> action)
@@ -1941,6 +2048,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 // A failure is reported by commit(), not here: the suspend below closes this
                 // worker's phase, and the failure belongs to the mailbox phase that surfaces it.
                 if (replay) {
+                    task.getRunnerContext().getTimerOperations().addAll(state.getTimerOperations());
                     MemoryUpdateReplayer.replay(
                             task.getRunnerContext().getShortTermMemory(),
                             state.getShortTermMemoryUpdates());
@@ -2080,6 +2188,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                             actionTask.getRunnerContext().assignOutputIdentity(emitted);
                         }
                     }
+                    actionTask
+                            .getRunnerContext()
+                            .resolveTimerOperations(timerService.currentProcessingTime());
                     durableExecManager.maybePersistTaskResult(
                             key,
                             sequenceNumber,
@@ -2140,7 +2251,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         .getBuiltInMetrics()
                         .markActionExecuted(actionTask.action.getName());
             }
-            actionTask.getRunnerContext().persistMemory();
+            applyActionStateUpdates(actionTask.getRunnerContext());
             if (submittedTask == null) {
                 stateManager.removeInFlightActionTask(taskIndex);
             }

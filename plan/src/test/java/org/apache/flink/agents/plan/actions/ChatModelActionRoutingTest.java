@@ -42,6 +42,7 @@ import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.context.TimerMode;
 import org.apache.flink.agents.api.decision.BaseDecisionModelSetup;
 import org.apache.flink.agents.api.decision.DecisionRequest;
 import org.apache.flink.agents.api.decision.DecisionResult;
@@ -65,6 +66,7 @@ import org.apache.flink.metrics.Histogram;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -321,6 +323,24 @@ public class ChatModelActionRoutingTest {
                 return model;
             }
             throw new IllegalArgumentException("unexpected resource " + name + " " + type);
+        }
+
+        @Override
+        public void registerTimer(String timerId, Duration delay, Event event, TimerMode mode) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
+        }
+
+        @Override
+        public void registerTimerAt(String timerId, Instant deadline, Event event, TimerMode mode) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
+        }
+
+        @Override
+        public void cancelTimer(String timerId) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
         }
 
         @Override
