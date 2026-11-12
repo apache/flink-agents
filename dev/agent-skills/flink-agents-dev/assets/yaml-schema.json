@@ -279,7 +279,8 @@
       },
       "required": [
         "media_type",
-        "source"
+        "source",
+        "type"
       ],
       "title": "AudioBlock",
       "type": "object"
@@ -301,7 +302,8 @@
         }
       },
       "required": [
-        "data"
+        "data",
+        "type"
       ],
       "title": "Base64Source",
       "type": "object"
@@ -416,7 +418,8 @@
       },
       "required": [
         "media_type",
-        "source"
+        "source",
+        "type"
       ],
       "title": "DocumentBlock",
       "type": "object"
@@ -495,7 +498,8 @@
       },
       "required": [
         "media_type",
-        "source"
+        "source",
+        "type"
       ],
       "title": "ImageBlock",
       "type": "object"
@@ -764,6 +768,9 @@
           "type": "string"
         }
       },
+      "required": [
+        "type"
+      ],
       "title": "TextBlock",
       "type": "object"
     },
@@ -899,7 +906,8 @@
         }
       },
       "required": [
-        "url"
+        "url",
+        "type"
       ],
       "title": "UrlSource",
       "type": "object"
@@ -978,7 +986,8 @@
       },
       "required": [
         "media_type",
-        "source"
+        "source",
+        "type"
       ],
       "title": "VideoBlock",
       "type": "object"

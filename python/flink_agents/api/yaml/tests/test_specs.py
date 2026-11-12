@@ -16,8 +16,10 @@
 # limitations under the License.
 #################################################################################
 import hashlib
+import json
 from pathlib import Path
 
+import jsonschema
 import pytest
 import yaml
 from pydantic import ValidationError
@@ -194,6 +196,51 @@ def test_prompt_message_with_content_blocks() -> None:
 def test_prompt_message_rejects_invalid_content(content: object) -> None:
     with pytest.raises(ValidationError):
         PromptMessage.model_validate({"content": content})
+
+
+def _document_with_content(content: object) -> dict:
+    return {
+        "prompts": [{"name": "p1", "messages": [{"content": content}]}],
+    }
+
+
+_IMAGE_URL = {"type": "url", "url": "https://example.com/cat.png"}
+
+
+def test_schema_accepts_content_blocks_with_discriminators() -> None:
+    schema = json.loads(export())
+    content = [
+        {"type": "text", "text": "hi"},
+        {"type": "image", "media_type": "image/png", "source": _IMAGE_URL},
+    ]
+    jsonschema.validate(_document_with_content(content), schema)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        [{"text": "hi"}],
+        [{"media_type": "image/png", "source": _IMAGE_URL}],
+        [
+            {
+                "type": "image",
+                "media_type": "image/png",
+                "source": {"url": "https://example.com/cat.png"},
+            }
+        ],
+        [
+            {
+                "type": "document",
+                "media_type": "application/pdf",
+                "source": {"data": "aGk="},
+            }
+        ],
+    ],
+)
+def test_schema_rejects_missing_block_or_source_type(content: object) -> None:
+    schema = json.loads(export())
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(_document_with_content(content), schema)
 
 
 def test_prompt_spec_requires_text_xor_messages() -> None:

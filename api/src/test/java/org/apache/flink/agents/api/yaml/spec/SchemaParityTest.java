@@ -239,6 +239,13 @@ class SchemaParityTest {
                 .as("%s: schema lacks the type discriminator", defName)
                 .contains("type");
         schemaProps.remove("type");
+        Set<String> schemaRequired = new HashSet<>();
+        for (JsonNode r : def.path("required")) {
+            schemaRequired.add(r.asText());
+        }
+        assertThat(schemaRequired)
+                .as("%s: schema must require the type discriminator", defName)
+                .contains("type");
         assertThat(creatorProperties(clz).keySet())
                 .as("%s: Java block properties drift from schema", defName)
                 .isEqualTo(schemaProps);
