@@ -36,6 +36,8 @@ import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -907,7 +909,9 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                         new AgentPlan(new HashMap<>(), new HashMap<>()),
                         null,
                         "test-job",
-                        executor);
+                        executor,
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         context.setContinuationContext(new ContinuationContext());
         TestDurableCallable<String> first =
                 new TestDurableCallable<>("batch-1", String.class, () -> "one");
@@ -1346,7 +1350,9 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                         new AgentPlan(new HashMap<>(), new HashMap<>()),
                         null,
                         "test-job",
-                        executor);
+                        executor,
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         context.setContinuationContext(new ContinuationContext());
         ActionStatePersister persister =
                 (key, sequenceNumber, action, event, state) -> {
@@ -1610,7 +1616,8 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                     agentPlan,
                     resourceCache,
                     jobIdentifier,
-                    continuationExecutor);
+                    continuationExecutor,
+                    TypeInformation.of(Event.class).createSerializer(new SerializerConfigImpl()));
             this.failOnResult = failOnResult;
         }
 

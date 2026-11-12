@@ -28,6 +28,8 @@ import org.apache.flink.agents.runtime.python.operator.PythonGeneratorActionTask
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -102,7 +104,13 @@ class ActionTaskTest {
         PythonActionTask task = new PythonActionTask("key", triggeringEvent, action, 1L);
         PythonRunnerContextImpl context =
                 new PythonRunnerContextImpl(
-                        null, () -> {}, new AgentPlan(Map.of()), null, "test-job");
+                        null,
+                        () -> {},
+                        new AgentPlan(Map.of()),
+                        null,
+                        "test-job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         context.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         PythonActionExecutor executor = mock(PythonActionExecutor.class);
         task.setRunnerContext(context);

@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.context.TimerMode;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
@@ -37,6 +38,8 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -250,6 +253,24 @@ class EventAttachmentUtilsTest {
         @Override
         public MemoryObject getSensoryMemory() {
             return memoryObject;
+        }
+
+        @Override
+        public void registerTimer(String timerId, Duration delay, Event event, TimerMode mode) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
+        }
+
+        @Override
+        public void registerTimerAt(String timerId, Instant deadline, Event event, TimerMode mode) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
+        }
+
+        @Override
+        public void cancelTimer(String timerId) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
         }
 
         @Override

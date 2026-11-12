@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.context.TimerMode;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
@@ -53,6 +54,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -930,6 +932,24 @@ class ToolCallActionSubagentTest {
             config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
             config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
             return this;
+        }
+
+        @Override
+        public void registerTimer(String timerId, Duration delay, Event event, TimerMode mode) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
+        }
+
+        @Override
+        public void registerTimerAt(String timerId, Instant deadline, Event event, TimerMode mode) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
+        }
+
+        @Override
+        public void cancelTimer(String timerId) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
         }
 
         @Override

@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.context;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.configuration.DurationUtils;
@@ -35,6 +36,7 @@ import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.async.ContinuationNativeCallable;
 import org.apache.flink.agents.runtime.chat.ChatDurableFuture;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -60,8 +62,15 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             AgentPlan agentPlan,
             ResourceCache resourceCache,
             String jobIdentifier,
-            ContinuationActionExecutor continuationExecutor) {
-        super(agentMetricGroup, mailboxThreadChecker, agentPlan, resourceCache, jobIdentifier);
+            ContinuationActionExecutor continuationExecutor,
+            TypeSerializer<Event> eventSerializer) {
+        super(
+                agentMetricGroup,
+                mailboxThreadChecker,
+                agentPlan,
+                resourceCache,
+                jobIdentifier,
+                eventSerializer);
         this.continuationExecutor = continuationExecutor;
     }
 

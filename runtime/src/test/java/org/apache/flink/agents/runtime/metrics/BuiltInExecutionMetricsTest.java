@@ -18,6 +18,7 @@
  */
 package org.apache.flink.agents.runtime.metrics;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import org.apache.flink.agents.api.trace.TraceContext;
@@ -25,6 +26,8 @@ import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl.ExecutionReportingContext;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.BeforeEach;
@@ -64,7 +67,9 @@ class BuiltInExecutionMetricsTest {
                         () -> {},
                         new AgentPlan(new HashMap<>(), new HashMap<>()),
                         null,
-                        "job");
+                        "job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         TraceContext action =
                 TraceContext.forAction(
                         TraceContext.forInputRun("key", "agent"), ACTION_NAME, "trigger-event");

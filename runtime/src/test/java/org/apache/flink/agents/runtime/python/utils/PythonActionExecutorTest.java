@@ -25,6 +25,8 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.types.Row;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -382,7 +384,13 @@ class PythonActionExecutorTest {
         PythonInterpreter interpreter = mockInterpreter();
         PythonRunnerContextImpl runnerContext =
                 new PythonRunnerContextImpl(
-                        null, () -> {}, new AgentPlan(Map.of()), null, "test-job");
+                        null,
+                        () -> {},
+                        new AgentPlan(Map.of()),
+                        null,
+                        "test-job",
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         runnerContext.setOutputIdentities(
                 new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         PythonActionExecutor executor = newExecutor(interpreter, runnerContext);

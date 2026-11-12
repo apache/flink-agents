@@ -22,6 +22,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
@@ -30,6 +31,7 @@ import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.context.TimerMode;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
@@ -65,10 +67,12 @@ import org.apache.flink.agents.runtime.subgraph.SubgraphCallManager;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.agents.runtime.subgraph.SubgraphExecution;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
+import org.apache.flink.agents.runtime.timer.TimerOperation;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 import org.apache.flink.agents.runtime.utils.IdAllocatorSource;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.annotation.Internal;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.function.ThrowingRunnable;
 import org.slf4j.Logger;
@@ -76,6 +80,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -180,6 +185,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     private static final Logger LOG = LoggerFactory.getLogger(RunnerContextImpl.class);
 
     protected List<Event> pendingEvents = new ArrayList<>();
+    private List<TimerOperation> timerOperations = new ArrayList<>();
+    private final TypeSerializer<Event> eventSerializer;
 
     protected final FlinkAgentsMetricGroupImpl agentMetricGroup;
     protected final Runnable mailboxThreadChecker;
@@ -250,7 +257,9 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             Runnable mailboxThreadChecker,
             AgentPlan agentPlan,
             ResourceCache resourceCache,
-            String jobIdentifier) {
+            String jobIdentifier,
+            TypeSerializer<Event> eventSerializer) {
+        this.eventSerializer = eventSerializer;
         this.agentMetricGroup = agentMetricGroup;
         this.mailboxThreadChecker = mailboxThreadChecker;
         this.agentPlan = agentPlan;
@@ -495,6 +504,71 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             event = new SubgraphEvent(subgraphInvocation.getId(), event, false);
         }
         addPendingEvent(event);
+    }
+
+    @Override
+    public void registerTimer(String timerId, Duration delay, Event event, TimerMode mode) {
+        checkTimerAccess(timerId);
+        checkTimerEvent(event, mode);
+        Preconditions.checkNotNull(delay, "delay");
+        Preconditions.checkArgument(!delay.isNegative(), "Timer delay must be non-negative");
+        long millis = Math.addExact(delay.toMillis(), delay.getNano() % 1_000_000 == 0 ? 0 : 1);
+        timerOperations.add(
+                new TimerOperation(
+                        timerId, millis, true, TimerOperation.snapshot(event, eventSerializer)));
+    }
+
+    @Override
+    public void registerTimerAt(String timerId, Instant deadline, Event event, TimerMode mode) {
+        checkTimerAccess(timerId);
+        checkTimerEvent(event, mode);
+        Preconditions.checkNotNull(deadline, "deadline");
+        long millis =
+                Math.addExact(deadline.toEpochMilli(), deadline.getNano() % 1_000_000 == 0 ? 0 : 1);
+        timerOperations.add(
+                new TimerOperation(
+                        timerId, millis, false, TimerOperation.snapshot(event, eventSerializer)));
+    }
+
+    @Override
+    public void cancelTimer(String timerId) {
+        checkTimerAccess(timerId);
+        timerOperations.add(new TimerOperation(timerId, 0, false, null));
+    }
+
+    private void checkTimerAccess(String timerId) {
+        mailboxThreadChecker.run();
+        Preconditions.checkArgument(
+                timerId != null && !timerId.isBlank(), "Timer ID must not be blank");
+        Preconditions.checkState(
+                subgraphInvocation == null,
+                "Timers cannot outlive an internal subagent or chat invocation");
+    }
+
+    private static void checkTimerEvent(Event event, TimerMode mode) {
+        Preconditions.checkNotNull(mode, "Timer mode must not be null");
+        Preconditions.checkNotNull(event, "event");
+        if (mode == TimerMode.TRIGGER_AFTER_CURRENT_RUN) {
+            Preconditions.checkArgument(
+                    event.getAttachments().isEmpty(),
+                    "Timer Events that start a new run cannot carry attachments");
+        }
+        Preconditions.checkArgument(
+                !OutputEvent.EVENT_TYPE.equals(event.getType()),
+                "A timer must target an Event handled by an Action");
+    }
+
+    public List<TimerOperation> getTimerOperations() {
+        return timerOperations;
+    }
+
+    public void setTimerOperations(List<TimerOperation> timerOperations) {
+        this.timerOperations = timerOperations;
+    }
+
+    /** Resolves relative delays once, at the Action completion commit boundary. */
+    public void resolveTimerOperations(long now) {
+        timerOperations.replaceAll(operation -> operation.resolve(now));
     }
 
     /** Enqueues a runtime event without applying user-event or sub-agent routing. */

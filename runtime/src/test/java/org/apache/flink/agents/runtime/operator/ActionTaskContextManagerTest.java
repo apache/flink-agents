@@ -840,6 +840,9 @@ class ActionTaskContextManagerTest {
         // sufficient for these contract tests. The continuation executor runs synchronously here
         // (null mailbox lock), so the parallel-MVP hand-off is exercised elsewhere.
         return new ActionTaskContextManager(
-                mock(ActionExecutionOperator.class), durableExecManager, 1);
+                mock(ActionExecutionOperator.class),
+                durableExecManager,
+                1,
+                TypeInformation.of(Event.class).createSerializer(new SerializerConfigImpl()));
     }
 }

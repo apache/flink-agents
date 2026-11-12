@@ -43,6 +43,8 @@ import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.ForTestMemoryMapState;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -248,11 +250,26 @@ class DecisionRoutingRecoveryTest {
             }
             JavaRunnerContextImpl asyncContext =
                     new JavaRunnerContextImpl(
-                            metrics, () -> {}, plan, resources, "test-job", executor);
+                            metrics,
+                            () -> {},
+                            plan,
+                            resources,
+                            "test-job",
+                            executor,
+                            TypeInformation.of(Event.class)
+                                    .createSerializer(new SerializerConfigImpl()));
             asyncContext.setContinuationContext(new ContinuationContext());
             context = asyncContext;
         } else {
-            context = new RunnerContextImpl(metrics, () -> {}, plan, resources, "test-job");
+            context =
+                    new RunnerContextImpl(
+                            metrics,
+                            () -> {},
+                            plan,
+                            resources,
+                            "test-job",
+                            TypeInformation.of(Event.class)
+                                    .createSerializer(new SerializerConfigImpl()));
         }
         context.setOutputIdentities(new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
         context.actionName = "chat_model_action";

@@ -54,6 +54,8 @@ import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.agents.runtime.python.utils.PythonResourceAdapterImpl;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -363,7 +365,9 @@ public class DecisionModelCrossLanguageTest {
                             () -> {},
                             plan,
                             cache,
-                            "decision-bridge-test") {
+                            "decision-bridge-test",
+                            TypeInformation.of(Event.class)
+                                    .createSerializer(new SerializerConfigImpl())) {
                         {
                             actionName = "decision_model_action";
                         }

@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.integration.test;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.Configuration;
 import org.apache.flink.agents.api.context.AsyncFuture;
@@ -27,6 +28,8 @@ import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Timeout;
@@ -86,7 +89,9 @@ class AsyncBatchErrorPropagationTest {
                         new AgentPlan(new HashMap<>(), new HashMap<>()),
                         null,
                         "batch-error-test",
-                        executor);
+                        executor,
+                        TypeInformation.of(Event.class)
+                                .createSerializer(new SerializerConfigImpl()));
         context.setContinuationContext(continuation);
         Configuration config = (Configuration) context.getConfig();
         config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);

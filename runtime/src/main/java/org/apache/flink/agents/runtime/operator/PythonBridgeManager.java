@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.operator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -42,6 +43,7 @@ import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.agents.runtime.python.utils.PythonResourceAdapterImpl;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.python.env.PythonDependencyInfo;
 import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
@@ -136,6 +138,7 @@ class PythonBridgeManager implements AutoCloseable {
      * @param userCodeClassLoader the operator's user-code class loader, propagated to {@link
      *     JavaResourceAdapter} so reflective Java tool resolution sees user jars added via {@code
      *     env.add_jars(...)}.
+     * @param eventSerializer the job-configured serializer for delayed Events.
      */
     void open(
             AgentPlan agentPlan,
@@ -147,7 +150,8 @@ class PythonBridgeManager implements AutoCloseable {
             FlinkAgentsMetricGroupImpl metricGroup,
             Runnable mailboxThreadChecker,
             String jobIdentifier,
-            ClassLoader userCodeClassLoader)
+            ClassLoader userCodeClassLoader,
+            TypeSerializer<Event> eventSerializer)
             throws Exception {
         // One Python runtime serves the whole plan tree: an internal sub-agent's child scope runs
         // its Python actions and materializes its Python-owned resources through the root's
@@ -205,7 +209,8 @@ class PythonBridgeManager implements AutoCloseable {
                             mailboxThreadChecker,
                             agentPlan,
                             resourceCache,
-                            jobIdentifier);
+                            jobIdentifier,
+                            eventSerializer);
 
             javaResourceAdapter =
                     new JavaResourceAdapter(
