@@ -46,17 +46,15 @@ public final class ClasspathSkillRepository extends AbstractMaterializedSkillRep
 
     private final String resource;
 
-    public ClasspathSkillRepository(String resource) throws IOException {
-        this(resource, Thread.currentThread().getContextClassLoader());
-    }
-
     /**
      * Constructor that accepts an explicit class loader. Production code passes the Flink user-code
      * class loader (threaded through {@code ResourceCache}); tests may inject a {@link
      * URLClassLoader} pointing at freshly-built jars.
      */
-    public ClasspathSkillRepository(String resource, ClassLoader classLoader) throws IOException {
-        super(ClasspathSkillMaterializer.materialize(resource, classLoader));
+    public ClasspathSkillRepository(
+            String resource, ClassLoader classLoader, SkillMaterializer.Limits limits)
+            throws IOException {
+        super(ClasspathSkillMaterializer.materialize(resource, classLoader, limits));
         this.resource = resource;
     }
 

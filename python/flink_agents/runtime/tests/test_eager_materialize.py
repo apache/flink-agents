@@ -37,10 +37,11 @@ from flink_agents.runtime.flink_runner_context import FlinkRunnerContext
 from flink_agents.runtime.resource_cache import ResourceCache
 
 
-class _StubResourceCache:
+class _StubResourceCache(ResourceCache):
     """Resource cache recording every resolution and close, returning a marker."""
 
     def __init__(self) -> None:
+        super().__init__({})
         self.resolved: list = []
         self.closed = False
 
@@ -224,6 +225,9 @@ def test_new_child_scopes_can_resolve_root_resources() -> None:
         ctx._j_runner_context.getActiveScopePlanJson.return_value = plan_json
         cache = ctx._FlinkRunnerContext__active_resource_cache()
         assert isinstance(cache, ResourceCache)
-        assert cache.get_resource("shared", ResourceType.CHAT_MODEL) == "resource:shared"
+        assert cache.get_config() is root_cache.get_config()
+        assert (
+            cache.get_resource("shared", ResourceType.CHAT_MODEL) == "resource:shared"
+        )
 
     assert root_cache.resolved == [("shared", ResourceType.CHAT_MODEL)] * 2

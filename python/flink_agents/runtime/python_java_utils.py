@@ -487,10 +487,29 @@ def set_metric_group(obj: Resource, j_metric_group: Any) -> None:
     obj.set_metric_group(metric_group)
 
 
-def materialize_package_skills(package: str, resource: str, target_dir: str) -> None:
+def materialize_package_skills(
+    package: str,
+    resource: str,
+    target_dir: str,
+    max_download_bytes: int,
+    max_extract_entry_bytes: int,
+    max_extract_total_bytes: int,
+    max_extract_entries: int,
+) -> None:
     """Extract a package source into a directory owned by the Java caller."""
+    from flink_agents.runtime.skill.repository._materialize import MaterializerLimits
     from flink_agents.runtime.skill.repository.package_materializer import (
         materialize_package,
     )
 
-    materialize_package(package, resource, target_dir)
+    materialize_package(
+        package,
+        resource,
+        target_dir,
+        limits=MaterializerLimits(
+            max_download_bytes=max_download_bytes,
+            max_extract_entry_bytes=max_extract_entry_bytes,
+            max_extract_total_bytes=max_extract_total_bytes,
+            max_extract_entries=max_extract_entries,
+        ),
+    )

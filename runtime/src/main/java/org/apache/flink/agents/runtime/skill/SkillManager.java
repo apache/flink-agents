@@ -25,6 +25,7 @@ import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.agents.runtime.skill.repository.ClasspathSkillRepository;
 import org.apache.flink.agents.runtime.skill.repository.FileSystemSkillRepository;
 import org.apache.flink.agents.runtime.skill.repository.PackageSkillRepository;
+import org.apache.flink.agents.runtime.skill.repository.SkillMaterializer;
 import org.apache.flink.agents.runtime.skill.repository.URLSkillRepository;
 import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
@@ -61,6 +62,7 @@ public class SkillManager implements AutoCloseable {
 
     private final Skills config;
     private final ClassLoader classLoader;
+    private final SkillMaterializer.Limits limits;
     private final Map<String, SkillSourceHandler> handlers = new HashMap<>();
     private final Map<String, AgentSkill> skills = new LinkedHashMap<>();
     private final Map<String, SkillRepository> repos = new HashMap<>();
@@ -82,39 +84,30 @@ public class SkillManager implements AutoCloseable {
     private final List<SkillRepository> openedRepos = new ArrayList<>();
 
     /**
-     * Construct a {@code SkillManager} that resolves {@code classpath:} sources against {@code
-     * classLoader}. Production code passes the Flink user-code class loader (threaded through
-     * {@code ResourceCache} from {@code ActionExecutionOperator}); tests / standalone use may use
-     * {@link #SkillManager(Skills)}.
+     * Construct with the download/extraction {@link SkillMaterializer.Limits} enforced for HTTP
+     * downloads and ZIP sources. Production code passes {@link SkillMaterializer.Limits#fromConfig}
+     * built from the agent configuration.
      */
-    public SkillManager(Skills config, ClassLoader classLoader) {
-        this(config, classLoader, null);
-    }
-
     public SkillManager(
             Skills config,
             ClassLoader classLoader,
-            @Nullable PythonInterpreterManager interpreterManager) {
+            @Nullable PythonInterpreterManager interpreterManager,
+            SkillMaterializer.Limits limits) {
         this.config = config;
         this.classLoader = classLoader;
+        this.limits = limits;
         initializeHandlers(interpreterManager);
         loadAll();
     }
 
-    /**
-     * Convenience overload that uses {@link Thread#getContextClassLoader} for {@code classpath:}
-     * resolution. Prefer {@link #SkillManager(Skills, ClassLoader)} in production paths where the
-     * Flink user-code class loader is available — the thread context loader is not guaranteed to be
-     * the user-code loader (e.g. Python interpreter or async-pool threads).
-     */
-    public SkillManager(Skills config) {
-        this(config, Thread.currentThread().getContextClassLoader());
-    }
-
     /** Construct with instance-local handlers for internal lifecycle tests. */
-    SkillManager(Skills config, Map<String, SkillSourceHandler> handlers) {
+    SkillManager(
+            Skills config,
+            Map<String, SkillSourceHandler> handlers,
+            SkillMaterializer.Limits limits) {
         this.config = config;
         this.classLoader = Thread.currentThread().getContextClassLoader();
+        this.limits = limits;
         this.handlers.putAll(handlers);
         loadAll();
     }
@@ -122,7 +115,8 @@ public class SkillManager implements AutoCloseable {
     private void initializeHandlers(@Nullable PythonInterpreterManager interpreterManager) {
         registerHandler(
                 "local",
-                (params, cl) -> new FileSystemSkillRepository(require(params, "local", "path")),
+                (params, cl) ->
+                        new FileSystemSkillRepository(require(params, "local", "path"), limits),
                 params -> params.getOrDefault("path", ""));
         registerHandler(
                 "url",
@@ -131,12 +125,14 @@ public class SkillManager implements AutoCloseable {
                                 require(params, "url", "url"),
                                 params.get("sha256"),
                                 Boolean.parseBoolean(
-                                        params.getOrDefault("allow_insecure_http", "false"))),
+                                        params.getOrDefault("allow_insecure_http", "false")),
+                                limits),
                 params -> SkillUrlUtils.redact(params.get("url")));
         registerHandler(
                 "classpath",
                 (params, cl) ->
-                        new ClasspathSkillRepository(require(params, "classpath", "resource"), cl),
+                        new ClasspathSkillRepository(
+                                require(params, "classpath", "resource"), cl, limits),
                 params -> params.getOrDefault("resource", ""));
         registerHandler(
                 "package",
@@ -144,7 +140,8 @@ public class SkillManager implements AutoCloseable {
                         new PackageSkillRepository(
                                 require(params, "package", "package"),
                                 require(params, "package", "resource"),
-                                interpreterManager),
+                                interpreterManager,
+                                limits),
                 params ->
                         params.getOrDefault("package", "")
                                 + "/"

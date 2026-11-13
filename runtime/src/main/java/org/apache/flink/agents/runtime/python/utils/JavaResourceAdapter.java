@@ -32,6 +32,7 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.runtime.skill.repository.ClasspathSkillMaterializer;
+import org.apache.flink.agents.runtime.skill.repository.SkillMaterializer;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -63,10 +64,23 @@ public class JavaResourceAdapter {
     }
 
     /** Materialize JAR resources for a Python-owned repository using the job's class loader. */
-    public void extractClasspathSkills(String resource, String targetDirectory)
+    public void extractClasspathSkills(
+            String resource,
+            String targetDirectory,
+            long maxDownloadBytes,
+            long maxExtractEntryBytes,
+            long maxExtractTotalBytes,
+            int maxExtractEntries)
             throws java.io.IOException {
         ClasspathSkillMaterializer.materializeInto(
-                resource, userCodeClassLoader, java.nio.file.Path.of(targetDirectory));
+                resource,
+                userCodeClassLoader,
+                java.nio.file.Path.of(targetDirectory),
+                new SkillMaterializer.Limits(
+                        maxDownloadBytes,
+                        maxExtractEntryBytes,
+                        maxExtractTotalBytes,
+                        maxExtractEntries));
     }
 
     /**

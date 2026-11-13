@@ -483,7 +483,11 @@ public class BaseAsyncSubagentSetupTest {
                         new ResourceDescriptor(
                                 DescriptorAsyncSetup.class.getName(),
                                 Map.of("status_poll_interval_millis", 123)),
-                        new ResourceContextImpl((name, type) -> null));
+                        new ResourceContextImpl(
+                                (name, type) -> null,
+                                Thread.currentThread().getContextClassLoader(),
+                                () -> null,
+                                new org.apache.flink.agents.plan.AgentConfiguration()));
 
         assertThat(setup.pollIntervalMillis()).isEqualTo(123);
     }
@@ -493,7 +497,11 @@ public class BaseAsyncSubagentSetupTest {
         DescriptorAsyncSetup setup =
                 new DescriptorAsyncSetup(
                         new ResourceDescriptor(DescriptorAsyncSetup.class.getName(), Map.of()),
-                        new ResourceContextImpl((name, type) -> null));
+                        new ResourceContextImpl(
+                                (name, type) -> null,
+                                Thread.currentThread().getContextClassLoader(),
+                                () -> null,
+                                new org.apache.flink.agents.plan.AgentConfiguration()));
 
         assertThat(setup.pollIntervalMillis()).isEqualTo(500);
     }

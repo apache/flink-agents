@@ -64,6 +64,7 @@ from urllib.parse import urlparse, urlsplit, urlunsplit
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing_extensions import override
 
+from flink_agents.api.configuration import ConfigOption
 from flink_agents.api.resource import ResourceType, SerializableResource
 
 _INVALID_URI_CHARACTER = re.compile(r'[\x00-\x20\x7f<>"{}|\\^`]')
@@ -338,3 +339,48 @@ class Skills(SerializableResource):
 # name of built-in tools needed by using skills
 LOAD_SKILL_TOOL = "load_skill"
 BASH_TOOL = "bash"
+
+
+class SkillOptions:
+    """Agent config options that bound skill source materialization.
+
+    The download limit applies to URL skill sources; the extraction limits
+    apply to every skill archive that is extracted, including local ``.zip``
+    sources.
+    """
+
+    # The maximum number of bytes accepted from a single skill archive download
+    # over HTTP(S). Must be strictly positive; there is no unlimited setting.
+    # Defaults to 64 MiB.
+    MAX_DOWNLOAD_BYTES = ConfigOption(
+        key="skill.max-download-bytes",
+        config_type=int,
+        default=64 * 1024 * 1024,
+    )
+
+    # The maximum uncompressed size in bytes of a single entry when a skill
+    # archive is extracted. Must be strictly positive; there is no unlimited
+    # setting. Defaults to 64 MiB.
+    MAX_UNCOMPRESSED_ENTRY_BYTES = ConfigOption(
+        key="skill.max-uncompressed-entry-bytes",
+        config_type=int,
+        default=64 * 1024 * 1024,
+    )
+
+    # The maximum cumulative uncompressed size in bytes across all entries of one
+    # skill archive extraction. Must be strictly positive; there is no unlimited
+    # setting. Defaults to 256 MiB.
+    MAX_UNCOMPRESSED_TOTAL_BYTES = ConfigOption(
+        key="skill.max-uncompressed-total-bytes",
+        config_type=int,
+        default=256 * 1024 * 1024,
+    )
+
+    # The maximum number of entries permitted in one skill archive, including
+    # directory entries. Must be strictly positive; there is no unlimited setting.
+    # Defaults to 1000.
+    MAX_ARCHIVE_ENTRIES = ConfigOption(
+        key="skill.max-archive-entries",
+        config_type=int,
+        default=1_000,
+    )

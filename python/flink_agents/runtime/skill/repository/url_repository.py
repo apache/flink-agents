@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from typing import TYPE_CHECKING
 
 from flink_agents.api.skills import redact_skill_url, validate_skill_url
 from flink_agents.runtime.skill.repository._materialize import (
@@ -34,6 +35,11 @@ from flink_agents.runtime.skill.repository._materialize import (
 from flink_agents.runtime.skill.repository.materialized_skill_repository import (
     MaterializedSkillRepository,
 )
+
+if TYPE_CHECKING:
+    from flink_agents.runtime.skill.repository._materialize import (
+        MaterializerLimits,
+    )
 
 _REQUEST_TIMEOUT_SEC = 90
 
@@ -53,8 +59,11 @@ class URLSkillRepository(MaterializedSkillRepository):
         *,
         sha256: str | None = None,
         allow_insecure_http: bool = False,
+        limits: MaterializerLimits,
     ) -> None:
         """Download and extract the zip at ``url``.
+
+        ``limits`` bounds both the download and the extraction.
 
         Raises:
             ValueError: If the URL transport or SHA-256 value is invalid.
@@ -76,6 +85,7 @@ class URLSkillRepository(MaterializedSkillRepository):
             url,
             timeout=_REQUEST_TIMEOUT_SEC,
             allow_insecure_http=allow_insecure_http,
+            limits=limits,
         )
         try:
             if normalized_sha256 is not None:
@@ -91,7 +101,7 @@ class URLSkillRepository(MaterializedSkillRepository):
                         f"{normalized_sha256}, got {actual}"
                     )
                     raise ValueError(msg)
-            materialization = extract_zip_safely(tmp_zip)
+            materialization = extract_zip_safely(tmp_zip, limits=limits)
         finally:
             tmp_zip.unlink(missing_ok=True)
         super().__init__(materialization)

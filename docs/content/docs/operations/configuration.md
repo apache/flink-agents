@@ -248,6 +248,24 @@ the built-in [parallel tool-call batches]({{< ref "docs/development/calling-llms
 | `num-async-threads` | os cpu count * 2 | int | Controls the thread capacity for asynchronous execution per Agent operator subtask. Must be positive. Increasing this value may improve throughput for concurrent external calls, at the cost of higher resource usage and load on external services. Use `max-in-flight-input-records` to limit unfinished inputs and `async.batch.parallelism` to limit concurrent calls within a batch. |
 | `parallel-execution.enabled` | true | boolean | **Experimental.** Enable the parallel engine for eligible plans with only Java Actions when continuation-based execution is unavailable. `false` selects serial execution. Ignored by the continuation engine and plans containing Python Actions. On JDK 11–20, Java `ctx.chat` and internal sub-agent calls need this engine, and an internal child with a non-Java Action fails the job when the operator opens. See [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}}) for JDK and Python Resource requirements. |
 
+### Skills
+
+Use these options to limit the download size and extracted contents of skill ZIP
+archives. ZIP archives can be loaded from URLs, local files, Java classpath resources,
+or Python packages. See [Skill Sources]({{< ref "docs/development/calling-llms/skills#skill-sources" >}})
+for supported sources and usage.
+
+Each limit applies to one archive. Loading fails if any limit is exceeded. All values
+must be positive; limits cannot be disabled. Increase the relevant limit if your
+skills require larger archives.
+
+| Key | Default | Type | Description |
+| --- | --- | --- | --- |
+| `skill.max-archive-entries` | 1000 | int | Maximum number of entries in one skill archive, including directory entries. |
+| `skill.max-uncompressed-entry-bytes` | 67108864 (64 MiB) | long | Maximum uncompressed size of a single archive entry. |
+| `skill.max-uncompressed-total-bytes` | 268435456 (256 MiB) | long | Maximum combined uncompressed size of all entries in one archive. |
+| `skill.max-download-bytes` | 67108864 (64 MiB) | long | Maximum bytes downloaded for one skill archive over HTTP(S). |
+
 ### Memory
 
 #### Memory events {#memory-event-options}

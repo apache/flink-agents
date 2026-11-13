@@ -365,7 +365,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 new ResourceCache(
                         agentPlan.getResourceProviders(),
                         getRuntimeContext().getUserCodeClassLoader(),
-                        pythonBridge::getPythonInterpreterManager);
+                        pythonBridge::getPythonInterpreterManager,
+                        agentPlan.getConfig());
         JavaMCPResourceDiscovery.discoverJavaMCPResources(
                 agentPlan.getResourceProviders(), resourceCache);
 
