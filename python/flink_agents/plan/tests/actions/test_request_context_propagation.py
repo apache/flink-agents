@@ -19,7 +19,7 @@
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import MagicMock
 from uuid import UUID
@@ -71,7 +71,7 @@ def _runner(chat_model: Any, max_retries: int = 0) -> tuple[MagicMock, list, _Me
     config = MagicMock()
     options = {
         id(AgentExecutionOptions.MAX_RETRIES): max_retries,
-        id(AgentExecutionOptions.RETRY_WAIT_INTERVAL): 0,
+        id(AgentExecutionOptions.RETRY_WAIT_INTERVAL): timedelta(0),
         id(AgentExecutionOptions.CHAT_ASYNC): False,
     }
     config.get = MagicMock(

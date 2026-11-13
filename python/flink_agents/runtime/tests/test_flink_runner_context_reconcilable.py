@@ -21,6 +21,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Callable, Dict, List, Sequence
 from unittest.mock import MagicMock
 
@@ -365,7 +366,7 @@ def test_native_finalization_replays_both_calls_without_provider_calls(
             side_effect=lambda option: {
                 id(AgentExecutionOptions.CHAT_ASYNC): asynchronous,
                 id(AgentExecutionOptions.MAX_RETRIES): finalization_failures,
-                id(AgentExecutionOptions.RETRY_WAIT_INTERVAL): 0,
+                id(AgentExecutionOptions.RETRY_WAIT_INTERVAL): timedelta(0),
             }.get(id(option), option.get_default_value())
         )
         ctx.durable_execute = runner.durable_execute
@@ -697,7 +698,7 @@ def test_flink_runner_context_async_future_is_deferred_and_reusable() -> None:
 def test_flink_runner_context_gather_reserves_before_execution() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     config = AgentConfiguration(
-        {"async.batch.timeout.ms": -1, "async.batch.parallelism": 2}
+        {"async.batch.timeout": "-1 ms", "async.batch.parallelism": 2}
     )
     ctx = _create_runner_context(j_runner_context, config=config)
     observed_states: list[list[str]] = []
@@ -997,7 +998,7 @@ def test_flink_runner_context_gather_runs_calls_in_parallel() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     parallelism = 3
     config = AgentConfiguration(
-        {"async.batch.timeout.ms": -1, "async.batch.parallelism": parallelism}
+        {"async.batch.timeout": "-1 ms", "async.batch.parallelism": parallelism}
     )
     ctx = _create_runner_context(
         j_runner_context, config=config, executor_workers=parallelism
@@ -1190,7 +1191,7 @@ def test_flink_runner_context_gather_collects_failures() -> None:
 def test_flink_runner_context_gather_timeout_keeps_completed_results() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     config = AgentConfiguration(
-        {"async.batch.timeout.ms": 100, "async.batch.parallelism": 2}
+        {"async.batch.timeout": "100 ms", "async.batch.parallelism": 2}
     )
     ctx = _create_runner_context(j_runner_context, config=config)
 
@@ -1231,7 +1232,7 @@ def test_flink_runner_context_gather_timeout_keeps_completed_results() -> None:
 def test_flink_runner_context_gather_timeout_leaves_unsubmitted_slots_pending() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     config = AgentConfiguration(
-        {"async.batch.timeout.ms": 100, "async.batch.parallelism": 2}
+        {"async.batch.timeout": "100 ms", "async.batch.parallelism": 2}
     )
     ctx = _create_runner_context(j_runner_context, config=config, executor_workers=2)
 
@@ -1281,7 +1282,7 @@ def test_flink_runner_context_gather_timeout_leaves_queued_slots_pending() -> No
     # Parallelism budget exceeds the worker count, so two suppliers are handed to a
     # saturated pool and wait in its queue without ever starting before the deadline.
     config = AgentConfiguration(
-        {"async.batch.timeout.ms": 100, "async.batch.parallelism": 4}
+        {"async.batch.timeout": "100 ms", "async.batch.parallelism": 4}
     )
     ctx = _create_runner_context(j_runner_context, config=config, executor_workers=2)
 
@@ -1654,7 +1655,7 @@ def test_mixed_batch_timeout_preserves_unstarted_durable_slot_for_recovery() -> 
     ctx = _create_runner_context(
         j_ctx,
         AgentConfiguration(
-            {"async.batch.parallelism": 2, "async.batch.timeout.ms": 50}
+            {"async.batch.parallelism": 2, "async.batch.timeout": "50 ms"}
         ),
         executor_workers=1,
     )
@@ -1727,7 +1728,7 @@ def test_mixed_batch_timeout_preserves_unstarted_durable_slot_for_recovery() -> 
 def test_flink_runner_context_gather_respects_max_parallelism() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     config = AgentConfiguration(
-        {"async.batch.timeout.ms": -1, "async.batch.parallelism": 2}
+        {"async.batch.timeout": "-1 ms", "async.batch.parallelism": 2}
     )
     ctx = _create_runner_context(j_runner_context, config=config, executor_workers=4)
     active_count = 0

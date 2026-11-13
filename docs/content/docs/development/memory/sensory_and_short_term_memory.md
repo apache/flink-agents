@@ -291,7 +291,7 @@ During execution, sensory memory data is checkpointed by Flink for fault toleran
 
 Short-term memory can be configured with a time-to-live (TTL) so that older state expires automatically. This is useful for agents that may run for a long time: if the agent only needs recent memories, expiring historical data directly keeps the stored state focused on the latest context and avoids retaining stale information.
 
-Set `short-term-memory.state-ttl.ms` to a value greater than 0 in milliseconds to enable TTL. You can also configure how the TTL is refreshed and whether expired state can be returned before Flink cleans it up:
+Set `short-term-memory.state-ttl` to a positive whole number of milliseconds, at least 1 ms, such as `1 min`, to enable TTL. Effective precision is 1 ms. A zero or negative duration disables it. A positive duration shorter than 1 ms is rejected, and so is a longer positive duration that is not a whole number of milliseconds, such as `1500 us`. `1000 us` is exactly 1 ms and is accepted. You can also configure how the TTL is refreshed and whether expired state can be returned before Flink cleans it up:
 
 - `short-term-memory.state-ttl.update-type`: controls whether TTL is refreshed on create/write (`ON_CREATE_AND_WRITE`) or on read/write (`ON_READ_AND_WRITE`, the default).
 - `short-term-memory.state-ttl.visibility`: controls whether expired memory is never returned or may be returned if it has not been cleaned up yet.
@@ -304,6 +304,8 @@ With the default update type `ON_READ_AND_WRITE`, every read refreshes an entry'
 
 {{< tab "Python" >}}
 ```python
+from datetime import timedelta
+
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
     ShortTermMemoryTtlUpdate,
@@ -314,7 +316,7 @@ from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
 agents_config = agents_env.get_config()
 
-agents_config.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, 60_000)
+agents_config.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL, timedelta(minutes=1))
 agents_config.set(
     AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE,
     ShortTermMemoryTtlUpdate.ON_READ_AND_WRITE,
@@ -328,10 +330,12 @@ agents_config.set(
 
 {{< tab "Java" >}}
 ```java
+import java.time.Duration;
+
 AgentsExecutionEnvironment agentsEnv = AgentsExecutionEnvironment.getExecutionEnvironment(env);
 Configuration agentsConfig = agentsEnv.getConfig();
 
-agentsConfig.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, 60_000L);
+agentsConfig.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL, Duration.ofMinutes(1));
 agentsConfig.set(
         AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE,
         ShortTermMemoryTtlUpdate.ON_READ_AND_WRITE);

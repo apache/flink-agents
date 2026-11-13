@@ -34,6 +34,7 @@ from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.configuration import ReadableConfiguration
 from flink_agents.api.core_options import AgentExecutionOptions
+from flink_agents.api.duration import format_duration, positive_seconds
 from flink_agents.api.events.chat_event import ChatRequestEvent
 from flink_agents.api.events.event import Event
 from flink_agents.api.memory.long_term_memory import (
@@ -397,8 +398,12 @@ class _BatchAsyncExecutionResult:
         parallelism = self._ctx.config.get(
             AgentExecutionOptions.ASYNC_BATCH_PARALLELISM
         )
-        timeout_ms = self._ctx.config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS)
-        deadline = time.monotonic() + timeout_ms / 1000 if timeout_ms > 0 else None
+        timeout = self._ctx.config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)
+        timeout_seconds = positive_seconds(timeout)
+        deadline = (
+            time.monotonic() + timeout_seconds if timeout_seconds is not None else None
+        )
+        timeout_label = format_duration(timeout) if deadline is not None else None
         batch_futures: list[Any | None] = [None] * len(suppliers)
         started: list[bool] = [False] * len(suppliers)
         try:
@@ -407,7 +412,7 @@ class _BatchAsyncExecutionResult:
                 suppliers,
                 parallelism,
                 deadline,
-                timeout_ms,
+                timeout_label,
                 batch_futures,
                 started,
             )
@@ -561,7 +566,7 @@ def _execute_sliding_window_batch(
     suppliers: list[Any],
     parallelism: int,
     deadline: float | None,
-    timeout_ms: int,
+    timeout_label: str | None,
     futures: list[Any | None],
     started: list[bool],
 ) -> Any:
@@ -583,7 +588,7 @@ def _execute_sliding_window_batch(
 
     while completed < batch_size:
         if deadline is not None and time.monotonic() >= deadline:
-            timeout_message = f"Async batch execution timed out after {timeout_ms} ms"
+            timeout_message = f"Async batch execution timed out after {timeout_label}"
             raise _BatchTimeoutError(timeout_message)
 
         while next_to_submit < batch_size and in_flight() < parallelism_limit:

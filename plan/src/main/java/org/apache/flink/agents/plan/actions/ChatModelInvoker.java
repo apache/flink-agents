@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
+import org.apache.flink.agents.api.configuration.DurationFormat;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
@@ -37,6 +38,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -159,9 +161,23 @@ public final class ChatModelInvoker {
         return Math.max(ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES), 0);
     }
 
-    /** The request-level retry backoff. */
-    public static int configuredRetryWaitSec(RunnerContext ctx) {
-        return Math.max(ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL), 0);
+    /**
+     * The request-level retry backoff. A negative configured duration waits zero; zero waits zero.
+     */
+    public static Duration configuredRetryWait(RunnerContext ctx) {
+        return acceptedRetryWait(ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+    }
+
+    /**
+     * Retry backoff after a negative duration is treated as zero. A positive duration must be a
+     * whole number of milliseconds; {@link Thread#sleep(long)} cannot honor a sub-millisecond
+     * remainder.
+     */
+    public static Duration acceptedRetryWait(Duration configured) {
+        return DurationFormat.requireWholeMilliseconds(
+                AgentExecutionOptions.RETRY_WAIT_INTERVAL.getKey(),
+                DurationFormat.zeroIfNegative(configured),
+                "or zero or negative to retry without waiting");
     }
 
     public static ChatAttemptResult chatWithRetries(
@@ -173,8 +189,9 @@ public final class ChatModelInvoker {
             @Nullable Object outputSchema,
             RunnerContext ctx,
             int numRetries,
-            int retryWaitIntervalSec)
+            Duration retryWaitInterval)
             throws ChatAttemptFailed, Exception {
+        retryWaitInterval = acceptedRetryWait(retryWaitInterval);
         BaseChatModelSetup chatModel;
         try {
             chatModel = (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
@@ -343,23 +360,24 @@ public final class ChatModelInvoker {
                 }
                 if (attempt < numRetries) {
                     actualRetryCount = attempt + 1;
-                    int currentWaitSec = retryWaitIntervalSec * (1 << (actualRetryCount - 1));
+                    Duration currentWait =
+                            retryWaitInterval.multipliedBy(1L << (actualRetryCount - 1));
+                    long waitMillis = Math.max(0L, currentWait.toMillis());
                     LOG.warn(
-                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {}"
-                                    + " s.",
+                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {}.",
                             initialRequestId,
                             e,
                             actualRetryCount,
                             numRetries,
-                            currentWaitSec);
-                    if (currentWaitSec > 0) {
+                            DurationFormat.format(currentWait));
+                    if (waitMillis > 0) {
                         try {
-                            Thread.sleep(currentWaitSec * 1000L);
+                            Thread.sleep(waitMillis);
                         } catch (InterruptedException ie) {
                             Thread.currentThread().interrupt();
                             throw ie;
                         }
-                        totalWaitTimeSec += currentWaitSec;
+                        totalWaitTimeSec += DurationFormat.recordedRetryWaitSeconds(currentWait);
                     }
                     continue;
                 }

@@ -19,6 +19,7 @@ package org.apache.flink.agents.runtime.context;
 
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.configuration.DurationFormat;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.Outcome;
@@ -348,9 +349,8 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             Arrays.fill(started, true);
             return new BatchExecutionResult<>(outcomes, started);
         }
-        Long timeoutMs = getConfig().get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS);
-        Duration timeout =
-                timeoutMs == null || timeoutMs <= 0 ? null : Duration.ofMillis(timeoutMs);
+        Duration configuredTimeout = getConfig().get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT);
+        Duration timeout = DurationFormat.isPositive(configuredTimeout) ? configuredTimeout : null;
         Integer parallelism = getConfig().get(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM);
         int parallelismCap = parallelism == null ? 1 : Math.max(parallelism, 1);
         return continuationExecutor.executeAllAsync(

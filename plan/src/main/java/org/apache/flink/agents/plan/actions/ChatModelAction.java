@@ -47,6 +47,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -365,7 +366,7 @@ public class ChatModelAction {
             RunnerContext ctx)
             throws Exception {
         int numRetries = ChatModelInvoker.configuredRetries(ctx);
-        int retryWaitIntervalSec = ChatModelInvoker.configuredRetryWaitSec(ctx);
+        Duration retryWaitInterval = ChatModelInvoker.configuredRetryWait(ctx);
 
         List<String> triedModels = new ArrayList<>();
         Exception lastError = null;
@@ -382,7 +383,7 @@ public class ChatModelAction {
                                 outputSchema,
                                 ctx,
                                 numRetries,
-                                retryWaitIntervalSec);
+                                retryWaitInterval);
                 recordAttemptRetryStats(
                         ctx,
                         initialRequestId,

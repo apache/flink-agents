@@ -24,6 +24,11 @@ from typing import TYPE_CHECKING, cast
 
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.decision_models import DecisionRequest, DecisionResult
+from flink_agents.api.duration import (
+    recorded_retry_wait_seconds,
+    require_whole_milliseconds,
+    zero_if_negative,
+)
 from flink_agents.api.events.decision_event import (
     DecisionRequestEvent,
     DecisionResponseEvent,
@@ -107,7 +112,11 @@ async def process_decision_request(
 
     decision_async = ctx.config.get(AgentExecutionOptions.DECISION_ASYNC)
     max_retries = max(0, ctx.config.get(AgentExecutionOptions.MAX_RETRIES))
-    retry_interval = max(0, ctx.config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL))
+    retry_interval = require_whole_milliseconds(
+        AgentExecutionOptions.RETRY_WAIT_INTERVAL.get_key(),
+        zero_if_negative(ctx.config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)),
+        "or zero or negative to retry without waiting",
+    )
     retry_count = 0
     total_retry_wait_sec = 0
     response = None
@@ -144,10 +153,11 @@ async def process_decision_request(
             )
             if attempt < max_retries:
                 retry_count += 1
-                wait_sec = retry_interval * (1 << attempt)
-                if wait_sec > 0:
-                    time.sleep(wait_sec)
-                    total_retry_wait_sec += wait_sec
+                current_wait = retry_interval * (1 << attempt)
+                wait_seconds = current_wait.total_seconds()
+                if wait_seconds > 0:
+                    time.sleep(wait_seconds)
+                    total_retry_wait_sec += recorded_retry_wait_seconds(current_wait)
     finally:
         _record_retry_metrics(
             ctx.action_metric_group,

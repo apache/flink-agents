@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+from datetime import timedelta
 from typing import Any, Dict, Type
 
 from pydantic import BaseModel
@@ -24,17 +25,26 @@ from flink_agents.api.configuration import (
     ConfigOption,
     Configuration,
 )
+from flink_agents.api.duration import (
+    format_duration,
+    parse_duration,
+    validate_consumed_duration,
+)
 from flink_agents.api.trace_log import _parse_targets, _serialize_targets
 
 _TRACE_LOG_TARGETS_KEY = "trace-log.targets"
 
 
-def _normalize_trace_log_targets(conf_data: Dict[str, Any]) -> Dict[str, Any]:
-    if _TRACE_LOG_TARGETS_KEY not in conf_data:
-        return conf_data
+def _normalize_conf_data(conf_data: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = {
+        key: format_duration(value) if isinstance(value, timedelta) else value
+        for key, value in conf_data.items()
+    }
+    if _TRACE_LOG_TARGETS_KEY not in normalized:
+        return normalized
     return {
-        **conf_data,
-        _TRACE_LOG_TARGETS_KEY: _serialize_targets(conf_data[_TRACE_LOG_TARGETS_KEY]),
+        **normalized,
+        _TRACE_LOG_TARGETS_KEY: _serialize_targets(normalized[_TRACE_LOG_TARGETS_KEY]),
     }
 
 
@@ -52,7 +62,7 @@ class AgentConfiguration(BaseModel, Configuration):
         if conf_data is None:
             super().__init__(conf_data={})
         else:
-            super().__init__(conf_data=_normalize_trace_log_targets(conf_data))
+            super().__init__(conf_data=_normalize_conf_data(conf_data))
 
     def get_value_with_type(
         self, key: str, config_type: Type[Any], default: Any
@@ -62,7 +72,7 @@ class AgentConfiguration(BaseModel, Configuration):
         Args:
             key: The configuration key to retrieve
             config_type: The expected type of the configuration value (int, float, str,
-            or bool)
+            bool, timedelta, or an enum)
             default: The default value to return if key is not found
 
         Returns:
@@ -78,10 +88,17 @@ class AgentConfiguration(BaseModel, Configuration):
                 # converts them when an option is read, accepting "true"
                 # case-insensitively, so "false" must not stay truthy.
                 return value.strip().lower() == "true"
-            return config_type(value)
+            if config_type is timedelta:
+                parsed = parse_duration(value)
+            else:
+                return config_type(value)
         except (ValueError, TypeError) as e:
-            msg = f"Invalid value for {key}: {value}"
+            if config_type is timedelta:
+                msg = f"Invalid duration for '{key}': {e}"
+            else:
+                msg = f"Invalid value for {key}: {value}"
             raise ValueError(msg) from e
+        return validate_consumed_duration(key, parsed)
 
     @override
     def get_int(self, key: str, default: int | None = None) -> int:
@@ -109,29 +126,41 @@ class AgentConfiguration(BaseModel, Configuration):
             option.get_key(), option.get_type(), option.get_default_value()
         )
 
+    def _put(self, key: str, value: Any) -> None:
+        self.conf_data[key] = value
+
     @override
     def set_str(self, key: str, value: str) -> None:
-        self.conf_data[key] = value
+        self._put(key, value)
 
     @override
     def set_int(self, key: str, value: int) -> None:
-        self.conf_data[key] = value
+        self._put(key, value)
 
     @override
     def set_float(self, key: str, value: float) -> None:
-        self.conf_data[key] = value
+        self._put(key, value)
 
     @override
     def set_bool(self, key: str, value: bool) -> None:
-        self.conf_data[key] = value
+        self._put(key, value)
 
     @override
     def set(self, option: ConfigOption, value: Any) -> None:
-        self.conf_data[option.get_key()] = (
-            _serialize_targets(value)
-            if option.get_key() == _TRACE_LOG_TARGETS_KEY
-            else value
-        )
+        if option.get_key() == _TRACE_LOG_TARGETS_KEY:
+            stored = _serialize_targets(value)
+        elif option.get_type() is timedelta:
+            try:
+                parsed = parse_duration(value)
+            except ValueError as error:
+                msg = f"Invalid duration for '{option.get_key()}': {error}"
+                raise ValueError(msg) from error
+            stored = format_duration(
+                validate_consumed_duration(option.get_key(), parsed)
+            )
+        else:
+            stored = value
+        self._put(option.get_key(), stored)
 
     def get_conf_data(self) -> dict:
         """Get the configuration data dictionary.

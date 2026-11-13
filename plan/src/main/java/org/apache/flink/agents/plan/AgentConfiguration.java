@@ -20,9 +20,11 @@ package org.apache.flink.agents.plan;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.apache.flink.agents.api.configuration.Configuration;
+import org.apache.flink.agents.api.configuration.DurationFormat;
 import org.apache.flink.agents.api.logger.TraceLogTarget;
 import org.apache.flink.configuration.ConfigurationUtils;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,7 +44,10 @@ public class AgentConfiguration implements Configuration {
      * retained as option values; YAML key expansion belongs to the configuration loader.
      */
     public AgentConfiguration(Map<String, Object> confData) {
-        this.confData = new HashMap<>(confData);
+        this.confData = new HashMap<>();
+        for (Map.Entry<String, Object> entry : confData.entrySet()) {
+            this.confData.put(entry.getKey(), normalizeDurationValue(entry.getValue()));
+        }
         String targetsKey = AgentConfigOptions.TRACE_LOG_TARGETS.getKey();
         if (this.confData.containsKey(targetsKey)) {
             this.confData.put(targetsKey, traceLogTargetConfig(this.confData.get(targetsKey)));
@@ -55,44 +60,55 @@ public class AgentConfiguration implements Configuration {
 
     @Override
     public void setStr(String key, String value) {
-        confData.put(key, value);
+        putValue(key, value);
     }
 
     @Override
     public void setInt(String key, int value) {
-        confData.put(key, value);
+        putValue(key, value);
     }
 
     @Override
     public void setLong(String key, long value) {
-        confData.put(key, value);
+        putValue(key, value);
     }
 
     @Override
     public void setFloat(String key, float value) {
-        confData.put(key, value);
+        putValue(key, value);
     }
 
     @Override
     public void setDouble(String key, double value) {
-        confData.put(key, value);
+        putValue(key, value);
     }
 
     @Override
     public void setBool(String key, boolean value) {
-        confData.put(key, value);
+        putValue(key, value);
     }
 
     @Override
     public <T> void set(ConfigOption<T> option, T value) {
         if (AgentConfigOptions.TRACE_LOG_TARGETS.equals(option)) {
-            confData.put(option.getKey(), traceLogTargetConfig(value));
+            putValue(option.getKey(), traceLogTargetConfig(value));
             return;
         }
         if (value == null && option.getDefaultValue() != null) {
             return;
         }
-        confData.put(option.getKey(), value);
+        if (Duration.class.equals(option.getType())) {
+            final Duration parsed;
+            try {
+                parsed = DurationFormat.parse(value);
+            } catch (IllegalArgumentException e) {
+                throw invalidDuration(option.getKey(), e);
+            }
+            DurationFormat.validateConsumedDuration(option.getKey(), parsed);
+            putValue(option.getKey(), DurationFormat.format(parsed));
+            return;
+        }
+        putValue(option.getKey(), value);
     }
 
     @Override
@@ -156,6 +172,9 @@ public class AgentConfiguration implements Configuration {
         Class<T> targetType = option.getType();
 
         if (targetType.isAssignableFrom(rawValue.getClass())) {
+            if (Duration.class.equals(targetType)) {
+                DurationFormat.validateConsumedDuration(option.getKey(), (Duration) rawValue);
+            }
             return targetType.cast(rawValue);
         } else if (String.class.equals(targetType)) {
             return targetType.cast(rawValue.toString());
@@ -169,6 +188,15 @@ public class AgentConfiguration implements Configuration {
             return targetType.cast(Double.parseDouble(rawValue.toString()));
         } else if (Boolean.class.equals(targetType)) {
             return targetType.cast(Boolean.parseBoolean(rawValue.toString()));
+        } else if (Duration.class.equals(targetType)) {
+            final Duration parsed;
+            try {
+                parsed = DurationFormat.parse(rawValue);
+            } catch (IllegalArgumentException e) {
+                throw invalidDuration(option.getKey(), e);
+            }
+            return targetType.cast(
+                    DurationFormat.validateConsumedDuration(option.getKey(), parsed));
         } else if (targetType.isEnum()) {
             return ConfigurationUtils.convertValue(rawValue, targetType);
         } else {
@@ -178,6 +206,23 @@ public class AgentConfiguration implements Configuration {
                             + " to "
                             + targetType.getName());
         }
+    }
+
+    private void putValue(String key, Object value) {
+        confData.put(key, value);
+    }
+
+    private static Object normalizeDurationValue(Object value) {
+        if (value instanceof Duration) {
+            return DurationFormat.format(DurationFormat.parse(value));
+        }
+        return value;
+    }
+
+    private static IllegalArgumentException invalidDuration(
+            String key, IllegalArgumentException cause) {
+        return new IllegalArgumentException(
+                "Invalid duration for '" + key + "': " + cause.getMessage(), cause);
     }
 
     private static List<Map<String, Object>> traceLogTargetConfig(Object value) {

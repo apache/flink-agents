@@ -424,8 +424,10 @@ on another's result, request it in a later step instead of the same batch.
 
 ### Timeouts and external effects
 
-`async.batch.timeout.ms` sets an overall timeout for a parallel batch of ordinary
-tool calls. Its default is `-1`; non-positive values disable it. When it expires,
+`async.batch.timeout` sets an overall timeout for a parallel batch of ordinary
+tool calls. Its default is `-1 ms`; a zero or negative duration disables it.
+Effective precision is 1 µs on Java and Python: the deadline uses the full
+duration and is not truncated to milliseconds. When it expires,
 completed calls keep their results and unfinished calls are reported to the model
 as failed tool calls.
 

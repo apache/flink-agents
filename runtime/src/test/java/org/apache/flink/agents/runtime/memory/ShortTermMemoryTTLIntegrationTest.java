@@ -33,6 +33,7 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -150,7 +151,8 @@ class ShortTermMemoryTTLIntegrationTest {
         AgentsExecutionEnvironment agentEnv =
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
         AgentConfiguration agentsConfig = (AgentConfiguration) agentEnv.getConfig();
-        agentsConfig.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, 3000L);
+        agentsConfig.set(
+                AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL, Duration.ofMillis(3000));
         if (updateType != null) {
             agentsConfig.set(
                     AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_UPDATE_TYPE, updateType);
@@ -184,7 +186,8 @@ class ShortTermMemoryTTLIntegrationTest {
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
         AgentConfiguration agentsConfig = (AgentConfiguration) agentEnv.getConfig();
         if (configureTtlMs) {
-            agentsConfig.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS, ttlMs);
+            agentsConfig.set(
+                    AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL, Duration.ofMillis(ttlMs));
         }
         if (configureTtlOptions) {
             agentsConfig.set(

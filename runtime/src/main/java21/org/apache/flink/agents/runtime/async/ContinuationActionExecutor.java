@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.async;
 
+import org.apache.flink.agents.api.configuration.DurationFormat;
 import org.apache.flink.agents.api.context.Outcome;
 
 import jdk.internal.vm.Continuation;
@@ -425,9 +426,8 @@ public class ContinuationActionExecutor {
     }
 
     private long getDeadlineNanos(Duration timeout) {
-        return timeout == null || timeout.isZero() || timeout.isNegative()
-                ? Long.MAX_VALUE
-                : System.nanoTime() + timeout.toNanos();
+        long nanos = DurationFormat.positiveNanos(timeout);
+        return nanos == 0L ? Long.MAX_VALUE : System.nanoTime() + nanos;
     }
 
     /**

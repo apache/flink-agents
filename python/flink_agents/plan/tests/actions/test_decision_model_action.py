@@ -119,7 +119,7 @@ def _context(
         {
             "decision.async": decision_async,
             "max-retries": retries,
-            "retry-wait-interval": interval,
+            "retry-wait-interval": f"{interval} s",
         }
     )
     ctx.get_resource = MagicMock(side_effect=resource)

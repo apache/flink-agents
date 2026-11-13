@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.async;
 
+import org.apache.flink.agents.api.configuration.DurationFormat;
 import org.apache.flink.agents.api.context.Outcome;
 
 import java.time.Duration;
@@ -113,11 +114,9 @@ final class AsyncBatchExecutor {
     }
 
     private static long timeoutNanos(Duration timeout) {
-        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
-            return Long.MAX_VALUE;
-        }
         try {
-            return timeout.toNanos();
+            long nanos = DurationFormat.positiveNanos(timeout);
+            return nanos == 0L ? Long.MAX_VALUE : nanos;
         } catch (ArithmeticException overflow) {
             return Long.MAX_VALUE;
         }

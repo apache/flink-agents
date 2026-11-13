@@ -637,7 +637,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         executor.setUseTimeoutCollection(true);
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
         ((Configuration) context.getConfig())
-                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS, 100L);
+                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(100));
         TestDurableCallable<String> first =
                 new TestDurableCallable<>("batch-1", String.class, () -> "fast");
         TestDurableCallable<String> second =
@@ -671,7 +671,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         executor.setUseTimeoutCollection(true);
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
         ((Configuration) context.getConfig())
-                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS, 100L);
+                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(100));
         ((Configuration) context.getConfig()).set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
         TestDurableCallable<String> first =
                 new TestDurableCallable<>(
@@ -719,7 +719,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         executor.setBatchThreads(2);
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
         ((Configuration) context.getConfig())
-                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS, 100L);
+                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(100));
         ((Configuration) context.getConfig()).set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 4);
         Callable<String> slow =
                 () -> {
@@ -1159,7 +1159,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         ActionState state = new ActionState(null);
         JavaRunnerContextImpl context = createContext(state, executor);
         ((Configuration) context.getConfig())
-                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS, 1000L);
+                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(1000));
         ((Configuration) context.getConfig()).set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
         TestDurableCallable<String> first =
                 new TestDurableCallable<>(

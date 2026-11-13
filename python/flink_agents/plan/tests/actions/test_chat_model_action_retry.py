@@ -19,6 +19,7 @@
 
 import asyncio
 import time
+from datetime import timedelta
 from typing import Any, Callable, Sequence
 from unittest.mock import ANY, MagicMock, call
 from uuid import uuid4
@@ -168,7 +169,9 @@ def _create_mock_runner_context(
     config = MagicMock()
     option_values = {
         id(AgentExecutionOptions.MAX_RETRIES): max_retries,
-        id(AgentExecutionOptions.RETRY_WAIT_INTERVAL): retry_wait_interval_sec,
+        id(AgentExecutionOptions.RETRY_WAIT_INTERVAL): timedelta(
+            seconds=retry_wait_interval_sec
+        ),
         id(AgentExecutionOptions.CHAT_ASYNC): chat_async,
     }
     config.get = MagicMock(
@@ -860,7 +863,9 @@ class TestRetryWaitIntervalConfig:
 
     def test_default_value(self) -> None:
         """Default value is 1 second."""
-        assert AgentExecutionOptions.RETRY_WAIT_INTERVAL.get_default_value() == 1
+        assert AgentExecutionOptions.RETRY_WAIT_INTERVAL.get_default_value() == timedelta(
+            seconds=1
+        )
 
 
 class TestProcessToolResponsePromptArgsForwarding:

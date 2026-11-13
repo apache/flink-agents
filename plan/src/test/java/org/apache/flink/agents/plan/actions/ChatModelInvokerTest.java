@@ -30,6 +30,7 @@ import org.apache.flink.agents.plan.ChatFixtures;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -84,7 +85,7 @@ class ChatModelInvokerTest {
                                 null,
                                 ctx,
                                 3,
-                                0));
+                                Duration.ZERO));
 
         // Only the first attempt should have run: retry backoff must not consume more attempts
         // after a cancellation interrupts the call.
@@ -116,7 +117,7 @@ class ChatModelInvokerTest {
                                         null,
                                         ctx,
                                         3,
-                                        0)));
+                                        Duration.ZERO)));
         verify(ctx, times(1)).durableExecute(any());
     }
 
@@ -156,12 +157,33 @@ class ChatModelInvokerTest {
                                             null,
                                             ctx,
                                             0,
-                                            0));
+                                            Duration.ZERO));
             assertTrue(
                     ChatModelInvoker.errorText(failure.error)
                             .contains("IllegalArgumentException: invalid model"));
         }
         verify(model, times(1)).chat(any(), any(), any());
+    }
+
+    @Test
+    void testChatWithRetriesRejectsSubMillisecondWaitBeforeSleeping() {
+        IllegalArgumentException error =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                ChatModelInvoker.chatWithRetries(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        "chat",
+                                        List.of(),
+                                        Map.of(),
+                                        null,
+                                        null,
+                                        1,
+                                        Duration.ofNanos(1_500_000)));
+        assertTrue(error.getMessage().contains("retry-wait-interval"));
+        assertTrue(error.getMessage().contains("whole number of milliseconds"));
+        assertTrue(error.getMessage().contains("1500 us"));
     }
 
     @Test
@@ -195,7 +217,7 @@ class ChatModelInvokerTest {
                                 null,
                                 ctx,
                                 1,
-                                1));
+                                Duration.ofSeconds(1)));
 
         // Only the first attempt should have run: the sleep before the retry throws before a
         // second call is made.
@@ -231,7 +253,7 @@ class ChatModelInvokerTest {
                                 null,
                                 ctx,
                                 2,
-                                0));
+                                Duration.ZERO));
 
         // An ordinary failure must still consume the full retry budget (initial attempt + 2
         // retries), confirming the interruption fix doesn't disturb normal retry behavior.
@@ -267,7 +289,7 @@ class ChatModelInvokerTest {
                                         Map.class,
                                         ctx,
                                         2,
-                                        0));
+                                        Duration.ZERO));
 
         assertSame(infeasible, failure.error);
         assertSame(model, failure.chatModel);
@@ -298,7 +320,7 @@ class ChatModelInvokerTest {
                                         Map.class,
                                         ctx,
                                         2,
-                                        0)));
+                                        Duration.ZERO)));
         verify(ctx, never()).durableExecute(any());
     }
 
@@ -333,7 +355,7 @@ class ChatModelInvokerTest {
                                         Map.class,
                                         ctx,
                                         3,
-                                        0)));
+                                        Duration.ZERO)));
         verify(ctx, times(2)).durableExecute(any());
         verify(model, never()).chat(any(), any(), any(), any());
     }
@@ -384,7 +406,7 @@ class ChatModelInvokerTest {
                         Map.class,
                         ctx,
                         1,
-                        0);
+                        Duration.ZERO);
         assertEquals(List.of("chat", "chat:final", "chat", "chat:final"), recordedIds);
 
         replaying[0] = true;
@@ -398,7 +420,7 @@ class ChatModelInvokerTest {
                         Map.class,
                         ctx,
                         1,
-                        0);
+                        Duration.ZERO);
 
         assertEquals(4, next[0]);
         verify(model, times(2)).chat(any(), any(), any());
@@ -448,7 +470,7 @@ class ChatModelInvokerTest {
                                                 null,
                                                 ctx,
                                                 3,
-                                                0)));
+                                                Duration.ZERO)));
                 verify(model, times(1)).chat(any(), any(), any());
                 org.junit.jupiter.api.Assertions.assertEquals(index < 2, Thread.interrupted());
             } finally {

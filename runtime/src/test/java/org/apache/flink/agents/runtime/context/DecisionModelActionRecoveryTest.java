@@ -41,6 +41,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.CancellationException;
@@ -198,7 +199,7 @@ class DecisionModelActionRecoveryTest {
         AgentPlan plan = new AgentPlan(Map.of());
         plan.getConfig().set(AgentExecutionOptions.DECISION_ASYNC, async);
         plan.getConfig().set(AgentExecutionOptions.MAX_RETRIES, 1);
-        plan.getConfig().set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, 0);
+        plan.getConfig().set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, Duration.ZERO);
         ResourceCache resources = mock(ResourceCache.class);
         when(resources.getResource("decision", ResourceType.DECISION_MODEL)).thenReturn(model);
         FlinkAgentsMetricGroupImpl metrics =
