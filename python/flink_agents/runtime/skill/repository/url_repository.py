@@ -29,7 +29,6 @@ from typing import TYPE_CHECKING
 
 from flink_agents.api.skills import redact_skill_url, validate_skill_url
 from flink_agents.runtime.skill.repository._materialize import (
-    DEFAULT_LIMITS,
     download_to_tempfile,
     extract_zip_safely,
 )
@@ -60,7 +59,7 @@ class URLSkillRepository(MaterializedSkillRepository):
         *,
         sha256: str | None = None,
         allow_insecure_http: bool = False,
-        limits: MaterializerLimits = DEFAULT_LIMITS,
+        limits: MaterializerLimits,
     ) -> None:
         """Download and extract the zip at ``url``.
 

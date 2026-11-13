@@ -48,15 +48,6 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
 
     private final String url;
 
-    public URLSkillRepository(String url) throws IOException {
-        this(url, null, false);
-    }
-
-    public URLSkillRepository(String url, @Nullable String sha256, boolean allowInsecureHttp)
-            throws IOException {
-        this(url, sha256, allowInsecureHttp, SkillMaterializer.Limits.DEFAULT);
-    }
-
     public URLSkillRepository(
             String url,
             @Nullable String sha256,

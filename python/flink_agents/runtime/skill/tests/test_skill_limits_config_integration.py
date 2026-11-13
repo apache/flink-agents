@@ -132,7 +132,7 @@ class TestLocalZipSource:
 
     def test_configured_entry_limit_rejects_zip(self, tmp_path: Path) -> None:
         zip_path = _write_zip(tmp_path, 3)
-        config = AgentConfiguration({"skill.source.max-extract-entries": 2})
+        config = AgentConfiguration({"skill.max-archive-entries": 2})
         cache = _cache_with(Skills.from_local_dir(str(zip_path)), config)
         try:
             message = _load_failure(cache)
@@ -145,7 +145,7 @@ class TestLocalZipSource:
         self, tmp_path: Path
     ) -> None:
         zip_path = _write_zip(tmp_path, 3)
-        config = AgentConfiguration({"skill.source.max-extract-entries": 3})
+        config = AgentConfiguration({"skill.max-archive-entries": 3})
         cache = _cache_with(Skills.from_local_dir(str(zip_path)), config)
         try:
             assert len(_skill_names(cache)) == 3
@@ -154,7 +154,7 @@ class TestLocalZipSource:
 
     def test_configured_entry_byte_limit_rejects_zip(self, tmp_path: Path) -> None:
         zip_path = _write_zip(tmp_path, 1)
-        config = AgentConfiguration({"skill.source.max-extract-entry-bytes": 5})
+        config = AgentConfiguration({"skill.max-uncompressed-entry-bytes": 5})
         cache = _cache_with(Skills.from_local_dir(str(zip_path)), config)
         try:
             assert "per-entry limit of 5 bytes" in _load_failure(cache)
@@ -163,7 +163,7 @@ class TestLocalZipSource:
 
     def test_configured_total_byte_limit_rejects_zip(self, tmp_path: Path) -> None:
         zip_path = _write_zip(tmp_path, 3)
-        config = AgentConfiguration({"skill.source.max-extract-total-bytes": 10})
+        config = AgentConfiguration({"skill.max-uncompressed-total-bytes": 10})
         cache = _cache_with(Skills.from_local_dir(str(zip_path)), config)
         try:
             assert "exceeds the limit of 10 bytes" in _load_failure(cache)
@@ -174,7 +174,7 @@ class TestLocalZipSource:
         self, tmp_path: Path
     ) -> None:
         zip_path = _write_zip(tmp_path, 1)
-        config = AgentConfiguration({"skill.source.max-extract-entries": 0})
+        config = AgentConfiguration({"skill.max-archive-entries": 0})
         cache = _cache_with(Skills.from_local_dir(str(zip_path)), config)
         try:
             with pytest.raises(ValueError, match="strictly positive"):
@@ -184,7 +184,7 @@ class TestLocalZipSource:
 
     def test_string_valued_limit_from_yaml_applies(self, tmp_path: Path) -> None:
         zip_path = _write_zip(tmp_path, 3)
-        config = AgentConfiguration({"skill.source.max-extract-entries": "2"})
+        config = AgentConfiguration({"skill.max-archive-entries": "2"})
         cache = _cache_with(Skills.from_local_dir(str(zip_path)), config)
         try:
             assert "limit of 2" in _load_failure(cache)
@@ -204,9 +204,7 @@ class TestUrlSource:
     def test_configured_download_limit_rejects(self, serve) -> None:
         body = _skill_zip(2)
         url = serve(body)
-        config = AgentConfiguration(
-            {"skill.source.url.max-download-bytes": len(body) - 1}
-        )
+        config = AgentConfiguration({"skill.max-download-bytes": len(body) - 1})
         cache = _cache_with(Skills.from_url_unsafe(url), config)
         try:
             message = _load_failure(cache)
@@ -218,7 +216,7 @@ class TestUrlSource:
     def test_configured_download_limit_exactly_at_body_size_loads(self, serve) -> None:
         body = _skill_zip(2)
         url = serve(body)
-        config = AgentConfiguration({"skill.source.url.max-download-bytes": len(body)})
+        config = AgentConfiguration({"skill.max-download-bytes": len(body)})
         cache = _cache_with(Skills.from_url_unsafe(url), config)
         try:
             assert len(_skill_names(cache)) == 2
@@ -227,7 +225,7 @@ class TestUrlSource:
 
     def test_configured_entry_limit_rejects(self, serve) -> None:
         url = serve(_skill_zip(3))
-        config = AgentConfiguration({"skill.source.max-extract-entries": 2})
+        config = AgentConfiguration({"skill.max-archive-entries": 2})
         cache = _cache_with(Skills.from_url_unsafe(url), config)
         try:
             assert "limit of 2" in _load_failure(cache)
@@ -236,7 +234,7 @@ class TestUrlSource:
 
     def test_configured_entry_byte_limit_rejects(self, serve) -> None:
         url = serve(_skill_zip(1))
-        config = AgentConfiguration({"skill.source.max-extract-entry-bytes": 5})
+        config = AgentConfiguration({"skill.max-uncompressed-entry-bytes": 5})
         cache = _cache_with(Skills.from_url_unsafe(url), config)
         try:
             assert "per-entry limit of 5 bytes" in _load_failure(cache)
@@ -245,7 +243,7 @@ class TestUrlSource:
 
     def test_configured_total_byte_limit_rejects(self, serve) -> None:
         url = serve(_skill_zip(3))
-        config = AgentConfiguration({"skill.source.max-extract-total-bytes": 10})
+        config = AgentConfiguration({"skill.max-uncompressed-total-bytes": 10})
         cache = _cache_with(Skills.from_url_unsafe(url), config)
         try:
             assert "exceeds the limit of 10 bytes" in _load_failure(cache)
@@ -254,22 +252,32 @@ class TestUrlSource:
 
     def test_value_too_large_for_java_fails_loading(self, serve) -> None:
         url = serve(_skill_zip(1))
-        config = AgentConfiguration({"skill.source.max-extract-entries": 3_000_000_000})
+        config = AgentConfiguration({"skill.max-archive-entries": 3_000_000_000})
         cache = _cache_with(Skills.from_url_unsafe(url), config)
         try:
             with pytest.raises(
                 ValueError,
-                match=r"Invalid value for skill\.source\.max-extract-entries",
+                match=r"Invalid value for skill\.max-archive-entries",
             ):
                 cache.get_resource_context().get_skill_manager()
         finally:
             cache.close()
 
 
-class TestPackageSourceKeepsDefaults:
-    """D14: configured limits apply to url and local sources only."""
+class TestPackageSourceLimits:
+    """Package ZIP extraction uses the same configured limits as local ZIPs."""
 
-    def test_package_zip_ignores_configured_limits(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("key", "value", "message"),
+        [
+            ("skill.max-archive-entries", 1, "limit of 1"),
+            ("skill.max-uncompressed-entry-bytes", 5, "per-entry limit of 5 bytes"),
+            ("skill.max-uncompressed-total-bytes", 10, "limit of 10 bytes"),
+        ],
+    )
+    def test_package_zip_enforces_configured_limits(
+        self, tmp_path: Path, key: str, value: int, message: str
+    ) -> None:
         pkg_root = tmp_path / "pkg_root"
         pkg_dir = pkg_root / "_flink_agents_test_limits_pkg"
         pkg_dir.mkdir(parents=True)
@@ -277,13 +285,21 @@ class TestPackageSourceKeepsDefaults:
         (pkg_dir / "skills.zip").write_bytes(_skill_zip(3))
         sys.path.insert(0, str(pkg_root))
         importlib.invalidate_caches()
-        config = AgentConfiguration({"skill.source.max-extract-entries": 1})
+        config = AgentConfiguration({key: value})
         cache = _cache_with(
             Skills.from_package(("_flink_agents_test_limits_pkg", "skills.zip")),
             config,
         )
         try:
-            assert len(_skill_names(cache)) == 3
+            assert message in _load_failure(cache)
+            control = _cache_with(
+                Skills.from_package(("_flink_agents_test_limits_pkg", "skills.zip")),
+                AgentConfiguration(),
+            )
+            try:
+                assert len(_skill_names(control)) == 3
+            finally:
+                control.close()
         finally:
             cache.close()
             sys.path.remove(str(pkg_root))
@@ -295,7 +311,7 @@ class TestSubagentChildCache:
 
     def test_child_cache_inherits_root_limits(self, tmp_path: Path) -> None:
         zip_path = _write_zip(tmp_path, 3)
-        config = AgentConfiguration({"skill.source.max-extract-entries": 2})
+        config = AgentConfiguration({"skill.max-archive-entries": 2})
         root = _cache_with(Skills.from_local_dir(str(zip_path)), config)
         child = ResourceCache({}, parent=root)
         try:
@@ -306,8 +322,8 @@ class TestSubagentChildCache:
 
     def test_child_cache_own_config_overrides_root(self, tmp_path: Path) -> None:
         zip_path = _write_zip(tmp_path, 3)
-        root_config = AgentConfiguration({"skill.source.max-extract-entries": 2})
-        child_config = AgentConfiguration({"skill.source.max-extract-entries": 3})
+        root_config = AgentConfiguration({"skill.max-archive-entries": 2})
+        child_config = AgentConfiguration({"skill.max-archive-entries": 3})
         root = _cache_with(Skills.from_local_dir(str(zip_path)), root_config)
         child = _cache_with(
             Skills.from_local_dir(str(zip_path)), child_config, parent=root

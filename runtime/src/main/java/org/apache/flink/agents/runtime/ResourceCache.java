@@ -21,6 +21,7 @@ package org.apache.flink.agents.runtime;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
@@ -63,11 +64,10 @@ public class ResourceCache implements AutoCloseable {
     private final ResourceCache parent;
 
     /**
-     * Agent configuration that supplies the skill download/extraction limits, or {@code null} for
-     * the defaults. A sub-agent scope without its own config inherits its parent's, so one job uses
-     * one set of limits.
+     * Agent configuration that supplies the skill download/extraction limits. A sub-agent scope
+     * without its own config inherits its parent's, so one job uses one set of limits.
      */
-    @Nullable private final ReadableConfiguration config;
+    private final ReadableConfiguration config;
 
     /**
      * Child plan JSON identifying the sub-agent scope this cache serves, or {@code null} for the
@@ -145,9 +145,8 @@ public class ResourceCache implements AutoCloseable {
     }
 
     /**
-     * Root cache that also takes the agent configuration supplying the {@code
-     * skill.source.url.max-*} limits. Production code passes {@code agentPlan.getConfig()} from
-     * {@code ActionExecutionOperator}.
+     * Root cache that also takes the agent configuration supplying the {@code SkillOptions} limits.
+     * Production code passes {@code agentPlan.getConfig()} from {@code ActionExecutionOperator}.
      */
     public ResourceCache(
             Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
@@ -169,7 +168,10 @@ public class ResourceCache implements AutoCloseable {
             Supplier<PythonInterpreterManager> interpreterManagerSupplier,
             @Nullable ReadableConfiguration config) {
         this.parent = parent;
-        this.config = config != null ? config : (parent != null ? parent.config : null);
+        this.config =
+                config != null
+                        ? config
+                        : (parent != null ? parent.config : new AgentConfiguration());
         this.scopePlanJson = scopePlanJson;
         // Defensive copy: the cache must not be affected by later mutations to the source map.
         this.resourceProviders = new HashMap<>();

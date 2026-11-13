@@ -33,6 +33,7 @@ import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+import static org.apache.flink.agents.runtime.skill.SkillTestUtils.defaultLimits;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -48,7 +49,8 @@ class FileSystemSkillRepositoryTest {
 
     @Test
     void getSkillsReturnsSortedSkillNames() {
-        FileSystemSkillRepository repo = new FileSystemSkillRepository(resourcesRoot());
+        FileSystemSkillRepository repo =
+                new FileSystemSkillRepository(resourcesRoot(), defaultLimits());
         List<AgentSkill> skills = repo.getSkills();
         assertEquals(2, skills.size());
         assertEquals("github", skills.get(0).getName());
@@ -57,13 +59,15 @@ class FileSystemSkillRepositoryTest {
 
     @Test
     void getSkillReturnsNullForUnknown() {
-        FileSystemSkillRepository repo = new FileSystemSkillRepository(resourcesRoot());
+        FileSystemSkillRepository repo =
+                new FileSystemSkillRepository(resourcesRoot(), defaultLimits());
         assertNull(repo.getSkill("does-not-exist"));
     }
 
     @Test
     void getResourcesReadsBundledFiles() {
-        FileSystemSkillRepository repo = new FileSystemSkillRepository(resourcesRoot());
+        FileSystemSkillRepository repo =
+                new FileSystemSkillRepository(resourcesRoot(), defaultLimits());
         Map<String, String> resources = repo.getResources("nano-banana-pro");
         assertNotNull(resources);
         assertTrue(
@@ -74,7 +78,8 @@ class FileSystemSkillRepositoryTest {
 
     @Test
     void resourceLoaderIsLazy() {
-        FileSystemSkillRepository repo = new FileSystemSkillRepository(resourcesRoot());
+        FileSystemSkillRepository repo =
+                new FileSystemSkillRepository(resourcesRoot(), defaultLimits());
         AgentSkill skill = repo.getSkill("nano-banana-pro");
         assertNotNull(skill);
         // resources are not loaded until requested through the loader hook.
@@ -88,7 +93,7 @@ class FileSystemSkillRepositoryTest {
         IllegalArgumentException ex =
                 assertThrows(
                         IllegalArgumentException.class,
-                        () -> new FileSystemSkillRepository(missing));
+                        () -> new FileSystemSkillRepository(missing, defaultLimits()));
         assertTrue(ex.getMessage().contains("does not exist"));
     }
 
@@ -115,7 +120,7 @@ class FileSystemSkillRepositoryTest {
         Path zip = tempDir.resolve("skills.zip");
         zipDir(resourcesRoot(), zip);
 
-        FileSystemSkillRepository repo = new FileSystemSkillRepository(zip);
+        FileSystemSkillRepository repo = new FileSystemSkillRepository(zip, defaultLimits());
 
         List<AgentSkill> skills = repo.getSkills();
         assertEquals(2, skills.size());
@@ -133,7 +138,7 @@ class FileSystemSkillRepositoryTest {
         IllegalArgumentException ex =
                 assertThrows(
                         IllegalArgumentException.class,
-                        () -> new FileSystemSkillRepository(nonZipFile));
+                        () -> new FileSystemSkillRepository(nonZipFile, defaultLimits()));
         assertTrue(ex.getMessage().contains("must be a directory or a .zip"));
     }
 
@@ -164,7 +169,7 @@ class FileSystemSkillRepositoryTest {
                 };
         Files.write(skillDir.resolve("blob.bin"), original);
 
-        FileSystemSkillRepository repo = new FileSystemSkillRepository(tempDir);
+        FileSystemSkillRepository repo = new FileSystemSkillRepository(tempDir, defaultLimits());
         String encoded = repo.getResources("binary-skill").get("blob.bin");
 
         assertTrue(encoded.startsWith("base64: "));

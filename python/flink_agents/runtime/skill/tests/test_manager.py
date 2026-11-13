@@ -30,7 +30,6 @@ import pytest
 
 from flink_agents.api.skills import Skills, SkillSourceSpec
 from flink_agents.runtime.skill.repository._materialize import (
-    DEFAULT_LIMITS,
     MaterializerLimits,
 )
 from flink_agents.runtime.skill.repository.package_repository import (
@@ -38,6 +37,7 @@ from flink_agents.runtime.skill.repository.package_repository import (
 )
 from flink_agents.runtime.skill.skill_manager import SkillManager
 from flink_agents.runtime.skill.skill_source_handler import SkillSourceHandler
+from flink_agents.runtime.skill.tests.utils import default_limits
 
 base_dir = Path(__file__).parent
 
@@ -52,7 +52,9 @@ class TestSkillManager:
 
     def test_add_skills_from_path(self, skills_dir: Path) -> None:
         """Test adding skills from path."""
-        manager = SkillManager(Skills.from_local_dir(str(skills_dir)))
+        manager = SkillManager(
+            Skills.from_local_dir(str(skills_dir)), limits=default_limits()
+        )
         skill = manager.get_skill("github")
         assert skill.name == "github"
         assert skill.description == (
@@ -63,7 +65,9 @@ class TestSkillManager:
 
     def test_generate_discovery_prompt(self, skills_dir: Path) -> None:
         """Test generating discovery prompt."""
-        manager = SkillManager(Skills.from_local_dir(str(skills_dir)))
+        manager = SkillManager(
+            Skills.from_local_dir(str(skills_dir)), limits=default_limits()
+        )
 
         prompt = manager.generate_discovery_prompt("github", "nano-banana-pro")
         with Path.open(base_dir / "resources" / "skill_discovery_prompt.txt") as f:
@@ -72,7 +76,9 @@ class TestSkillManager:
 
     def test_get_skill(self, skills_dir: Path) -> None:
         """Test getting a skill."""
-        manager = SkillManager(Skills.from_local_dir(str(skills_dir)))
+        manager = SkillManager(
+            Skills.from_local_dir(str(skills_dir)), limits=default_limits()
+        )
 
         skill = manager.get_skill("github")
         assert skill is not None
@@ -91,7 +97,9 @@ class TestSkillManager:
         )
 
     def test_origin_is_attached_after_load(self, skills_dir: Path) -> None:
-        manager = SkillManager(Skills.from_local_dir(str(skills_dir)))
+        manager = SkillManager(
+            Skills.from_local_dir(str(skills_dir)), limits=default_limits()
+        )
         origin = manager.get_skill("github").origin
         assert origin is not None
         assert origin.scheme == "local"
@@ -115,13 +123,15 @@ class TestSkillManager:
                 SkillSourceSpec(scheme="local", params={"path": str(dir_b)}),
             ]
         )
-        manager = SkillManager(config)
+        manager = SkillManager(config, limits=default_limits())
         # Second source wins on collision; check via origin.
         assert manager.get_skill("dup").origin.location == str(dir_b)
 
     def test_load_skill_resource(self, skills_dir: Path) -> None:
         """Test loading a skill resource."""
-        manager = SkillManager(Skills.from_local_dir(str(skills_dir)))
+        manager = SkillManager(
+            Skills.from_local_dir(str(skills_dir)), limits=default_limits()
+        )
 
         skill = manager.get_skill("nano-banana-pro")
         content = skill.get_resource("scripts/generate_image.py")
@@ -132,7 +142,9 @@ class TestSkillManager:
         assert nonexistent is None
 
     def test_get_skill_dirs_raises_for_unknown_name(self, skills_dir: Path) -> None:
-        manager = SkillManager(Skills.from_local_dir(str(skills_dir)))
+        manager = SkillManager(
+            Skills.from_local_dir(str(skills_dir)), limits=default_limits()
+        )
         with pytest.raises(ValueError) as exc_info:
             manager.get_skill_dirs("does-not-exist")
         assert "does-not-exist" in str(exc_info.value)
@@ -210,7 +222,7 @@ class TestSkillManagerMixedSources:
         _dir, url, _pkg, _resource = mixed_sources
         digest = hashlib.sha256(_ZipHandler.zip_bytes).hexdigest()
         config = Skills.from_url_unsafe_with_sha256(url, digest)
-        manager = SkillManager(config)
+        manager = SkillManager(config, limits=default_limits())
         assert set(manager.get_all_skill_names()) == {"github", "nano-banana-pro"}
 
     def test_serialized_http_source_is_rejected_by_default(self) -> None:
@@ -224,7 +236,7 @@ class TestSkillManagerMixedSources:
             ]
         )
         with pytest.raises(RuntimeError) as exc_info:
-            SkillManager(config)
+            SkillManager(config, limits=default_limits())
         assert "url:http://example.com/skills.zip" in str(exc_info.value)
         assert "disabled by default" in str(exc_info.value.__cause__)
         assert secret not in str(exc_info.value)
@@ -232,7 +244,7 @@ class TestSkillManagerMixedSources:
 
     def test_url_origin_description_omits_credentials_and_query(self) -> None:
         description = (
-            SkillManager(Skills(sources=[]))
+            SkillManager(Skills(sources=[]), limits=default_limits())
             ._get_handler("url")
             .describe_location(
                 {"url": ("https://user:password@example.com/x.zip?token=secret#part")}
@@ -244,7 +256,7 @@ class TestSkillManagerMixedSources:
     def test_package_only_loads_skills(self, mixed_sources) -> None:
         _dir, _url, pkg, resource = mixed_sources
         config = Skills.from_package((pkg, resource))
-        manager = SkillManager(config)
+        manager = SkillManager(config, limits=default_limits())
         assert set(manager.get_all_skill_names()) == {"github", "nano-banana-pro"}
 
     def test_loads_from_all_sources(self, mixed_sources) -> None:
@@ -266,7 +278,7 @@ class TestSkillManagerMixedSources:
                 ),
             ]
         )
-        manager = SkillManager(config)
+        manager = SkillManager(config, limits=default_limits())
         assert set(manager.get_all_skill_names()) == {"github", "nano-banana-pro"}
         assert all(
             isinstance(r, PackageSkillRepository) for r in manager._repos.values()
@@ -275,7 +287,7 @@ class TestSkillManagerMixedSources:
     def test_close_releases_url_repo_temp_dir(self, mixed_sources) -> None:
         _dir, url, _pkg, _resource = mixed_sources
         config = Skills.from_url_unsafe(url)
-        with SkillManager(config) as manager:
+        with SkillManager(config, limits=default_limits()) as manager:
             skill_dir = manager.get_skill_dir("github")
             assert skill_dir is not None
             extract_root = skill_dir.parent
@@ -291,7 +303,7 @@ class TestSkillManagerMixedSources:
             sources=[SkillSourceSpec(scheme="future-scheme", params={"k": "v"})]
         )
         with pytest.raises(RuntimeError) as exc_info:
-            SkillManager(config)
+            SkillManager(config, limits=default_limits())
         assert "future-scheme" in str(exc_info.value)
         # The registered-scheme list comes from the chained ValueError.
         assert "local" in str(exc_info.value.__cause__)
@@ -310,7 +322,7 @@ class TestSkillManagerMixedSources:
         config = Skills(sources=[SkillSourceSpec(scheme="url", params=params)])
 
         with pytest.raises(RuntimeError) as exc_info:
-            SkillManager(config)
+            SkillManager(config, limits=default_limits())
 
         messages = f"{exc_info.value}\n{exc_info.value.__cause__}"
         assert "password" not in messages
@@ -364,7 +376,7 @@ class TestSkillManagerMixedSources:
                 SkillSourceSpec(scheme="test-dup-close", params={}),
             ]
         )
-        manager = SkillManager(config)
+        manager = SkillManager(config, limits=default_limits())
         manager.close()
 
         assert sorted(closed) == [1, 2], (
@@ -424,7 +436,7 @@ class TestSkillManagerMixedSources:
         )
 
         with pytest.raises(RuntimeError):
-            SkillManager(config)
+            SkillManager(config, limits=default_limits())
         assert closed == ["skill-1"], (
             "the repo opened before the partial-load failure must be closed"
         )
@@ -477,7 +489,7 @@ class TestSkillManagerMixedSources:
         )
 
         with pytest.raises(zipfile.BadZipFile):
-            SkillManager(config)
+            SkillManager(config, limits=default_limits())
         assert closed == ["skill-1"], (
             "a load failure outside (OSError, ValueError) must still close the "
             "repos opened before it"
@@ -535,7 +547,7 @@ class TestSkillManagerMixedSources:
         )
 
         with pytest.raises(KeyError):
-            SkillManager(config)
+            SkillManager(config, limits=default_limits())
         assert closed == ["skill-1", "skill-2"], (
             "a registration failure must close every repo opened so far — the "
             "earlier source's repo and the one whose registration failed"
@@ -549,9 +561,9 @@ class TestSkillManagerLimits:
         zip_path = tmp_path / "skills.zip"
         _zip_dir(base_dir / "resources" / "skills", zip_path)
         limits = MaterializerLimits(
-            max_download_bytes=DEFAULT_LIMITS.max_download_bytes,
-            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
-            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
+            max_download_bytes=default_limits().max_download_bytes,
+            max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
+            max_extract_total_bytes=default_limits().max_extract_total_bytes,
             max_extract_entries=1,
         )
         config = Skills.from_local_dir(str(zip_path))
@@ -559,26 +571,28 @@ class TestSkillManagerLimits:
             SkillManager(config, limits=limits)
         assert "exceeding the limit of 1" in str(exc_info.value.__cause__)
         # Control: the same zip loads with the default limits.
-        with SkillManager(config) as manager:
+        with SkillManager(config, limits=default_limits()) as manager:
             assert manager.size > 0
 
     def test_url_source_uses_given_limits(self, mixed_sources) -> None:
         _dir, url, _pkg, _resource = mixed_sources
         limits = MaterializerLimits(
             max_download_bytes=1,
-            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
-            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
-            max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
+            max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
+            max_extract_total_bytes=default_limits().max_extract_total_bytes,
+            max_extract_entries=default_limits().max_extract_entries,
         )
         config = Skills.from_url_unsafe(url)
         with pytest.raises(RuntimeError) as exc_info:
             SkillManager(config, limits=limits)
         assert "limit of 1 bytes" in str(exc_info.value.__cause__)
         # Control: the same archive loads with the default limits.
-        with SkillManager(config) as manager:
+        with SkillManager(config, limits=default_limits()) as manager:
             assert manager.size > 0
 
-    def test_package_source_keeps_default_limits(self, mixed_sources) -> None:
+    def test_package_directory_is_not_subject_to_zip_limits(
+        self, mixed_sources
+    ) -> None:
         _dir, _url, pkg, resource = mixed_sources
         limits = MaterializerLimits(
             max_download_bytes=1,

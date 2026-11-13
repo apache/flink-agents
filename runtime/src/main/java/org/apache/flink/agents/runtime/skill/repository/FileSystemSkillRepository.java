@@ -31,16 +31,8 @@ import java.nio.file.Path;
  */
 public final class FileSystemSkillRepository extends AbstractMaterializedSkillRepository {
 
-    public FileSystemSkillRepository(Path path) {
-        this(path, SkillMaterializer.Limits.DEFAULT);
-    }
-
     public FileSystemSkillRepository(Path path, SkillMaterializer.Limits limits) {
         super(materialize(path, limits));
-    }
-
-    public FileSystemSkillRepository(String path) {
-        this(Path.of(path));
     }
 
     public FileSystemSkillRepository(String path, SkillMaterializer.Limits limits) {

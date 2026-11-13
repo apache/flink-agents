@@ -109,5 +109,5 @@ class ResourceContextImpl(ResourceContext):
         return SkillManager(
             skills_config,
             self._resource_cache.get_java_resource_adapter(),
-            limits_from_config(self._resource_cache.get_config()),
+            limits=limits_from_config(self._resource_cache.get_config()),
         )

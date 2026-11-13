@@ -23,7 +23,6 @@ from flink_agents.api.skills import Skills, SkillSourceSpec, redact_skill_url
 from flink_agents.runtime.close_utils import failure_of, first_or_logged
 from flink_agents.runtime.skill.agent_skill import AgentSkill, SkillOrigin
 from flink_agents.runtime.skill.repository._materialize import (
-    DEFAULT_LIMITS,
     MaterializerLimits,
 )
 from flink_agents.runtime.skill.repository.classpath_repository import (
@@ -61,12 +60,13 @@ class SkillManager:
         self,
         skills_config: Skills,
         java_bridge: object = None,
-        limits: MaterializerLimits = DEFAULT_LIMITS,
+        *,
+        limits: MaterializerLimits,
     ) -> None:
         """Initialize the SkillManager from a Skills configuration.
 
-        ``limits`` bounds the download and extraction done by ``url`` and
-        ``local`` (zip) sources. The runtime passes the limits built from the
+        ``limits`` bounds HTTP downloads and ZIP extraction for all sources.
+        The runtime passes the limits built from the
         agent configuration with ``limits_from_config``.
         """
         self._limits = limits
@@ -108,12 +108,15 @@ class SkillManager:
                 lambda p: PackageSkillRepository(
                     _require(p, "package", "package"),
                     _require(p, "package", "resource"),
+                    limits=self._limits,
                 ),
                 lambda p: f"{p.get('package', '')}/{p.get('resource', '')}",
             ),
             "classpath": SkillSourceHandler(
                 lambda p: ClasspathSkillRepository(
-                    _require(p, "classpath", "resource"), java_bridge
+                    _require(p, "classpath", "resource"),
+                    java_bridge,
+                    limits=self._limits,
                 ),
                 lambda p: p.get("resource", ""),
             ),
@@ -205,9 +208,7 @@ class SkillManager:
         repo = self._repos.get(skill_name)
         return None if repo is None else repo.get_skill_dir(skill_name)
 
-    def get_skill_names_for_sources(
-        self, specs: list[SkillSourceSpec]
-    ) -> list[str]:
+    def get_skill_names_for_sources(self, specs: list[SkillSourceSpec]) -> list[str]:
         """Return the skill names that were loaded from the given sources.
 
         Sources that were not loaded contribute an empty list. The order follows the

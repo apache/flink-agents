@@ -23,12 +23,12 @@ from pathlib import Path
 import pytest
 
 from flink_agents.runtime.skill.repository._materialize import (
-    DEFAULT_LIMITS,
     MaterializerLimits,
 )
 from flink_agents.runtime.skill.repository.filesystem_repository import (
     FileSystemSkillRepository,
 )
+from flink_agents.runtime.skill.tests.utils import default_limits
 
 
 class TestFileSystemSkillRepository:
@@ -42,18 +42,18 @@ class TestFileSystemSkillRepository:
 
     def test_create_repository(self, skills_dir: Path) -> None:
         """Test creating a repository."""
-        repo = FileSystemSkillRepository(skills_dir)
+        repo = FileSystemSkillRepository(skills_dir, limits=default_limits())
         # Path is resolved, so compare resolved paths
         assert repo.base_dir == skills_dir.resolve()
 
     def test_create_repository_invalid_path(self) -> None:
         """Test creating repository with invalid path."""
         with pytest.raises(ValueError):
-            FileSystemSkillRepository("/nonexistent/path")
+            FileSystemSkillRepository("/nonexistent/path", limits=default_limits())
 
     def test_get_all_skill_names(self, skills_dir: Path) -> None:
         """Test getting all skills (verifies skill discovery)."""
-        repo = FileSystemSkillRepository(skills_dir)
+        repo = FileSystemSkillRepository(skills_dir, limits=default_limits())
         names = [s.name for s in repo.get_skills()]
         assert len(names) == 2
         assert "github" in names
@@ -61,7 +61,7 @@ class TestFileSystemSkillRepository:
 
     def test_get_skill(self, skills_dir: Path) -> None:
         """Test getting a specific skill."""
-        repo = FileSystemSkillRepository(skills_dir)
+        repo = FileSystemSkillRepository(skills_dir, limits=default_limits())
         skill = repo.get_skill("github")
 
         assert skill is not None
@@ -74,7 +74,7 @@ class TestFileSystemSkillRepository:
 
     def test_get_resources(self, skills_dir: Path) -> None:
         """Test getting a skill with resources."""
-        repo = FileSystemSkillRepository(skills_dir)
+        repo = FileSystemSkillRepository(skills_dir, limits=default_limits())
         skill = repo.get_skill("nano-banana-pro")
 
         assert skill is not None
@@ -87,13 +87,13 @@ class TestFileSystemSkillRepository:
 
     def test_get_nonexistent_skill(self, skills_dir: Path) -> None:
         """Test getting a nonexistent skill."""
-        repo = FileSystemSkillRepository(skills_dir)
+        repo = FileSystemSkillRepository(skills_dir, limits=default_limits())
         skill = repo.get_skill("nonexistent")
         assert skill is None
 
     def test_get_all_skills(self, skills_dir: Path) -> None:
         """Test getting all skills."""
-        repo = FileSystemSkillRepository(skills_dir)
+        repo = FileSystemSkillRepository(skills_dir, limits=default_limits())
         skills = repo.get_skills()
         assert len(skills) == 2
         names = {s.name for s in skills}
@@ -120,7 +120,7 @@ class TestFileSystemSkillRepositoryZip:
         return zip_path
 
     def test_create_repository_from_zip(self, skills_zip: Path) -> None:
-        repo = FileSystemSkillRepository(skills_zip)
+        repo = FileSystemSkillRepository(skills_zip, limits=default_limits())
 
         # base_dir resolves to a temp directory containing the extracted layout
         assert repo.base_dir.is_dir()
@@ -129,13 +129,13 @@ class TestFileSystemSkillRepositoryZip:
         assert "nano-banana-pro" in names
 
     def test_get_skills_from_zip(self, skills_zip: Path) -> None:
-        repo = FileSystemSkillRepository(skills_zip)
+        repo = FileSystemSkillRepository(skills_zip, limits=default_limits())
         skills = repo.get_skills()
         names = {s.name for s in skills}
         assert names == {"github", "nano-banana-pro"}
 
     def test_get_resources_from_zip(self, skills_zip: Path) -> None:
-        repo = FileSystemSkillRepository(skills_zip)
+        repo = FileSystemSkillRepository(skills_zip, limits=default_limits())
         resources = repo.get_resources("nano-banana-pro")
         assert "_meta.json" in resources
 
@@ -143,19 +143,19 @@ class TestFileSystemSkillRepositoryZip:
         non_zip_file = tmp_path / "data.txt"
         non_zip_file.write_text("not a zip")
         with pytest.raises(ValueError, match=r"must be a directory or a \.zip file"):
-            FileSystemSkillRepository(non_zip_file)
+            FileSystemSkillRepository(non_zip_file, limits=default_limits())
 
     def test_zip_uses_given_limits(self, skills_zip: Path) -> None:
         limits = MaterializerLimits(
-            max_download_bytes=DEFAULT_LIMITS.max_download_bytes,
-            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
-            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
+            max_download_bytes=default_limits().max_download_bytes,
+            max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
+            max_extract_total_bytes=default_limits().max_extract_total_bytes,
             max_extract_entries=1,
         )
         with pytest.raises(ValueError, match="exceeding the limit of 1"):
             FileSystemSkillRepository(skills_zip, limits=limits)
         # Control: the same zip loads with the default limits.
-        repo = FileSystemSkillRepository(skills_zip)
+        repo = FileSystemSkillRepository(skills_zip, limits=default_limits())
         try:
             assert repo.get_skills()
         finally:

@@ -25,8 +25,6 @@ import org.apache.flink.annotation.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.annotation.Nullable;
-
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -69,12 +67,10 @@ public final class SkillMaterializer {
     // --- Size caps for download and extraction (issue #1072) ---
 
     /**
-     * All four resource limits for a single materializer operation, grouped so tests can inject
-     * small thresholds without touching production defaults.
+     * Validated resource limits for a single skill archive download and extraction.
      *
-     * <p>Production callers use {@link #DEFAULT}; tests construct a small instance and pass it to
-     * the overloads of {@link SkillMaterializer#downloadToTempFile} and {@link
-     * SkillMaterializer#extractZipSafely} that accept a {@code Limits} argument.
+     * <p>Use {@link #fromConfig} to read the agent's {@link SkillOptions} once and pass the values
+     * through to the materializer. All limits must be strictly positive.
      */
     public static final class Limits {
         /** Maximum number of bytes accepted from a single HTTP download. */
@@ -94,18 +90,6 @@ public final class SkillMaterializer {
 
         /** Maximum number of entries permitted in a single zip archive. */
         public final int maxExtractEntries;
-
-        /**
-         * Conservative production defaults, identical to Python's {@code DEFAULT_LIMITS}. They
-         * bound disk use per materialization, especially when several skills are materialized
-         * concurrently; deployments that need larger archives can raise them explicitly.
-         */
-        public static final Limits DEFAULT =
-                new Limits(
-                        64L * 1024 * 1024, // 64 MiB download
-                        64L * 1024 * 1024, // 64 MiB per entry
-                        256L * 1024 * 1024, // 256 MiB total extraction
-                        1_000); // entries
 
         /**
          * Construct a {@code Limits} instance. All values must be strictly positive.
@@ -131,20 +115,16 @@ public final class SkillMaterializer {
 
         /**
          * Build a {@code Limits} from the four {@link SkillOptions} agent config options. Any key
-         * that is absent falls back to its default, and a {@code null} config yields {@link
-         * #DEFAULT}.
+         * that is absent falls back to its default in {@link SkillOptions}.
          *
          * @throws IllegalArgumentException if a configured value is not strictly positive.
          */
-        public static Limits fromConfig(@Nullable ReadableConfiguration config) {
-            if (config == null) {
-                return DEFAULT;
-            }
+        public static Limits fromConfig(ReadableConfiguration config) {
             return new Limits(
-                    config.get(SkillOptions.URL_MAX_DOWNLOAD_BYTES),
-                    config.get(SkillOptions.MAX_EXTRACT_ENTRY_BYTES),
-                    config.get(SkillOptions.MAX_EXTRACT_TOTAL_BYTES),
-                    config.get(SkillOptions.MAX_EXTRACT_ENTRIES));
+                    config.get(SkillOptions.MAX_DOWNLOAD_BYTES),
+                    config.get(SkillOptions.MAX_UNCOMPRESSED_ENTRY_BYTES),
+                    config.get(SkillOptions.MAX_UNCOMPRESSED_TOTAL_BYTES),
+                    config.get(SkillOptions.MAX_ARCHIVE_ENTRIES));
         }
     }
 
@@ -248,19 +228,6 @@ public final class SkillMaterializer {
      *
      * @throws IOException if any zip entry resolves outside the extraction directory, if any size
      *     cap is exceeded, or on I/O errors.
-     */
-    public static Materialized extractZipSafely(Path zipPath) throws IOException {
-        return extractZipSafely(zipPath, Limits.DEFAULT);
-    }
-
-    /**
-     * Extract a zip into a fresh temp directory using the supplied {@link Limits}, and return a
-     * {@link Materialized} handle owning that directory.
-     *
-     * <p>This overload exists so tests can inject small thresholds without allocating hundreds of
-     * MiB of data. Production callers should use {@link #extractZipSafely(Path)}.
-     *
-     * @see #extractZipSafely(Path)
      */
     public static Materialized extractZipSafely(Path zipPath, Limits limits) throws IOException {
         Path extractDir = Files.createTempDirectory(TEMP_DIR_PREFIX);
@@ -526,15 +493,6 @@ public final class SkillMaterializer {
      * <p>The {@code .zip} suffix is load-bearing: {@link FileSystemSkillRepository} uses {@code
      * path.endsWith(".zip")} to detect zip input. Do not change it.
      *
-     * @throws IOException on connect / read failures or HTTP error responses.
-     */
-    public static Path downloadToTempFile(String url, int timeoutMs) throws IOException {
-        return downloadToTempFile(url, timeoutMs, false, Limits.DEFAULT);
-    }
-
-    /**
-     * Download {@code url}, optionally permitting plain HTTP transport.
-     *
      * <p>Security properties:
      *
      * <ul>
@@ -545,23 +503,6 @@ public final class SkillMaterializer {
      *       Content-Length} cannot bypass the limit.
      *   <li>Deletes the temp file on any failure.
      * </ul>
-     *
-     * @throws IOException on connect / read failures, HTTP error responses, or size cap exceeded.
-     */
-    public static Path downloadToTempFile(String url, int timeoutMs, boolean allowInsecureHttp)
-            throws IOException {
-        return downloadToTempFile(url, timeoutMs, allowInsecureHttp, Limits.DEFAULT);
-    }
-
-    /**
-     * Download {@code url}, optionally permitting plain HTTP transport, enforcing the supplied
-     * {@link Limits}.
-     *
-     * <p>This overload exists so tests can inject small thresholds without streaming hundreds of
-     * MiB of data. Production callers should use {@link #downloadToTempFile(String, int)} or {@link
-     * #downloadToTempFile(String, int, boolean)}.
-     *
-     * <p>Security properties: (same as before, but references {@code limits.maxDownloadBytes}).
      *
      * @throws IOException on connect / read failures, HTTP error responses, or size cap exceeded.
      */

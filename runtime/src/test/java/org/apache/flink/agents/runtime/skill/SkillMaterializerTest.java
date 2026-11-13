@@ -55,8 +55,8 @@ import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+import static org.apache.flink.agents.runtime.skill.SkillTestUtils.defaultLimits;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -81,7 +81,8 @@ class SkillMaterializerTest {
                         "skill-a/SKILL.md", "---\nname: skill-a\n---\nbody",
                         "skill-b/SKILL.md", "---\nname: skill-b\n---\nbody"));
 
-        try (SkillMaterializer.Materialized m = SkillMaterializer.extractZipSafely(zip)) {
+        try (SkillMaterializer.Materialized m =
+                SkillMaterializer.extractZipSafely(zip, defaultLimits())) {
             Path extracted = m.getDir();
             assertTrue(Files.isDirectory(extracted));
             assertTrue(Files.isRegularFile(extracted.resolve("skill-a/SKILL.md")));
@@ -95,7 +96,9 @@ class SkillMaterializerTest {
         writeZip(zip, Map.of("../evil.txt", "pwn"));
 
         IOException ex =
-                assertThrows(IOException.class, () -> SkillMaterializer.extractZipSafely(zip));
+                assertThrows(
+                        IOException.class,
+                        () -> SkillMaterializer.extractZipSafely(zip, defaultLimits()));
         assertTrue(ex.getMessage().contains("Unsafe zip entry"));
     }
 
@@ -105,7 +108,9 @@ class SkillMaterializerTest {
         writeZip(zip, Map.of("/etc/evil.txt", "pwn"));
 
         IOException ex =
-                assertThrows(IOException.class, () -> SkillMaterializer.extractZipSafely(zip));
+                assertThrows(
+                        IOException.class,
+                        () -> SkillMaterializer.extractZipSafely(zip, defaultLimits()));
         assertTrue(ex.getMessage().contains("Unsafe zip entry"));
     }
 
@@ -131,7 +136,7 @@ class SkillMaterializerTest {
             int port = server.getAddress().getPort();
             String url = "http://127.0.0.1:" + port + "/anything";
 
-            Path file = SkillMaterializer.downloadToTempFile(url, 5_000, true);
+            Path file = SkillMaterializer.downloadToTempFile(url, 5_000, true, defaultLimits());
             try {
                 assertTrue(Files.isRegularFile(file));
                 byte[] read = Files.readAllBytes(file);
@@ -153,7 +158,7 @@ class SkillMaterializerTest {
 
             assertThrows(
                     IOException.class,
-                    () -> SkillMaterializer.downloadToTempFile(url, 5_000, true));
+                    () -> SkillMaterializer.downloadToTempFile(url, 5_000, true, defaultLimits()));
         } finally {
             server.stop(0);
         }
@@ -166,7 +171,10 @@ class SkillMaterializerTest {
                         IOException.class,
                         () ->
                                 SkillMaterializer.downloadToTempFile(
-                                        "http://127.0.0.1:1/anything", 5_000));
+                                        "http://127.0.0.1:1/anything",
+                                        5_000,
+                                        false,
+                                        defaultLimits()));
         assertTrue(ex.getMessage().contains("disabled by default"));
     }
 
@@ -177,7 +185,10 @@ class SkillMaterializerTest {
                         IOException.class,
                         () ->
                                 SkillMaterializer.downloadToTempFile(
-                                        "not-a-url?token=top-secret", 5_000, true));
+                                        "not-a-url?token=top-secret",
+                                        5_000,
+                                        true,
+                                        defaultLimits()));
         assertTrue(!ex.getMessage().contains("top-secret"));
         assertTrue(ex.getCause() == null);
     }
@@ -189,7 +200,8 @@ class SkillMaterializerTest {
                         IOException.class,
                         () ->
                                 SkillMaterializer.downloadToTempFile(
-                                        "https://[fe80::1%25lo0]/skills.zip", 5_000));
+                                        "https://[fe80::1%25lo0]/skills.zip",
+                                        5_000, false, defaultLimits()));
         assertTrue(ex.getMessage().contains("must not include an IPv6 zone identifier"));
         assertTrue(ex.getCause() == null);
     }
@@ -212,7 +224,10 @@ class SkillMaterializerTest {
                             IOException.class,
                             () ->
                                     SkillMaterializer.downloadToTempFile(
-                                            "http://127.0.0.1:" + port + "/redirect", 5_000, true));
+                                            "http://127.0.0.1:" + port + "/redirect",
+                                            5_000,
+                                            true,
+                                            defaultLimits()));
             assertTrue(ex.getMessage().contains("unsupported redirect"));
             assertTrue(ex.getMessage().contains("https://example.com/skills.zip"));
         } finally {
@@ -237,7 +252,10 @@ class SkillMaterializerTest {
                             IOException.class,
                             () ->
                                     SkillMaterializer.downloadToTempFile(
-                                            "http://127.0.0.1:" + port + "/redirect", 5_000, true));
+                                            "http://127.0.0.1:" + port + "/redirect",
+                                            5_000,
+                                            true,
+                                            defaultLimits()));
             assertTrue(ex.getMessage().contains("invalid redirect"));
             assertTrue(ex.getMessage().contains("<redacted>"));
         } finally {
@@ -267,7 +285,9 @@ class SkillMaterializerTest {
                 });
         server.start();
         try {
-            Path file = SkillMaterializer.downloadToTempFile(baseUrl + "/redirect", 5_000, true);
+            Path file =
+                    SkillMaterializer.downloadToTempFile(
+                            baseUrl + "/redirect", 5_000, true, defaultLimits());
             try {
                 assertEquals("redirected-zip-bytes", Files.readString(file));
             } finally {
@@ -310,7 +330,7 @@ class SkillMaterializerTest {
                             IOException.class,
                             () ->
                                     SkillMaterializer.downloadToTempFile(
-                                            baseUrl + "/redirect", 5_000, true));
+                                            baseUrl + "/redirect", 5_000, true, defaultLimits()));
             assertTrue(ex.getMessage().contains("must not include user info"));
             assertTrue(!ex.getMessage().contains("password"));
             assertTrue(!ex.getMessage().contains("top-secret"));
@@ -343,7 +363,7 @@ class SkillMaterializerTest {
                             IOException.class,
                             () ->
                                     SkillMaterializer.downloadToTempFile(
-                                            baseUrl + "/chain/0", 5_000, true));
+                                            baseUrl + "/chain/0", 5_000, true, defaultLimits()));
             assertTrue(ex.getMessage().contains("too many redirects"));
             assertEquals(11, requests.get());
         } finally {
@@ -378,7 +398,7 @@ class SkillMaterializerTest {
                             IOException.class,
                             () ->
                                     SkillMaterializer.downloadToTempFile(
-                                            baseUrl + "/redirect", 5_000, true));
+                                            baseUrl + "/redirect", 5_000, true, defaultLimits()));
             assertTrue(ex.getMessage().contains("Invalid skill URL"));
             assertEquals(0, targetRequests.get());
         } finally {
@@ -416,7 +436,7 @@ class SkillMaterializerTest {
                             IOException.class,
                             () ->
                                     SkillMaterializer.downloadToTempFile(
-                                            baseUrl + "/redirect", 5_000, true));
+                                            baseUrl + "/redirect", 5_000, true, defaultLimits()));
             assertTrue(ex.getMessage().contains("unsupported redirect"));
             assertTrue(ex.getMessage().contains(baseUrl + "/skills.zip"));
         } finally {
@@ -467,7 +487,9 @@ class SkillMaterializerTest {
         loggerContext.updateLoggers();
         try {
             String configuredUrl = baseUrl + "/redirect?configured_token=secret";
-            Path file = SkillMaterializer.downloadToTempFile(configuredUrl, 5_000, true);
+            Path file =
+                    SkillMaterializer.downloadToTempFile(
+                            configuredUrl, 5_000, true, defaultLimits());
             try {
                 assertEquals("redirected-zip-bytes", Files.readString(file));
                 String warning = String.join("\n", appender.getMessages());
@@ -614,7 +636,7 @@ class SkillMaterializerTest {
         Path zip = tempDir.resolve("skills.zip");
         writeZip(zip, Map.of("skill-a/SKILL.md", "---\nname: skill-a\n---\nbody"));
 
-        SkillMaterializer.Materialized m = SkillMaterializer.extractZipSafely(zip);
+        SkillMaterializer.Materialized m = SkillMaterializer.extractZipSafely(zip, defaultLimits());
         Path extracted = m.getDir();
         assertTrue(Files.exists(extracted));
 
@@ -990,7 +1012,8 @@ class SkillMaterializerTest {
         // Declared size is forged below actual size in both ZIP headers.
         forgeDeclaredSizesForAllEntries(zip, 1L);
 
-        try (SkillMaterializer.Materialized m = SkillMaterializer.extractZipSafely(zip)) {
+        try (SkillMaterializer.Materialized m =
+                SkillMaterializer.extractZipSafely(zip, defaultLimits())) {
             Path extracted = m.getDir().resolve("large.bin");
             assertEquals(actualSize, Files.size(extracted));
         }
@@ -1154,18 +1177,14 @@ class SkillMaterializerTest {
 
         long before = countSkillTempDirs();
 
-        assertThrows(IOException.class, () -> SkillMaterializer.extractZipSafely(zip));
+        assertThrows(
+                IOException.class, () -> SkillMaterializer.extractZipSafely(zip, defaultLimits()));
 
         assertEquals(
                 before, countSkillTempDirs(), "zip-slip failure must not leave a temp dir behind");
     }
 
     // --- Limits.fromConfig: the four SkillOptions agent config options ---
-
-    @Test
-    void limitsFromConfigNullReturnsDefault() {
-        assertSame(SkillMaterializer.Limits.DEFAULT, SkillMaterializer.Limits.fromConfig(null));
-    }
 
     @Test
     void limitsFromConfigWithNoKeysReturnsDefaultValues() {
@@ -1181,10 +1200,10 @@ class SkillMaterializerTest {
     @Test
     void limitsFromConfigReadsAllFourKeys() {
         AgentConfiguration config = new AgentConfiguration();
-        config.setLong("skill.source.url.max-download-bytes", 11L);
-        config.setLong("skill.source.max-extract-entry-bytes", 22L);
-        config.setLong("skill.source.max-extract-total-bytes", 33L);
-        config.setInt("skill.source.max-extract-entries", 44);
+        config.setLong("skill.max-download-bytes", 11L);
+        config.setLong("skill.max-uncompressed-entry-bytes", 22L);
+        config.setLong("skill.max-uncompressed-total-bytes", 33L);
+        config.setInt("skill.max-archive-entries", 44);
 
         SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
 
@@ -1195,42 +1214,24 @@ class SkillMaterializerTest {
     }
 
     @Test
-    void limitsFromConfigIgnoresPreRenameUrlExtractKeys() {
-        AgentConfiguration config = new AgentConfiguration();
-        config.setInt("skill.source.url.max-extract-entries", 7);
-        config.setLong("skill.source.url.max-extract-entry-bytes", 7L);
-        config.setLong("skill.source.url.max-extract-total-bytes", 7L);
-
-        SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
-
-        assertEquals(SkillMaterializer.Limits.DEFAULT.maxExtractEntries, limits.maxExtractEntries);
-        assertEquals(
-                SkillMaterializer.Limits.DEFAULT.maxExtractEntryBytes, limits.maxExtractEntryBytes);
-        assertEquals(
-                SkillMaterializer.Limits.DEFAULT.maxExtractTotalBytes, limits.maxExtractTotalBytes);
-    }
-
-    @Test
     void limitsFromConfigSetsOneKeyAndDefaultsTheRest() {
         AgentConfiguration config = new AgentConfiguration();
-        config.setInt("skill.source.max-extract-entries", 7);
+        config.setInt("skill.max-archive-entries", 7);
 
         SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
 
         assertEquals(7, limits.maxExtractEntries);
-        assertEquals(SkillMaterializer.Limits.DEFAULT.maxDownloadBytes, limits.maxDownloadBytes);
-        assertEquals(
-                SkillMaterializer.Limits.DEFAULT.maxExtractEntryBytes, limits.maxExtractEntryBytes);
-        assertEquals(
-                SkillMaterializer.Limits.DEFAULT.maxExtractTotalBytes, limits.maxExtractTotalBytes);
+        assertEquals(defaultLimits().maxDownloadBytes, limits.maxDownloadBytes);
+        assertEquals(defaultLimits().maxExtractEntryBytes, limits.maxExtractEntryBytes);
+        assertEquals(defaultLimits().maxExtractTotalBytes, limits.maxExtractTotalBytes);
     }
 
     @Test
     void limitsFromConfigRejectsZeroAndNegativeForEveryKey() {
         String[] longKeys = {
-            "skill.source.url.max-download-bytes",
-            "skill.source.max-extract-entry-bytes",
-            "skill.source.max-extract-total-bytes"
+            "skill.max-download-bytes",
+            "skill.max-uncompressed-entry-bytes",
+            "skill.max-uncompressed-total-bytes"
         };
         for (String key : longKeys) {
             for (long bad : new long[] {0L, -1L}) {
@@ -1244,21 +1245,21 @@ class SkillMaterializerTest {
         }
         for (int bad : new int[] {0, -1}) {
             AgentConfiguration config = new AgentConfiguration();
-            config.setInt("skill.source.max-extract-entries", bad);
+            config.setInt("skill.max-archive-entries", bad);
             assertThrows(
                     IllegalArgumentException.class,
                     () -> SkillMaterializer.Limits.fromConfig(config),
-                    "max-extract-entries=" + bad + " must be rejected");
+                    "max-archive-entries=" + bad + " must be rejected");
         }
     }
 
     @Test
     void limitsFromConfigParsesStringValues() {
         AgentConfiguration config = new AgentConfiguration();
-        config.setStr("skill.source.url.max-download-bytes", "11");
-        config.setStr("skill.source.max-extract-entry-bytes", "22");
-        config.setStr("skill.source.max-extract-total-bytes", "33");
-        config.setStr("skill.source.max-extract-entries", "44");
+        config.setStr("skill.max-download-bytes", "11");
+        config.setStr("skill.max-uncompressed-entry-bytes", "22");
+        config.setStr("skill.max-uncompressed-total-bytes", "33");
+        config.setStr("skill.max-archive-entries", "44");
 
         SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
 
@@ -1271,10 +1272,10 @@ class SkillMaterializerTest {
     @Test
     void limitsFromConfigAcceptsMinimumOfOne() {
         AgentConfiguration config = new AgentConfiguration();
-        config.setLong("skill.source.url.max-download-bytes", 1L);
-        config.setLong("skill.source.max-extract-entry-bytes", 1L);
-        config.setLong("skill.source.max-extract-total-bytes", 1L);
-        config.setInt("skill.source.max-extract-entries", 1);
+        config.setLong("skill.max-download-bytes", 1L);
+        config.setLong("skill.max-uncompressed-entry-bytes", 1L);
+        config.setLong("skill.max-uncompressed-total-bytes", 1L);
+        config.setInt("skill.max-archive-entries", 1);
 
         SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
 
@@ -1285,8 +1286,8 @@ class SkillMaterializerTest {
     @Test
     void limitsFromConfigAcceptsJavaTypeMaximum() {
         AgentConfiguration config = new AgentConfiguration();
-        config.setStr("skill.source.url.max-download-bytes", String.valueOf(Long.MAX_VALUE));
-        config.setStr("skill.source.max-extract-entries", String.valueOf(Integer.MAX_VALUE));
+        config.setStr("skill.max-download-bytes", String.valueOf(Long.MAX_VALUE));
+        config.setStr("skill.max-archive-entries", String.valueOf(Integer.MAX_VALUE));
 
         SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(config);
 
@@ -1301,12 +1302,12 @@ class SkillMaterializerTest {
     @Test
     void limitsFromConfigRejectsValuesTooLargeForType() {
         AgentConfiguration entries = new AgentConfiguration();
-        entries.setStr("skill.source.max-extract-entries", "3000000000");
+        entries.setStr("skill.max-archive-entries", "3000000000");
         assertThrows(
                 NumberFormatException.class, () -> SkillMaterializer.Limits.fromConfig(entries));
 
         AgentConfiguration bytes = new AgentConfiguration();
-        bytes.setStr("skill.source.url.max-download-bytes", "9223372036854775808");
+        bytes.setStr("skill.max-download-bytes", "9223372036854775808");
         assertThrows(NumberFormatException.class, () -> SkillMaterializer.Limits.fromConfig(bytes));
     }
 }

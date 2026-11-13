@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from flink_agents.runtime.skill.repository._materialize import (
-    DEFAULT_LIMITS,
     Materialized,
     extract_zip_safely,
 )
@@ -48,9 +47,7 @@ class FileSystemSkillRepository(MaterializedSkillRepository):
     ``SKILL.md``, or a ``.zip`` that extracts into such a layout.
     """
 
-    def __init__(
-        self, base_dir: Path | str, *, limits: MaterializerLimits = DEFAULT_LIMITS
-    ) -> None:
+    def __init__(self, base_dir: Path | str, *, limits: MaterializerLimits) -> None:
         """Open a directory or ``.zip`` of skills.
 
         ``limits`` bounds the extraction of a ``.zip``; directories are not copied.

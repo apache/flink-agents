@@ -31,6 +31,7 @@ from flink_agents.plan.agent_plan import SKILLS_CONFIG
 from flink_agents.runtime.resource_cache import ResourceCache
 from flink_agents.runtime.skill.skill_manager import SkillManager
 from flink_agents.runtime.skill.skill_tools import LoadSkillTool
+from flink_agents.runtime.skill.tests.utils import default_limits
 
 base_dir = Path(__file__).parent
 skills_dir = base_dir / "resources" / "skills"
@@ -39,7 +40,7 @@ skills_dir = base_dir / "resources" / "skills"
 @pytest.fixture
 def manager() -> SkillManager:
     """SkillManager loaded with test skills."""
-    return SkillManager(Skills.from_local_dir(str(skills_dir)))
+    return SkillManager(Skills.from_local_dir(str(skills_dir)), limits=default_limits())
 
 
 @pytest.fixture

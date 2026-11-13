@@ -29,15 +29,17 @@ public final class PackageSkillRepository extends AbstractMaterializedSkillRepos
     public PackageSkillRepository(
             String packageName,
             String resource,
-            @Nullable PythonInterpreterManager interpreterManager)
+            @Nullable PythonInterpreterManager interpreterManager,
+            SkillMaterializer.Limits limits)
             throws IOException {
-        super(materialize(packageName, resource, interpreterManager));
+        super(materialize(packageName, resource, interpreterManager, limits));
     }
 
     private static SkillMaterializer.Materialized materialize(
             String packageName,
             String resource,
-            @Nullable PythonInterpreterManager interpreterManager)
+            @Nullable PythonInterpreterManager interpreterManager,
+            SkillMaterializer.Limits limits)
             throws IOException {
         if (interpreterManager == null) {
             throw new IOException(
@@ -54,7 +56,11 @@ public final class PackageSkillRepository extends AbstractMaterializedSkillRepos
                         "python_java_utils.materialize_package_skills",
                         packageName,
                         resource,
-                        result.getDir().toString());
+                        result.getDir().toString(),
+                        limits.maxDownloadBytes,
+                        limits.maxExtractEntryBytes,
+                        limits.maxExtractTotalBytes,
+                        limits.maxExtractEntries);
             } catch (Exception e) {
                 throw new IOException(
                         "Failed to load Python package skill source '"

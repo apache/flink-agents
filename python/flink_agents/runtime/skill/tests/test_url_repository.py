@@ -28,10 +28,10 @@ from urllib.error import HTTPError
 import pytest
 
 from flink_agents.runtime.skill.repository._materialize import (
-    DEFAULT_LIMITS,
     MaterializerLimits,
 )
 from flink_agents.runtime.skill.repository.url_repository import URLSkillRepository
+from flink_agents.runtime.skill.tests.utils import default_limits
 
 
 def _zip_dir(src: Path, dst_zip: Path) -> None:
@@ -85,7 +85,9 @@ class TestURLSkillRepository:
     def test_load_from_url(self, zip_server: "tuple[str, type[_ZipHandler]]") -> None:
         url, _handler = zip_server
         digest = hashlib.sha256(_handler.zip_bytes).hexdigest().upper()
-        repo = URLSkillRepository(url, sha256=digest, allow_insecure_http=True)
+        repo = URLSkillRepository(
+            url, sha256=digest, allow_insecure_http=True, limits=default_limits()
+        )
 
         skills = repo.get_skills()
         names = {s.name for s in skills}
@@ -93,17 +95,17 @@ class TestURLSkillRepository:
 
     def test_non_http_url_rejected(self) -> None:
         with pytest.raises(ValueError, match=r"Only HTTP\(S\)"):
-            URLSkillRepository("file:///tmp/skills.zip")
+            URLSkillRepository("file:///tmp/skills.zip", limits=default_limits())
 
         with pytest.raises(ValueError, match=r"Only HTTP\(S\)"):
-            URLSkillRepository("ftp://example.com/skills.zip")
+            URLSkillRepository("ftp://example.com/skills.zip", limits=default_limits())
 
     def test_plain_http_rejected_by_default(
         self, zip_server: "tuple[str, type[_ZipHandler]]"
     ) -> None:
         url, _handler = zip_server
         with pytest.raises(ValueError, match="disabled by default"):
-            URLSkillRepository(url)
+            URLSkillRepository(url, limits=default_limits())
 
     def test_sha256_mismatch_rejected_before_extraction(
         self, zip_server: "tuple[str, type[_ZipHandler]]"
@@ -116,7 +118,12 @@ class TestURLSkillRepository:
 
         signed_url = f"{url}?token=top-secret#fragment"
         with pytest.raises(ValueError, match="SHA-256 mismatch") as exc_info:
-            URLSkillRepository(signed_url, sha256="0" * 64, allow_insecure_http=True)
+            URLSkillRepository(
+                signed_url,
+                sha256="0" * 64,
+                allow_insecure_http=True,
+                limits=default_limits(),
+            )
         assert url in str(exc_info.value)
         assert "top-secret" not in str(exc_info.value)
 
@@ -130,12 +137,12 @@ class TestURLSkillRepository:
     )
     def test_invalid_host_and_port_rejected_before_download(self, url: str) -> None:
         with pytest.raises(ValueError, match=r"valid host|valid port"):
-            URLSkillRepository(url)
+            URLSkillRepository(url, limits=default_limits())
 
     def test_ambiguous_invalid_port_is_redacted_before_download(self) -> None:
         url = "https://user:supersecret/skills.zip?token=TOPSECRET"
         with pytest.raises(ValueError, match="valid port") as exc_info:
-            URLSkillRepository(url)
+            URLSkillRepository(url, limits=default_limits())
         assert str(exc_info.value).endswith("<redacted>")
         assert "supersecret" not in str(exc_info.value)
         assert "TOPSECRET" not in str(exc_info.value)
@@ -144,7 +151,9 @@ class TestURLSkillRepository:
         with pytest.raises(
             ValueError, match="must not include an IPv6 zone identifier"
         ):
-            URLSkillRepository("https://[fe80::1%25lo0]/skills.zip")
+            URLSkillRepository(
+                "https://[fe80::1%25lo0]/skills.zip", limits=default_limits()
+            )
 
     @pytest.mark.parametrize(
         "url",
@@ -172,7 +181,7 @@ class TestURLSkillRepository:
     )
     def test_invalid_hostname_syntax_rejected_before_download(self, url: str) -> None:
         with pytest.raises(ValueError, match="valid host"):
-            URLSkillRepository(url)
+            URLSkillRepository(url, limits=default_limits())
 
     @pytest.mark.parametrize(
         "url",
@@ -186,14 +195,14 @@ class TestURLSkillRepository:
     )
     def test_malformed_url_is_rejected_without_leaking_query(self, url: str) -> None:
         with pytest.raises(ValueError) as exc_info:
-            URLSkillRepository(url)
+            URLSkillRepository(url, limits=default_limits())
         assert "password" not in str(exc_info.value)
         assert "top-secret" not in str(exc_info.value)
 
     def test_user_info_is_rejected_without_leaking_secrets(self) -> None:
         url = "https://user:password@example.com/x.zip?token=top-secret"
         with pytest.raises(ValueError, match="must not include user info") as exc_info:
-            URLSkillRepository(url)
+            URLSkillRepository(url, limits=default_limits())
         assert "password" not in str(exc_info.value)
         assert "top-secret" not in str(exc_info.value)
 
@@ -203,6 +212,7 @@ class TestURLSkillRepository:
                 "http://127.0.0.1:1/skills.zip",
                 sha256="invalid",
                 allow_insecure_http=True,
+                limits=default_limits(),
             )
 
     def test_404_error(self, zip_server: "tuple[str, type[_ZipHandler]]") -> None:
@@ -210,7 +220,11 @@ class TestURLSkillRepository:
         handler.status = 404
 
         with pytest.raises(HTTPError) as exc_info:
-            URLSkillRepository(f"{url}?token=top-secret", allow_insecure_http=True)
+            URLSkillRepository(
+                f"{url}?token=top-secret",
+                allow_insecure_http=True,
+                limits=default_limits(),
+            )
         assert "top-secret" not in str(exc_info.value)
 
 
@@ -222,14 +236,16 @@ class TestURLSkillRepositoryLimits:
         size = len(handler.zip_bytes)
         limits = MaterializerLimits(
             max_download_bytes=size - 1,
-            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
-            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
-            max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
+            max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
+            max_extract_total_bytes=default_limits().max_extract_total_bytes,
+            max_extract_entries=default_limits().max_extract_entries,
         )
         with pytest.raises(ValueError, match=f"limit of {size - 1} bytes"):
             URLSkillRepository(url, allow_insecure_http=True, limits=limits)
         # Control: the same archive loads with the default limits.
-        repo = URLSkillRepository(url, allow_insecure_http=True)
+        repo = URLSkillRepository(
+            url, allow_insecure_http=True, limits=default_limits()
+        )
         try:
             assert repo.get_skills()
         finally:
@@ -240,9 +256,9 @@ class TestURLSkillRepositoryLimits:
     ) -> None:
         url, _handler = zip_server
         limits = MaterializerLimits(
-            max_download_bytes=DEFAULT_LIMITS.max_download_bytes,
-            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
-            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
+            max_download_bytes=default_limits().max_download_bytes,
+            max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
+            max_extract_total_bytes=default_limits().max_extract_total_bytes,
             max_extract_entries=1,
         )
         with pytest.raises(ValueError, match="exceeding the limit of 1"):

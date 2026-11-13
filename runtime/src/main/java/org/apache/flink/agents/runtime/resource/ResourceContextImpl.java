@@ -32,6 +32,7 @@ import javax.annotation.Nullable;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
@@ -51,45 +52,22 @@ public class ResourceContextImpl implements ResourceContext, AutoCloseable {
     @Nullable private SkillManager skillManager;
     private boolean skillManagerInitialized;
     private final Supplier<PythonInterpreterManager> interpreterManagerSupplier;
-    @Nullable private final ReadableConfiguration config;
+    private final ReadableConfiguration config;
 
     /**
-     * Construct a context that resolves {@code classpath:} skill sources via {@code classLoader}.
-     * Production code passes the Flink user-code class loader (threaded through {@code
-     * ResourceCache}); standalone use may use {@link #ResourceContextImpl(BiFunction)}.
-     */
-    public ResourceContextImpl(
-            BiFunction<String, ResourceType, Resource> getResource, ClassLoader classLoader) {
-        this(getResource, classLoader, () -> null);
-    }
-
-    /** Resolve the operator's interpreter only when skills are first used, after bridge setup. */
-    public ResourceContextImpl(
-            BiFunction<String, ResourceType, Resource> getResource,
-            ClassLoader classLoader,
-            Supplier<PythonInterpreterManager> interpreterManagerSupplier) {
-        this(getResource, classLoader, interpreterManagerSupplier, null);
-    }
-
-    /**
-     * Also takes the agent configuration that supplies the {@code SkillOptions} download and
-     * extraction limits when the {@link SkillManager} is created. A {@code null} config means the
-     * default limits.
+     * Construct a context with explicit resource lookup, class loader, interpreter supplier and
+     * agent configuration. The interpreter is resolved lazily when skills are first used, after
+     * bridge setup. The cache supplies the effective configuration, including inherited settings.
      */
     public ResourceContextImpl(
             BiFunction<String, ResourceType, Resource> getResource,
             ClassLoader classLoader,
             Supplier<PythonInterpreterManager> interpreterManagerSupplier,
-            @Nullable ReadableConfiguration config) {
+            ReadableConfiguration config) {
         this.getResource = getResource;
         this.classLoader = classLoader;
         this.interpreterManagerSupplier = interpreterManagerSupplier;
-        this.config = config;
-    }
-
-    /** Convenience overload that uses the current thread's context class loader. */
-    public ResourceContextImpl(BiFunction<String, ResourceType, Resource> getResource) {
-        this(getResource, Thread.currentThread().getContextClassLoader());
+        this.config = Objects.requireNonNull(config);
     }
 
     @Override

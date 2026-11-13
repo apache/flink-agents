@@ -32,7 +32,6 @@ import pytest
 from flink_agents.api.skills import redact_skill_url
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.runtime.skill.repository._materialize import (
-    DEFAULT_LIMITS,
     Materialized,
     MaterializerLimits,
     _bounded_copy,
@@ -41,12 +40,13 @@ from flink_agents.runtime.skill.repository._materialize import (
     extract_zip_safely,
     limits_from_config,
 )
+from flink_agents.runtime.skill.tests.utils import default_limits
 
 _LIMIT_KEYS = (
-    ("skill.source.url.max-download-bytes", "max_download_bytes"),
-    ("skill.source.max-extract-entry-bytes", "max_extract_entry_bytes"),
-    ("skill.source.max-extract-total-bytes", "max_extract_total_bytes"),
-    ("skill.source.max-extract-entries", "max_extract_entries"),
+    ("skill.max-download-bytes", "max_download_bytes"),
+    ("skill.max-uncompressed-entry-bytes", "max_extract_entry_bytes"),
+    ("skill.max-uncompressed-total-bytes", "max_extract_total_bytes"),
+    ("skill.max-archive-entries", "max_extract_entries"),
 )
 
 
@@ -58,19 +58,19 @@ def _make_zip(zip_path: Path, entries: dict[str, str]) -> None:
 
 def _small_limits(*, entry: int, total: int) -> MaterializerLimits:
     return MaterializerLimits(
-        max_download_bytes=DEFAULT_LIMITS.max_download_bytes,
+        max_download_bytes=default_limits().max_download_bytes,
         max_extract_entry_bytes=entry,
         max_extract_total_bytes=total,
-        max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
+        max_extract_entries=default_limits().max_extract_entries,
     )
 
 
 def _download_cap(cap: int) -> MaterializerLimits:
     return MaterializerLimits(
         max_download_bytes=cap,
-        max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
-        max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
-        max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
+        max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
+        max_extract_total_bytes=default_limits().max_extract_total_bytes,
+        max_extract_entries=default_limits().max_extract_entries,
     )
 
 
@@ -93,7 +93,7 @@ class TestExtractZipSafely:
             },
         )
 
-        with extract_zip_safely(zip_path) as m:
+        with extract_zip_safely(zip_path, limits=default_limits()) as m:
             extract_dir = m.dir
             assert extract_dir.is_dir()
             assert (extract_dir / "skill-a" / "SKILL.md").read_text().startswith("---")
@@ -104,7 +104,7 @@ class TestExtractZipSafely:
         _make_zip(zip_path, {"../evil.txt": "pwn"})
 
         with pytest.raises(ValueError, match="Unsafe zip entry"):
-            extract_zip_safely(zip_path)
+            extract_zip_safely(zip_path, limits=default_limits())
 
     def test_rejects_zip_slip_absolute(self, tmp_path: Path) -> None:
         # Defense-in-depth: CPython's extractall already strips leading slashes,
@@ -113,7 +113,7 @@ class TestExtractZipSafely:
         _make_zip(zip_path, {"/etc/evil.txt": "pwn"})
 
         with pytest.raises(ValueError, match="Unsafe zip entry"):
-            extract_zip_safely(zip_path)
+            extract_zip_safely(zip_path, limits=default_limits())
 
 
 class TestExtractZipInto:
@@ -124,7 +124,7 @@ class TestExtractZipInto:
         _make_zip(zip_path, {"skill-a/SKILL.md": "---\nname: skill-a\n---\nbody"})
         target = tmp_path / "target"
 
-        extract_zip_into(zip_path, target)
+        extract_zip_into(zip_path, target, limits=default_limits())
 
         assert (target / "skill-a" / "SKILL.md").is_file()
 
@@ -133,7 +133,7 @@ class TestExtractZipInto:
         _make_zip(zip_path, {"../evil.txt": "pwn"})
 
         with pytest.raises(ValueError, match="Unsafe zip entry"):
-            extract_zip_into(zip_path, tmp_path / "target")
+            extract_zip_into(zip_path, tmp_path / "target", limits=default_limits())
         assert not (tmp_path / "evil.txt").exists()
 
     def test_enforces_limits(self, tmp_path: Path) -> None:
@@ -169,7 +169,9 @@ class TestExtractZipInto:
         target = tmp_path / "target"
         target.mkdir()
 
-        materialize_package("fake_skill_pkg", "skills.zip", str(target))
+        materialize_package(
+            "fake_skill_pkg", "skills.zip", str(target), limits=default_limits()
+        )
 
         assert (target / "skill-a" / "SKILL.md").is_file()
 
@@ -178,7 +180,7 @@ class TestMaterialized:
     def test_close_removes_dir(self, tmp_path: Path) -> None:
         zip_path = tmp_path / "skills.zip"
         _make_zip(zip_path, {"skill-a/SKILL.md": "---\nname: skill-a\n---\nbody"})
-        m = extract_zip_safely(zip_path)
+        m = extract_zip_safely(zip_path, limits=default_limits())
         extracted = m.dir
         assert extracted.exists()
 
@@ -266,7 +268,10 @@ class TestDownloadToTempfile:
         handler.status = 200
 
         path = download_to_tempfile(
-            f"{base_url}/anything", timeout=10, allow_insecure_http=True
+            f"{base_url}/anything",
+            timeout=10,
+            allow_insecure_http=True,
+            limits=default_limits(),
         )
 
         try:
@@ -284,18 +289,27 @@ class TestDownloadToTempfile:
 
         with pytest.raises(HTTPError):
             download_to_tempfile(
-                f"{base_url}/missing", timeout=10, allow_insecure_http=True
+                f"{base_url}/missing",
+                timeout=10,
+                allow_insecure_http=True,
+                limits=default_limits(),
             )
 
     def test_rejects_plain_http_by_default(self) -> None:
         with pytest.raises(ValueError, match="disabled by default"):
-            download_to_tempfile("http://127.0.0.1:1/anything", timeout=10)
+            download_to_tempfile(
+                "http://127.0.0.1:1/anything", timeout=10, limits=default_limits()
+            )
 
     def test_rejects_scoped_ipv6_before_connection(self) -> None:
         with pytest.raises(
             ValueError, match="must not include an IPv6 zone identifier"
         ):
-            download_to_tempfile("https://[fe80::1%25lo0]/skills.zip", timeout=10)
+            download_to_tempfile(
+                "https://[fe80::1%25lo0]/skills.zip",
+                timeout=10,
+                limits=default_limits(),
+            )
 
     def test_rejects_cross_protocol_redirect_before_request(
         self, static_server: "tuple[str, type[_StaticHandler]]"
@@ -307,7 +321,10 @@ class TestDownloadToTempfile:
             ValueError, match=r"unsupported redirect.*https://127\.0\.0\.1:1"
         ):
             download_to_tempfile(
-                f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+                f"{base_url}/redirect",
+                timeout=10,
+                allow_insecure_http=True,
+                limits=default_limits(),
             )
 
     def test_follows_308_redirect(
@@ -319,7 +336,10 @@ class TestDownloadToTempfile:
         handler.redirect_location = f"{base_url}/skills.zip"
 
         path = download_to_tempfile(
-            f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+            f"{base_url}/redirect",
+            timeout=10,
+            allow_insecure_http=True,
+            limits=default_limits(),
         )
         try:
             assert path.read_bytes() == b"redirected-zip-bytes"
@@ -339,7 +359,10 @@ class TestDownloadToTempfile:
 
         with pytest.raises(ValueError, match="must not include user info") as exc_info:
             download_to_tempfile(
-                f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+                f"{base_url}/redirect",
+                timeout=10,
+                allow_insecure_http=True,
+                limits=default_limits(),
             )
         assert "password" not in str(exc_info.value)
         assert "top-secret" not in str(exc_info.value)
@@ -352,7 +375,10 @@ class TestDownloadToTempfile:
 
         with pytest.raises(HTTPError):
             download_to_tempfile(
-                f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+                f"{base_url}/redirect",
+                timeout=10,
+                allow_insecure_http=True,
+                limits=default_limits(),
             )
         assert handler.request_count == 5
 
@@ -363,7 +389,10 @@ class TestDownloadToTempfile:
 
         with pytest.raises(HTTPError):
             download_to_tempfile(
-                f"{base_url}/chain/0", timeout=10, allow_insecure_http=True
+                f"{base_url}/chain/0",
+                timeout=10,
+                allow_insecure_http=True,
+                limits=default_limits(),
             )
         assert handler.request_count == 11
 
@@ -375,7 +404,10 @@ class TestDownloadToTempfile:
 
         with pytest.raises(ValueError, match="Invalid skill URL"):
             download_to_tempfile(
-                f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+                f"{base_url}/redirect",
+                timeout=10,
+                allow_insecure_http=True,
+                limits=default_limits(),
             )
         assert handler.request_count == 1
 
@@ -396,7 +428,10 @@ class TestDownloadToTempfile:
             logger="flink_agents.runtime.skill.repository._materialize",
         ):
             path = download_to_tempfile(
-                configured_url, timeout=10, allow_insecure_http=True
+                configured_url,
+                timeout=10,
+                allow_insecure_http=True,
+                limits=default_limits(),
             )
 
         try:
@@ -594,9 +629,9 @@ class TestDownloadSizeCap:
 class TestExtractionSizeCap:
     def test_rejects_archive_with_too_many_entries(self, tmp_path: Path) -> None:
         limits = MaterializerLimits(
-            max_download_bytes=DEFAULT_LIMITS.max_download_bytes,
-            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
-            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
+            max_download_bytes=default_limits().max_download_bytes,
+            max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
+            max_extract_total_bytes=default_limits().max_extract_total_bytes,
             max_extract_entries=2,
         )
         zip_path = tmp_path / "many.zip"
@@ -610,10 +645,10 @@ class TestExtractionSizeCap:
         _make_zip_with_patched_declared_sizes(
             tmp_path / "big-declared.zip",
             {"entry.bin": b"x"},
-            DEFAULT_LIMITS.max_extract_entry_bytes + 1,
+            default_limits().max_extract_entry_bytes + 1,
         )
         with pytest.raises(ValueError, match="per-entry limit"):
-            extract_zip_safely(tmp_path / "big-declared.zip")
+            extract_zip_safely(tmp_path / "big-declared.zip", limits=default_limits())
 
     def test_forged_declared_size_is_rejected_by_crc_check(
         self, tmp_path: Path
@@ -624,7 +659,7 @@ class TestExtractionSizeCap:
         zip_path = tmp_path / "forged.zip"
         _make_zip_with_patched_declared_sizes(zip_path, {"large.bin": b"x" * 512}, 1)
         with pytest.raises(ValueError, match="failed integrity check"):
-            extract_zip_safely(zip_path)
+            extract_zip_safely(zip_path, limits=default_limits())
 
     def test_forged_declared_size_still_cleans_up(self, tmp_path: Path) -> None:
         zip_path = tmp_path / "forged.zip"
@@ -632,7 +667,7 @@ class TestExtractionSizeCap:
         tmp_dir = Path(tempfile.gettempdir())
         before = _count_skill_temp_dirs(tmp_dir)
         with pytest.raises(ValueError, match="failed integrity check"):
-            extract_zip_safely(zip_path)
+            extract_zip_safely(zip_path, limits=default_limits())
         assert _count_skill_temp_dirs(tmp_dir) == before
 
     def test_accepts_entries_exactly_at_total_cap(self, tmp_path: Path) -> None:
@@ -645,9 +680,9 @@ class TestExtractionSizeCap:
 
     def test_cleanup_on_extraction_failure(self, tmp_path: Path) -> None:
         limits = MaterializerLimits(
-            max_download_bytes=DEFAULT_LIMITS.max_download_bytes,
-            max_extract_entry_bytes=DEFAULT_LIMITS.max_extract_entry_bytes,
-            max_extract_total_bytes=DEFAULT_LIMITS.max_extract_total_bytes,
+            max_download_bytes=default_limits().max_download_bytes,
+            max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
+            max_extract_total_bytes=default_limits().max_extract_total_bytes,
             max_extract_entries=2,
         )
         zip_path = tmp_path / "many.zip"
@@ -743,9 +778,6 @@ class TestBoundedCopy:
 class TestLimitsFromConfig:
     """``limits_from_config`` builds the limits from the ``SkillOptions`` keys."""
 
-    def test_none_config_returns_defaults(self) -> None:
-        assert limits_from_config(None) is DEFAULT_LIMITS
-
     def test_no_keys_returns_default_values(self) -> None:
         limits = limits_from_config(AgentConfiguration())
         assert limits.max_download_bytes == 64 * 1024 * 1024
@@ -763,23 +795,13 @@ class TestLimitsFromConfig:
         assert limits.max_extract_total_bytes == 13
         assert limits.max_extract_entries == 14
 
-    def test_ignores_pre_rename_url_extract_keys(self) -> None:
-        config = AgentConfiguration(
-            {
-                "skill.source.url.max-extract-entry-bytes": 7,
-                "skill.source.url.max-extract-total-bytes": 7,
-                "skill.source.url.max-extract-entries": 7,
-            }
-        )
-        limits = limits_from_config(config)
-        for _key, attr in _LIMIT_KEYS:
-            assert getattr(limits, attr) == getattr(DEFAULT_LIMITS, attr)
-
     @pytest.mark.parametrize(("key", "attr"), _LIMIT_KEYS)
     def test_one_key_set_and_the_rest_default(self, key: str, attr: str) -> None:
         limits = limits_from_config(AgentConfiguration({key: 7}))
         for _other_key, other_attr in _LIMIT_KEYS:
-            expected = 7 if other_attr == attr else getattr(DEFAULT_LIMITS, other_attr)
+            expected = (
+                7 if other_attr == attr else getattr(default_limits(), other_attr)
+            )
             assert getattr(limits, other_attr) == expected
 
     @pytest.mark.parametrize(("key", "attr"), _LIMIT_KEYS)
@@ -796,8 +818,8 @@ class TestLimitsFromConfig:
     def test_parses_string_values(self) -> None:
         config = AgentConfiguration(
             {
-                "skill.source.url.max-download-bytes": "1024",
-                "skill.source.max-extract-entries": "+5",
+                "skill.max-download-bytes": "1024",
+                "skill.max-archive-entries": "+5",
             }
         )
         limits = limits_from_config(config)
@@ -810,28 +832,28 @@ class TestLimitsFromConfig:
     def test_rejects_non_integer_values_like_java(self, value: object) -> None:
         # Java parses with Long.parseLong / Integer.parseInt, which reject all of
         # these, so the same config value must not load in one runtime only.
-        config = AgentConfiguration({"skill.source.max-extract-entries": value})
+        config = AgentConfiguration({"skill.max-archive-entries": value})
         with pytest.raises(
             ValueError,
-            match=r"Invalid value for skill\.source\.max-extract-entries",
+            match=r"Invalid value for skill\.max-archive-entries",
         ):
             limits_from_config(config)
 
     @pytest.mark.parametrize(
         ("key", "attr", "java_max"),
         [
-            ("skill.source.url.max-download-bytes", "max_download_bytes", 2**63 - 1),
+            ("skill.max-download-bytes", "max_download_bytes", 2**63 - 1),
             (
-                "skill.source.max-extract-entry-bytes",
+                "skill.max-uncompressed-entry-bytes",
                 "max_extract_entry_bytes",
                 2**63 - 1,
             ),
             (
-                "skill.source.max-extract-total-bytes",
+                "skill.max-uncompressed-total-bytes",
                 "max_extract_total_bytes",
                 2**63 - 1,
             ),
-            ("skill.source.max-extract-entries", "max_extract_entries", 2**31 - 1),
+            ("skill.max-archive-entries", "max_extract_entries", 2**31 - 1),
         ],
     )
     def test_accepts_java_type_maximum(
@@ -844,11 +866,11 @@ class TestLimitsFromConfig:
     @pytest.mark.parametrize(
         ("key", "too_large"),
         [
-            ("skill.source.url.max-download-bytes", 2**63),
-            ("skill.source.max-extract-entry-bytes", 2**63),
-            ("skill.source.max-extract-total-bytes", 2**63),
-            ("skill.source.max-extract-entries", 2**31),
-            ("skill.source.max-extract-entries", 3_000_000_000),
+            ("skill.max-download-bytes", 2**63),
+            ("skill.max-uncompressed-entry-bytes", 2**63),
+            ("skill.max-uncompressed-total-bytes", 2**63),
+            ("skill.max-archive-entries", 2**31),
+            ("skill.max-archive-entries", 3_000_000_000),
         ],
     )
     def test_rejects_values_too_large_for_java_type(
@@ -865,18 +887,18 @@ class TestLimitsFromConfig:
     @pytest.mark.parametrize(
         ("key", "attr", "java_min"),
         [
-            ("skill.source.url.max-download-bytes", "max_download_bytes", -(2**63)),
+            ("skill.max-download-bytes", "max_download_bytes", -(2**63)),
             (
-                "skill.source.max-extract-entry-bytes",
+                "skill.max-uncompressed-entry-bytes",
                 "max_extract_entry_bytes",
                 -(2**63),
             ),
             (
-                "skill.source.max-extract-total-bytes",
+                "skill.max-uncompressed-total-bytes",
                 "max_extract_total_bytes",
                 -(2**63),
             ),
-            ("skill.source.max-extract-entries", "max_extract_entries", -(2**31)),
+            ("skill.max-archive-entries", "max_extract_entries", -(2**31)),
         ],
     )
     def test_java_type_minimum_parses_then_fails_positivity(
@@ -889,10 +911,10 @@ class TestLimitsFromConfig:
     @pytest.mark.parametrize(
         ("key", "too_small"),
         [
-            ("skill.source.url.max-download-bytes", -(2**63) - 1),
-            ("skill.source.max-extract-entry-bytes", -(2**63) - 1),
-            ("skill.source.max-extract-total-bytes", -(2**63) - 1),
-            ("skill.source.max-extract-entries", -(2**31) - 1),
+            ("skill.max-download-bytes", -(2**63) - 1),
+            ("skill.max-uncompressed-entry-bytes", -(2**63) - 1),
+            ("skill.max-uncompressed-total-bytes", -(2**63) - 1),
+            ("skill.max-archive-entries", -(2**31) - 1),
         ],
     )
     def test_rejects_values_too_small_for_java_type(

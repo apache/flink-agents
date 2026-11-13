@@ -36,6 +36,7 @@ import java.util.jar.JarOutputStream;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static org.apache.flink.agents.runtime.skill.SkillTestUtils.defaultLimits;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -68,7 +69,9 @@ class ClasspathSkillRepositoryTest {
     @Test
     void loadFromDirectoryResource() throws IOException {
         // src/test/resources/skills is on the test classpath as a directory.
-        ClasspathSkillRepository repo = new ClasspathSkillRepository("skills");
+        ClasspathSkillRepository repo =
+                new ClasspathSkillRepository(
+                        "skills", Thread.currentThread().getContextClassLoader(), defaultLimits());
         assertEquals(
                 List.of("github", "nano-banana-pro"),
                 repo.getSkills().stream()
@@ -83,7 +86,8 @@ class ClasspathSkillRepositoryTest {
         zipDirIntoJarUnderPrefix(resourcesRoot(), jar, "embedded-skills");
         URLClassLoader loader =
                 new URLClassLoader(new URL[] {jar.toUri().toURL()}, /* parent */ null);
-        ClasspathSkillRepository repo = new ClasspathSkillRepository("embedded-skills", loader);
+        ClasspathSkillRepository repo =
+                new ClasspathSkillRepository("embedded-skills", loader, defaultLimits());
         assertEquals(
                 List.of("github", "nano-banana-pro"),
                 repo.getSkills().stream()
@@ -106,7 +110,8 @@ class ClasspathSkillRepositoryTest {
                 new URL("file:" + relativeJar.toString().replace(File.separatorChar, '/'));
         URLClassLoader loader = new URLClassLoader(new URL[] {relativeUrl}, /* parent */ null);
 
-        ClasspathSkillRepository repo = new ClasspathSkillRepository("embedded-skills", loader);
+        ClasspathSkillRepository repo =
+                new ClasspathSkillRepository("embedded-skills", loader, defaultLimits());
         assertEquals(
                 List.of("github", "nano-banana-pro"),
                 repo.getSkills().stream()
@@ -129,7 +134,8 @@ class ClasspathSkillRepositoryTest {
         URL directJarUrl = new URL("jar:" + relativeFileUrl + "!/embedded-skills");
         ClassLoader loader = resourcesReturning("embedded-skills", directJarUrl);
 
-        ClasspathSkillRepository repo = new ClasspathSkillRepository("embedded-skills", loader);
+        ClasspathSkillRepository repo =
+                new ClasspathSkillRepository("embedded-skills", loader, defaultLimits());
         assertEquals(
                 List.of("github", "nano-banana-pro"),
                 repo.getSkills().stream()
@@ -146,7 +152,8 @@ class ClasspathSkillRepositoryTest {
         URL directDirUrl = new URL("file:src/test/resources/skills");
         ClassLoader loader = resourcesReturning("skills", directDirUrl);
 
-        ClasspathSkillRepository repo = new ClasspathSkillRepository("skills", loader);
+        ClasspathSkillRepository repo =
+                new ClasspathSkillRepository("skills", loader, defaultLimits());
         assertEquals(
                 List.of("github", "nano-banana-pro"),
                 repo.getSkills().stream()
@@ -186,7 +193,8 @@ class ClasspathSkillRepositoryTest {
         URLClassLoader loader =
                 new URLClassLoader(
                         new URL[] {jarA.toUri().toURL(), jarB.toUri().toURL()}, /* parent */ null);
-        ClasspathSkillRepository repo = new ClasspathSkillRepository("merged-skills", loader);
+        ClasspathSkillRepository repo =
+                new ClasspathSkillRepository("merged-skills", loader, defaultLimits());
         assertEquals(
                 List.of("github", "nano-banana-pro"),
                 repo.getSkills().stream()
@@ -210,7 +218,8 @@ class ClasspathSkillRepositoryTest {
         URLClassLoader loader =
                 new URLClassLoader(
                         new URL[] {jarA.toUri().toURL(), jarB.toUri().toURL()}, /* parent */ null);
-        ClasspathSkillRepository repo = new ClasspathSkillRepository("merged-skills", loader);
+        ClasspathSkillRepository repo =
+                new ClasspathSkillRepository("merged-skills", loader, defaultLimits());
         assertEquals(
                 List.of("github"),
                 List.copyOf(
@@ -249,7 +258,11 @@ class ClasspathSkillRepositoryTest {
         IllegalArgumentException ex =
                 assertThrows(
                         IllegalArgumentException.class,
-                        () -> new ClasspathSkillRepository("no-such-thing"));
+                        () ->
+                                new ClasspathSkillRepository(
+                                        "no-such-thing",
+                                        Thread.currentThread().getContextClassLoader(),
+                                        defaultLimits()));
         assertTrue(
                 ex.getMessage().contains("Classpath resource not found"),
                 "expected 'Classpath resource not found' in message, got: " + ex.getMessage());

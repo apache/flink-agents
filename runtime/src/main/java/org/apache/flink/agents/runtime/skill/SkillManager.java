@@ -84,26 +84,9 @@ public class SkillManager implements AutoCloseable {
     private final List<SkillRepository> openedRepos = new ArrayList<>();
 
     /**
-     * Construct a {@code SkillManager} that resolves {@code classpath:} sources against {@code
-     * classLoader}. Production code passes the Flink user-code class loader (threaded through
-     * {@code ResourceCache} from {@code ActionExecutionOperator}); tests / standalone use may use
-     * {@link #SkillManager(Skills)}.
-     */
-    public SkillManager(Skills config, ClassLoader classLoader) {
-        this(config, classLoader, null);
-    }
-
-    public SkillManager(
-            Skills config,
-            ClassLoader classLoader,
-            @Nullable PythonInterpreterManager interpreterManager) {
-        this(config, classLoader, interpreterManager, SkillMaterializer.Limits.DEFAULT);
-    }
-
-    /**
-     * Construct with the download/extraction {@link SkillMaterializer.Limits} that {@code url} and
-     * {@code local} (zip) sources enforce. Production code passes {@link
-     * SkillMaterializer.Limits#fromConfig} built from the agent configuration.
+     * Construct with the download/extraction {@link SkillMaterializer.Limits} enforced for HTTP
+     * downloads and ZIP sources. Production code passes {@link SkillMaterializer.Limits#fromConfig}
+     * built from the agent configuration.
      */
     public SkillManager(
             Skills config,
@@ -117,21 +100,14 @@ public class SkillManager implements AutoCloseable {
         loadAll();
     }
 
-    /**
-     * Convenience overload that uses {@link Thread#getContextClassLoader} for {@code classpath:}
-     * resolution. Prefer {@link #SkillManager(Skills, ClassLoader)} in production paths where the
-     * Flink user-code class loader is available — the thread context loader is not guaranteed to be
-     * the user-code loader (e.g. Python interpreter or async-pool threads).
-     */
-    public SkillManager(Skills config) {
-        this(config, Thread.currentThread().getContextClassLoader());
-    }
-
     /** Construct with instance-local handlers for internal lifecycle tests. */
-    SkillManager(Skills config, Map<String, SkillSourceHandler> handlers) {
+    SkillManager(
+            Skills config,
+            Map<String, SkillSourceHandler> handlers,
+            SkillMaterializer.Limits limits) {
         this.config = config;
         this.classLoader = Thread.currentThread().getContextClassLoader();
-        this.limits = SkillMaterializer.Limits.DEFAULT;
+        this.limits = limits;
         this.handlers.putAll(handlers);
         loadAll();
     }
@@ -155,7 +131,8 @@ public class SkillManager implements AutoCloseable {
         registerHandler(
                 "classpath",
                 (params, cl) ->
-                        new ClasspathSkillRepository(require(params, "classpath", "resource"), cl),
+                        new ClasspathSkillRepository(
+                                require(params, "classpath", "resource"), cl, limits),
                 params -> params.getOrDefault("resource", ""));
         registerHandler(
                 "package",
@@ -163,7 +140,8 @@ public class SkillManager implements AutoCloseable {
                         new PackageSkillRepository(
                                 require(params, "package", "package"),
                                 require(params, "package", "resource"),
-                                interpreterManager),
+                                interpreterManager,
+                                limits),
                 params ->
                         params.getOrDefault("package", "")
                                 + "/"

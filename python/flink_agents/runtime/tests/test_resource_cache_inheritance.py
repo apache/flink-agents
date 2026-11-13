@@ -204,4 +204,4 @@ def test_get_config_returns_own_config_else_parents() -> None:
     assert ResourceCache({}, child_config, parent=root).get_config() is child_config
     grandchild = ResourceCache({}, parent=ResourceCache({}, parent=root))
     assert grandchild.get_config() is root_config
-    assert ResourceCache({}).get_config() is None
+    assert isinstance(ResourceCache({}).get_config(), AgentConfiguration)

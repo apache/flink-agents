@@ -45,12 +45,11 @@ logger = logging.getLogger(__name__)
 
 
 class MaterializerLimits:
-    """All four resource limits for a single materializer operation.
+    """Validated resource limits for a single skill archive download and extraction.
 
-    Group the limits into one object so tests can inject small thresholds
-    without touching production defaults.
-
-    All values must be strictly positive integers.
+    Use ``limits_from_config`` to read the agent's ``SkillOptions`` once and pass
+    the values through to the materializer. All values must be strictly positive
+    integers.
     """
 
     __slots__ = (
@@ -82,17 +81,6 @@ class MaterializerLimits:
         self.max_extract_total_bytes = max_extract_total_bytes
         self.max_extract_entries = max_extract_entries
 
-
-#: Conservative production defaults, identical to Java's
-#: ``SkillMaterializer.Limits.DEFAULT``. They bound disk use per materialization,
-#: especially when several skills are materialized concurrently; deployments that
-#: need larger archives can raise them explicitly.
-DEFAULT_LIMITS = MaterializerLimits(
-    max_download_bytes=64 * 1024 * 1024,  # 64 MiB
-    max_extract_entry_bytes=64 * 1024 * 1024,  # 64 MiB
-    max_extract_total_bytes=256 * 1024 * 1024,  # 256 MiB
-    max_extract_entries=1_000,
-)
 
 _INTEGER_PATTERN = re.compile(r"[+-]?[0-9]+")
 
@@ -127,38 +115,36 @@ def _read_strict_int(
     return value
 
 
-def limits_from_config(config: ReadableConfiguration | None) -> MaterializerLimits:
+def limits_from_config(config: ReadableConfiguration) -> MaterializerLimits:
     """Build :class:`MaterializerLimits` from the :class:`SkillOptions` options.
 
-    Mirrors Java's ``SkillMaterializer.Limits.fromConfig``: a ``None`` config
-    gives :data:`DEFAULT_LIMITS`, and an absent key falls back to its default.
+    Mirrors Java's ``SkillMaterializer.Limits.fromConfig``: an absent key
+    falls back to its default in ``SkillOptions``.
     Zero or negative values are rejected by :class:`MaterializerLimits`.
 
     Raises:
         ValueError: If a value is not an integer, is outside the range of the
             matching Java option's type, or is not strictly positive.
     """
-    if config is None:
-        return DEFAULT_LIMITS
     return MaterializerLimits(
         max_download_bytes=_read_strict_int(
             config,
-            SkillOptions.URL_MAX_DOWNLOAD_BYTES,
+            SkillOptions.MAX_DOWNLOAD_BYTES,
             _JAVA_LONG_RANGE,
         ),
         max_extract_entry_bytes=_read_strict_int(
             config,
-            SkillOptions.MAX_EXTRACT_ENTRY_BYTES,
+            SkillOptions.MAX_UNCOMPRESSED_ENTRY_BYTES,
             _JAVA_LONG_RANGE,
         ),
         max_extract_total_bytes=_read_strict_int(
             config,
-            SkillOptions.MAX_EXTRACT_TOTAL_BYTES,
+            SkillOptions.MAX_UNCOMPRESSED_TOTAL_BYTES,
             _JAVA_LONG_RANGE,
         ),
         max_extract_entries=_read_strict_int(
             config,
-            SkillOptions.MAX_EXTRACT_ENTRIES,
+            SkillOptions.MAX_ARCHIVE_ENTRIES,
             _JAVA_INT_RANGE,
         ),
     )
@@ -283,9 +269,7 @@ def copy_dir_to_temp(src_dir: Path) -> Materialized:
     return materialized
 
 
-def extract_zip_safely(
-    zip_path: Path, *, limits: MaterializerLimits = DEFAULT_LIMITS
-) -> Materialized:
+def extract_zip_safely(zip_path: Path, *, limits: MaterializerLimits) -> Materialized:
     """Extract a zip into a fresh temp dir, returning a :class:`Materialized`.
 
     Each entry is validated against zip-slip. ``close()`` the returned handle
@@ -293,9 +277,7 @@ def extract_zip_safely(
 
     Args:
         zip_path: Path to the zip file to extract.
-        limits: Resource limits to enforce during extraction. Defaults to
-            :data:`DEFAULT_LIMITS`. Pass a small :class:`MaterializerLimits`
-            instance in tests to avoid allocating large fixtures.
+        limits: Resource limits to enforce during extraction.
 
     Returns:
         A :class:`Materialized` handle owning the extraction directory.
@@ -317,7 +299,7 @@ def extract_zip_safely(
 
 
 def extract_zip_into(
-    zip_path: Path, target_dir: Path, *, limits: MaterializerLimits = DEFAULT_LIMITS
+    zip_path: Path, target_dir: Path, *, limits: MaterializerLimits
 ) -> None:
     """Extract into a caller-owned directory with zip-slip checks and resource limits.
 
@@ -327,8 +309,7 @@ def extract_zip_into(
     Args:
         zip_path: Path to the zip file to extract.
         target_dir: Caller-owned directory to extract into. Created if missing.
-        limits: Resource limits to enforce during extraction. Defaults to
-            :data:`DEFAULT_LIMITS`.
+        limits: Resource limits to enforce during extraction.
 
     Raises:
         ValueError: if any zip entry resolves outside ``target_dir``, or if any
@@ -483,7 +464,7 @@ def download_to_tempfile(
     timeout: int = 90,
     *,
     allow_insecure_http: bool = False,
-    limits: MaterializerLimits = DEFAULT_LIMITS,
+    limits: MaterializerLimits,
 ) -> Path:
     """Download ``url`` to a temp file and return its path.
 
@@ -495,9 +476,7 @@ def download_to_tempfile(
         url: The URL to download.
         timeout: Socket timeout in seconds.
         allow_insecure_http: Whether the request may use plain HTTP.
-        limits: Resource limits to enforce during download. Defaults to
-            :data:`DEFAULT_LIMITS`. Pass a small :class:`MaterializerLimits`
-            instance in tests to avoid streaming large payloads.
+        limits: Resource limits to enforce during download.
 
     Returns:
         Path to the downloaded temp file (caller is responsible for deletion).

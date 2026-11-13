@@ -352,8 +352,8 @@ class SkillOptions:
     # The maximum number of bytes accepted from a single skill archive download
     # over HTTP(S). Must be strictly positive; there is no unlimited setting.
     # Defaults to 64 MiB.
-    URL_MAX_DOWNLOAD_BYTES = ConfigOption(
-        key="skill.source.url.max-download-bytes",
+    MAX_DOWNLOAD_BYTES = ConfigOption(
+        key="skill.max-download-bytes",
         config_type=int,
         default=64 * 1024 * 1024,
     )
@@ -361,8 +361,8 @@ class SkillOptions:
     # The maximum uncompressed size in bytes of a single entry when a skill
     # archive is extracted. Must be strictly positive; there is no unlimited
     # setting. Defaults to 64 MiB.
-    MAX_EXTRACT_ENTRY_BYTES = ConfigOption(
-        key="skill.source.max-extract-entry-bytes",
+    MAX_UNCOMPRESSED_ENTRY_BYTES = ConfigOption(
+        key="skill.max-uncompressed-entry-bytes",
         config_type=int,
         default=64 * 1024 * 1024,
     )
@@ -370,16 +370,17 @@ class SkillOptions:
     # The maximum cumulative uncompressed size in bytes across all entries of one
     # skill archive extraction. Must be strictly positive; there is no unlimited
     # setting. Defaults to 256 MiB.
-    MAX_EXTRACT_TOTAL_BYTES = ConfigOption(
-        key="skill.source.max-extract-total-bytes",
+    MAX_UNCOMPRESSED_TOTAL_BYTES = ConfigOption(
+        key="skill.max-uncompressed-total-bytes",
         config_type=int,
         default=256 * 1024 * 1024,
     )
 
-    # The maximum number of entries permitted in one skill archive. Must be
-    # strictly positive; there is no unlimited setting. Defaults to 1000.
-    MAX_EXTRACT_ENTRIES = ConfigOption(
-        key="skill.source.max-extract-entries",
+    # The maximum number of entries permitted in one skill archive, including
+    # directory entries. Must be strictly positive; there is no unlimited setting.
+    # Defaults to 1000.
+    MAX_ARCHIVE_ENTRIES = ConfigOption(
+        key="skill.max-archive-entries",
         config_type=int,
         default=1_000,
     )
