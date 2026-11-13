@@ -15,21 +15,13 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-"""Integration tests for the ``SkillOptions`` agent config options.
+"""Verify configured limits through ResourceCache for each source and child scope."""
 
-A limit set only in the agent configuration must take effect at the bottom of
-the real path: ``ResourceCache`` -> ``ResourceContextImpl`` -> ``SkillManager``
--> ``URLSkillRepository`` / ``FileSystemSkillRepository`` -> ``_materialize``.
-
-Every rejection test has a matching control that uses the same archive with no
-limit set, so a failure can only come from the configured limit.
-"""
-
-import importlib
 import io
 import sys
 import threading
 import zipfile
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Iterator
@@ -121,193 +113,93 @@ def serve() -> Iterator:
         _ZipHandler.body = b""
 
 
-class TestLocalZipSource:
-    def test_loads_when_no_limits_configured(self, tmp_path: Path) -> None:
-        zip_path = _write_zip(tmp_path, 3)
-        cache = _cache_with(Skills.from_local_dir(str(zip_path)), AgentConfiguration())
+@pytest.fixture(params=["local", "url", "package"])
+def skill_source(
+    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[Skills]:
+    """Expose the same three-skill ZIP through each supported Python source."""
+    if request.param == "url":
+        yield Skills.from_url_unsafe(request.getfixturevalue("serve")(_skill_zip(3)))
+    elif request.param == "local":
+        yield Skills.from_local_dir(str(_write_zip(tmp_path, 3)))
+    else:
+        package = "_flink_agents_test_limits_pkg"
+        package_dir = tmp_path / package
+        package_dir.mkdir()
+        (package_dir / "__init__.py").write_text("")
+        _write_zip(package_dir, 3)
+        monkeypatch.syspath_prepend(str(tmp_path))
         try:
-            assert _skill_names(cache) == ["skill-0", "skill-1", "skill-2"]
+            yield Skills.from_package((package, "skills.zip"))
         finally:
-            cache.close()
-
-    def test_configured_entry_limit_rejects_zip(self, tmp_path: Path) -> None:
-        zip_path = _write_zip(tmp_path, 3)
-        config = AgentConfiguration({"skill.max-archive-entries": 2})
-        cache = _cache_with(Skills.from_local_dir(str(zip_path)), config)
-        try:
-            message = _load_failure(cache)
-            assert "3 entries" in message
-            assert "limit of 2" in message
-        finally:
-            cache.close()
-
-    def test_configured_entry_limit_exactly_at_archive_size_loads(
-        self, tmp_path: Path
-    ) -> None:
-        zip_path = _write_zip(tmp_path, 3)
-        config = AgentConfiguration({"skill.max-archive-entries": 3})
-        cache = _cache_with(Skills.from_local_dir(str(zip_path)), config)
-        try:
-            assert len(_skill_names(cache)) == 3
-        finally:
-            cache.close()
-
-    def test_configured_entry_byte_limit_rejects_zip(self, tmp_path: Path) -> None:
-        zip_path = _write_zip(tmp_path, 1)
-        config = AgentConfiguration({"skill.max-uncompressed-entry-bytes": 5})
-        cache = _cache_with(Skills.from_local_dir(str(zip_path)), config)
-        try:
-            assert "per-entry limit of 5 bytes" in _load_failure(cache)
-        finally:
-            cache.close()
-
-    def test_configured_total_byte_limit_rejects_zip(self, tmp_path: Path) -> None:
-        zip_path = _write_zip(tmp_path, 3)
-        config = AgentConfiguration({"skill.max-uncompressed-total-bytes": 10})
-        cache = _cache_with(Skills.from_local_dir(str(zip_path)), config)
-        try:
-            assert "exceeds the limit of 10 bytes" in _load_failure(cache)
-        finally:
-            cache.close()
-
-    def test_invalid_configured_limit_fails_instead_of_using_default(
-        self, tmp_path: Path
-    ) -> None:
-        zip_path = _write_zip(tmp_path, 1)
-        config = AgentConfiguration({"skill.max-archive-entries": 0})
-        cache = _cache_with(Skills.from_local_dir(str(zip_path)), config)
-        try:
-            with pytest.raises(ValueError, match="strictly positive"):
-                cache.get_resource_context().get_skill_manager()
-        finally:
-            cache.close()
-
-    def test_string_valued_limit_from_yaml_applies(self, tmp_path: Path) -> None:
-        zip_path = _write_zip(tmp_path, 3)
-        config = AgentConfiguration({"skill.max-archive-entries": "2"})
-        cache = _cache_with(Skills.from_local_dir(str(zip_path)), config)
-        try:
-            assert "limit of 2" in _load_failure(cache)
-        finally:
-            cache.close()
+            sys.modules.pop(package, None)
 
 
-class TestUrlSource:
-    def test_loads_when_no_limits_configured(self, serve) -> None:
-        url = serve(_skill_zip(2))
-        cache = _cache_with(Skills.from_url_unsafe(url), AgentConfiguration())
-        try:
+def test_loads_with_default_limits(skill_source: Skills) -> None:
+    with closing(_cache_with(skill_source, AgentConfiguration())) as cache:
+        assert _skill_names(cache) == ["skill-0", "skill-1", "skill-2"]
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("skill.max-archive-entries", 2, "limit of 2"),
+        ("skill.max-uncompressed-entry-bytes", 5, "per-entry limit of 5 bytes"),
+        ("skill.max-uncompressed-total-bytes", 10, "limit of 10 bytes"),
+    ],
+)
+def test_extraction_limits_reach_source(
+    skill_source: Skills, key: str, value: int, message: str
+) -> None:
+    with closing(_cache_with(skill_source, AgentConfiguration({key: value}))) as cache:
+        assert message in _load_failure(cache)
+
+
+def test_entry_count_exactly_at_limit_loads(skill_source: Skills) -> None:
+    config = AgentConfiguration({"skill.max-archive-entries": 3})
+    with closing(_cache_with(skill_source, config)) as cache:
+        assert len(_skill_names(cache)) == 3
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (0, "strictly positive"),
+        (3_000_000_000, r"Invalid value for skill\.max-archive-entries"),
+    ],
+)
+def test_invalid_config_fails_instead_of_using_defaults(
+    skill_source: Skills, value: int, message: str
+) -> None:
+    config = AgentConfiguration({"skill.max-archive-entries": value})
+    with (
+        closing(_cache_with(skill_source, config)) as cache,
+        pytest.raises(ValueError, match=message),
+    ):
+        cache.get_resource_context().get_skill_manager()
+
+
+def test_string_valued_config_applies(skill_source: Skills) -> None:
+    config = AgentConfiguration({"skill.max-archive-entries": "2"})
+    with closing(_cache_with(skill_source, config)) as cache:
+        assert "limit of 2" in _load_failure(cache)
+
+
+@pytest.mark.parametrize("offset", [-1, 0], ids=["over-limit", "at-limit"])
+def test_download_limit_reaches_url_source(serve, offset: int) -> None:
+    body = _skill_zip(2)
+    config = AgentConfiguration({"skill.max-download-bytes": len(body) + offset})
+    with closing(_cache_with(Skills.from_url_unsafe(serve(body)), config)) as cache:
+        if offset == 0:
             assert len(_skill_names(cache)) == 2
-        finally:
-            cache.close()
-
-    def test_configured_download_limit_rejects(self, serve) -> None:
-        body = _skill_zip(2)
-        url = serve(body)
-        config = AgentConfiguration({"skill.max-download-bytes": len(body) - 1})
-        cache = _cache_with(Skills.from_url_unsafe(url), config)
-        try:
+        else:
             message = _load_failure(cache)
             assert "download" in message
             assert f"limit of {len(body) - 1} bytes" in message
-        finally:
-            cache.close()
-
-    def test_configured_download_limit_exactly_at_body_size_loads(self, serve) -> None:
-        body = _skill_zip(2)
-        url = serve(body)
-        config = AgentConfiguration({"skill.max-download-bytes": len(body)})
-        cache = _cache_with(Skills.from_url_unsafe(url), config)
-        try:
-            assert len(_skill_names(cache)) == 2
-        finally:
-            cache.close()
-
-    def test_configured_entry_limit_rejects(self, serve) -> None:
-        url = serve(_skill_zip(3))
-        config = AgentConfiguration({"skill.max-archive-entries": 2})
-        cache = _cache_with(Skills.from_url_unsafe(url), config)
-        try:
-            assert "limit of 2" in _load_failure(cache)
-        finally:
-            cache.close()
-
-    def test_configured_entry_byte_limit_rejects(self, serve) -> None:
-        url = serve(_skill_zip(1))
-        config = AgentConfiguration({"skill.max-uncompressed-entry-bytes": 5})
-        cache = _cache_with(Skills.from_url_unsafe(url), config)
-        try:
-            assert "per-entry limit of 5 bytes" in _load_failure(cache)
-        finally:
-            cache.close()
-
-    def test_configured_total_byte_limit_rejects(self, serve) -> None:
-        url = serve(_skill_zip(3))
-        config = AgentConfiguration({"skill.max-uncompressed-total-bytes": 10})
-        cache = _cache_with(Skills.from_url_unsafe(url), config)
-        try:
-            assert "exceeds the limit of 10 bytes" in _load_failure(cache)
-        finally:
-            cache.close()
-
-    def test_value_too_large_for_java_fails_loading(self, serve) -> None:
-        url = serve(_skill_zip(1))
-        config = AgentConfiguration({"skill.max-archive-entries": 3_000_000_000})
-        cache = _cache_with(Skills.from_url_unsafe(url), config)
-        try:
-            with pytest.raises(
-                ValueError,
-                match=r"Invalid value for skill\.max-archive-entries",
-            ):
-                cache.get_resource_context().get_skill_manager()
-        finally:
-            cache.close()
-
-
-class TestPackageSourceLimits:
-    """Package ZIP extraction uses the same configured limits as local ZIPs."""
-
-    @pytest.mark.parametrize(
-        ("key", "value", "message"),
-        [
-            ("skill.max-archive-entries", 1, "limit of 1"),
-            ("skill.max-uncompressed-entry-bytes", 5, "per-entry limit of 5 bytes"),
-            ("skill.max-uncompressed-total-bytes", 10, "limit of 10 bytes"),
-        ],
-    )
-    def test_package_zip_enforces_configured_limits(
-        self, tmp_path: Path, key: str, value: int, message: str
-    ) -> None:
-        pkg_root = tmp_path / "pkg_root"
-        pkg_dir = pkg_root / "_flink_agents_test_limits_pkg"
-        pkg_dir.mkdir(parents=True)
-        (pkg_dir / "__init__.py").write_text("")
-        (pkg_dir / "skills.zip").write_bytes(_skill_zip(3))
-        sys.path.insert(0, str(pkg_root))
-        importlib.invalidate_caches()
-        config = AgentConfiguration({key: value})
-        cache = _cache_with(
-            Skills.from_package(("_flink_agents_test_limits_pkg", "skills.zip")),
-            config,
-        )
-        try:
-            assert message in _load_failure(cache)
-            control = _cache_with(
-                Skills.from_package(("_flink_agents_test_limits_pkg", "skills.zip")),
-                AgentConfiguration(),
-            )
-            try:
-                assert len(_skill_names(control)) == 3
-            finally:
-                control.close()
-        finally:
-            cache.close()
-            sys.path.remove(str(pkg_root))
-            sys.modules.pop("_flink_agents_test_limits_pkg", None)
 
 
 class TestSubagentChildCache:
-    """D15 / D15a: a child cache inherits the root's limits unless it has its own."""
+    """A child cache inherits the root's limits unless it has its own."""
 
     def test_child_cache_inherits_root_limits(self, tmp_path: Path) -> None:
         zip_path = _write_zip(tmp_path, 3)

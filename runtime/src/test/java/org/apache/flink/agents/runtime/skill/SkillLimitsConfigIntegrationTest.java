@@ -31,6 +31,8 @@ import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -52,15 +54,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Integration tests for the {@code SkillOptions} agent config options: a limit set only in the
- * agent configuration must take effect at the bottom of the real path ({@code ResourceCache} ->
- * {@code ResourceContextImpl} -> {@code SkillManager} -> {@code URLSkillRepository} / {@code
- * FileSystemSkillRepository} -> {@code SkillMaterializer}).
- *
- * <p>Every rejection test has a matching control that uses the same archive with no limit set, so a
- * failure can only come from the configured limit.
- */
+/** Verifies configured limits through the operator, resource caches, and skill sources. */
 class SkillLimitsConfigIntegrationTest {
 
     @Test
@@ -175,6 +169,40 @@ class SkillLimitsConfigIntegrationTest {
         return String.valueOf(cur.getMessage());
     }
 
+    @ParameterizedTest(name = "{0}: {1}")
+    @CsvSource({
+        "local, skill.max-archive-entries, 2, limit of 2",
+        "local, skill.max-uncompressed-entry-bytes, 5, per-entry limit of 5",
+        "local, skill.max-uncompressed-total-bytes, 10, limit of 10 bytes",
+        "url, skill.max-archive-entries, 2, limit of 2",
+        "url, skill.max-uncompressed-entry-bytes, 5, per-entry limit of 5",
+        "url, skill.max-uncompressed-total-bytes, 10, limit of 10 bytes"
+    })
+    void extractionLimitsReachSource(
+            String source, String key, String value, String message, @TempDir Path tempDir)
+            throws Exception {
+        byte[] body = skillZip(3);
+        Path zip = tempDir.resolve("skills.zip");
+        Files.write(zip, body);
+        HttpServer server = source.equals("url") ? serve(body) : null;
+        Skills skills =
+                server == null
+                        ? Skills.fromLocalDir(zip.toString())
+                        : Skills.fromUrlUnsafe(url(server));
+        AgentConfiguration config = new AgentConfiguration();
+        config.setStr(key, value);
+        try (ResourceCache cache = cacheWith(skills, config)) {
+            Exception error =
+                    assertThrows(
+                            Exception.class, () -> cache.getResourceContext().getSkillManager());
+            assertTrue(rootCauseMessage(error).contains(message), rootCauseMessage(error));
+        } finally {
+            if (server != null) {
+                server.stop(0);
+            }
+        }
+    }
+
     // --- FileSystemSkillRepository (local zip) ---
 
     @Test
@@ -193,24 +221,6 @@ class SkillLimitsConfigIntegrationTest {
     }
 
     @Test
-    void configuredEntryLimitRejectsLocalZip(@TempDir Path tempDir) throws Exception {
-        Path zip = tempDir.resolve("skills.zip");
-        Files.write(zip, skillZip(3));
-        AgentConfiguration config = new AgentConfiguration();
-        config.setInt("skill.max-archive-entries", 2);
-
-        try (ResourceCache cache = cacheWith(Skills.fromLocalDir(zip.toString()), config)) {
-            Exception ex =
-                    assertThrows(
-                            Exception.class, () -> cache.getResourceContext().getSkillManager());
-            assertTrue(
-                    rootCauseMessage(ex).contains("3 entries")
-                            && rootCauseMessage(ex).contains("limit of 2"),
-                    "expected the configured entry limit to fire, got: " + rootCauseMessage(ex));
-        }
-    }
-
-    @Test
     void configuredEntryLimitExactlyAtArchiveSizeStillLoads(@TempDir Path tempDir)
             throws Exception {
         Path zip = tempDir.resolve("skills.zip");
@@ -220,41 +230,6 @@ class SkillLimitsConfigIntegrationTest {
 
         try (ResourceCache cache = cacheWith(Skills.fromLocalDir(zip.toString()), config)) {
             assertEquals(3, cache.getResourceContext().getSkillManager().getAllSkillNames().size());
-        }
-    }
-
-    @Test
-    void configuredEntryByteLimitRejectsLocalZip(@TempDir Path tempDir) throws Exception {
-        Path zip = tempDir.resolve("skills.zip");
-        Files.write(zip, skillZip(1));
-        AgentConfiguration config = new AgentConfiguration();
-        config.setLong("skill.max-uncompressed-entry-bytes", 5L);
-
-        try (ResourceCache cache = cacheWith(Skills.fromLocalDir(zip.toString()), config)) {
-            Exception ex =
-                    assertThrows(
-                            Exception.class, () -> cache.getResourceContext().getSkillManager());
-            assertTrue(
-                    rootCauseMessage(ex).contains("per-entry limit of 5"),
-                    "expected the configured per-entry limit to fire, got: "
-                            + rootCauseMessage(ex));
-        }
-    }
-
-    @Test
-    void configuredTotalByteLimitRejectsLocalZip(@TempDir Path tempDir) throws Exception {
-        Path zip = tempDir.resolve("skills.zip");
-        Files.write(zip, skillZip(3));
-        AgentConfiguration config = new AgentConfiguration();
-        config.setLong("skill.max-uncompressed-total-bytes", 10L);
-
-        try (ResourceCache cache = cacheWith(Skills.fromLocalDir(zip.toString()), config)) {
-            Exception ex =
-                    assertThrows(
-                            Exception.class, () -> cache.getResourceContext().getSkillManager());
-            assertTrue(
-                    rootCauseMessage(ex).contains("exceeds the limit of 10 bytes"),
-                    "expected the configured total limit to fire, got: " + rootCauseMessage(ex));
         }
     }
 
@@ -322,62 +297,7 @@ class SkillLimitsConfigIntegrationTest {
         }
     }
 
-    @Test
-    void configuredEntryLimitRejectsUrlSource() throws Exception {
-        HttpServer server = serve(skillZip(3));
-        AgentConfiguration config = new AgentConfiguration();
-        config.setInt("skill.max-archive-entries", 2);
-
-        try (ResourceCache cache = cacheWith(Skills.fromUrlUnsafe(url(server)), config)) {
-            Exception ex =
-                    assertThrows(
-                            Exception.class, () -> cache.getResourceContext().getSkillManager());
-            assertTrue(
-                    rootCauseMessage(ex).contains("limit of 2"),
-                    "expected the configured entry limit to fire, got: " + rootCauseMessage(ex));
-        } finally {
-            server.stop(0);
-        }
-    }
-
-    @Test
-    void configuredEntryByteLimitRejectsUrlSource() throws Exception {
-        HttpServer server = serve(skillZip(1));
-        AgentConfiguration config = new AgentConfiguration();
-        config.setLong("skill.max-uncompressed-entry-bytes", 5L);
-
-        try (ResourceCache cache = cacheWith(Skills.fromUrlUnsafe(url(server)), config)) {
-            Exception ex =
-                    assertThrows(
-                            Exception.class, () -> cache.getResourceContext().getSkillManager());
-            assertTrue(
-                    rootCauseMessage(ex).contains("per-entry limit of 5"),
-                    "expected the configured per-entry limit to fire, got: "
-                            + rootCauseMessage(ex));
-        } finally {
-            server.stop(0);
-        }
-    }
-
-    @Test
-    void configuredTotalByteLimitRejectsUrlSource() throws Exception {
-        HttpServer server = serve(skillZip(3));
-        AgentConfiguration config = new AgentConfiguration();
-        config.setLong("skill.max-uncompressed-total-bytes", 10L);
-
-        try (ResourceCache cache = cacheWith(Skills.fromUrlUnsafe(url(server)), config)) {
-            Exception ex =
-                    assertThrows(
-                            Exception.class, () -> cache.getResourceContext().getSkillManager());
-            assertTrue(
-                    rootCauseMessage(ex).contains("exceeds the limit of 10 bytes"),
-                    "expected the configured total limit to fire, got: " + rootCauseMessage(ex));
-        } finally {
-            server.stop(0);
-        }
-    }
-
-    // --- Sub-agent child cache (D15): inherits the root cache's limits ---
+    // --- Sub-agent configuration inheritance ---
 
     @Test
     void childCacheInheritsRootLimits(@TempDir Path tempDir) throws Exception {

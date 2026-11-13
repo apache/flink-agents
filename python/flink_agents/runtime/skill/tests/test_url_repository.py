@@ -27,9 +27,6 @@ from urllib.error import HTTPError
 
 import pytest
 
-from flink_agents.runtime.skill.repository._materialize import (
-    MaterializerLimits,
-)
 from flink_agents.runtime.skill.repository.url_repository import URLSkillRepository
 from flink_agents.runtime.skill.tests.utils import default_limits
 
@@ -226,40 +223,3 @@ class TestURLSkillRepository:
                 limits=default_limits(),
             )
         assert "top-secret" not in str(exc_info.value)
-
-
-class TestURLSkillRepositoryLimits:
-    def test_download_uses_given_limits(
-        self, zip_server: "tuple[str, type[_ZipHandler]]"
-    ) -> None:
-        url, handler = zip_server
-        size = len(handler.zip_bytes)
-        limits = MaterializerLimits(
-            max_download_bytes=size - 1,
-            max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
-            max_extract_total_bytes=default_limits().max_extract_total_bytes,
-            max_extract_entries=default_limits().max_extract_entries,
-        )
-        with pytest.raises(ValueError, match=f"limit of {size - 1} bytes"):
-            URLSkillRepository(url, allow_insecure_http=True, limits=limits)
-        # Control: the same archive loads with the default limits.
-        repo = URLSkillRepository(
-            url, allow_insecure_http=True, limits=default_limits()
-        )
-        try:
-            assert repo.get_skills()
-        finally:
-            repo.close()
-
-    def test_extraction_uses_given_limits(
-        self, zip_server: "tuple[str, type[_ZipHandler]]"
-    ) -> None:
-        url, _handler = zip_server
-        limits = MaterializerLimits(
-            max_download_bytes=default_limits().max_download_bytes,
-            max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
-            max_extract_total_bytes=default_limits().max_extract_total_bytes,
-            max_extract_entries=1,
-        )
-        with pytest.raises(ValueError, match="exceeding the limit of 1"):
-            URLSkillRepository(url, allow_insecure_http=True, limits=limits)

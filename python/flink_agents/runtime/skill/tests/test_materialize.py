@@ -43,10 +43,10 @@ from flink_agents.runtime.skill.repository._materialize import (
 from flink_agents.runtime.skill.tests.utils import default_limits
 
 _LIMIT_KEYS = (
-    ("skill.max-download-bytes", "max_download_bytes"),
-    ("skill.max-uncompressed-entry-bytes", "max_extract_entry_bytes"),
-    ("skill.max-uncompressed-total-bytes", "max_extract_total_bytes"),
-    ("skill.max-archive-entries", "max_extract_entries"),
+    ("skill.max-download-bytes", "max_download_bytes", 63),
+    ("skill.max-uncompressed-entry-bytes", "max_extract_entry_bytes", 63),
+    ("skill.max-uncompressed-total-bytes", "max_extract_total_bytes", 63),
+    ("skill.max-archive-entries", "max_extract_entries", 31),
 )
 
 
@@ -99,21 +99,15 @@ class TestExtractZipSafely:
             assert (extract_dir / "skill-a" / "SKILL.md").read_text().startswith("---")
             assert (extract_dir / "skill-b" / "SKILL.md").is_file()
 
-    def test_rejects_zip_slip_relative(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("entry", ["../evil.txt", "/etc/evil.txt"])
+    def test_rejects_zip_slip_and_cleans_up(self, tmp_path: Path, entry: str) -> None:
         zip_path = tmp_path / "evil.zip"
-        _make_zip(zip_path, {"../evil.txt": "pwn"})
-
+        _make_zip(zip_path, {entry: "pwn"})
+        tmp_dir = Path(tempfile.gettempdir())
+        before = _count_skill_temp_dirs(tmp_dir)
         with pytest.raises(ValueError, match="Unsafe zip entry"):
             extract_zip_safely(zip_path, limits=default_limits())
-
-    def test_rejects_zip_slip_absolute(self, tmp_path: Path) -> None:
-        # Defense-in-depth: CPython's extractall already strips leading slashes,
-        # but we reject absolute entries explicitly so we don't depend on that.
-        zip_path = tmp_path / "evil.zip"
-        _make_zip(zip_path, {"/etc/evil.txt": "pwn"})
-
-        with pytest.raises(ValueError, match="Unsafe zip entry"):
-            extract_zip_safely(zip_path, limits=default_limits())
+        assert _count_skill_temp_dirs(tmp_dir) == before
 
 
 class TestExtractZipInto:
@@ -533,92 +527,46 @@ def _make_zip_with_patched_declared_sizes(
 
 
 class TestDownloadSizeCap:
-    def test_rejects_declared_content_length_over_cap(self) -> None:
-        cap = 1024
-        limits = _download_cap(cap)
-        url, server = _make_streaming_server(
-            declared_content_length=cap + 1, bytes_to_stream=0
-        )
+    @pytest.mark.parametrize(
+        ("declared_size", "body_size", "message"),
+        [(1025, 0, "exceeding the limit"), (None, 1025, "exceeded the limit")],
+        ids=["declared-size", "streamed-size"],
+    )
+    def test_rejects_oversized_download_and_cleans_up(
+        self, declared_size: int | None, body_size: int, message: str
+    ) -> None:
+        url, server = _make_streaming_server(declared_size, body_size)
+        tmp_dir = Path(tempfile.gettempdir())
+        before = set(tmp_dir.glob("flink-agents-skills-*.zip"))
         try:
-            with pytest.raises(ValueError, match="exceeding the limit"):
+            with pytest.raises(ValueError, match=message):
                 download_to_tempfile(
-                    url, timeout=10, allow_insecure_http=True, limits=limits
+                    url,
+                    timeout=10,
+                    allow_insecure_http=True,
+                    limits=_download_cap(1024),
                 )
+            assert set(tmp_dir.glob("flink-agents-skills-*.zip")) == before
         finally:
             server.shutdown()
+            server.server_close()
 
-    def test_accepts_declared_content_length_exactly_at_cap(self) -> None:
-        cap = 1024
-        limits = _download_cap(cap)
-        url, server = _make_streaming_server(
-            declared_content_length=cap, bytes_to_stream=cap
-        )
+    @pytest.mark.parametrize(
+        "declared_size", [1024, None], ids=["declared-size", "streamed-size"]
+    )
+    def test_accepts_body_exactly_at_cap(self, declared_size: int | None) -> None:
+        url, server = _make_streaming_server(declared_size, 1024)
         try:
             path = download_to_tempfile(
-                url, timeout=10, allow_insecure_http=True, limits=limits
+                url, timeout=10, allow_insecure_http=True, limits=_download_cap(1024)
             )
             try:
-                assert path.stat().st_size == cap
+                assert path.stat().st_size == 1024
             finally:
-                path.unlink(missing_ok=True)
+                path.unlink()
         finally:
             server.shutdown()
-
-    def test_rejects_stream_with_no_content_length_and_body_over_cap(self) -> None:
-        cap = 1024
-        limits = _download_cap(cap)
-        url, server = _make_streaming_server(
-            declared_content_length=None, bytes_to_stream=cap + 1
-        )
-        try:
-            with pytest.raises(ValueError, match=f"exceeded the limit of {cap} bytes"):
-                download_to_tempfile(
-                    url, timeout=10, allow_insecure_http=True, limits=limits
-                )
-        finally:
-            server.shutdown()
-
-    def test_accepts_body_exactly_at_cap(
-        self, static_server: "tuple[str, type[_StaticHandler]]"
-    ) -> None:
-        cap = 1024
-        limits = _download_cap(cap)
-        base_url, handler = static_server
-        handler.payload = b"z" * cap
-        handler.status = 200
-        path = download_to_tempfile(
-            f"{base_url}/skill.zip", timeout=10, allow_insecure_http=True, limits=limits
-        )
-        try:
-            assert path.stat().st_size == cap
-        finally:
-            path.unlink(missing_ok=True)
-
-    def test_cleanup_on_download_failure(self) -> None:
-        cap = 1024
-        limits = _download_cap(cap)
-        url, server = _make_streaming_server(
-            declared_content_length=cap + 1, bytes_to_stream=0
-        )
-        tmp_dir = Path(tempfile.gettempdir())
-        try:
-            before = sum(
-                1
-                for p in tmp_dir.iterdir()
-                if p.name.startswith("flink-agents-skills-") and p.suffix == ".zip"
-            )
-            with pytest.raises(ValueError):
-                download_to_tempfile(
-                    url, timeout=10, allow_insecure_http=True, limits=limits
-                )
-            after = sum(
-                1
-                for p in tmp_dir.iterdir()
-                if p.name.startswith("flink-agents-skills-") and p.suffix == ".zip"
-            )
-            assert before == after
-        finally:
-            server.shutdown()
+            server.server_close()
 
 
 # ---------------------------------------------------------------------------
@@ -627,7 +575,9 @@ class TestDownloadSizeCap:
 
 
 class TestExtractionSizeCap:
-    def test_rejects_archive_with_too_many_entries(self, tmp_path: Path) -> None:
+    def test_rejects_archive_with_too_many_entries_and_cleans_up(
+        self, tmp_path: Path
+    ) -> None:
         limits = MaterializerLimits(
             max_download_bytes=default_limits().max_download_bytes,
             max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
@@ -638,36 +588,30 @@ class TestExtractionSizeCap:
         with zipfile.ZipFile(zip_path, "w") as zf:
             for i in range(3):
                 zf.writestr(f"entry-{i}.txt", "")
-        with pytest.raises(ValueError, match="entries"):
-            extract_zip_safely(zip_path, limits=limits)
-
-    def test_rejects_declared_entry_size_over_cap(self, tmp_path: Path) -> None:
-        _make_zip_with_patched_declared_sizes(
-            tmp_path / "big-declared.zip",
-            {"entry.bin": b"x"},
-            default_limits().max_extract_entry_bytes + 1,
-        )
-        with pytest.raises(ValueError, match="per-entry limit"):
-            extract_zip_safely(tmp_path / "big-declared.zip", limits=default_limits())
-
-    def test_forged_declared_size_is_rejected_by_crc_check(
-        self, tmp_path: Path
-    ) -> None:
-        # Streaming extraction via zf.open validates CRC-32, so an archive whose
-        # declared sizes were forged to slip past the metadata pre-check is
-        # rejected as corrupt instead of being trusted.
-        zip_path = tmp_path / "forged.zip"
-        _make_zip_with_patched_declared_sizes(zip_path, {"large.bin": b"x" * 512}, 1)
-        with pytest.raises(ValueError, match="failed integrity check"):
-            extract_zip_safely(zip_path, limits=default_limits())
-
-    def test_forged_declared_size_still_cleans_up(self, tmp_path: Path) -> None:
-        zip_path = tmp_path / "forged.zip"
-        _make_zip_with_patched_declared_sizes(zip_path, {"large.bin": b"x" * 512}, 1)
         tmp_dir = Path(tempfile.gettempdir())
         before = _count_skill_temp_dirs(tmp_dir)
-        with pytest.raises(ValueError, match="failed integrity check"):
-            extract_zip_safely(zip_path, limits=default_limits())
+        with pytest.raises(ValueError, match="entries"):
+            extract_zip_safely(zip_path, limits=limits)
+        assert _count_skill_temp_dirs(tmp_dir) == before
+
+    @pytest.mark.parametrize(
+        ("actual_size", "declared_size", "message"),
+        [(1, 401, "per-entry limit"), (512, 1, "failed integrity check")],
+        ids=["declared-size", "forged-size-crc"],
+    )
+    def test_rejects_invalid_entry_and_cleans_up(
+        self, tmp_path: Path, actual_size: int, declared_size: int, message: str
+    ) -> None:
+        # CPython rejects the forged size via CRC validation, before the byte limit.
+        zip_path = tmp_path / "invalid.zip"
+        _make_zip_with_patched_declared_sizes(
+            zip_path, {"entry.bin": b"x" * actual_size}, declared_size
+        )
+        limits = _small_limits(entry=400, total=4000)
+        tmp_dir = Path(tempfile.gettempdir())
+        before = _count_skill_temp_dirs(tmp_dir)
+        with pytest.raises(ValueError, match=message):
+            extract_zip_safely(zip_path, limits=limits)
         assert _count_skill_temp_dirs(tmp_dir) == before
 
     def test_accepts_entries_exactly_at_total_cap(self, tmp_path: Path) -> None:
@@ -678,80 +622,59 @@ class TestExtractionSizeCap:
             assert (m.dir / "a.bin").stat().st_size == 600
             assert (m.dir / "b.bin").stat().st_size == 600
 
-    def test_cleanup_on_extraction_failure(self, tmp_path: Path) -> None:
-        limits = MaterializerLimits(
-            max_download_bytes=default_limits().max_download_bytes,
-            max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
-            max_extract_total_bytes=default_limits().max_extract_total_bytes,
-            max_extract_entries=2,
-        )
-        zip_path = tmp_path / "many.zip"
-        with zipfile.ZipFile(zip_path, "w") as zf:
-            for i in range(3):
-                zf.writestr(f"e{i}.txt", "")
-        tmp_dir = Path(tempfile.gettempdir())
-        before = _count_skill_temp_dirs(tmp_dir)
-        with pytest.raises(ValueError):
-            extract_zip_safely(zip_path, limits=limits)
-        assert _count_skill_temp_dirs(tmp_dir) == before
-
 
 class TestBoundedCopy:
     """Exercise the streaming byte counters directly, independent of zip metadata."""
 
-    def test_copies_all_bytes_under_limits(self) -> None:
+    @pytest.mark.parametrize(
+        ("size", "entry_limit", "already_written", "total_limit"),
+        [(100, 100, 0, 100), (424, 1024, 600, 1024)],
+        ids=["entry-boundary", "total-boundary"],
+    )
+    def test_accepts_exact_limits(
+        self, size: int, entry_limit: int, already_written: int, total_limit: int
+    ) -> None:
         dst = io.BytesIO()
         written = _bounded_copy(
-            io.BytesIO(b"x" * 100),
+            io.BytesIO(b"x" * size),
             dst,
             name="e",
-            max_entry_bytes=100,
-            total_already_written=0,
-            max_total_bytes=100,
+            max_entry_bytes=entry_limit,
+            total_already_written=already_written,
+            max_total_bytes=total_limit,
             chunk_size=7,
         )
-        assert written == 100
-        assert dst.getvalue() == b"x" * 100
+        assert written == size
+        assert dst.getvalue() == b"x" * size
 
-    def test_rejects_one_byte_over_entry_limit(self) -> None:
+    @pytest.mark.parametrize(
+        ("size", "entry_limit", "already_written", "total_limit", "message"),
+        [
+            (101, 100, 0, 1000, "'e' exceeds the per-entry limit of 100"),
+            (600, 1024, 600, 1024, "total extracted size exceeds the limit of 1024"),
+        ],
+        ids=["entry-limit", "total-limit"],
+    )
+    def test_rejects_oversized_copy(
+        self,
+        size: int,
+        entry_limit: int,
+        already_written: int,
+        total_limit: int,
+        message: str,
+    ) -> None:
         dst = io.BytesIO()
-        with pytest.raises(ValueError, match="'e' exceeds the per-entry limit of 100"):
+        with pytest.raises(ValueError, match=message):
             _bounded_copy(
-                io.BytesIO(b"x" * 101),
+                io.BytesIO(b"x" * size),
                 dst,
                 name="e",
-                max_entry_bytes=100,
-                total_already_written=0,
-                max_total_bytes=1000,
+                max_entry_bytes=entry_limit,
+                total_already_written=already_written,
+                max_total_bytes=total_limit,
                 chunk_size=7,
             )
-        # Checked before writing: nothing past the last full chunk under the limit.
-        assert len(dst.getvalue()) <= 100
-
-    def test_rejects_cumulative_total_from_earlier_entries(self) -> None:
-        # Each entry fits on its own; together they exceed the total cap.
-        with pytest.raises(
-            ValueError, match="total extracted size exceeds the limit of 1024"
-        ):
-            _bounded_copy(
-                io.BytesIO(b"x" * 600),
-                io.BytesIO(),
-                name="second",
-                max_entry_bytes=1024,
-                total_already_written=600,
-                max_total_bytes=1024,
-            )
-
-    def test_accepts_cumulative_total_exactly_at_limit(self) -> None:
-        written = _bounded_copy(
-            io.BytesIO(b"x" * 424),
-            io.BytesIO(),
-            name="second",
-            max_entry_bytes=1024,
-            total_already_written=600,
-            max_total_bytes=1024,
-        )
-        assert written == 424
+        assert len(dst.getvalue()) <= min(entry_limit, total_limit - already_written)
 
     def test_extraction_uses_running_total_not_declared_sizes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -785,46 +708,39 @@ class TestLimitsFromConfig:
         assert limits.max_extract_total_bytes == 256 * 1024 * 1024
         assert limits.max_extract_entries == 1_000
 
-    def test_reads_all_four_keys(self) -> None:
-        config = AgentConfiguration(
-            {key: value for value, (key, _attr) in enumerate(_LIMIT_KEYS, start=11)}
-        )
-        limits = limits_from_config(config)
-        assert limits.max_download_bytes == 11
-        assert limits.max_extract_entry_bytes == 12
-        assert limits.max_extract_total_bytes == 13
-        assert limits.max_extract_entries == 14
-
-    @pytest.mark.parametrize(("key", "attr"), _LIMIT_KEYS)
-    def test_one_key_set_and_the_rest_default(self, key: str, attr: str) -> None:
-        limits = limits_from_config(AgentConfiguration({key: 7}))
-        for _other_key, other_attr in _LIMIT_KEYS:
-            expected = (
-                7 if other_attr == attr else getattr(default_limits(), other_attr)
-            )
-            assert getattr(limits, other_attr) == expected
-
-    @pytest.mark.parametrize(("key", "attr"), _LIMIT_KEYS)
-    def test_rejects_zero_and_negative_for_every_key(self, key: str, attr: str) -> None:
-        for value in (0, -1):
-            with pytest.raises(ValueError, match=f"{attr} must be a strictly positive"):
-                limits_from_config(AgentConfiguration({key: value}))
-
-    def test_accepts_minimum_of_one(self) -> None:
-        limits = limits_from_config(AgentConfiguration({k: 1 for k, _a in _LIMIT_KEYS}))
-        for _key, attr in _LIMIT_KEYS:
-            assert getattr(limits, attr) == 1
-
-    def test_parses_string_values(self) -> None:
+    @pytest.mark.parametrize(
+        "values",
+        [(11, 12, 13, 14), (1, 1, 1, 1), ("1024", "12", "13", "+5")],
+        ids=["numbers", "minimum", "strings"],
+    )
+    def test_reads_all_four_keys(self, values: tuple) -> None:
         config = AgentConfiguration(
             {
-                "skill.max-download-bytes": "1024",
-                "skill.max-archive-entries": "+5",
+                key: value
+                for (key, _attr, _bits), value in zip(_LIMIT_KEYS, values, strict=False)
             }
         )
         limits = limits_from_config(config)
-        assert limits.max_download_bytes == 1024
-        assert limits.max_extract_entries == 5
+        assert tuple(
+            getattr(limits, attr) for _key, attr, _bits in _LIMIT_KEYS
+        ) == tuple(map(int, values))
+
+    @pytest.mark.parametrize(("key", "attr", "bits"), _LIMIT_KEYS)
+    def test_one_key_set_and_the_rest_default(
+        self, key: str, attr: str, bits: int
+    ) -> None:
+        limits = limits_from_config(AgentConfiguration({key: 7}))
+        defaults = default_limits()
+        for _other_key, other_attr, _bits in _LIMIT_KEYS:
+            assert getattr(limits, other_attr) == (
+                7 if other_attr == attr else getattr(defaults, other_attr)
+            )
+
+    @pytest.mark.parametrize(("key", "attr", "bits"), _LIMIT_KEYS)
+    def test_rejects_non_positive_values(self, key: str, attr: str, bits: int) -> None:
+        for value in (0, -1, -(2**bits)):
+            with pytest.raises(ValueError, match=f"{attr} must be a strictly positive"):
+                limits_from_config(AgentConfiguration({key: value}))
 
     @pytest.mark.parametrize(
         "value", [True, False, 1.5, 64.0, "64.0", "1e3", "", "ten"]
@@ -839,89 +755,16 @@ class TestLimitsFromConfig:
         ):
             limits_from_config(config)
 
-    @pytest.mark.parametrize(
-        ("key", "attr", "java_max"),
-        [
-            ("skill.max-download-bytes", "max_download_bytes", 2**63 - 1),
-            (
-                "skill.max-uncompressed-entry-bytes",
-                "max_extract_entry_bytes",
-                2**63 - 1,
-            ),
-            (
-                "skill.max-uncompressed-total-bytes",
-                "max_extract_total_bytes",
-                2**63 - 1,
-            ),
-            ("skill.max-archive-entries", "max_extract_entries", 2**31 - 1),
-        ],
-    )
-    def test_accepts_java_type_maximum(
-        self, key: str, attr: str, java_max: int
+    @pytest.mark.parametrize(("key", "attr", "bits"), _LIMIT_KEYS)
+    @pytest.mark.parametrize("as_string", [False, True], ids=["number", "string"])
+    def test_java_integer_range(
+        self, key: str, attr: str, bits: int, as_string: bool
     ) -> None:
-        for value in (java_max, str(java_max)):
-            limits = limits_from_config(AgentConfiguration({key: value}))
-            assert getattr(limits, attr) == java_max
-
-    @pytest.mark.parametrize(
-        ("key", "too_large"),
-        [
-            ("skill.max-download-bytes", 2**63),
-            ("skill.max-uncompressed-entry-bytes", 2**63),
-            ("skill.max-uncompressed-total-bytes", 2**63),
-            ("skill.max-archive-entries", 2**31),
-            ("skill.max-archive-entries", 3_000_000_000),
-        ],
-    )
-    def test_rejects_values_too_large_for_java_type(
-        self, key: str, too_large: int
-    ) -> None:
-        # Java's Long.parseLong / Integer.parseInt reject these, so they must
-        # not load in Python only.
-        for value in (too_large, str(too_large)):
-            with pytest.raises(
-                ValueError, match=f"Invalid value for {key}: {too_large}"
-            ):
-                limits_from_config(AgentConfiguration({key: value}))
-
-    @pytest.mark.parametrize(
-        ("key", "attr", "java_min"),
-        [
-            ("skill.max-download-bytes", "max_download_bytes", -(2**63)),
-            (
-                "skill.max-uncompressed-entry-bytes",
-                "max_extract_entry_bytes",
-                -(2**63),
-            ),
-            (
-                "skill.max-uncompressed-total-bytes",
-                "max_extract_total_bytes",
-                -(2**63),
-            ),
-            ("skill.max-archive-entries", "max_extract_entries", -(2**31)),
-        ],
-    )
-    def test_java_type_minimum_parses_then_fails_positivity(
-        self, key: str, attr: str, java_min: int
-    ) -> None:
-        # Java parses its type's minimum and then rejects it as not positive.
-        with pytest.raises(ValueError, match=f"{attr} must be a strictly positive"):
-            limits_from_config(AgentConfiguration({key: java_min}))
-
-    @pytest.mark.parametrize(
-        ("key", "too_small"),
-        [
-            ("skill.max-download-bytes", -(2**63) - 1),
-            ("skill.max-uncompressed-entry-bytes", -(2**63) - 1),
-            ("skill.max-uncompressed-total-bytes", -(2**63) - 1),
-            ("skill.max-archive-entries", -(2**31) - 1),
-        ],
-    )
-    def test_rejects_values_too_small_for_java_type(
-        self, key: str, too_small: int
-    ) -> None:
-        for value in (too_small, str(too_small)):
-            with pytest.raises(
-                ValueError, match=f"Invalid value for {key}: {too_small}"
-            ):
+        maximum = 2**bits - 1
+        value = str(maximum) if as_string else maximum
+        limits = limits_from_config(AgentConfiguration({key: value}))
+        assert getattr(limits, attr) == maximum
+        for outside in (2**bits, -(2**bits) - 1):
+            value = str(outside) if as_string else outside
+            with pytest.raises(ValueError, match=f"Invalid value for {key}: {outside}"):
                 limits_from_config(AgentConfiguration({key: value}))

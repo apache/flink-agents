@@ -555,40 +555,7 @@ class TestSkillManagerMixedSources:
 
 
 class TestSkillManagerLimits:
-    """The limits reach the url and local handlers (D14)."""
-
-    def test_local_zip_source_uses_given_limits(self, tmp_path: Path) -> None:
-        zip_path = tmp_path / "skills.zip"
-        _zip_dir(base_dir / "resources" / "skills", zip_path)
-        limits = MaterializerLimits(
-            max_download_bytes=default_limits().max_download_bytes,
-            max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
-            max_extract_total_bytes=default_limits().max_extract_total_bytes,
-            max_extract_entries=1,
-        )
-        config = Skills.from_local_dir(str(zip_path))
-        with pytest.raises(RuntimeError) as exc_info:
-            SkillManager(config, limits=limits)
-        assert "exceeding the limit of 1" in str(exc_info.value.__cause__)
-        # Control: the same zip loads with the default limits.
-        with SkillManager(config, limits=default_limits()) as manager:
-            assert manager.size > 0
-
-    def test_url_source_uses_given_limits(self, mixed_sources) -> None:
-        _dir, url, _pkg, _resource = mixed_sources
-        limits = MaterializerLimits(
-            max_download_bytes=1,
-            max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
-            max_extract_total_bytes=default_limits().max_extract_total_bytes,
-            max_extract_entries=default_limits().max_extract_entries,
-        )
-        config = Skills.from_url_unsafe(url)
-        with pytest.raises(RuntimeError) as exc_info:
-            SkillManager(config, limits=limits)
-        assert "limit of 1 bytes" in str(exc_info.value.__cause__)
-        # Control: the same archive loads with the default limits.
-        with SkillManager(config, limits=default_limits()) as manager:
-            assert manager.size > 0
+    """Directory sources are not subject to ZIP extraction limits."""
 
     def test_package_directory_is_not_subject_to_zip_limits(
         self, mixed_sources

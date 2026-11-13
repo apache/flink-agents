@@ -145,22 +145,6 @@ class TestFileSystemSkillRepositoryZip:
         with pytest.raises(ValueError, match=r"must be a directory or a \.zip file"):
             FileSystemSkillRepository(non_zip_file, limits=default_limits())
 
-    def test_zip_uses_given_limits(self, skills_zip: Path) -> None:
-        limits = MaterializerLimits(
-            max_download_bytes=default_limits().max_download_bytes,
-            max_extract_entry_bytes=default_limits().max_extract_entry_bytes,
-            max_extract_total_bytes=default_limits().max_extract_total_bytes,
-            max_extract_entries=1,
-        )
-        with pytest.raises(ValueError, match="exceeding the limit of 1"):
-            FileSystemSkillRepository(skills_zip, limits=limits)
-        # Control: the same zip loads with the default limits.
-        repo = FileSystemSkillRepository(skills_zip, limits=default_limits())
-        try:
-            assert repo.get_skills()
-        finally:
-            repo.close()
-
     def test_directory_ignores_limits(self) -> None:
         skills_dir = Path(__file__).parent / "resources" / "skills"
         limits = MaterializerLimits(
