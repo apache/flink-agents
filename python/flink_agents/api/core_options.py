@@ -293,8 +293,12 @@ class AgentExecutionOptions:
     )
 
     # Base wait between retries controlled by max-retries. The wait before retry N
-    # is this duration multiplied by 2^(N-1). A zero or negative duration retries
-    # without waiting. In YAML, write a duration such as "1 s".
+    # is this duration multiplied by 2^(N-1). Effective precision is 1 ms on Java
+    # and Python. A positive duration that is not a whole number of milliseconds
+    # is rejected. A zero or negative duration retries without waiting.
+    # retryWaitSec and total_retry_wait_sec add only the whole seconds of each
+    # sleep, so a sub-second sleep can be undercounted. In YAML, write a duration
+    # such as "1 s".
     RETRY_WAIT_INTERVAL = ConfigOption(
         key="retry-wait-interval",
         config_type=timedelta,
@@ -357,11 +361,13 @@ class AgentExecutionOptions:
         default=os.cpu_count() or 1,
     )
 
-    # Overall timeout per ctx.gather batch. A zero or negative duration disables
-    # it; the default of -1 ms disables it. Applies to ordinary, durable, and
-    # built-in tool calls. In YAML, write a duration such as "30 s". Running
-    # callbacks may continue after timeout and occupy their worker until they
-    # return, so blocking operations should also set their own timeouts.
+    # Overall timeout per ctx.gather batch. Effective precision is 1 us on Java
+    # and Python: the deadline uses the full duration and is not truncated to
+    # milliseconds. A zero or negative duration disables it; the default of -1 ms
+    # disables it. Applies to ordinary, durable, and built-in tool calls. In YAML,
+    # write a duration such as "30 s". Running callbacks may continue after
+    # timeout and occupy their worker until they return, so blocking operations
+    # should also set their own timeouts.
     ASYNC_BATCH_TIMEOUT = ConfigOption(
         key="async.batch.timeout",
         config_type=timedelta,
@@ -374,9 +380,11 @@ class AgentExecutionOptions:
         default=True,
     )
 
-    # Short-term memory time-to-live. A positive duration of at least 1 ms enables
-    # expiration; a zero or negative duration disables it. A positive duration
-    # shorter than 1 ms is rejected. In YAML, write a duration such as "1 min".
+    # Short-term memory time-to-live. Effective precision is 1 ms. A positive whole
+    # number of milliseconds, at least 1 ms, enables expiration. A positive
+    # duration shorter than 1 ms is rejected, and so is a longer positive duration
+    # that is not a whole number of milliseconds. A zero or negative duration
+    # disables TTL. In YAML, write a duration such as "1 min".
     SHORT_TERM_MEMORY_STATE_TTL = ConfigOption(
         key="short-term-memory.state-ttl",
         config_type=timedelta,

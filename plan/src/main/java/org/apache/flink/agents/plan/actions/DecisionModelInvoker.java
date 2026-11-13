@@ -114,7 +114,7 @@ public final class DecisionModelInvoker {
                         && setup.supportsAsyncExecution();
         int maxRetries = Math.max(0, ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES));
         Duration waitInterval =
-                DurationFormat.zeroIfNegative(
+                ChatModelInvoker.acceptedRetryWait(
                         ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
         FlinkAgentsMetricGroup actionMetrics = ctx.getActionMetricGroup();
         FlinkAgentsMetricGroup resourceMetrics =
@@ -209,7 +209,7 @@ public final class DecisionModelInvoker {
                         Thread.currentThread().interrupt();
                         throw error;
                     }
-                    totalWaitSec += (int) Math.min(Integer.MAX_VALUE, waitMillis / 1000L);
+                    totalWaitSec += DurationFormat.recordedRetryWaitSeconds(currentWait);
                 }
             }
         } finally {

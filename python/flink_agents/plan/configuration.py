@@ -28,7 +28,7 @@ from flink_agents.api.configuration import (
 from flink_agents.api.duration import (
     format_duration,
     parse_duration,
-    removed_duration_keys_message,
+    validate_consumed_duration,
 )
 from flink_agents.api.trace_log import _parse_targets, _serialize_targets
 
@@ -36,9 +36,6 @@ _TRACE_LOG_TARGETS_KEY = "trace-log.targets"
 
 
 def _normalize_conf_data(conf_data: Dict[str, Any]) -> Dict[str, Any]:
-    removed = removed_duration_keys_message(conf_data)
-    if removed is not None:
-        raise ValueError(removed)
     normalized = {
         key: format_duration(value) if isinstance(value, timedelta) else value
         for key, value in conf_data.items()
@@ -92,14 +89,16 @@ class AgentConfiguration(BaseModel, Configuration):
                 # case-insensitively, so "false" must not stay truthy.
                 return value.strip().lower() == "true"
             if config_type is timedelta:
-                return parse_duration(value)
-            return config_type(value)
+                parsed = parse_duration(value)
+            else:
+                return config_type(value)
         except (ValueError, TypeError) as e:
             if config_type is timedelta:
                 msg = f"Invalid duration for '{key}': {e}"
             else:
                 msg = f"Invalid value for {key}: {value}"
             raise ValueError(msg) from e
+        return validate_consumed_duration(key, parsed)
 
     @override
     def get_int(self, key: str, default: int | None = None) -> int:
@@ -128,9 +127,6 @@ class AgentConfiguration(BaseModel, Configuration):
         )
 
     def _put(self, key: str, value: Any) -> None:
-        removed = removed_duration_keys_message((key,))
-        if removed is not None:
-            raise ValueError(removed)
         self.conf_data[key] = value
 
     @override
@@ -155,10 +151,13 @@ class AgentConfiguration(BaseModel, Configuration):
             stored = _serialize_targets(value)
         elif option.get_type() is timedelta:
             try:
-                stored = format_duration(parse_duration(value))
+                parsed = parse_duration(value)
             except ValueError as error:
                 msg = f"Invalid duration for '{option.get_key()}': {error}"
                 raise ValueError(msg) from error
+            stored = format_duration(
+                validate_consumed_duration(option.get_key(), parsed)
+            )
         else:
             stored = value
         self._put(option.get_key(), stored)

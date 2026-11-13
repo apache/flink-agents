@@ -25,7 +25,6 @@ import org.apache.flink.agents.api.logger.TraceLogTarget;
 import org.apache.flink.configuration.ConfigurationUtils;
 
 import java.time.Duration;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +44,6 @@ public class AgentConfiguration implements Configuration {
      * retained as option values; YAML key expansion belongs to the configuration loader.
      */
     public AgentConfiguration(Map<String, Object> confData) {
-        rejectRemovedDurationKeys(confData.keySet());
         this.confData = new HashMap<>();
         for (Map.Entry<String, Object> entry : confData.entrySet()) {
             this.confData.put(entry.getKey(), normalizeDurationValue(entry.getValue()));
@@ -100,11 +98,14 @@ public class AgentConfiguration implements Configuration {
             return;
         }
         if (Duration.class.equals(option.getType())) {
+            final Duration parsed;
             try {
-                putValue(option.getKey(), DurationFormat.format(DurationFormat.parse(value)));
+                parsed = DurationFormat.parse(value);
             } catch (IllegalArgumentException e) {
                 throw invalidDuration(option.getKey(), e);
             }
+            DurationFormat.validateConsumedDuration(option.getKey(), parsed);
+            putValue(option.getKey(), DurationFormat.format(parsed));
             return;
         }
         putValue(option.getKey(), value);
@@ -171,6 +172,9 @@ public class AgentConfiguration implements Configuration {
         Class<T> targetType = option.getType();
 
         if (targetType.isAssignableFrom(rawValue.getClass())) {
+            if (Duration.class.equals(targetType)) {
+                DurationFormat.validateConsumedDuration(option.getKey(), (Duration) rawValue);
+            }
             return targetType.cast(rawValue);
         } else if (String.class.equals(targetType)) {
             return targetType.cast(rawValue.toString());
@@ -185,11 +189,14 @@ public class AgentConfiguration implements Configuration {
         } else if (Boolean.class.equals(targetType)) {
             return targetType.cast(Boolean.parseBoolean(rawValue.toString()));
         } else if (Duration.class.equals(targetType)) {
+            final Duration parsed;
             try {
-                return targetType.cast(DurationFormat.parse(rawValue));
+                parsed = DurationFormat.parse(rawValue);
             } catch (IllegalArgumentException e) {
                 throw invalidDuration(option.getKey(), e);
             }
+            return targetType.cast(
+                    DurationFormat.validateConsumedDuration(option.getKey(), parsed));
         } else if (targetType.isEnum()) {
             return ConfigurationUtils.convertValue(rawValue, targetType);
         } else {
@@ -202,7 +209,6 @@ public class AgentConfiguration implements Configuration {
     }
 
     private void putValue(String key, Object value) {
-        rejectRemovedDurationKeys(Collections.singleton(key));
         confData.put(key, value);
     }
 
@@ -211,13 +217,6 @@ public class AgentConfiguration implements Configuration {
             return DurationFormat.format(DurationFormat.parse(value));
         }
         return value;
-    }
-
-    private static void rejectRemovedDurationKeys(Iterable<String> keys) {
-        String message = DurationFormat.removedKeysMessage(keys);
-        if (message != null) {
-            throw new IllegalArgumentException(message);
-        }
     }
 
     private static IllegalArgumentException invalidDuration(

@@ -165,8 +165,19 @@ public final class ChatModelInvoker {
      * The request-level retry backoff. A negative configured duration waits zero; zero waits zero.
      */
     public static Duration configuredRetryWait(RunnerContext ctx) {
-        return DurationFormat.zeroIfNegative(
-                ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+        return acceptedRetryWait(ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+    }
+
+    /**
+     * Retry backoff after a negative duration is treated as zero. A positive duration must be a
+     * whole number of milliseconds; {@link Thread#sleep(long)} cannot honor a sub-millisecond
+     * remainder.
+     */
+    public static Duration acceptedRetryWait(Duration configured) {
+        return DurationFormat.requireWholeMilliseconds(
+                AgentExecutionOptions.RETRY_WAIT_INTERVAL.getKey(),
+                DurationFormat.zeroIfNegative(configured),
+                "or zero or negative to retry without waiting");
     }
 
     public static ChatAttemptResult chatWithRetries(
@@ -180,6 +191,7 @@ public final class ChatModelInvoker {
             int numRetries,
             Duration retryWaitInterval)
             throws ChatAttemptFailed, Exception {
+        retryWaitInterval = acceptedRetryWait(retryWaitInterval);
         BaseChatModelSetup chatModel;
         try {
             chatModel = (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
@@ -365,7 +377,7 @@ public final class ChatModelInvoker {
                             Thread.currentThread().interrupt();
                             throw ie;
                         }
-                        totalWaitTimeSec += (int) Math.min(Integer.MAX_VALUE, waitMillis / 1000L);
+                        totalWaitTimeSec += DurationFormat.recordedRetryWaitSeconds(currentWait);
                     }
                     continue;
                 }

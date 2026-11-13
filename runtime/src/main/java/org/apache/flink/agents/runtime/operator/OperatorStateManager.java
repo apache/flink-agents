@@ -143,9 +143,11 @@ class OperatorStateManager {
 
     /**
      * Attaches Flink {@link StateTtlConfig} when {@link
-     * AgentExecutionOptions#SHORT_TERM_MEMORY_STATE_TTL} is at least 1 ms. Unset, null, or
-     * non-positive values disable TTL. A positive duration shorter than 1 ms is rejected, because
-     * Flink state TTL must be a positive number of milliseconds.
+     * AgentExecutionOptions#SHORT_TERM_MEMORY_STATE_TTL} is a positive whole number of milliseconds
+     * and at least 1 ms. Unset, null, zero, and negative values disable TTL. A positive duration
+     * shorter than 1 ms is rejected, and so is a longer positive duration that is not a whole
+     * number of milliseconds. Flink state TTL is a number of milliseconds, so a sub-millisecond
+     * remainder would otherwise be truncated.
      */
     private void maybeEnableShortTermMemoryTTL(
             MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> descriptor,
@@ -154,14 +156,8 @@ class OperatorStateManager {
         if (!DurationFormat.isPositive(ttl)) {
             return;
         }
-        // StateTtlConfig requires ttl.toMillis() > 0. A positive duration below 1 ms truncates to
-        // 0 and would otherwise fail here with Flink's generic "TTL is expected to be positive."
-        if (ttl.toMillis() == 0) {
-            throw new IllegalArgumentException(
-                    AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.getKey()
-                            + " must be at least 1 ms, got "
-                            + DurationFormat.format(ttl));
-        }
+        DurationFormat.requireShortTermMemoryTtl(
+                AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.getKey(), ttl);
 
         ShortTermMemoryTtlUpdate updateType =
                 agentConfiguration.get(

@@ -29,8 +29,12 @@ public class AgentExecutionOptions {
 
     /**
      * Base wait between retries controlled by {@link #MAX_RETRIES}. The wait before retry N is this
-     * duration multiplied by {@code 2^(N-1)}. A zero or negative duration retries without waiting.
-     * In YAML, write a duration such as {@code 1 s}.
+     * duration multiplied by {@code 2^(N-1)}. Effective precision is 1 ms: Java sleeps with {@code
+     * Thread.sleep(long)} and Python sleeps the same whole-millisecond duration. A positive
+     * duration that is not a whole number of milliseconds is rejected. A zero or negative duration
+     * retries without waiting. {@code retryWaitSec} and {@code total_retry_wait_sec} add only the
+     * whole seconds of each sleep, so a sub-second sleep can be undercounted. In YAML, write a
+     * duration such as {@code 1 s}.
      */
     public static final ConfigOption<Duration> RETRY_WAIT_INTERVAL =
             new ConfigOption<>("retry-wait-interval", Duration.class, Duration.ofSeconds(1));
@@ -86,8 +90,10 @@ public class AgentExecutionOptions {
 
     /**
      * Overall timeout for one async batch composed with RunnerContext.gather. Applies to ordinary,
-     * durable, and built-in tool calls. A zero or negative duration disables it. The default {@code
-     * -1 ms} disables it. In YAML, write a duration such as {@code 30 s}.
+     * durable, and built-in tool calls. Effective precision is 1 µs on Java and Python: the
+     * deadline uses the full duration, and a positive value is not truncated to milliseconds. A
+     * zero or negative duration disables it. The default {@code -1 ms} disables it. In YAML, write
+     * a duration such as {@code 30 s}.
      *
      * <p>Completed calls keep their outcomes; unfinished calls receive timeout failures. For
      * durable calls, started calls are finalized as failures while unstarted calls remain pending
@@ -108,9 +114,10 @@ public class AgentExecutionOptions {
             new ConfigOption<>("agent-run.begin-event", Boolean.class, false);
 
     /**
-     * Short-term memory time-to-live. A positive duration of at least 1 ms enables expiration; a
-     * zero or negative duration disables it. A positive duration shorter than 1 ms is rejected. In
-     * YAML, write a duration such as {@code 1 min}.
+     * Short-term memory time-to-live. Effective precision is 1 ms. A positive whole number of
+     * milliseconds, at least 1 ms, enables expiration. A positive duration shorter than 1 ms is
+     * rejected, and so is a longer positive duration that is not a whole number of milliseconds. A
+     * zero or negative duration disables TTL. In YAML, write a duration such as {@code 1 min}.
      */
     public static final ConfigOption<Duration> SHORT_TERM_MEMORY_STATE_TTL =
             new ConfigOption<>("short-term-memory.state-ttl", Duration.class, Duration.ZERO);

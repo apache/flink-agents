@@ -425,22 +425,55 @@ public class AgentConfigurationTest {
     }
 
     @Test
-    void removedDurationKeysAreRejected() {
-        IllegalArgumentException error =
+    void durationConsumersRejectFinerValuesThanTheyHonor() {
+        AgentConfiguration timeout =
+                new AgentConfiguration(Map.of("async.batch.timeout", "1500 us"));
+        assertEquals(
+                Duration.ofNanos(1_500_000),
+                timeout.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT));
+
+        IllegalArgumentException retry =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                new AgentConfiguration(Map.of("retry-wait-interval", "1500 us"))
+                                        .get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+        assertTrue(retry.getMessage().contains("retry-wait-interval"));
+        assertTrue(retry.getMessage().contains("whole number of milliseconds"));
+        assertTrue(retry.getMessage().contains("1500 us"));
+        assertEquals(
+                Duration.ofMillis(1500),
+                new AgentConfiguration(Map.of("retry-wait-interval", "1500 ms"))
+                        .get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+
+        IllegalArgumentException ttl =
                 assertThrows(
                         IllegalArgumentException.class,
                         () ->
                                 new AgentConfiguration(
-                                        Map.of(
-                                                "async.batch.timeout.ms",
-                                                100,
-                                                "short-term-memory.state-ttl.ms",
-                                                1000)));
-        assertTrue(error.getMessage().contains("async.batch.timeout.ms"));
-        assertTrue(error.getMessage().contains("async.batch.timeout"));
-        assertTrue(error.getMessage().contains("short-term-memory.state-ttl.ms"));
+                                                Map.of("short-term-memory.state-ttl", "1500 us"))
+                                        .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL));
+        assertTrue(ttl.getMessage().contains("short-term-memory.state-ttl"));
+        assertTrue(ttl.getMessage().contains("whole number of milliseconds"));
+        assertTrue(ttl.getMessage().contains("1500 us"));
+        IllegalArgumentException shortTtl =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                new AgentConfiguration(
+                                                Map.of("short-term-memory.state-ttl", "500 us"))
+                                        .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL));
+        assertTrue(shortTtl.getMessage().contains("must be at least 1 ms"));
+        assertEquals(
+                Duration.ofMillis(1),
+                new AgentConfiguration(Map.of("short-term-memory.state-ttl", "1000 us"))
+                        .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new AgentConfiguration().setStr("async.batch.timeout.ms", "100 ms"));
+                () ->
+                        new AgentConfiguration()
+                                .set(
+                                        AgentExecutionOptions.RETRY_WAIT_INTERVAL,
+                                        Duration.ofNanos(1_500_000)));
     }
 }

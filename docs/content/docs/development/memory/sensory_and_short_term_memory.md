@@ -291,7 +291,7 @@ During execution, sensory memory data is checkpointed by Flink for fault toleran
 
 Short-term memory can be configured with a time-to-live (TTL) so that older state expires automatically. This is useful for agents that may run for a long time: if the agent only needs recent memories, expiring historical data directly keeps the stored state focused on the latest context and avoids retaining stale information.
 
-Set `short-term-memory.state-ttl` to a positive duration of at least 1 ms, such as `1 min`, to enable TTL. A zero or negative duration disables it. A positive duration shorter than 1 ms is rejected. You can also configure how the TTL is refreshed and whether expired state can be returned before Flink cleans it up:
+Set `short-term-memory.state-ttl` to a positive whole number of milliseconds, at least 1 ms, such as `1 min`, to enable TTL. Effective precision is 1 ms. A zero or negative duration disables it. A positive duration shorter than 1 ms is rejected, and so is a longer positive duration that is not a whole number of milliseconds, such as `1500 us`. `1000 us` is exactly 1 ms and is accepted. You can also configure how the TTL is refreshed and whether expired state can be returned before Flink cleans it up:
 
 - `short-term-memory.state-ttl.update-type`: controls whether TTL is refreshed on create/write (`ON_CREATE_AND_WRITE`) or on read/write (`ON_READ_AND_WRITE`, the default).
 - `short-term-memory.state-ttl.visibility`: controls whether expired memory is never returned or may be returned if it has not been cleaned up yet.

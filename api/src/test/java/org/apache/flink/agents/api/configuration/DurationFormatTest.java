@@ -118,4 +118,92 @@ class DurationFormatTest {
         assertThat(DurationFormat.zeroIfNegative(Duration.ofSeconds(2)))
                 .isEqualTo(Duration.ofSeconds(2));
     }
+
+    /** Deadline budget shared with Python {@code positive_seconds}. 1_500_000 ns is 0.0015 s. */
+    @ParameterizedTest
+    @CsvSource({
+        "1500 us, 1500000",
+        "1 ms, 1000000",
+        "1500 ms, 1500000000",
+        "1 s, 1000000000",
+        "1 min, 60000000000"
+    })
+    void positiveDeadlineKeepsMicroseconds(String text, long nanos) {
+        Duration parsed = DurationFormat.parse(text);
+        assertThat(DurationFormat.positiveNanos(parsed)).isEqualTo(nanos);
+        assertThat(DurationFormat.validateConsumedDuration("async.batch.timeout", parsed))
+                .isEqualTo(parsed);
+    }
+
+    @Test
+    void nonPositiveDeadlineContributesNoNanos() {
+        assertThat(DurationFormat.positiveNanos(null)).isZero();
+        assertThat(DurationFormat.positiveNanos(DurationFormat.parse("0 ms"))).isZero();
+        assertThat(DurationFormat.positiveNanos(DurationFormat.parse("-1 ms"))).isZero();
+    }
+
+    @Test
+    void retryWaitRejectsASubMillisecondRemainderAndKeepsWholeMilliseconds() {
+        assertThatThrownBy(
+                        () ->
+                                DurationFormat.validateConsumedDuration(
+                                        "retry-wait-interval", DurationFormat.parse("1500 us")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(
+                        "retry-wait-interval must be a whole number of milliseconds,"
+                                + " or zero or negative to retry without waiting, got 1500 us");
+
+        Duration wait =
+                DurationFormat.requireWholeMilliseconds(
+                        "retry-wait-interval",
+                        DurationFormat.parse("1500 ms"),
+                        "or zero or negative to retry without waiting");
+        assertThat(wait).isEqualTo(Duration.ofMillis(1500));
+        assertThat(wait.toNanos()).isEqualTo(wait.toMillis() * 1_000_000L);
+        assertThat(
+                        DurationFormat.requireWholeMilliseconds(
+                                "retry-wait-interval",
+                                DurationFormat.parse("-1 ms"),
+                                "or zero or negative to retry without waiting"))
+                .isEqualTo(Duration.ofMillis(-1));
+    }
+
+    @Test
+    void shortTermMemoryTtlRejectsASubMillisecondRemainder() {
+        assertThatThrownBy(
+                        () ->
+                                DurationFormat.requireShortTermMemoryTtl(
+                                        "short-term-memory.state-ttl",
+                                        DurationFormat.parse("500 us")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("short-term-memory.state-ttl must be at least 1 ms, got 500 us");
+        assertThatThrownBy(
+                        () ->
+                                DurationFormat.requireShortTermMemoryTtl(
+                                        "short-term-memory.state-ttl",
+                                        DurationFormat.parse("1500 us")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(
+                        "short-term-memory.state-ttl must be a whole number of milliseconds,"
+                                + " or zero or negative to disable TTL, got 1500 us");
+        assertThat(
+                        DurationFormat.requireShortTermMemoryTtl(
+                                "short-term-memory.state-ttl", DurationFormat.parse("1000 us")))
+                .isEqualTo(Duration.ofMillis(1));
+        assertThat(
+                        DurationFormat.requireShortTermMemoryTtl(
+                                "short-term-memory.state-ttl", DurationFormat.parse("1 min")))
+                .isEqualTo(Duration.ofMinutes(1));
+    }
+
+    @Test
+    void retryStatisticsRecordWholeSecondsOnly() {
+        assertThat(DurationFormat.recordedRetryWaitSeconds(DurationFormat.parse("2 s")))
+                .isEqualTo(2);
+        assertThat(DurationFormat.recordedRetryWaitSeconds(DurationFormat.parse("1500 ms")))
+                .isEqualTo(1);
+        assertThat(DurationFormat.recordedRetryWaitSeconds(DurationFormat.parse("500 ms")))
+                .isZero();
+        assertThat(DurationFormat.recordedRetryWaitSeconds(DurationFormat.parse("0 ms"))).isZero();
+    }
 }

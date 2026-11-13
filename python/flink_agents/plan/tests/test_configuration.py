@@ -403,17 +403,37 @@ def test_duration_strings_keep_disable_sentinels_and_reject_bare_numbers() -> No
     assert "30 s" in str(error.value)
 
 
-def test_removed_duration_keys_are_rejected() -> None:
-    with pytest.raises(ValueError, match="async.batch.timeout") as error:
-        AgentConfiguration(
-            {
-                "async.batch.timeout.ms": 100,
-                "short-term-memory.state-ttl.ms": 1000,
-            }
+def test_duration_consumers_reject_finer_values_than_they_honor() -> None:
+    timeout = AgentConfiguration({"async.batch.timeout": "1500 us"})
+    assert timeout.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT) == timedelta(
+        microseconds=1500
+    )
+
+    with pytest.raises(ValueError, match="whole number of milliseconds") as retry:
+        AgentConfiguration({"retry-wait-interval": "1500 us"}).get(
+            AgentExecutionOptions.RETRY_WAIT_INTERVAL
         )
-    assert "short-term-memory.state-ttl" in str(error.value)
-    with pytest.raises(ValueError, match="async.batch.timeout.ms"):
-        AgentConfiguration().set_str("async.batch.timeout.ms", "100 ms")
+    assert "retry-wait-interval" in str(retry.value)
+    assert "1500 us" in str(retry.value)
+    assert AgentConfiguration({"retry-wait-interval": "1500 ms"}).get(
+        AgentExecutionOptions.RETRY_WAIT_INTERVAL
+    ) == timedelta(milliseconds=1500)
+
+    with pytest.raises(ValueError, match="whole number of milliseconds") as ttl:
+        AgentConfiguration({"short-term-memory.state-ttl": "1500 us"}).get(
+            AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL
+        )
+    assert "short-term-memory.state-ttl" in str(ttl.value)
+    assert "1500 us" in str(ttl.value)
+    with pytest.raises(ValueError, match="must be at least 1 ms"):
+        AgentConfiguration({"short-term-memory.state-ttl": "500 us"}).get(
+            AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL
+        )
+    assert AgentConfiguration({"short-term-memory.state-ttl": "1000 us"}).get(
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL
+    ) == timedelta(milliseconds=1)
+    with pytest.raises(ValueError, match="retry-wait-interval"):
+        AgentConfiguration().set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, "1500 us")
 
 
 def test_trace_log_target_error_identifies_list_entry() -> None:

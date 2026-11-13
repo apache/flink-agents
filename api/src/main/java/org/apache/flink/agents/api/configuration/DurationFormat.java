@@ -18,13 +18,13 @@
 
 package org.apache.flink.agents.api.configuration;
 
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+
 import java.math.BigInteger;
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -38,7 +38,9 @@ import java.util.Map;
  * ({@code second}, {@code seconds}, {@code millisecond}, and so on). {@code m} means minutes.
  *
  * <p>The value must be a whole number of microseconds, because the Python counterpart is {@code
- * datetime.timedelta}. {@code 1000 ns} is one microsecond; {@code 1 ns} is rejected.
+ * datetime.timedelta}. {@code 1000 ns} is one microsecond; {@code 1 ns} is rejected. This parser
+ * does not truncate to a coarser unit. A consumer that cannot honor microseconds rejects the value
+ * when the option is read.
  */
 public final class DurationFormat {
 
@@ -46,12 +48,6 @@ public final class DurationFormat {
     private static final BigInteger NANOS_PER_MICRO = BigInteger.valueOf(1_000L);
 
     private static final Map<String, ChronoUnit> UNITS = units();
-
-    /**
-     * Keys removed when duration options dropped their unit suffix. The value is the replacement
-     * key. Reading the old key is rejected so a leftover numeric setting is not silently ignored.
-     */
-    private static final Map<String, String> REMOVED_KEYS = removedKeys();
 
     private static final ChronoUnit[] FORMAT_UNITS = {
         ChronoUnit.DAYS,
@@ -185,24 +181,84 @@ public final class DurationFormat {
     }
 
     /**
-     * Returns an error naming every removed duration key in {@code keys}, or null when none are
-     * present.
+     * Nanoseconds of a positive duration. Null, zero, and negative return {@code 0}. A positive
+     * duration that does not fit in a {@code long} throws {@link ArithmeticException}.
      */
-    public static String removedKeysMessage(Iterable<String> keys) {
-        List<String> found = new ArrayList<>();
-        for (String key : keys) {
-            String replacement = REMOVED_KEYS.get(key);
-            if (replacement != null) {
-                found.add("'" + key + "' (use '" + replacement + "')");
-            }
+    public static long positiveNanos(Duration duration) {
+        if (!isPositive(duration)) {
+            return 0L;
         }
-        if (found.isEmpty()) {
-            return null;
+        return duration.toNanos();
+    }
+
+    /**
+     * Whole seconds recorded for one retry sleep. A sub-second remainder is dropped, which can
+     * undercount {@code retryWaitSec} and {@code total_retry_wait_sec}.
+     */
+    public static int recordedRetryWaitSeconds(Duration duration) {
+        if (!isPositive(duration)) {
+            return 0;
         }
-        Collections.sort(found);
-        return "Unsupported duration configuration keys: "
-                + String.join(", ", found)
-                + ". Values use a duration such as '30 s' or '5 min'.";
+        long millis = duration.toMillis();
+        if (millis <= 0L) {
+            return 0;
+        }
+        return (int) Math.min(Integer.MAX_VALUE, millis / 1000L);
+    }
+
+    /**
+     * Applies the precision rule of a duration option. Retry wait and short-term memory TTL must be
+     * a whole number of milliseconds when positive. Other durations, including the async batch
+     * timeout, keep the parsed microsecond value.
+     */
+    public static Duration validateConsumedDuration(String optionKey, Duration duration) {
+        if (optionKey == null || duration == null) {
+            return duration;
+        }
+        if (AgentExecutionOptions.RETRY_WAIT_INTERVAL.getKey().equals(optionKey)) {
+            return requireWholeMilliseconds(
+                    optionKey, duration, "or zero or negative to retry without waiting");
+        }
+        if (AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.getKey().equals(optionKey)) {
+            return requireShortTermMemoryTtl(optionKey, duration);
+        }
+        return duration;
+    }
+
+    /**
+     * Returns {@code duration} when it is not positive or is a positive whole number of
+     * milliseconds. A positive sub-millisecond remainder is rejected.
+     */
+    public static Duration requireWholeMilliseconds(
+            String optionKey, Duration duration, String disabledBy) {
+        if (!isPositive(duration)) {
+            return duration;
+        }
+        if (duration.getNano() % 1_000_000 != 0) {
+            throw new IllegalArgumentException(
+                    optionKey
+                            + " must be a whole number of milliseconds, "
+                            + disabledBy
+                            + ", got "
+                            + format(duration));
+        }
+        return duration;
+    }
+
+    /**
+     * Checks a short-term memory TTL. A non-positive value is left unchanged so the caller can
+     * disable TTL. A positive value shorter than 1 ms, or a longer positive value that is not a
+     * whole number of milliseconds, is rejected.
+     */
+    public static Duration requireShortTermMemoryTtl(String optionKey, Duration duration) {
+        if (!isPositive(duration)) {
+            return duration;
+        }
+        if (duration.toMillis() == 0) {
+            throw new IllegalArgumentException(
+                    optionKey + " must be at least 1 ms, got " + format(duration));
+        }
+        return requireWholeMilliseconds(optionKey, duration, "or zero or negative to disable TTL");
     }
 
     private static Duration requireMicrosecondAligned(Duration duration, String rendered) {
@@ -256,12 +312,5 @@ public final class DurationFormat {
         for (String label : labels) {
             units.put(label, unit);
         }
-    }
-
-    private static Map<String, String> removedKeys() {
-        Map<String, String> keys = new LinkedHashMap<>();
-        keys.put("async.batch.timeout.ms", "async.batch.timeout");
-        keys.put("short-term-memory.state-ttl.ms", "short-term-memory.state-ttl");
-        return Collections.unmodifiableMap(keys);
     }
 }

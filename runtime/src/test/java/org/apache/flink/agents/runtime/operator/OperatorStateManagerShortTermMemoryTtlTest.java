@@ -42,7 +42,8 @@ import static org.mockito.Mockito.mock;
 
 /**
  * Short-term memory state TTL is applied when keyed state is registered. Flink measures that TTL in
- * milliseconds, so a positive duration below 1 ms must fail before {@link StateTtlConfig}.
+ * whole milliseconds, so a positive duration below 1 ms, or a longer positive duration that is not
+ * a whole number of milliseconds, must fail before {@link StateTtlConfig}.
  */
 class OperatorStateManagerShortTermMemoryTtlTest {
 
@@ -79,7 +80,22 @@ class OperatorStateManagerShortTermMemoryTtlTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"1 ms", "1000 us", "1500 us", "1 min"})
+    @ValueSource(strings = {"1500 us", "1001 us"})
+    void positiveTtlWithASubMillisecondRemainderIsRejected(String ttl) throws Exception {
+        AgentConfiguration configuration = configuration(ttl);
+        String formatted = DurationFormat.format(DurationFormat.parse(ttl));
+
+        assertThatThrownBy(() -> shortTermMemoryDescriptor(configuration))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(
+                        OPTION_KEY
+                                + " must be a whole number of milliseconds, or zero or negative to"
+                                + " disable TTL, got "
+                                + formatted);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"1 ms", "1000 us", "1 min"})
     void millisecondOrLongerTtlEnablesExpiration(String ttl) throws Exception {
         StateTtlConfig ttlConfig = shortTermMemoryDescriptor(configuration(ttl)).getTtlConfig();
 

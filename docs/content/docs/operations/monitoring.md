@@ -101,7 +101,7 @@ These metrics describe LLM, Tool, Skill, MCP Server and sub-agent calls that the
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.numOfLlmCallsFailed | Model invocations that failed. [1] [6] | Counter |
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.llmCallLatencyMs | Time for one model invocation, excluding structured-output parsing and retry waits. [1] | Histogram |
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryCount | Additional invocations made by framework retries (`max-retries > 0`); recorded only when a retry occurs. See [retry-wait-interval]({{< ref "docs/operations/configuration#model-calls-tools-and-retries" >}}). | Counter |
-| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryWaitSec | Backoff time accumulated by framework retries; recorded only when a retry occurs. | Counter |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryWaitSec | Backoff time accumulated by framework retries, counting only whole seconds of each sleep, so a sub-second sleep can be omitted. Recorded only when a retry occurs. | Counter |
 | **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsSucceeded | Successful calls to the Tool. [2] [6] | Counter |
 | **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsFailed | Failed calls to the Tool. [2] [6] | Counter |
 | **Tool** | action.\<action_name\>.tool.\<tool_name\>.toolCallLatencyMs | Time spent in one Tool call, excluding waits for other calls in the same parallel batch. [5] | Histogram |

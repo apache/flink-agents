@@ -26,6 +26,11 @@ from flink_agents.api.duration import (
     format_duration,
     is_positive,
     parse_duration,
+    positive_seconds,
+    recorded_retry_wait_seconds,
+    require_short_term_memory_ttl,
+    require_whole_milliseconds,
+    validate_consumed_duration,
     zero_if_negative,
 )
 
@@ -91,9 +96,9 @@ def test_option_defaults_match_the_disable_sentinels() -> None:
     assert AgentExecutionOptions.ASYNC_BATCH_TIMEOUT.get_default_value() == timedelta(
         milliseconds=-1
     )
-    assert is_positive(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT.get_default_value()) is (
-        False
-    )
+    assert is_positive(
+        AgentExecutionOptions.ASYNC_BATCH_TIMEOUT.get_default_value()
+    ) is (False)
     assert (
         AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.get_key()
         == "short-term-memory.state-ttl"
@@ -103,3 +108,75 @@ def test_option_defaults_match_the_disable_sentinels() -> None:
     )
     assert zero_if_negative(timedelta(milliseconds=-1)) == timedelta(0)
     assert zero_if_negative(timedelta(seconds=2)) == timedelta(seconds=2)
+
+
+# Deadline budget shared with Java DurationFormat.positiveNanos.
+# 1_500_000 ns is 0.0015 s.
+@pytest.mark.parametrize(
+    ("text", "seconds"),
+    [
+        ("1500 us", 0.0015),
+        ("1 ms", 0.001),
+        ("1500 ms", 1.5),
+        ("1 s", 1.0),
+        ("1 min", 60.0),
+    ],
+)
+def test_positive_deadline_keeps_microseconds(text: str, seconds: float) -> None:
+    parsed = parse_duration(text)
+    assert positive_seconds(parsed) == seconds
+    assert validate_consumed_duration("async.batch.timeout", parsed) == parsed
+
+
+def test_non_positive_deadline_contributes_no_seconds() -> None:
+    assert positive_seconds(None) is None
+    assert positive_seconds(parse_duration("0 ms")) is None
+    assert positive_seconds(parse_duration("-1 ms")) is None
+
+
+def test_retry_wait_rejects_a_sub_millisecond_remainder() -> None:
+    with pytest.raises(ValueError, match="whole number of milliseconds") as error:
+        validate_consumed_duration("retry-wait-interval", parse_duration("1500 us"))
+    message = str(error.value)
+    assert "retry-wait-interval" in message
+    assert "1500 us" in message
+    wait = require_whole_milliseconds(
+        "retry-wait-interval",
+        parse_duration("1500 ms"),
+        "or zero or negative to retry without waiting",
+    )
+    assert wait == timedelta(milliseconds=1500)
+    assert wait.total_seconds() * 1000 == 1500
+    assert require_whole_milliseconds(
+        "retry-wait-interval",
+        parse_duration("-1 ms"),
+        "or zero or negative to retry without waiting",
+    ) == timedelta(milliseconds=-1)
+
+
+def test_short_term_memory_ttl_rejects_a_sub_millisecond_remainder() -> None:
+    with pytest.raises(
+        ValueError,
+        match="short-term-memory.state-ttl must be at least 1 ms, got 500 us",
+    ):
+        require_short_term_memory_ttl(
+            "short-term-memory.state-ttl", parse_duration("500 us")
+        )
+    with pytest.raises(ValueError, match="whole number of milliseconds") as error:
+        require_short_term_memory_ttl(
+            "short-term-memory.state-ttl", parse_duration("1500 us")
+        )
+    assert "1500 us" in str(error.value)
+    assert require_short_term_memory_ttl(
+        "short-term-memory.state-ttl", parse_duration("1000 us")
+    ) == timedelta(milliseconds=1)
+    assert require_short_term_memory_ttl(
+        "short-term-memory.state-ttl", parse_duration("1 min")
+    ) == timedelta(minutes=1)
+
+
+def test_retry_statistics_record_whole_seconds_only() -> None:
+    assert recorded_retry_wait_seconds(parse_duration("2 s")) == 2
+    assert recorded_retry_wait_seconds(parse_duration("1500 ms")) == 1
+    assert recorded_retry_wait_seconds(parse_duration("500 ms")) == 0
+    assert recorded_retry_wait_seconds(parse_duration("0 ms")) == 0

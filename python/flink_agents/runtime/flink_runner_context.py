@@ -34,7 +34,7 @@ from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.configuration import ReadableConfiguration
 from flink_agents.api.core_options import AgentExecutionOptions
-from flink_agents.api.duration import format_duration, is_positive
+from flink_agents.api.duration import format_duration, positive_seconds
 from flink_agents.api.events.chat_event import ChatRequestEvent
 from flink_agents.api.events.event import Event
 from flink_agents.api.memory.long_term_memory import (
@@ -399,8 +399,9 @@ class _BatchAsyncExecutionResult:
             AgentExecutionOptions.ASYNC_BATCH_PARALLELISM
         )
         timeout = self._ctx.config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)
+        timeout_seconds = positive_seconds(timeout)
         deadline = (
-            time.monotonic() + timeout.total_seconds() if is_positive(timeout) else None
+            time.monotonic() + timeout_seconds if timeout_seconds is not None else None
         )
         timeout_label = format_duration(timeout) if deadline is not None else None
         batch_futures: list[Any | None] = [None] * len(suppliers)
