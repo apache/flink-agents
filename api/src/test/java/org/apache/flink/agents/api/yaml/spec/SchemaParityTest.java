@@ -24,7 +24,14 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.chat.messages.AudioBlock;
+import org.apache.flink.agents.api.chat.messages.Base64Source;
+import org.apache.flink.agents.api.chat.messages.DocumentBlock;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UrlSource;
+import org.apache.flink.agents.api.chat.messages.VideoBlock;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameterSource;
 import org.junit.jupiter.api.Test;
@@ -32,7 +39,9 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Executable;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -84,6 +93,21 @@ class SchemaParityTest {
         SPEC_CLASSES = Map.copyOf(m);
     }
 
+    /**
+     * Content blocks a prompt message can hold, in the {@code ChatMessage} block format. Their
+     * {@code type} is Jackson's type id rather than a creator property, and their required fields
+     * are checked by their constructors, so only property names and strictness are compared.
+     */
+    private static final Map<String, Class<?>> CONTENT_BLOCK_CLASSES =
+            Map.of(
+                    "TextBlock", TextBlock.class,
+                    "ImageBlock", ImageBlock.class,
+                    "AudioBlock", AudioBlock.class,
+                    "VideoBlock", VideoBlock.class,
+                    "DocumentBlock", DocumentBlock.class,
+                    "Base64Source", Base64Source.class,
+                    "UrlSource", UrlSource.class);
+
     @Test
     void checkedInSchemaMatchesJavaSpecs() throws IOException {
         JsonNode schema = MAPPER.readTree(Files.readString(schemaFile()));
@@ -103,6 +127,10 @@ class SchemaParityTest {
                 assertToolParameterSourceEnum(def);
                 continue;
             }
+            if (CONTENT_BLOCK_CLASSES.containsKey(name)) {
+                assertContentBlockDefMatchesClass(name, def, CONTENT_BLOCK_CLASSES.get(name));
+                continue;
+            }
             Class<?> javaClass = SPEC_CLASSES.get(name);
             assertThat(javaClass).as("no Java spec for $defs/%s", name).isNotNull();
             assertDefMatchesClass(name, def, javaClass);
@@ -110,6 +138,7 @@ class SchemaParityTest {
 
         // Every Java spec in the map must have appeared in $defs.
         Set<String> expectedSchemaDefs = new HashSet<>(SPEC_CLASSES.keySet());
+        expectedSchemaDefs.addAll(CONTENT_BLOCK_CLASSES.keySet());
         expectedSchemaDefs.add("MessageRole");
         expectedSchemaDefs.add("ToolParameterSource");
         assertThat(seen).as("$defs entries").isEqualTo(expectedSchemaDefs);
@@ -200,16 +229,49 @@ class SchemaParityTest {
      * introspection) avoids picking up the Java camelCase field/getter names as duplicate aliases
      * of the snake_case JSON keys.
      */
+    private static void assertContentBlockDefMatchesClass(
+            String defName, JsonNode def, Class<?> clz) {
+        Set<String> schemaProps = new HashSet<>();
+        for (Iterator<String> it = def.get("properties").fieldNames(); it.hasNext(); ) {
+            schemaProps.add(it.next());
+        }
+        assertThat(schemaProps)
+                .as("%s: schema lacks the type discriminator", defName)
+                .contains("type");
+        schemaProps.remove("type");
+        Set<String> schemaRequired = new HashSet<>();
+        for (JsonNode r : def.path("required")) {
+            schemaRequired.add(r.asText());
+        }
+        assertThat(schemaRequired)
+                .as("%s: schema must require the type discriminator", defName)
+                .contains("type");
+        assertThat(creatorProperties(clz).keySet())
+                .as("%s: Java block properties drift from schema", defName)
+                .isEqualTo(schemaProps);
+        assertThat(def.get("additionalProperties").asBoolean())
+                .as("%s: additionalProperties drift from schema", defName)
+                .isEqualTo(javaAllowsAdditional(clz));
+    }
+
     private static Map<String, Boolean> creatorProperties(Class<?> clz) {
-        Constructor<?> creator = null;
+        Executable creator = null;
         for (Constructor<?> c : clz.getDeclaredConstructors()) {
             if (c.isAnnotationPresent(JsonCreator.class)) {
                 creator = c;
                 break;
             }
         }
+        // TextBlock declares its creator as a static factory.
+        for (Method m : clz.getDeclaredMethods()) {
+            if (creator == null
+                    && Modifier.isStatic(m.getModifiers())
+                    && m.isAnnotationPresent(JsonCreator.class)) {
+                creator = m;
+            }
+        }
         if (creator == null) {
-            throw new IllegalStateException("No @JsonCreator constructor on " + clz.getName());
+            throw new IllegalStateException("No @JsonCreator on " + clz.getName());
         }
         Map<String, Boolean> out = new LinkedHashMap<>();
         Parameter[] params = creator.getParameters();

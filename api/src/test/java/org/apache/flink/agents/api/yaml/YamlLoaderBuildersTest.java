@@ -21,7 +21,10 @@ package org.apache.flink.agents.api.yaml;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ContentBlock;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.function.PythonFunction;
 import org.apache.flink.agents.api.prompt.Prompt;
@@ -223,6 +226,50 @@ class YamlLoaderBuildersTest {
         assertThat(messages)
                 .extracting(ChatMessage::getText)
                 .containsExactly("Hello Alice", "How are you?");
+    }
+
+    @Test
+    void buildPromptWithMediaBlocks() throws Exception {
+        PromptSpec spec =
+                M.readValue(
+                        "name: p\n"
+                                + "messages:\n"
+                                + "  - {role: system, content: 'You describe {kind}.'}\n"
+                                + "  - role: user\n"
+                                + "    content:\n"
+                                + "      - {type: text, text: 'Describe {subject}.'}\n"
+                                + "      - type: image\n"
+                                + "        media_type: image/png\n"
+                                + "        source: {type: base64, data: aGVsbG8=}\n",
+                        PromptSpec.class);
+        Prompt prompt = YamlLoader.buildPrompt(spec);
+        List<ChatMessage> messages =
+                prompt.formatMessages(
+                        MessageRole.USER, Map.of("kind", "images", "subject", "the cat"));
+
+        assertThat(messages).hasSize(2);
+        assertThat(messages.get(0).getText()).isEqualTo("You describe images.");
+        List<ContentBlock> blocks = messages.get(1).getBlocks();
+        assertThat(blocks).hasSize(2);
+        assertThat(((TextBlock) blocks.get(0)).getText()).isEqualTo("Describe the cat.");
+        assertThat(blocks.get(1)).isEqualTo(ImageBlock.fromBase64("image/png", "aGVsbG8="));
+    }
+
+    @Test
+    void buildPromptRejectsMediaInSystemMessages() throws Exception {
+        PromptSpec spec =
+                M.readValue(
+                        "name: p\n"
+                                + "messages:\n"
+                                + "  - role: system\n"
+                                + "    content:\n"
+                                + "      - type: image\n"
+                                + "        media_type: image/png\n"
+                                + "        source: {type: url, url: 'https://example.com/a.png'}\n",
+                        PromptSpec.class);
+        assertThatThrownBy(() -> YamlLoader.buildPrompt(spec))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("SYSTEM messages accept only text");
     }
 
     @Test
