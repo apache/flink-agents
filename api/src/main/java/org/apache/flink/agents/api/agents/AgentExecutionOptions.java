@@ -108,8 +108,9 @@ public class AgentExecutionOptions {
             new ConfigOption<>("agent-run.begin-event", Boolean.class, false);
 
     /**
-     * Short-term memory time-to-live. A positive duration enables expiration; a zero or negative
-     * duration disables it. In YAML, write a duration such as {@code 1 min}.
+     * Short-term memory time-to-live. A positive duration of at least 1 ms enables expiration; a
+     * zero or negative duration disables it. A positive duration shorter than 1 ms is rejected. In
+     * YAML, write a duration such as {@code 1 min}.
      */
     public static final ConfigOption<Duration> SHORT_TERM_MEMORY_STATE_TTL =
             new ConfigOption<>("short-term-memory.state-ttl", Duration.class, Duration.ZERO);

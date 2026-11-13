@@ -284,7 +284,7 @@ for TTL behavior and setup examples.
 
 | Key | Default | Type | Description |
 | --- | --- | --- | --- |
-| `short-term-memory.state-ttl` | `0 ms` | duration | Short-term memory TTL. A positive duration enables expiration; a zero or negative duration disables it. |
+| `short-term-memory.state-ttl` | `0 ms` | duration | Short-term memory TTL. A positive duration of at least 1 ms enables expiration; a zero or negative duration disables it. A positive duration shorter than 1 ms is rejected. |
 | `short-term-memory.state-ttl.update-type` | `ON_READ_AND_WRITE` | ShortTermMemoryTtlUpdate | When TTL is enabled, refresh expiration on creation and writes (`ON_CREATE_AND_WRITE`), or also on reads (`ON_READ_AND_WRITE`). |
 | `short-term-memory.state-ttl.visibility` | `NEVER_RETURN_EXPIRED` | ShortTermMemoryTtlVisibility | When TTL is enabled, never return expired state (`NEVER_RETURN_EXPIRED`), or allow it until cleanup (`RETURN_EXPIRED_IF_NOT_CLEANED_UP`). |
 

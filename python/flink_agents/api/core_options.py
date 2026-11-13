@@ -374,9 +374,9 @@ class AgentExecutionOptions:
         default=True,
     )
 
-    # Short-term memory time-to-live. A positive duration enables expiration; a
-    # zero or negative duration disables it. In YAML, write a duration such as
-    # "1 min".
+    # Short-term memory time-to-live. A positive duration of at least 1 ms enables
+    # expiration; a zero or negative duration disables it. A positive duration
+    # shorter than 1 ms is rejected. In YAML, write a duration such as "1 min".
     SHORT_TERM_MEMORY_STATE_TTL = ConfigOption(
         key="short-term-memory.state-ttl",
         config_type=timedelta,
