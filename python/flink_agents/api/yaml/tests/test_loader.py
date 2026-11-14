@@ -1051,3 +1051,87 @@ def test_model_router_name_collision_matches_programmatic_registration(
             ),
         )
     assert str(yaml_error.value) == str(programmatic.value)
+
+
+def test_load_yaml_chat_model_clashing_with_registered_router_registers_nothing(
+    tmp_path: Path,
+) -> None:
+    env = _registration_env()
+    router = ResourceDescriptor(
+        clazz="flink_agents.api.chat_models.routing.ModelRouter"
+    )
+    env.add_resource("router", ResourceType.MODEL_ROUTER, router)
+    candidate = tmp_path / "candidate.yaml"
+    candidate.write_text(
+        "chat_model_setups:\n"
+        "  - name: fresh\n"
+        "    clazz: ollama\n"
+        "  - name: router\n"
+        "    clazz: ollama\n"
+    )
+
+    with pytest.raises(ValueError, match="both a chat model and a model router"):
+        load_yaml(env, candidate)
+
+    assert env.resources[ResourceType.CHAT_MODEL] == {}
+    assert env.resources[ResourceType.MODEL_ROUTER] == {"router": router}
+
+
+def test_load_yaml_router_clashing_with_registered_chat_model_registers_nothing(
+    tmp_path: Path,
+) -> None:
+    env = _registration_env()
+    env.add_resource(
+        "assistant", ResourceType.CHAT_MODEL, ResourceDescriptor(clazz="some.Setup")
+    )
+    candidate = tmp_path / "candidate.yaml"
+
+    def write_candidate(router_name: str) -> None:
+        candidate.write_text(
+            "prompts:\n"
+            "  - name: fresh\n"
+            "    text: hello\n"
+            "model_routers:\n"
+            f"  - name: {router_name}\n"
+            "    clazz: router\n"
+            "    candidates: [small]\n"
+            "    strategy_type: rule_based\n"
+        )
+
+    write_candidate("assistant")
+    with pytest.raises(ValueError, match="both a chat model and a model router"):
+        load_yaml(env, candidate)
+
+    # Prompts are committed before model routers, so a clash found only at
+    # commit time would leave ``fresh`` behind and block the retry below.
+    assert env.resources[ResourceType.PROMPT] == {}
+    assert env.resources[ResourceType.MODEL_ROUTER] == {}
+
+    write_candidate("picker")
+    load_yaml(env, candidate)
+
+    assert set(env.resources[ResourceType.PROMPT]) == {"fresh"}
+    assert set(env.resources[ResourceType.MODEL_ROUTER]) == {"picker"}
+
+
+def test_load_yaml_chat_model_and_router_clashing_within_file_registers_nothing(
+    tmp_path: Path,
+) -> None:
+    env = _registration_env()
+    candidate = tmp_path / "candidate.yaml"
+    candidate.write_text(
+        "chat_model_setups:\n"
+        "  - name: same\n"
+        "    clazz: ollama\n"
+        "model_routers:\n"
+        "  - name: same\n"
+        "    clazz: router\n"
+        "    candidates: [small]\n"
+        "    strategy_type: rule_based\n"
+    )
+
+    with pytest.raises(ValueError, match="both a chat model and a model router"):
+        load_yaml(env, candidate)
+
+    assert env.resources[ResourceType.CHAT_MODEL] == {}
+    assert env.resources[ResourceType.MODEL_ROUTER] == {}
