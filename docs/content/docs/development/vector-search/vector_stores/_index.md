@@ -449,6 +449,32 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
+### Use as a Tool
+
+`VectorStoreSearchTool` exposes a vector store as a tool, so the model decides when to search and what to search for. The model passes only a `query`.
+
+```python
+from flink_agents.api.tools.vector_store_search_tool import VectorStoreSearchTool
+
+agents_env.add_resource(
+    "search_knowledge_base",
+    ResourceType.TOOL,
+    VectorStoreSearchTool(
+        name="search_knowledge_base",  # must match the resource name
+        description="Search a knowledge base about Apache Flink.",
+        vector_store="knowledge_base",  # name of a declared vector store
+        max_results=3,  # optional, defaults to 3
+    ),
+)
+```
+
+Add the tool name to the chat model's `tools`. The tool returns a JSON list of `{"content", "metadata"}` objects, or `No relevant documents found.` when nothing matches. Errors from the vector store fail the tool call.
+
+{{< hint info >}}
+- The tool is available in Python only and cannot be declared in YAML.
+- With a Java vector store on Flink 1.20.4 and earlier, 2.0.0–2.0.1, 2.1.0–2.1.2, or 2.2.0, set `tool-call.async` to `false`.
+{{< /hint >}}
+
 ## Using Cross-Language Providers
 
 For descriptor selection, registration, and runtime requirements, see
