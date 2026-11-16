@@ -22,12 +22,15 @@ import datetime
 import math
 from typing import Any, Dict, List
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from typing_extensions import override
 
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
-from flink_agents.api.vector_stores.vector_store import VectorStoreQuery
+from flink_agents.api.vector_stores.vector_store import (
+    BaseVectorStore,
+    VectorStoreQuery,
+)
 
 NO_RESULTS_MESSAGE = "No relevant documents found."
 
@@ -72,6 +75,7 @@ class VectorStoreSearchTool(Tool):
 
     vector_store: str
     max_results: int = Field(default=3, gt=0)
+    _resolved_store: BaseVectorStore | None = PrivateAttr(default=None)
 
     @model_validator(mode="before")
     @classmethod
@@ -109,6 +113,20 @@ class VectorStoreSearchTool(Tool):
         return ToolType.FUNCTION
 
     @override
+    def open(self) -> None:
+        # Calls may run concurrently in async workers; resolve before them.
+        if self.resource_context is None:
+            msg = "VectorStoreSearchTool requires a ResourceContext."
+            raise RuntimeError(msg)
+        store = self.resource_context.get_resource(
+            self.vector_store, ResourceType.VECTOR_STORE
+        )
+        if not isinstance(store, BaseVectorStore):
+            msg = f"Resource '{self.vector_store}' must be a vector store."
+            raise TypeError(msg)
+        self._resolved_store = store
+
+    @override
     def call(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]] | str:
         """Search the vector store and return the matching documents."""
         parsed = (
@@ -116,10 +134,13 @@ class VectorStoreSearchTool(Tool):
             if args
             else VectorStoreSearchArgs(**kwargs)
         )
-        store = self.resource_context.get_resource(
-            self.vector_store, ResourceType.VECTOR_STORE
-        )
-        result = store.query(
+        if self._resolved_store is None:
+            msg = (
+                f"Vector store '{self.vector_store}' has not been resolved. "
+                "Ensure open() is called before calling the tool."
+            )
+            raise TypeError(msg)
+        result = self._resolved_store.query(
             VectorStoreQuery(query_text=parsed.query, limit=self.max_results)
         )
         if not result.documents:

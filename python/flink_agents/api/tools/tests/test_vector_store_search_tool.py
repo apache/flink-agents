@@ -30,6 +30,7 @@ from flink_agents.api.tools.vector_store_search_tool import (
     VectorStoreSearchTool,
 )
 from flink_agents.api.vector_stores.vector_store import (
+    BaseVectorStore,
     Document,
     VectorStoreQueryResult,
 )
@@ -38,7 +39,7 @@ from flink_agents.api.vector_stores.vector_store import (
 def _make_tool(
     documents: List[Document], **kwargs: Any
 ) -> tuple[VectorStoreSearchTool, MagicMock, MagicMock]:
-    store = MagicMock()
+    store = MagicMock(spec=BaseVectorStore)
     store.query.return_value = VectorStoreQueryResult(documents=documents)
     ctx = MagicMock(spec=ResourceContext)
     ctx.get_resource.return_value = store
@@ -49,7 +50,9 @@ def _make_tool(
         "resource_context": ctx,
     }
     args.update(kwargs)
-    return VectorStoreSearchTool(**args), store, ctx
+    tool = VectorStoreSearchTool(**args)
+    tool.open()
+    return tool, store, ctx
 
 
 def test_call_returns_content_and_metadata_only() -> None:
@@ -104,14 +107,58 @@ def test_max_results_defaults_to_three() -> None:
     assert store.query.call_args.args[0].limit == 3
 
 
-def test_call_looks_up_vector_store_by_name() -> None:
-    tool, _, ctx = _make_tool([])
+def test_open_resolves_vector_store_once_by_name() -> None:
+    tool, store, ctx = _make_tool([])
 
     tool.call(query="event time")
+    tool.call(query="watermarks")
 
     ctx.get_resource.assert_called_once_with(
         "knowledge_base", ResourceType.VECTOR_STORE
     )
+    assert store.query.call_count == 2
+
+
+def test_call_before_open_raises() -> None:
+    ctx = MagicMock(spec=ResourceContext)
+    tool = VectorStoreSearchTool(
+        name="search_docs",
+        description="Search the docs.",
+        vector_store="knowledge_base",
+        resource_context=ctx,
+    )
+
+    with pytest.raises(TypeError, match="Ensure open\\(\\) is called"):
+        tool.call(query="event time")
+    ctx.get_resource.assert_not_called()
+
+
+def test_open_rejects_resource_that_is_not_a_vector_store() -> None:
+    ctx = MagicMock(spec=ResourceContext)
+    ctx.get_resource.return_value = object()
+    tool = VectorStoreSearchTool(
+        name="search_docs",
+        description="Search the docs.",
+        vector_store="knowledge_base",
+        resource_context=ctx,
+    )
+
+    with pytest.raises(TypeError, match="must be a vector store"):
+        tool.open()
+
+
+def test_open_propagates_missing_vector_store() -> None:
+    ctx = MagicMock(spec=ResourceContext)
+    ctx.get_resource.side_effect = KeyError("Resource not found: 'knowledge_base'")
+    tool = VectorStoreSearchTool(
+        name="search_docs",
+        description="Search the docs.",
+        vector_store="knowledge_base",
+        resource_context=ctx,
+    )
+
+    with pytest.raises(KeyError, match="knowledge_base"):
+        tool.open()
 
 
 def test_call_propagates_vector_store_errors() -> None:
