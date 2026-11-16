@@ -152,6 +152,25 @@ class YamlLoaderLoadYamlTest {
     }
 
     @Test
+    void sharedChatModelAndRouterClashWithinFileLeavesFileUnregistered(@TempDir Path tmp)
+            throws Exception {
+        AgentsExecutionEnvironment env = new TestEnv();
+        Path candidate =
+                Files.writeString(
+                        tmp.resolve("candidate.yaml"),
+                        "chat_model_setups:\n"
+                                + "  - {name: same, clazz: ollama}\n"
+                                + "model_routers:\n"
+                                + "  - {name: same, clazz: router, type: java}\n");
+
+        assertThatThrownBy(() -> env.loadYaml(candidate))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("chat models and model routers share");
+        assertThat(env.getResources().get(ResourceType.CHAT_MODEL)).isEmpty();
+        assertThat(env.getResources().get(ResourceType.MODEL_ROUTER)).isEmpty();
+    }
+
+    @Test
     void missingSharedActionRejected(@TempDir Path tmp) throws Exception {
         Path bad = tmp.resolve("bad.yaml");
         Files.writeString(bad, "agents:\n  - name: a\n    actions:\n      - undefined_action\n");

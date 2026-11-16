@@ -41,6 +41,7 @@ from flink_agents.api.resource import (
     JavaResourceDescriptor,
     ResourceDescriptor,
     ResourceType,
+    check_model_name_collision,
 )
 from flink_agents.api.skills import Skills, SkillSourceSpec
 from flink_agents.api.subagent import InternalSubagentResourceDescriptorBuilder
@@ -439,6 +440,8 @@ def load_yaml(
     Multiple calls accumulate. Duplicate names — both within a single file
     and across the current environment — raise ``ValueError``. Files are loaded
     in order, so child references can use Agents from earlier files or calls.
+    A registration conflict leaves the failing file's resources and agents
+    unregistered.
     Agent name checks are delegated to :func:`_build_in_file_state` so
     that ``load_yaml`` and :func:`build_agents` share the same rules.
     """
@@ -459,6 +462,11 @@ def load_yaml(
                         f"(loading {path})"
                     )
                     raise ValueError(msg)
+                # ``env.add_resource`` also rejects a chat model and a model router
+                # sharing a name. Check the environment and this file here, so
+                # the commit below cannot fail halfway.
+                check_model_name_collision(name, resource_type, env.resources)
+                check_model_name_collision(name, resource_type, shared_resources)
 
         # Resolve string action refs (raises ValueError on unknown ref).
         _resolve_shared_action_refs(agents, agent_specs, shared_actions, path)
