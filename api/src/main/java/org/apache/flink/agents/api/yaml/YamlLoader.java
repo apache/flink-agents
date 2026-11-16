@@ -459,6 +459,9 @@ public final class YamlLoader {
                             String.format("%s %s already defined.", type, name));
                 }
                 Agent.checkNoChatModelRouterNameClash(name, type, registeredResources);
+                // addResource would catch a clash within this file only after registering
+                // the resources before it.
+                Agent.checkNoChatModelRouterNameClash(name, type, sharedResources);
             }
         }
     }
