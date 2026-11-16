@@ -57,6 +57,13 @@ Start with [Setup]({{< ref "docs/get-started/setup" >}}), then choose a Quicksta
 To build Flink Agents applications with a coding agent, see
 [Build with a Coding Agent]({{< ref "docs/development/coding-agent-skill" >}}).
 
+## Security
+
+Before deploying an agent, read the
+[Security & Threat Model]({{< ref "docs/operations/security" >}}) for trusted-input
+and model-service assumptions, tool execution boundaries, and operator
+responsibilities.
+
 ## Preview Status
 
 {{< hint warning >}}

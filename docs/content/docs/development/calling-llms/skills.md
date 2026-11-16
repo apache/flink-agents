@@ -317,7 +317,9 @@ without it, the tool uses the task process's working directory.
 {{< hint warning >}}
 These checks are not an operating-system sandbox. Allowing an interpreter such as
 `python` permits more than running the bundled script. Grant only the commands
-and directories needed by trusted skills.
+and directories needed by trusted skills. See the
+[Security & Threat Model]({{< ref "docs/operations/security" >}}) for input and
+model trust assumptions and execution-environment responsibilities.
 {{< /hint >}}
 
 File redirects are rejected; descriptor duplication and closure such as `2>&1`
