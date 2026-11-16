@@ -205,6 +205,109 @@
       "title": "AgentSpec",
       "type": "object"
     },
+    "AudioBlock": {
+      "additionalProperties": false,
+      "description": "The audio content of a ChatMessage \u2014 see MediaBlock for the media shape.",
+      "properties": {
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "size_bytes": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size Bytes"
+        },
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "base64": "#/$defs/Base64Source",
+              "url": "#/$defs/UrlSource"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Base64Source"
+            },
+            {
+              "$ref": "#/$defs/UrlSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "type": {
+          "const": "audio",
+          "default": "audio",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "media_type",
+        "source",
+        "type"
+      ],
+      "title": "AudioBlock",
+      "type": "object"
+    },
+    "Base64Source": {
+      "additionalProperties": false,
+      "description": "An inline media payload, carried as base64 text.",
+      "properties": {
+        "data": {
+          "minLength": 1,
+          "title": "Data",
+          "type": "string"
+        },
+        "type": {
+          "const": "base64",
+          "default": "base64",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "type"
+      ],
+      "title": "Base64Source",
+      "type": "object"
+    },
     "DescriptorSpec": {
       "additionalProperties": true,
       "description": "Schema for any ResourceDescriptor-backed resource.\n\nRequired: ``name`` and ``clazz``. ``type`` selects the implementation\nlanguage (``\"python\"`` or ``\"java\"``; ``None`` means Python). All\nremaining fields are forwarded verbatim to ``ResourceDescriptor`` as\nkwargs (or as the Java wrapper's kwargs when ``type: java``); the\nforwarding and language-aware wrapping is done by ``loader._build_descriptor``.",
@@ -239,6 +342,166 @@
         "clazz"
       ],
       "title": "DescriptorSpec",
+      "type": "object"
+    },
+    "DocumentBlock": {
+      "additionalProperties": false,
+      "description": "The document content of a ChatMessage \u2014 see MediaBlock for the media shape.",
+      "properties": {
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "size_bytes": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size Bytes"
+        },
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "base64": "#/$defs/Base64Source",
+              "url": "#/$defs/UrlSource"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Base64Source"
+            },
+            {
+              "$ref": "#/$defs/UrlSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "type": {
+          "const": "document",
+          "default": "document",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "media_type",
+        "source",
+        "type"
+      ],
+      "title": "DocumentBlock",
+      "type": "object"
+    },
+    "ImageBlock": {
+      "additionalProperties": false,
+      "description": "The image content of a ChatMessage \u2014 see MediaBlock for the media shape.",
+      "properties": {
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "size_bytes": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size Bytes"
+        },
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "base64": "#/$defs/Base64Source",
+              "url": "#/$defs/UrlSource"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Base64Source"
+            },
+            {
+              "$ref": "#/$defs/UrlSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "type": {
+          "const": "image",
+          "default": "image",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "media_type",
+        "source",
+        "type"
+      ],
+      "title": "ImageBlock",
       "type": "object"
     },
     "InjectedArg": {
@@ -343,11 +606,48 @@
     },
     "PromptMessage": {
       "additionalProperties": false,
-      "description": "One message in a multi-turn prompt template.",
+      "description": "One message in a multi-turn prompt template.\n\n``content`` is either text or a non-empty list of content blocks in the\n``ChatMessage`` block format (``text``, ``image``, ``audio``, ``video`` or\n``document``), so a prompt can carry media next to its text.",
       "properties": {
         "content": {
-          "title": "Content",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "discriminator": {
+                  "mapping": {
+                    "audio": "#/$defs/AudioBlock",
+                    "document": "#/$defs/DocumentBlock",
+                    "image": "#/$defs/ImageBlock",
+                    "text": "#/$defs/TextBlock",
+                    "video": "#/$defs/VideoBlock"
+                  },
+                  "propertyName": "type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/TextBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/ImageBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/AudioBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/VideoBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/DocumentBlock"
+                  }
+                ]
+              },
+              "minItems": 1,
+              "type": "array"
+            }
+          ],
+          "title": "Content"
         },
         "role": {
           "$ref": "#/$defs/MessageRole",
@@ -450,6 +750,28 @@
         "name"
       ],
       "title": "SkillsSpec",
+      "type": "object"
+    },
+    "TextBlock": {
+      "additionalProperties": false,
+      "description": "A plain-text, immutable part of a ChatMessage.",
+      "properties": {
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "default": "text",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "TextBlock",
       "type": "object"
     },
     "ToolParameterSource": {
@@ -565,6 +887,109 @@
         "url"
       ],
       "title": "UrlSkillSpec",
+      "type": "object"
+    },
+    "UrlSource": {
+      "additionalProperties": false,
+      "description": "An externally managed media location: a URL or a provider file URI.\n\nThe location is externally managed: it may expire, may not be reachable by\nthe model provider, and may be invalid after recovery from a checkpoint.",
+      "properties": {
+        "type": {
+          "const": "url",
+          "default": "url",
+          "title": "Type",
+          "type": "string"
+        },
+        "url": {
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "type"
+      ],
+      "title": "UrlSource",
+      "type": "object"
+    },
+    "VideoBlock": {
+      "additionalProperties": false,
+      "description": "The video content of a ChatMessage \u2014 see MediaBlock for the media shape.",
+      "properties": {
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "size_bytes": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size Bytes"
+        },
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "base64": "#/$defs/Base64Source",
+              "url": "#/$defs/UrlSource"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Base64Source"
+            },
+            {
+              "$ref": "#/$defs/UrlSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "type": {
+          "const": "video",
+          "default": "video",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "media_type",
+        "source",
+        "type"
+      ],
+      "title": "VideoBlock",
       "type": "object"
     }
   },

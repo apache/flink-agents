@@ -20,7 +20,10 @@ package org.apache.flink.agents.api.yaml.spec;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -84,5 +87,51 @@ class PromptSpecTest {
     void rejectsUnknownProperty() {
         assertThatThrownBy(() -> M.readValue("name: p1\ntext: x\nextra: y\n", PromptSpec.class))
                 .hasMessageContaining("extra");
+    }
+
+    @Test
+    void promptMessageWithContentBlocks() throws Exception {
+        String yaml =
+                "content:\n"
+                        + "  - {type: text, text: \"Describe {subject}.\"}\n"
+                        + "  - type: image\n"
+                        + "    media_type: image/png\n"
+                        + "    source: {type: url, url: \"https://example.com/cat.png\"}\n";
+        PromptMessage msg = M.readValue(yaml, PromptMessage.class);
+        assertThat(msg.getContent()).isNull();
+        assertThat(msg.getBlocks()).hasSize(2);
+        assertThat(((TextBlock) msg.getBlocks().get(0)).getText()).isEqualTo("Describe {subject}.");
+        ImageBlock image = (ImageBlock) msg.getBlocks().get(1);
+        assertThat(image.getMediaType()).isEqualTo("image/png");
+        assertThat(((UrlSource) image.getSource()).getUrl())
+                .isEqualTo("https://example.com/cat.png");
+    }
+
+    @Test
+    void rejectsEmptyContentBlockList() {
+        assertThatThrownBy(() -> M.readValue("content: []\n", PromptMessage.class))
+                .hasMessageContaining("must not be an empty list of content blocks");
+    }
+
+    @Test
+    void rejectsNonDataContentBlocks() {
+        String yaml = "content:\n  - {type: reasoning, text: thinking}\n";
+        assertThatThrownBy(() -> M.readValue(yaml, PromptMessage.class))
+                .hasMessageContaining(
+                        "must be text, image, audio, video or document blocks, not reasoning");
+    }
+
+    @Test
+    void rejectsMalformedContentBlocks() {
+        assertThatThrownBy(
+                        () ->
+                                M.readValue(
+                                        "content:\n  - {type: image, media_type: image/png}\n",
+                                        PromptMessage.class))
+                .hasMessageContaining("invalid content block in prompt message");
+        assertThatThrownBy(() -> M.readValue("content: {text: hi}\n", PromptMessage.class))
+                .hasMessageContaining("must be text or a list of content blocks");
+        assertThatThrownBy(() -> M.readValue("content: null\n", PromptMessage.class))
+                .hasMessageContaining("must be text or a list of content blocks");
     }
 }

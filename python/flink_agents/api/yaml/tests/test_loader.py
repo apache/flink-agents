@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.chat_message import MessageRole
+from flink_agents.api.chat_message import ImageBlock, MessageRole, TextBlock
 from flink_agents.api.events.chat_event import ChatResponseEvent
 from flink_agents.api.events.event import InputEvent
 from flink_agents.api.function import JavaFunction, PythonFunction
@@ -317,6 +317,51 @@ def test_build_agents_preserves_prompt_messages_with_unset_text(
         MessageRole.USER,
     ]
     assert [message.text for message in messages] == ["Hello Alice", "How are you?"]
+
+
+def test_build_agents_loads_prompt_media_blocks(tmp_path: Path) -> None:
+    path = tmp_path / "prompt.yaml"
+    path.write_text(
+        "agents:\n"
+        "  - name: vision_agent\n"
+        "    prompts:\n"
+        "      - name: describe\n"
+        "        messages:\n"
+        "          - {role: system, content: 'You describe {kind}.'}\n"
+        "          - role: user\n"
+        "            content:\n"
+        "              - {type: text, text: 'Describe {subject}.'}\n"
+        "              - type: image\n"
+        "                media_type: image/png\n"
+        "                source: {type: base64, data: aGVsbG8=}\n"
+    )
+    agents, _, _ = build_agents(path)
+    prompt = agents["vision_agent"].resources[ResourceType.PROMPT]["describe"]
+    messages = prompt.format_messages(kind="images", subject="the cat")
+
+    assert messages[0].text == "You describe images."
+    assert list(messages[1].blocks) == [
+        TextBlock(text="Describe the cat."),
+        ImageBlock.from_base64("image/png", "aGVsbG8="),
+    ]
+
+
+def test_build_agents_rejects_media_in_system_prompt_messages(tmp_path: Path) -> None:
+    path = tmp_path / "prompt.yaml"
+    path.write_text(
+        "agents:\n"
+        "  - name: vision_agent\n"
+        "    prompts:\n"
+        "      - name: describe\n"
+        "        messages:\n"
+        "          - role: system\n"
+        "            content:\n"
+        "              - type: image\n"
+        "                media_type: image/png\n"
+        "                source: {type: url, url: 'https://example.com/a.png'}\n"
+    )
+    with pytest.raises(ValueError, match="SYSTEM messages accept only text"):
+        build_agents(path)
 
 
 def test_build_agents_handles_shared_resources_and_actions() -> None:

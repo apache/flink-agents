@@ -37,6 +37,7 @@ from pydantic import (
     model_validator,
 )
 
+from flink_agents.api.chat_message import DataContentBlock
 from flink_agents.api.tools.tool_parameter_injection import (
     InjectedArg,
     normalize_injected_args,
@@ -97,12 +98,17 @@ class MessageRole(str, Enum):
 
 
 class PromptMessage(BaseModel):
-    """One message in a multi-turn prompt template."""
+    """One message in a multi-turn prompt template.
+
+    ``content`` is either text or a non-empty list of content blocks in the
+    ``ChatMessage`` block format (``text``, ``image``, ``audio``, ``video`` or
+    ``document``), so a prompt can carry media next to its text.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     role: MessageRole = MessageRole.USER
-    content: str
+    content: str | Annotated[List[DataContentBlock], Field(min_length=1)]
 
 
 class PromptSpec(BaseModel):
@@ -322,6 +328,17 @@ class YamlAgentsDocument(BaseModel):
     subagents: List[DescriptorSpec] = Field(default_factory=list)
 
 
+_DISCRIMINATED_DEFS = (
+    "TextBlock",
+    "ImageBlock",
+    "AudioBlock",
+    "VideoBlock",
+    "DocumentBlock",
+    "UrlSource",
+    "Base64Source",
+)
+
+
 def export() -> str:
     """Return the JSON Schema for the YAML API as a string.
 
@@ -333,6 +350,12 @@ def export() -> str:
     keep it in sync by re-running this helper after editing the specs.
     """
     schema = YamlAgentsDocument.model_json_schema()
+    # YAML parsing requires an explicit discriminator, even though direct
+    # construction of concrete block/source models has defaults.
+    for name in _DISCRIMINATED_DEFS:
+        required = schema["$defs"][name].setdefault("required", [])
+        if "type" not in required:
+            required.append("type")
     return json.dumps(schema, indent=2, sort_keys=True) + "\n"
 
 
