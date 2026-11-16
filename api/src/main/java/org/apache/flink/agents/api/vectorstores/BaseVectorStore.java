@@ -176,7 +176,8 @@ public abstract class BaseVectorStore extends Resource {
      * @return VectorStoreQueryResult containing the retrieved documents
      */
     public VectorStoreQueryResult query(VectorStoreQuery query) {
-        final float[] queryEmbedding = getEmbeddingModel().embed(query.getQueryText());
+        final float[] queryEmbedding =
+                getEmbeddingModel().embed(query.getQueryText()).getEmbeddings();
 
         final Map<String, Object> storeKwargs = this.getStoreKwargs();
         storeKwargs.putAll(query.getExtraArgs());
@@ -334,7 +335,7 @@ public abstract class BaseVectorStore extends Resource {
     protected void ensureEmbeddings(List<Document> documents) {
         for (Document doc : documents) {
             if (doc.getEmbedding() == null) {
-                doc.setEmbedding(getEmbeddingModel().embed(doc.getContent()));
+                doc.setEmbedding(getEmbeddingModel().embed(doc.getContent()).getEmbeddings());
             }
         }
     }

@@ -57,17 +57,20 @@ def test_java_embedding_wrappers_preserve_usage(
     kwargs: dict[str, str],
 ) -> None:
     j_resource = MagicMock()
-    j_resource.embedWithUsage.return_value = _JavaEmbeddingResult()
-    wrapper = wrapper_class(j_resource, MagicMock(), **kwargs)
+    j_resource.embed.return_value = _JavaEmbeddingResult()
+    adapter = MagicMock()
+    adapter.fromPythonDataContentBlock.side_effect = lambda block: block
+    wrapper = wrapper_class(j_resource, adapter, **kwargs)
 
-    result = wrapper.embed_with_usage(["first", "second"], batch_size=2)
+    result = wrapper.embed(["first", "second"], batch_size=2)
 
     assert result.embeddings == [[0.1, 0.2], [0.3, 0.4]]
     assert result.token_usage is not None
     assert result.token_usage.prompt_tokens == 7
     assert result.token_usage.total_tokens == 9
-    j_resource.embedWithUsage.assert_called_once_with(
-        ["first", "second"], {"batch_size": 2}
+    j_resource.embed.assert_called_once_with(
+        [TextBlock(text=t).model_dump(mode="json") for t in ["first", "second"]],
+        {"batch_size": 2}
     )
 
 
@@ -80,14 +83,14 @@ def test_java_embedding_setup_preserves_block_order_and_result_shape() -> None:
         j_resource, adapter, connection="connection", model="test-model"
     )
     image = ImageBlock.from_base64("image/png", "aGk=")
-    j_resource.embedBlocksWithUsage.return_value = _JavaEmbeddingResult()
+    j_resource.embed.return_value = _JavaEmbeddingResult()
 
-    result = setup.embed_with_usage(["caption", image], dimension=2)
+    result = setup.embed(["caption", image], dimension=2)
 
     assert result.embeddings == [[0.1, 0.2], [0.3, 0.4]]
     assert result.token_usage is not None
     assert result.token_usage.total_tokens == 9
-    j_resource.embedBlocksWithUsage.assert_called_once_with(
+    j_resource.embed.assert_called_once_with(
         [
             TextBlock(text="caption").model_dump(mode="json"),
             image.model_dump(mode="json"),
@@ -95,7 +98,12 @@ def test_java_embedding_setup_preserves_block_order_and_result_shape() -> None:
         {"dimension": 2},
     )
 
+    j_resource.embed.reset_mock()
     single_result = MagicMock()
-    single_result.getEmbeddings.return_value = [[0.1, 0.2]]
-    j_resource.embedBlocksWithUsage.return_value = single_result
-    assert setup.embed(image) == [0.1, 0.2]
+    single_result.getEmbeddings.return_value = [0.1, 0.2]
+    single_result.getTokenUsage.return_value = None
+    j_resource.embed.return_value = single_result
+    result = setup.embed(image)
+    assert result.embeddings == [0.1, 0.2]
+    assert result.token_usage is None
+    j_resource.embed.assert_called_once_with(image.model_dump(mode="json"), {})
