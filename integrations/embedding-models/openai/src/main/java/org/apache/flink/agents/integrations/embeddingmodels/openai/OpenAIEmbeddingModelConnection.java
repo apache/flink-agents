@@ -27,6 +27,7 @@ import com.openai.models.embeddings.CreateEmbeddingResponse;
 import com.openai.models.embeddings.Embedding;
 import com.openai.models.embeddings.EmbeddingCreateParams;
 import com.openai.models.embeddings.EmbeddingValue;
+import org.apache.flink.agents.api.chat.messages.DataContentBlock;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
 import org.apache.flink.agents.api.embedding.model.EmbeddingModelUtils;
 import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
@@ -71,8 +72,8 @@ import java.util.TreeSet;
  * request fields ({@code model}, {@code input}, {@code encoding_format}, {@code dimensions}, {@code
  * user}); entries with a {@code null} value are omitted. Blank strings are treated as absent, and
  * other per-call keys are ignored. A batch of texts is sent as one request and the embeddings are
- * returned in input order. Token usage reported by the API is surfaced through {@link
- * #embedWithUsage}; servers that omit it yield a {@code null} usage.
+ * returned in input order. Token usage reported by the API is surfaced through {@link #embed};
+ * servers that omit it yield a {@code null} usage.
  */
 public class OpenAIEmbeddingModelConnection extends BaseEmbeddingModelConnection {
 
@@ -324,40 +325,15 @@ public class OpenAIEmbeddingModelConnection extends BaseEmbeddingModelConnection
     }
 
     @Override
-    public float[] embed(String text, Map<String, Object> parameters) {
-        return embedWithUsage(text, parameters).getEmbeddings();
-    }
-
-    @Override
-    public List<float[]> embed(List<String> texts, Map<String, Object> parameters) {
-        return embedWithUsage(texts, parameters).getEmbeddings();
-    }
-
-    @Override
-    public EmbeddingResult<float[]> embedWithUsage(String text, Map<String, Object> parameters) {
-        EmbeddingResult<List<float[]>> result =
-                embedWithUsage(Collections.singletonList(text), parameters);
-        return new EmbeddingResult<>(result.getEmbeddings().get(0), result.getTokenUsage());
-    }
-
-    @Override
-    public EmbeddingResult<List<float[]>> embedWithUsage(
-            List<String> texts, Map<String, Object> parameters) {
-        if (texts == null) {
-            throw new IllegalArgumentException("texts must not be null.");
-        }
-        List<String> inputs = texts;
-        for (int i = 0; i < inputs.size(); i++) {
-            if (inputs.get(i) == null) {
-                throw new IllegalArgumentException(
-                        "Text at index " + i + " is null; every input must be a string.");
-            }
-        }
+    public EmbeddingResult<List<float[]>> embed(
+            List<? extends DataContentBlock> blocks, Map<String, Object> parameters) {
+        List<String> texts =
+                EmbeddingModelUtils.requireTextInputs(blocks, "OpenAIEmbeddingModelConnection");
         // Validate the parameters even for an empty batch so a bad per-call override is not
         // deferred to the first non-empty batch (the Python connection validates first too).
         EmbeddingCreateParams params =
-                buildParams(inputs, parameters == null ? Collections.emptyMap() : parameters);
-        if (inputs.isEmpty()) {
+                buildParams(texts, parameters == null ? Collections.emptyMap() : parameters);
+        if (texts.isEmpty()) {
             return new EmbeddingResult<>(new ArrayList<>(), null);
         }
         CreateEmbeddingResponse response = client.embeddings().create(params);

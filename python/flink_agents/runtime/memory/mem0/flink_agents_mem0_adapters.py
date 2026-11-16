@@ -77,7 +77,7 @@ class FlinkAgentsEmbedding(EmbeddingBase):
         Returns:
             The embedding vector.
         """
-        return self._embedding_model.embed(text)
+        return self._embedding_model.embed(text).embeddings
 
 
 class FlinkAgentsLlmConfig(BaseLlmConfig):

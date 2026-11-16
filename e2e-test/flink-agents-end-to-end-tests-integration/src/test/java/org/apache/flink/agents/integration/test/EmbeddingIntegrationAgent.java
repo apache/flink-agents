@@ -222,7 +222,7 @@ public class EmbeddingIntegrationAgent extends Agent {
                                     org.apache.flink.agents.api.resource.ResourceType
                                             .EMBEDDING_MODEL);
 
-            float[] embedding = embeddingModel.embed(text);
+            float[] embedding = embeddingModel.embed(text).getEmbeddings();
             System.out.printf("[TEST] Generated embedding with dimension: %d%n", embedding.length);
             return embedding;
 

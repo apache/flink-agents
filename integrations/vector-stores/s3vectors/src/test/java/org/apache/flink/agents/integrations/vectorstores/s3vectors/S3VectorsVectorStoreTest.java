@@ -18,7 +18,9 @@
 
 package org.apache.flink.agents.integrations.vectorstores.s3vectors;
 
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
+import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -86,18 +88,20 @@ public class S3VectorsVectorStoreTest {
     private static Resource getResource(String name, ResourceType type) {
         BaseEmbeddingModelSetup emb = Mockito.mock(BaseEmbeddingModelSetup.class);
         Mockito.when(emb.embed("Test document one"))
-                .thenReturn(new float[] {0.1f, 0.2f, 0.3f, 0.4f, 0.5f});
+                .thenReturn(
+                        new EmbeddingResult<>(new float[] {0.1f, 0.2f, 0.3f, 0.4f, 0.5f}, null));
         Mockito.when(emb.embed("Test document two"))
-                .thenReturn(new float[] {0.5f, 0.4f, 0.3f, 0.2f, 0.1f});
+                .thenReturn(
+                        new EmbeddingResult<>(new float[] {0.5f, 0.4f, 0.3f, 0.2f, 0.1f}, null));
         Mockito.when(emb.embed(Mockito.anyList()))
                 .thenAnswer(
                         inv -> {
-                            List<String> texts = inv.getArgument(0);
+                            List<TextBlock> texts = inv.getArgument(0);
                             List<float[]> result = new ArrayList<>();
-                            for (String t : texts) {
-                                result.add(emb.embed(t));
+                            for (TextBlock t : texts) {
+                                result.add(emb.embed(t.getText()).getEmbeddings());
                             }
-                            return result;
+                            return new EmbeddingResult<>(result, null);
                         });
         return emb;
     }

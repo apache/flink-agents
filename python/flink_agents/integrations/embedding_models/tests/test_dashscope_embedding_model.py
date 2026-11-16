@@ -74,7 +74,7 @@ def test_dashscope_embedding_model() -> None:
 
     response = embedding_model.embed(
         "The quality of the clothes is excellent, very beautiful, worth the wait, I like it and will buy here again"
-    )
+    ).embeddings
     assert response is not None
     assert isinstance(response, list)
     assert len(response) > 0
@@ -103,7 +103,7 @@ def test_dashscope_embedding_with_text_type() -> None:
     )
     embedding_model_query.open()
 
-    response_query = embedding_model_query.embed("Hello, Flink Agent!")
+    response_query = embedding_model_query.embed("Hello, Flink Agent!").embeddings
     assert response_query is not None
     assert isinstance(response_query, list)
     assert len(response_query) > 0
@@ -117,7 +117,7 @@ def test_dashscope_embedding_with_text_type() -> None:
     )
     embedding_model_doc.open()
 
-    response_doc = embedding_model_doc.embed("Hello, Flink Agent!")
+    response_doc = embedding_model_doc.embed("Hello, Flink Agent!").embeddings
     assert response_doc is not None
     assert isinstance(response_doc, list)
     assert len(response_doc) > 0
@@ -159,7 +159,7 @@ def test_dashscope_embedding_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     embedding_model.open()
 
-    response = embedding_model.embed("Test text")
+    response = embedding_model.embed("Test text").embeddings
 
     mock_call.assert_called_once()
     assert mock_call.call_args.kwargs["model"] == "text-embedding-v4"
@@ -207,7 +207,7 @@ def test_dashscope_embedding_returns_token_usage(
     )
     embedding_model.open()
 
-    result = embedding_model.embed_with_usage("Test text")
+    result = embedding_model.embed("Test text")
     assert result.embeddings == mock_embedding
     assert result.token_usage is not None
     assert result.token_usage.prompt_tokens == 6
@@ -256,7 +256,7 @@ def test_dashscope_embedding_batch_mock(monkeypatch: pytest.MonkeyPatch) -> None
     )
     embedding_model.open()
 
-    response = embedding_model.embed(["Text one", "Text two"])
+    response = embedding_model.embed(["Text one", "Text two"]).embeddings
 
     mock_call.assert_called_once()
     assert response == mock_embeddings
@@ -377,7 +377,7 @@ def test_dashscope_multimodal_embedding_returns_one_ordered_vector_per_input(
         usage={"input_tokens": 7, "total_tokens": 12},
     )
 
-    result = setup.embed_with_usage([TextBlock(text=str(query)), image, video])
+    result = setup.embed([TextBlock(text=str(query)), image, video])
 
     assert result.embeddings == vectors
     assert result.token_usage == EmbeddingTokenUsage(prompt_tokens=7, total_tokens=12)
@@ -405,7 +405,7 @@ def test_dashscope_multimodal_embedding_returns_one_vector_for_text_query(
         output={"embeddings": [{"index": 0, "embedding": vector}]},
     )
 
-    assert setup.embed("a tree") == vector
+    assert setup.embed("a tree").embeddings == vector
     call.assert_called_once()
     assert call.call_args.kwargs["model"] == "qwen3-vl-embedding"
     assert call.call_args.kwargs["input"] == {"contents": [{"text": "a tree"}]}

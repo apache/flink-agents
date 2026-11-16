@@ -23,6 +23,7 @@ import pytest
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole, TextBlock
 from flink_agents.api.chat_result import ChatResult, TokenUsage
+from flink_agents.api.embedding_models.embedding_model import EmbeddingResult
 from flink_agents.api.memory.long_term_memory import (
     MemorySet,
     MemorySetItem,
@@ -115,7 +116,7 @@ class MockEmbeddingModelSetup:
         for i in range(384):
             idx = i % len(h)
             vector.append(float(int(h[idx], 16)) / 15.0)
-        return vector
+        return EmbeddingResult(vector)
 
 
 def _build_vector_store(backend: str, tmpdir: str) -> CollectionManageableVectorStore:

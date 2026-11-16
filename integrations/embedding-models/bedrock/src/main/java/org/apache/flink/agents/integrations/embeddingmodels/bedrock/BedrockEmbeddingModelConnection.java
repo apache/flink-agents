@@ -22,7 +22,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.RetryExecutor;
+import org.apache.flink.agents.api.chat.messages.DataContentBlock;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
+import org.apache.flink.agents.api.embedding.model.EmbeddingModelUtils;
 import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.embedding.model.EmbeddingTokenUsage;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -136,13 +138,7 @@ public class BedrockEmbeddingModelConnection extends BaseEmbeddingModelConnectio
                 .build();
     }
 
-    @Override
-    public float[] embed(String text, Map<String, Object> parameters) {
-        return embedWithUsage(text, parameters).getEmbeddings();
-    }
-
-    @Override
-    public EmbeddingResult<float[]> embedWithUsage(String text, Map<String, Object> parameters) {
+    private EmbeddingResult<float[]> embedText(String text, Map<String, Object> parameters) {
         String model = (String) parameters.getOrDefault("model", defaultModel);
         Integer dimensions = (Integer) parameters.get("dimensions");
 
@@ -196,18 +192,15 @@ public class BedrockEmbeddingModelConnection extends BaseEmbeddingModelConnectio
     }
 
     @Override
-    public List<float[]> embed(List<String> texts, Map<String, Object> parameters) {
-        return embedWithUsage(texts, parameters).getEmbeddings();
-    }
-
-    @Override
-    public EmbeddingResult<List<float[]>> embedWithUsage(
-            List<String> texts, Map<String, Object> parameters) {
+    public EmbeddingResult<List<float[]>> embed(
+            List<? extends DataContentBlock> blocks, Map<String, Object> parameters) {
+        List<String> texts =
+                EmbeddingModelUtils.requireTextInputs(blocks, "BedrockEmbeddingModelConnection");
         if (texts.size() <= 1) {
             List<float[]> results = new ArrayList<>(texts.size());
             EmbeddingTokenUsage totalUsage = null;
             for (String text : texts) {
-                EmbeddingResult<float[]> result = embedWithUsage(text, parameters);
+                EmbeddingResult<float[]> result = embedText(text, parameters);
                 results.add(result.getEmbeddings());
                 totalUsage = mergeUsage(totalUsage, result.getTokenUsage());
             }
@@ -219,7 +212,7 @@ public class BedrockEmbeddingModelConnection extends BaseEmbeddingModelConnectio
                         .map(
                                 text ->
                                         CompletableFuture.supplyAsync(
-                                                () -> embedWithUsage(text, parameters), embedPool))
+                                                () -> embedText(text, parameters), embedPool))
                         .toArray(CompletableFuture[]::new);
         CompletableFuture.allOf(futures).join();
         List<float[]> results = new ArrayList<>(texts.size());

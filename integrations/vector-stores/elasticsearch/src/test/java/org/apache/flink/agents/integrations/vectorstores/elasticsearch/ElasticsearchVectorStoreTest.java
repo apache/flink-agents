@@ -19,6 +19,7 @@
 package org.apache.flink.agents.integrations.vectorstores.elasticsearch;
 
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
+import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -56,11 +57,13 @@ public class ElasticsearchVectorStoreTest {
     public static Resource getResource(String name, ResourceType type) {
         BaseEmbeddingModelSetup embeddingModel = Mockito.mock(BaseEmbeddingModelSetup.class);
         Mockito.when(embeddingModel.embed("Elasticsearch is a search engine"))
-                .thenReturn(new float[] {0.2f, 0.3f, 0.4f, 0.5f, 0.6f});
+                .thenReturn(
+                        new EmbeddingResult<>(new float[] {0.2f, 0.3f, 0.4f, 0.5f, 0.6f}, null));
         Mockito.when(
                         embeddingModel.embed(
                                 "Apache Flink Agents is an Agentic AI framework based on Apache Flink."))
-                .thenReturn(new float[] {0.1f, 0.2f, 0.3f, 0.4f, 0.5f});
+                .thenReturn(
+                        new EmbeddingResult<>(new float[] {0.1f, 0.2f, 0.3f, 0.4f, 0.5f}, null));
         return embeddingModel;
     }
 

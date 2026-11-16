@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.RetryExecutor;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
@@ -196,16 +197,16 @@ public class OpenSearchVectorStore extends BaseVectorStore
     public List<String> add(
             List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs)
             throws IOException {
-        List<String> texts = new ArrayList<>();
+        List<TextBlock> texts = new ArrayList<>();
         List<Integer> needsEmbedding = new ArrayList<>();
         for (int i = 0; i < documents.size(); i++) {
             if (documents.get(i).getEmbedding() == null) {
-                texts.add(documents.get(i).getContent());
+                texts.add(new TextBlock(documents.get(i).getContent()));
                 needsEmbedding.add(i);
             }
         }
         if (!texts.isEmpty()) {
-            List<float[]> embeddings = this.embeddingModel.embed(texts);
+            List<float[]> embeddings = this.embeddingModel.embed(texts).getEmbeddings();
             for (int j = 0; j < needsEmbedding.size(); j++) {
                 documents.get(needsEmbedding.get(j)).setEmbedding(embeddings.get(j));
             }

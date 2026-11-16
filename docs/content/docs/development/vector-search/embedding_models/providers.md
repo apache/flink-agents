@@ -90,8 +90,8 @@ A batch can mix text, images, and videos. It returns one independent vector per
 input, in input order. The integration does not combine inputs into a single
 fused vector; leave `enable_fusion` unset or set it to `False`.
 
-Use `embed` or `embed_with_usage` in Python. In Java, pass a list of blocks to
-`embedBlocksWithUsage`. See [Inputs and Results]({{< ref "docs/development/vector-search/embedding_models#inputs-and-results" >}})
+`embed` accepts single inputs or batches and returns an `EmbeddingResult` with
+optional token usage. See [Inputs and Results]({{< ref "docs/development/vector-search/embedding_models#inputs-and-results" >}})
 for accepted inputs and return values.
 
 #### DashScopeEmbeddingModelConnection Parameters
@@ -490,7 +490,7 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
-A batch of texts is embedded in a single request, so it must stay within OpenAI's per-request limits (2048 inputs at the time of writing); split larger batches before calling. Token usage reported by the API is available through `embedWithUsage` in Java and `embed_with_usage` in Python.
+A batch of texts is embedded in a single request, so it must stay within OpenAI's per-request limits (2048 inputs at the time of writing); split larger batches before calling. Token usage reported by the API is available in the `EmbeddingResult` returned by `embed`.
 
 #### Available Models
 
