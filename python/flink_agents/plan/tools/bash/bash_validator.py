@@ -31,6 +31,7 @@ assignments, control flow, etc.).
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, List
@@ -190,9 +191,18 @@ def _validate_command_node(
         # can later reinterpret their values in arithmetic contexts.
         return "Command without an executable is not allowed."
     executable = name_node.text.decode("utf-8", errors="replace")
+    # Validate the literal spelling before either authorization check. Shell
+    # expansion or quote removal must not change the executable being checked.
+    if re.fullmatch(r"[A-Za-z0-9_./-]+", executable) is None:
+        return (
+            f"Executable '{executable}' is not allowed. Use a literal name or path "
+            "containing only ASCII letters, digits, '_', '-', '.', and '/'."
+        )
     if executable in allowed_commands:
         return None
-    if is_under_allowed_dirs(executable, allowed_script_dirs, cwd):
+    # Bash looks up bare names via PATH, not relative to cwd. Only explicit
+    # paths can be authorized by an allowed script directory.
+    if "/" in executable and is_under_allowed_dirs(executable, allowed_script_dirs, cwd):
         return None
     return (
         f"Command '{executable}' is not allowed. "

@@ -52,6 +52,10 @@ class TestValidateCommand:
     def test_empty_allowed_commands_rejects(self) -> None:
         assert validate_command("gh issue list", [], []) is not None
 
+    def test_process_cwd_does_not_allow_bare_command(self) -> None:
+        """The implicit working directory must not authorize bare commands either."""
+        assert validate_command("pwd", [], [str(Path.cwd())]) is not None
+
     def test_reject_empty_command(self) -> None:
         assert validate_command("", ["gh"], []) is not None
         assert validate_command("   ", ["gh"], []) is not None
@@ -326,6 +330,78 @@ class TestBashTool:
 
     # -- cwd parameter -----------------------------------------------------
 
+    @pytest.mark.parametrize(
+        "command",
+        ["pwd", "echo ok | pwd", "echo ok && pwd", "run.sh", ".run.sh"],
+    )
+    @pytest.mark.parametrize("existing_file", [False, True])
+    def test_cwd_does_not_allow_bare_command(
+        self, tool: BashTool, tmp_path: Path, command: str, existing_file: bool
+    ) -> None:
+        """A directory grant never authorizes a PATH-based command lookup."""
+        if existing_file:
+            for name in ("pwd", "run.sh", ".run.sh"):
+                (tmp_path / name).touch()
+        result = tool.call(
+            command=command,
+            cwd=str(tmp_path),
+            allowed_commands=["echo"],
+            allowed_script_dirs=[str(tmp_path)],
+        )
+        assert result.startswith("Command rejected:")
+        assert "is not allowed" in result
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "${FLINK_BASH_TEST_UNSET:+/}pwd",
+            "${FLINK_BASH_TEST_UNSET:-/bin/pwd}",
+            "./$SCRIPT",
+            "./*.sh",
+            "./run?.sh",
+            "./[r]un.sh",
+            "./{run,other}.sh",
+            "~/run.sh",
+            "'./run.sh'",
+            '\"./run.sh\"',
+            './r"un".sh',
+            r"./run\ script.sh",
+        ],
+    )
+    def test_reject_nonliteral_executable(
+        self, tool: BashTool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+    ) -> None:
+        """Shell syntax in an executable cannot obtain directory authorization."""
+        monkeypatch.delenv("FLINK_BASH_TEST_UNSET", raising=False)
+        result = tool.call(
+            command=command,
+            cwd=str(tmp_path),
+            allowed_commands=[],
+            allowed_script_dirs=[str(tmp_path)],
+        )
+        assert result.startswith("Command rejected:")
+
+    @pytest.mark.parametrize("path_kind", ["relative", "nested", "absolute"])
+    def test_cwd_allows_explicit_script_path(
+        self, tool: BashTool, tmp_path: Path, path_kind: str
+    ) -> None:
+        """Explicit paths can use the directory grant without a command grant."""
+        script = tmp_path / "scripts" / "run_task-2.sh"
+        script.parent.mkdir()
+        script.write_text('#!/bin/sh\necho "script-ok:$1"\n')
+        script.chmod(0o755)
+        command = {
+            "relative": "./scripts/run_task-2.sh",
+            "nested": "scripts/run_task-2.sh",
+            "absolute": str(script),
+        }[path_kind]
+        assert tool.call(
+            command=command + ' "${FLINK_BASH_TEST_UNSET:-argument-ok}"',
+            cwd=str(tmp_path),
+            allowed_commands=[],
+            allowed_script_dirs=[str(tmp_path)],
+        ) == "script-ok:argument-ok"
+
     def test_cwd_enables_relative_script_path(
         self, tool: BashTool, script_dir: Path
     ) -> None:
@@ -334,11 +410,30 @@ class TestBashTool:
             command="python3 scripts/hello.py",
             timeout=10,
             cwd=str(script_dir),
-            allowed_commands=[],
+            allowed_commands=["python3"],
             allowed_script_dirs=[str(script_dir)],
         )
         assert "Command rejected" not in result
         assert "ok" in result
+
+    def test_cwd_rejects_script_outside_allowed_dir(
+        self, tool: BashTool, tmp_path: Path
+    ) -> None:
+        """Neither parent traversal nor a symlink grants access outside the root."""
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        outside = tmp_path / "outside.sh"
+        outside.write_text("#!/bin/sh\necho outside\n")
+        outside.chmod(0o755)
+        (allowed / "link.sh").symlink_to(outside)
+        for command in ("../outside.sh", "./link.sh", str(outside)):
+            result = tool.call(
+                command=command,
+                cwd=str(allowed),
+                allowed_commands=[],
+                allowed_script_dirs=[str(allowed)],
+            )
+            assert result.startswith("Command rejected:")
 
     def test_cwd_outside_allowed_dirs_rejected(
         self, tool: BashTool, script_dir: Path
