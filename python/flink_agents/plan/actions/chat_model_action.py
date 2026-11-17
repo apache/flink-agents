@@ -93,6 +93,10 @@ _logger = logging.getLogger(__name__)
 class _InvocationFailure(Exception):
     """Textual provider failure recovered from durable execution."""
 
+    def __init__(self, error: str, *, retryable: bool = True) -> None:
+        super().__init__(error)
+        self.retryable = retryable
+
 
 def _report_successful_response(
     ctx: "RunnerContext",
@@ -141,10 +145,13 @@ def _report_successful_response(
 
 
 def _require_invocation_response(
-    response: ChatResult | None, error: str | None
+    response: ChatResult | None,
+    error: str | None,
+    *,
+    retryable: bool = True,
 ) -> ChatResult:
     if error is not None:
-        raise _InvocationFailure(error)
+        raise _InvocationFailure(error, retryable=retryable)
     return _require_model_response(response)
 
 
@@ -156,23 +163,81 @@ def _error_text(error: Exception) -> str:
     )
 
 
+def _is_retryable(error: BaseException) -> bool:
+    """Client errors are not retried. 408, 409, 429, and 5xx are.
+
+    A failure with no HTTP status, including a timeout, stays retryable. The status
+    is read from the failure or its cause, so a wrapper does not hide a 4xx.
+    """
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, _InvocationFailure):
+            return current.retryable
+        status = _http_status(current)
+        if status is not None and not _is_retryable_http_status(status):
+            return False
+        current = current.__cause__
+    return True
+
+
+def _is_retryable_http_status(status: int) -> bool:
+    if status in (408, 409, 429):
+        return True
+    return status < 400 or status >= 500
+
+
+def _http_status(error: BaseException) -> int | None:
+    for name in ("status_code", "status"):
+        value = getattr(error, name, None)
+        if isinstance(value, int):
+            return value
+    response = getattr(error, "response", None)
+    if response is not None:
+        value = getattr(response, "status_code", None)
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def _provider_failure(error: Exception) -> tuple:
+    text = _error_text(error)
+    if _is_retryable(error):
+        # Two elements keep the durable payload of a retryable failure unchanged.
+        # A third element records that a client error must not be tried again.
+        return None, text
+    return None, text, False
+
+
+def _outcome_parts(
+    result: Any,
+) -> tuple[ChatResult | None, str | None, bool]:
+    if isinstance(result, tuple) and len(result) == 2:
+        return result[0], result[1], True
+    if isinstance(result, tuple) and len(result) == 3:
+        return result[0], result[1], bool(result[2])
+    msg = f"Chat durable outcome has unexpected shape: {type(result).__name__}"
+    raise TypeError(msg)
+
+
 def _invoke_chat(
     chat_model: "BaseChatModelSetup", messages: List[ChatMessage], prompt_args: Dict
-) -> tuple[ChatResult | None, str | None]:
+) -> tuple:
     try:
         return chat_model.chat(messages, prompt_args=prompt_args), None
     except (CancelledError, InterruptedError):
         raise
     except Exception as error:
         _logger.debug("Chat provider failed", exc_info=True)
-        return None, _error_text(error)
+        return _provider_failure(error)
 
 
 def _invoke_finalization(
     chat_model: "BaseChatModelSetup",
     answer_text: str,
     output_schema: OutputSchema,
-) -> tuple[ChatResult | None, str | None]:
+) -> tuple:
     # A fresh user message rather than resending the response object: it carries
     # no provider-specific fields of the loop response, and a single user turn
     # avoids provider rules on turn order and on empty assistant content.
@@ -183,7 +248,7 @@ def _invoke_finalization(
         raise
     except Exception as error:
         _logger.debug("Structured chat provider failed", exc_info=True)
-        return None, _error_text(error)
+        return _provider_failure(error)
 
 
 async def _durable_invoke(
@@ -192,7 +257,7 @@ async def _durable_invoke(
     *args: Any,
     chat_async: bool,
     **kwargs: Any,
-) -> tuple[ChatResult | None, str | None]:
+) -> tuple:
     if chat_async:
         return await ctx.durable_execute_async(func, *args, **kwargs)
     return ctx.durable_execute(func, *args, **kwargs)
@@ -583,6 +648,8 @@ def _accept_model_response(
     response: ChatResult | None,
     error: str | None,
     request_metric_group: "MetricGroup | None",
+    *,
+    retryable: bool,
 ) -> ChatResult:
     """Close the LLM span of one model call and vet its response.
 
@@ -591,7 +658,9 @@ def _accept_model_response(
             provider did not finish emitting.
     """
     try:
-        response = _require_invocation_response(response, error)
+        response = _require_invocation_response(
+            response, error, retryable=retryable
+        )
     except Exception as model_error:
         ExecutionReporters.failed(
             ctx,
@@ -693,17 +762,20 @@ async def _chat_with_retries(
     @wraps(chat_model.chat)
     def invoke(
         messages: List[ChatMessage], prompt_args: Dict
-    ) -> tuple[ChatResult | None, str | None]:
+    ) -> tuple:
         return _invoke_chat(chat_model, messages, prompt_args)
 
     def invoke_structured(
         answer_text: str, output_schema: OutputSchema
-    ) -> tuple[ChatResult | None, str | None]:
+    ) -> tuple:
         return _invoke_finalization(chat_model, answer_text, output_schema)
 
     def retry_after(attempt: int, error: Exception) -> bool:
         """Account for a failed attempt; False once the budget is spent."""
         nonlocal actual_retry_count, total_wait_time_sec, final_error
+        if isinstance(error, _InvocationFailure) and not error.retryable:
+            final_error = error
+            return False
         if attempt == num_retries:
             _logger.debug(
                 "Chat request %s failed (%d input messages).",
@@ -731,13 +803,15 @@ async def _chat_with_retries(
             )
             # Persistence/recovery failures must escape the request-failure boundary,
             # so durable calls stay outside the try blocks below.
-            response, failure = await _durable_invoke(
-                ctx,
-                invoke,
-                messages,
-                chat_async=chat_async,
-                prompt_args=prompt_args,
-                durable_id=durable_id,
+            response, failure, retryable = _outcome_parts(
+                await _durable_invoke(
+                    ctx,
+                    invoke,
+                    messages,
+                    chat_async=chat_async,
+                    prompt_args=prompt_args,
+                    durable_id=durable_id,
+                )
             )
             try:
                 response = _accept_model_response(
@@ -749,6 +823,7 @@ async def _chat_with_retries(
                     response,
                     failure,
                     request_metric_group,
+                    retryable=retryable,
                 )
                 final_answer = output_schema is not None and not response.tool_calls
                 finalize = final_answer and apply_native_schema
@@ -767,13 +842,15 @@ async def _chat_with_retries(
                 final_execution_id = ExecutionReporters.started(
                     ctx, ExecutionEntityTypes.LLM, model, llm_metadata
                 )
-                structured, failure = await _durable_invoke(
-                    ctx,
-                    invoke_structured,
-                    response.text,
-                    output_schema,
-                    chat_async=chat_async,
-                    durable_id=f"{durable_id}:final",
+                structured, failure, retryable = _outcome_parts(
+                    await _durable_invoke(
+                        ctx,
+                        invoke_structured,
+                        response.text,
+                        output_schema,
+                        chat_async=chat_async,
+                        durable_id=f"{durable_id}:final",
+                    )
                 )
                 try:
                     structured = _accept_model_response(
@@ -785,6 +862,7 @@ async def _chat_with_retries(
                         structured,
                         failure,
                         request_metric_group,
+                        retryable=retryable,
                     )
                     structured_output = _generate_structured_output_with_report(
                         ctx, structured, output_schema

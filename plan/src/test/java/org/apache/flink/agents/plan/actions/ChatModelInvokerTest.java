@@ -238,6 +238,158 @@ class ChatModelInvokerTest {
         verify(ctx, times(3)).durableExecute(any());
     }
 
+    @Test
+    void testClientErrorIsNotRetried() throws Exception {
+        BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
+        RunnerContext ctx = mock(RunnerContext.class);
+        ReadableConfiguration config = mock(ReadableConfiguration.class);
+        when(ctx.getConfig()).thenReturn(config);
+        when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
+        when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
+        when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
+        when(chatModel.chat(any(), any(), any())).thenThrow(new HttpStatusFailure(400));
+        when(ctx.durableExecute(any()))
+                .thenAnswer(
+                        invocation ->
+                                ((DurableCallable<?>) invocation.getArgument(0)).call());
+
+        ChatModelInvoker.ChatAttemptFailed failure =
+                assertThrows(
+                        ChatModelInvoker.ChatAttemptFailed.class,
+                        () ->
+                                ChatModelInvoker.chatWithRetries(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        "durable-call-id",
+                                        List.of(),
+                                        Map.of(),
+                                        null,
+                                        ctx,
+                                        2,
+                                        0));
+
+        verify(chatModel, times(1)).chat(any(), any(), any());
+        assertEquals(0, failure.retryCount);
+    }
+
+    @Test
+    void testWrappedClientErrorIsNotRetried() throws Exception {
+        BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
+        RunnerContext ctx = mock(RunnerContext.class);
+        ReadableConfiguration config = mock(ReadableConfiguration.class);
+        when(ctx.getConfig()).thenReturn(config);
+        when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
+        when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
+        when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
+        when(chatModel.chat(any(), any(), any()))
+                .thenThrow(new RuntimeException("provider call failed", new HttpStatusFailure(400)));
+        when(ctx.durableExecute(any()))
+                .thenAnswer(
+                        invocation -> ((DurableCallable<?>) invocation.getArgument(0)).call());
+
+        ChatModelInvoker.ChatAttemptFailed failure =
+                assertThrows(
+                        ChatModelInvoker.ChatAttemptFailed.class,
+                        () ->
+                                ChatModelInvoker.chatWithRetries(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        "durable-call-id",
+                                        List.of(),
+                                        Map.of(),
+                                        null,
+                                        ctx,
+                                        2,
+                                        0));
+
+        verify(chatModel, times(1)).chat(any(), any(), any());
+        assertEquals(0, failure.retryCount);
+    }
+
+    @Test
+    void testRateLimitAndServerErrorAreRetried() throws Exception {
+        for (int status : new int[] {429, 503}) {
+            BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
+            RunnerContext ctx = mock(RunnerContext.class);
+            ReadableConfiguration config = mock(ReadableConfiguration.class);
+            when(ctx.getConfig()).thenReturn(config);
+            when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
+            when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
+            when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
+            when(chatModel.chat(any(), any(), any())).thenThrow(new HttpStatusFailure(status));
+            when(ctx.durableExecute(any()))
+                    .thenAnswer(
+                            invocation ->
+                                    ((DurableCallable<?>) invocation.getArgument(0)).call());
+
+            ChatModelInvoker.ChatAttemptFailed failure =
+                    assertThrows(
+                            ChatModelInvoker.ChatAttemptFailed.class,
+                            () ->
+                                    ChatModelInvoker.chatWithRetries(
+                                            UUID.randomUUID(),
+                                            "test-model",
+                                            "durable-call-id",
+                                            List.of(),
+                                            Map.of(),
+                                            null,
+                                            ctx,
+                                            1,
+                                            0));
+
+            verify(chatModel, times(2)).chat(any(), any(), any());
+            assertEquals(1, failure.retryCount);
+        }
+    }
+
+    @Test
+    void testRecordedClientErrorIsNotRetried() throws Exception {
+        RunnerContext ctx = mock(RunnerContext.class);
+        BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
+        ReadableConfiguration config = mock(ReadableConfiguration.class);
+        when(ctx.getConfig()).thenReturn(config);
+        when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
+        when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
+        when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
+        when(ctx.durableExecute(any()))
+                .thenReturn(
+                        new ChatModelInvoker.InvocationOutcome(
+                                null, "BadRequestException: bad", false));
+
+        ChatModelInvoker.ChatAttemptFailed failure =
+                assertThrows(
+                        ChatModelInvoker.ChatAttemptFailed.class,
+                        () ->
+                                ChatModelInvoker.chatWithRetries(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        "durable-call-id",
+                                        List.of(),
+                                        Map.of(),
+                                        null,
+                                        ctx,
+                                        2,
+                                        0));
+
+        verify(ctx, times(1)).durableExecute(any());
+        assertEquals(0, failure.retryCount);
+    }
+
+    /** Provider failure that exposes an HTTP status the way the OpenAI SDK does. */
+    private static final class HttpStatusFailure extends RuntimeException {
+        private final int status;
+
+        private HttpStatusFailure(int status) {
+            super("status " + status);
+            this.status = status;
+        }
+
+        @SuppressWarnings("unused")
+        public int statusCode() {
+            return status;
+        }
+    }
+
     private static RunnerContext syncContext(BaseChatModelSetup model) throws Exception {
         RunnerContext ctx = mock(RunnerContext.class);
         ReadableConfiguration config = mock(ReadableConfiguration.class);

@@ -37,6 +37,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -72,11 +73,22 @@ public final class ChatModelInvoker {
         public ChatResult response;
         public String error;
 
+        /**
+         * Whether a recorded provider failure may be tried again. Outcomes written before this
+         * field existed omit it, and a missing value stays retryable.
+         */
+        public boolean retryable = true;
+
         public InvocationOutcome() {}
 
         InvocationOutcome(ChatResult response, String error) {
+            this(response, error, true);
+        }
+
+        InvocationOutcome(ChatResult response, String error, boolean retryable) {
             this.response = response;
             this.error = error;
+            this.retryable = retryable;
         }
     }
 
@@ -92,8 +104,15 @@ public final class ChatModelInvoker {
 
     /** Text already formatted at the provider boundary; do not add a wrapper type to it. */
     public static final class InvocationFailure extends Exception {
+        public final boolean retryable;
+
         public InvocationFailure(String error) {
+            this(error, true);
+        }
+
+        public InvocationFailure(String error, boolean retryable) {
             super(error);
+            this.retryable = retryable;
         }
     }
 
@@ -108,6 +127,57 @@ public final class ChatModelInvoker {
                         || error instanceof ModelRoutingResolver.RoutingFailure
                 ? error.getMessage()
                 : error.getClass().getName() + ": " + String.valueOf(error.getMessage());
+    }
+
+    /**
+     * A client error is not retried. 408, 409, 429, and 5xx are. Anything without an HTTP status,
+     * including a timeout, keeps the previous retry behavior. Status is read from the failure or a
+     * cause, so a {@code RuntimeException} wrapper does not hide it.
+     */
+    static boolean isRetryableProviderFailure(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            Integer status = httpStatus(current);
+            if (status != null && !isRetryableHttpStatus(status)) {
+                return false;
+            }
+            Throwable cause = current.getCause();
+            current = cause == current ? null : cause;
+        }
+        return true;
+    }
+
+    private static boolean isRetryableHttpStatus(int status) {
+        if (status == 408 || status == 409 || status == 429) {
+            return true;
+        }
+        return status < 400 || status >= 500;
+    }
+
+    private static Integer httpStatus(Throwable error) {
+        for (String name : new String[] {"statusCode", "getStatusCode"}) {
+            try {
+                Method method = error.getClass().getMethod(name);
+                if (method.getParameterCount() != 0) {
+                    continue;
+                }
+                Class<?> returnType = method.getReturnType();
+                if (returnType != int.class && returnType != Integer.class) {
+                    continue;
+                }
+                Object value = method.invoke(error);
+                if (value instanceof Integer) {
+                    return (Integer) value;
+                }
+            } catch (ReflectiveOperationException ignored) {
+                // This throwable does not expose that status method.
+            }
+        }
+        return null;
+    }
+
+    private static boolean isRetryableFailure(Exception error) {
+        return !(error instanceof InvocationFailure) || ((InvocationFailure) error).retryable;
     }
 
     public static final class ChatAttemptResult {
@@ -247,7 +317,8 @@ public final class ChatModelInvoker {
                                 throw e;
                             }
                             LOG.debug("Chat provider failed", e);
-                            return new InvocationOutcome(null, errorText(e));
+                            return new InvocationOutcome(
+                                    null, errorText(e), isRetryableProviderFailure(e));
                         }
                     }
                 };
@@ -274,7 +345,7 @@ public final class ChatModelInvoker {
             try {
                 try {
                     if (outcome.error != null) {
-                        throw new InvocationFailure(outcome.error);
+                        throw new InvocationFailure(outcome.error, outcome.retryable);
                     }
                     response = outcome.response;
                     Objects.requireNonNull(response, "ChatModel returned a null response.");
@@ -341,7 +412,7 @@ public final class ChatModelInvoker {
                     }
                     throw e;
                 }
-                if (attempt < numRetries) {
+                if (attempt < numRetries && isRetryableFailure(e)) {
                     actualRetryCount = attempt + 1;
                     int currentWaitSec = retryWaitIntervalSec * (1 << (actualRetryCount - 1));
                     LOG.warn(
@@ -423,7 +494,8 @@ public final class ChatModelInvoker {
                                 throw e;
                             }
                             LOG.debug("Structured output provider call failed", e);
-                            return new InvocationOutcome(null, errorText(e));
+                            return new InvocationOutcome(
+                                    null, errorText(e), isRetryableProviderFailure(e));
                         }
                     }
                 };
@@ -447,7 +519,7 @@ public final class ChatModelInvoker {
         ChatResult response;
         try {
             if (outcome.error != null) {
-                throw new InvocationFailure(outcome.error);
+                throw new InvocationFailure(outcome.error, outcome.retryable);
             }
             response =
                     Objects.requireNonNull(outcome.response, "ChatModel returned a null response.");
