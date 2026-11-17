@@ -88,6 +88,7 @@ public class JavaSerializableResourceProvider extends SerializableResourceProvid
                                             true,
                                             Thread.currentThread().getContextClassLoader()));
         }
+        resource.setResourceContext(resourceContext);
         return resource;
     }
 }
