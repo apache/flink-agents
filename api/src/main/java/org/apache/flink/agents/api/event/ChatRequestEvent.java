@@ -23,6 +23,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 
 import javax.annotation.Nullable;
@@ -42,10 +43,10 @@ public class ChatRequestEvent extends Event {
 
     /**
      * The fixed cross-language attribute schema for this event: {@code model} and {@code messages}
-     * are required, {@code prompt_args}, {@code output_schema}, and {@code user_context} are
-     * optional, and no other attribute is allowed. {@link #fromEvent} enforces it at the JSON
-     * boundary. {@code user_context} is application-defined data propagated to the response; it is
-     * not part of the prompt.
+     * are required, {@code prompt_args}, {@code output_schema}, {@code user_context}, and {@code
+     * budget} are optional, and no other attribute is allowed. {@link #fromEvent} enforces it at
+     * the JSON boundary. {@code user_context} is application-defined data propagated to the
+     * response; it is not part of the prompt.
      */
     private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
             List.of(
@@ -57,7 +58,8 @@ public class ChatRequestEvent extends Event {
                             Map.class),
                     BuiltInAttribute.optional("prompt_args", Map.class),
                     BuiltInAttribute.optionalUntyped("output_schema"),
-                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
+                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class),
+                    BuiltInAttribute.optionalUntyped("budget"));
 
     public ChatRequestEvent(
             String model,
@@ -65,7 +67,18 @@ public class ChatRequestEvent extends Event {
             @Nullable Map<String, Object> promptArgs,
             @Nullable Object outputSchema,
             @Nullable Map<String, Object> userContext) {
+        this(model, messages, promptArgs, outputSchema, userContext, null);
+    }
+
+    public ChatRequestEvent(
+            String model,
+            List<ChatMessage> messages,
+            @Nullable Map<String, Object> promptArgs,
+            @Nullable Object outputSchema,
+            @Nullable Map<String, Object> userContext,
+            @Nullable ReActLoopBudget budget) {
         super(EVENT_TYPE);
+        if (budget != null) setAttr("budget", budget);
         setAttr("model", model);
         setAttr("messages", new ArrayList<>(messages));
         setAttr("prompt_args", promptArgs != null ? promptArgs : Collections.emptyMap());
@@ -114,6 +127,12 @@ public class ChatRequestEvent extends Event {
             }
             attributes.put("messages", messages);
         }
+        Object budget = attributes.get("budget");
+        if (budget instanceof Map) {
+            attributes.put("budget", ReActLoopBudget.fromMap((Map<?, ?>) budget));
+        } else if (budget != null && !(budget instanceof ReActLoopBudget)) {
+            throw new IllegalArgumentException("budget must be a ReActLoopBudget or Map");
+        }
         return attributes;
     }
 
@@ -121,10 +140,10 @@ public class ChatRequestEvent extends Event {
      * Reconstructs a typed ChatRequestEvent from a base Event, deserializing nested types.
      *
      * <p>Enforces the fixed cross-language attribute schema: {@code model} and {@code messages} are
-     * required, {@code prompt_args}, {@code output_schema}, and {@code user_context} are optional,
-     * no other attribute is allowed, {@code model} must be a string, and every {@code messages}
-     * element must be a {@link ChatMessage} or its serialized map — an element such as a bare
-     * number is rejected rather than silently dropped.
+     * required, {@code prompt_args}, {@code output_schema}, {@code user_context}, and {@code
+     * budget} are optional, no other attribute is allowed, {@code model} must be a string, and
+     * every {@code messages} element must be a {@link ChatMessage} or its serialized map — an
+     * element such as a bare number is rejected rather than silently dropped.
      *
      * @param event the base event containing chat request data in attributes
      * @return a typed ChatRequestEvent
@@ -133,6 +152,12 @@ public class ChatRequestEvent extends Event {
     public static ChatRequestEvent fromEvent(Event event) {
         validateAttributeSchema(EVENT_TYPE, event.getAttributes(), ATTRIBUTE_SCHEMA);
         return reconstructFrom(event, ChatRequestEvent::new);
+    }
+
+    @JsonIgnore
+    @Nullable
+    public ReActLoopBudget getBudget() {
+        return (ReActLoopBudget) getAttr("budget");
     }
 
     @JsonIgnore

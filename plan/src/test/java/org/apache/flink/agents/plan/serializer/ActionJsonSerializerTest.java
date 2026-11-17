@@ -21,6 +21,7 @@ package org.apache.flink.agents.plan.serializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -39,6 +40,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Test for {@link ActionJsonSerializer}. */
 public class ActionJsonSerializerTest {
+    @Test
+    public void budgetConfigRestoresTypedObject() throws Exception {
+        var budget =
+                ReActLoopBudget.builder()
+                        .maxTurns(2)
+                        .maxTime(java.time.Duration.ofMillis(60001))
+                        .maxTokens(Long.MAX_VALUE)
+                        .mode(ReActLoopBudget.BudgetMode.HARD)
+                        .build();
+        var function =
+                new JavaFunction(
+                        "org.apache.flink.agents.plan.TestAction",
+                        "legal",
+                        new Class[] {Event.class, RunnerContext.class});
+        var action =
+                new Action(
+                        "budgeted",
+                        function,
+                        List.of(InputEvent.EVENT_TYPE),
+                        Map.of("budget", budget));
+        var mapper = new ObjectMapper();
+        var restored = mapper.readValue(mapper.writeValueAsString(action), Action.class);
+        var actual = assertInstanceOf(ReActLoopBudget.class, restored.getConfig().get("budget"));
+        assertEquals(budget.toMap(), actual.toMap());
+    }
+
     @Test
     public void testSerializeJavaFunction() throws Exception {
         // Create a JavaFunction

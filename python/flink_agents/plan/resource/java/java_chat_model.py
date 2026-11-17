@@ -222,16 +222,32 @@ class JavaChatModelSetup(BaseChatModelSetup):
                 "apply the schema on the Java side instead."
             )
             raise NotImplementedError(msg)
-        # Convert Python messages to Java format
+        return self._invoke_java_chat("chat", messages, prompt_args, kwargs)
+
+    @override
+    def _chat_without_tools(
+        self,
+        messages: Sequence[ChatMessage],
+        prompt_args: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        return self._invoke_java_chat("chatWithoutTools", messages, prompt_args, kwargs)
+
+    def _invoke_java_chat(
+        self,
+        method: str,
+        messages: Sequence[ChatMessage],
+        prompt_args: Mapping[str, Any] | None,
+        model_params: Mapping[str, Any],
+    ) -> ChatResult:
         java_messages = [
             _to_java_chat_message(self._j_resource_adapter, message)
             for message in messages
         ]
-        j_response_message = self._j_resource.chat(
-            java_messages, prompt_args or {}, kwargs
+        response = getattr(self._j_resource, method)(
+            java_messages, prompt_args or {}, model_params
         )
-
-        return from_java_chat_result(j_response_message)
+        return from_java_chat_result(response)
 
     @override
     def will_apply_native_structured_output(

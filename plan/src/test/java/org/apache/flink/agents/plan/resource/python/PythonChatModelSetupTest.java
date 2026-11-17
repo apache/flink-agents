@@ -232,6 +232,31 @@ public class PythonChatModelSetupTest {
     }
 
     @Test
+    void chatWithoutToolsForwardsHistoryAndPromptArgsToPython() throws Exception {
+        ChatMessage history = ChatMessage.user("finish");
+        PyObject converted = mock(PyObject.class);
+        PyObject answer = mock(PyObject.class);
+        ChatResult result = new ChatResult(ChatMessage.assistant("done"));
+        when(mockAdapter.toPythonChatMessage(history)).thenReturn(converted);
+        when(mockAdapter.callMethod(
+                        mockChatModelSetup,
+                        "_chat_without_tools",
+                        Map.of(
+                                "messages",
+                                List.of(converted),
+                                "prompt_args",
+                                Map.of("k", "v"),
+                                "temperature",
+                                0.2)))
+                .thenReturn(answer);
+        when(mockAdapter.fromPythonChatResult(answer)).thenReturn(result);
+        assertThat(
+                        pythonChatModelSetup.chatWithoutTools(
+                                List.of(history), Map.of("k", "v"), Map.of("temperature", 0.2)))
+                .isSameAs(result);
+    }
+
+    @Test
     void testExplicitChatIsRefused() {
         List<ChatMessage> messages = Collections.singletonList(mock(ChatMessage.class));
 

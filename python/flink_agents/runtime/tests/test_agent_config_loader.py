@@ -622,3 +622,20 @@ def test_duration_yaml_rejects_float_and_boolean(tmp_path, flink_2, value):
     config = load_agent_configuration(str(tmp_path))
     with pytest.raises(ValueError, match="retry-wait-interval"):
         config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)
+
+
+def test_nested_budget_defaults_loaded_from_yaml(tmp_path):
+    from datetime import timedelta
+
+    from flink_agents.api.core_options import AgentExecutionOptions
+    from flink_agents.api.react_loop_budget import BudgetMode
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "agent:\n  react-loop:\n    budget:\n      max-turns: 2\n      max-time: 60 s\n      max-tokens: 100\n      mode: hard\n"
+    )
+    conf = _load_yaml_config(path)
+    assert conf.get(AgentExecutionOptions.LOOP_MAX_TURNS) == 2
+    assert conf.get(AgentExecutionOptions.LOOP_MAX_TIME) == timedelta(seconds=60)
+    assert conf.get(AgentExecutionOptions.LOOP_MAX_TOKENS) == 100
+    assert conf.get(AgentExecutionOptions.LOOP_BUDGET_MODE) == BudgetMode.HARD

@@ -94,6 +94,8 @@ import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
 public class ChatModelAction {
     private static final Logger LOG = LoggerFactory.getLogger(ChatModelAction.class);
 
+    private static final String BUDGET_FINALIZATION_SUFFIX = ":budget-final";
+
     private static final String TOOL_CALL_CONTEXT = "_TOOL_CALL_CONTEXT";
     private static final String TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT";
     private static final String INITIAL_REQUEST_ID = "initialRequestId";
@@ -344,6 +346,10 @@ public class ChatModelAction {
             @Nullable Object outputSchema,
             RunnerContext ctx)
             throws Exception {
+        String reason = ReActLoopBudgetUtils.tryStartTurn(ctx.getSensoryMemory(), initialRequestId);
+        if (handleHardLimitExceeded(initialRequestId, reason, null, ctx)) {
+            return;
+        }
         chat(
                 initialRequestId,
                 ResolvedModelRoute.direct(model),
@@ -351,7 +357,29 @@ public class ChatModelAction {
                 promptArgs,
                 outputSchema,
                 null,
-                ctx);
+                ctx,
+                reason);
+    }
+
+    private static boolean handleHardLimitExceeded(
+            UUID requestId,
+            @Nullable String reason,
+            @Nullable Map<String, Object> userContext,
+            RunnerContext ctx)
+            throws Exception {
+        if (reason == null || ReActLoopBudgetUtils.isSoftLimit(ctx.getSensoryMemory(), requestId))
+            return false;
+        takeRoutingMetadata(ctx.getSensoryMemory(), requestId);
+        sendFailure(requestId, new IllegalStateException(reason), userContext, ctx);
+        return true;
+    }
+
+    static List<ChatMessage> closingMessages(List<ChatMessage> messages) {
+        List<ChatMessage> result = new ArrayList<>(messages);
+        result.add(
+                ChatMessage.user(
+                        "Give your final answer now using the information already available. Do not call tools."));
+        return result;
     }
 
     private static void chat(
@@ -361,8 +389,10 @@ public class ChatModelAction {
             Map<String, Object> promptArgs,
             @Nullable Object outputSchema,
             @Nullable Map<String, Object> userContext,
-            RunnerContext ctx)
+            RunnerContext ctx,
+            @Nullable String reason)
             throws Exception {
+        boolean closing = reason != null;
         int numRetries = ChatModelInvoker.configuredRetries(ctx);
         long retryWaitMillis = ChatModelInvoker.configuredRetryWaitMillis(ctx);
 
@@ -375,19 +405,33 @@ public class ChatModelAction {
                         ChatModelInvoker.chatWithRetries(
                                 initialRequestId,
                                 candidate,
-                                selection.durableChatCallId(candidate),
-                                messages,
+                                selection.durableChatCallId(candidate)
+                                        + (closing ? BUDGET_FINALIZATION_SUFFIX : ""),
+                                closing ? closingMessages(messages) : messages,
                                 promptArgs,
                                 outputSchema,
                                 ctx,
                                 numRetries,
-                                retryWaitMillis);
+                                retryWaitMillis,
+                                closing);
                 recordAttemptRetryStats(
                         ctx,
                         initialRequestId,
                         result.model,
                         result.retryCount,
                         result.totalRetryWaitMs);
+                if (closing && !result.response.getToolCalls().isEmpty()) {
+                    takeRoutingMetadata(ctx.getSensoryMemory(), initialRequestId);
+                    sendFailure(
+                            initialRequestId,
+                            new IllegalStateException(
+                                    "Soft finalization returned tool calls (budget reason: "
+                                            + reason
+                                            + ")"),
+                            userContext,
+                            ctx);
+                    return;
+                }
                 if (selection.isRouter()) {
                     if (!result.model.equals(selection.getSelectedModel())) {
                         // The strategy's pick failed and another candidate answered; emit a
@@ -462,7 +506,16 @@ public class ChatModelAction {
                 if (lastError != null && lastError != e.error) {
                     e.error.addSuppressed(lastError);
                 }
-                lastError = e.error;
+                lastError =
+                        closing
+                                ? new IllegalStateException(
+                                        "Soft finalization failed: "
+                                                + e.error.getMessage()
+                                                + " (budget reason: "
+                                                + reason
+                                                + ")",
+                                        e.error)
+                                : e.error;
                 LOG.debug(
                         "Chat request {} failed for model {} with error: {}. The input chat"
                                 + " messages are {}.",
@@ -507,7 +560,11 @@ public class ChatModelAction {
 
     @SuppressWarnings("unchecked")
     private static void clearRequestContext(MemoryObject memory, UUID requestId) throws Exception {
-        for (String key : List.of(TOOL_CALL_CONTEXT, RETRY_STATS_CONTEXT)) {
+        for (String key :
+                List.of(
+                        TOOL_CALL_CONTEXT,
+                        RETRY_STATS_CONTEXT,
+                        ReActLoopBudgetUtils.LOOP_BUDGET_CONTEXT)) {
             if (memory.isExist(key)) {
                 Map<UUID, Object> context =
                         new HashMap<>((Map<UUID, Object>) memory.get(key).getValue());
@@ -625,6 +682,11 @@ public class ChatModelAction {
 
     private static void processChatRequest(ChatRequestEvent event, RunnerContext ctx)
             throws Exception {
+        ReActLoopBudgetUtils.initialize(ctx, event);
+        String reason = ReActLoopBudgetUtils.tryStartTurn(ctx.getSensoryMemory(), event.getId());
+        if (handleHardLimitExceeded(event.getId(), reason, event.getUserContext(), ctx)) {
+            return;
+        }
         ResolvedModelRoute selection;
         try {
             selection =
@@ -645,7 +707,8 @@ public class ChatModelAction {
                 event.getPromptArgs(),
                 event.getOutputSchema(),
                 event.getUserContext(),
-                ctx);
+                ctx,
+                reason);
     }
 
     @SuppressWarnings("unchecked")
@@ -680,6 +743,10 @@ public class ChatModelAction {
                         Collections.emptyList(),
                         toolResponseMessages);
 
+        String reason = ReActLoopBudgetUtils.tryStartTurn(ctx.getSensoryMemory(), initialRequestId);
+        if (handleHardLimitExceeded(initialRequestId, reason, userContext, ctx)) {
+            return;
+        }
         // Tool rounds reuse the already-selected concrete model (no re-routing). If the initial
         // request was routed, its metadata block waits in ROUTING_METADATA_CONTEXT and is
         // attached when this loop produces its final response.
@@ -690,7 +757,8 @@ public class ChatModelAction {
                 promptArgs,
                 outputSchema,
                 userContext,
-                ctx);
+                ctx,
+                reason);
     }
 
     /**

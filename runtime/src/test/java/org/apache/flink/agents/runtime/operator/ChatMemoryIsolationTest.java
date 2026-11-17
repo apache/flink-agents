@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.context.DurableCallable;
@@ -47,6 +48,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -114,9 +116,12 @@ public class ChatMemoryIsolationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
-    void checkpointDoesNotIncludeUnfinishedCallerWrites(boolean rocksDb, boolean durable)
-            throws Exception {
+    @CsvSource({
+        "false,false,false", "false,true,false", "true,false,false", "true,true,false",
+        "false,false,true", "false,true,true", "true,false,true", "true,true,true"
+    })
+    void checkpointDoesNotIncludeUnfinishedCallerWrites(
+            boolean rocksDb, boolean durable, boolean budgeted) throws Exception {
         MODEL_CALLS.set(0);
         tailStarted = false;
         tailGate = new CountDownLatch(1);
@@ -135,6 +140,13 @@ public class ChatMemoryIsolationTest {
                         "caller", Event.class, RunnerContext.class));
         AgentPlan plan = new AgentPlan(agent);
         plan.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2);
+        if (budgeted) {
+            plan.getConfig().set(AgentExecutionOptions.LOOP_MAX_TURNS, 2);
+            plan.getConfig().set(AgentExecutionOptions.LOOP_MAX_TOKENS, 4L);
+            plan.getConfig().set(AgentExecutionOptions.LOOP_MAX_TIME, Duration.ofMinutes(1));
+            plan.getConfig()
+                    .set(AgentExecutionOptions.LOOP_BUDGET_MODE, ReActLoopBudget.BudgetMode.HARD);
+        }
         InMemoryActionStateStore store = durable ? new InMemoryActionStateStore(false) : null;
         InMemoryActionStateStore saved = durable ? new InMemoryActionStateStore(false) : null;
         OperatorSubtaskState snapshot;

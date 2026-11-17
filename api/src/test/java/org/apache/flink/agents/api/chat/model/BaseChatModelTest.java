@@ -578,6 +578,26 @@ class BaseChatModelTest {
         assertNull(connection.capturedTools);
     }
 
+    @Test
+    void chatWithoutToolsDropsToolOnlyParamsWithoutSchema() {
+        RecordingConnection connection = new RecordingConnection();
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(connection, null, null, paramsWithToolChoice());
+        setup.chatWithoutTools(
+                List.of(ChatMessage.user("finish")),
+                Map.of(),
+                Map.of("temperature", 0.2, "tool_choice", "required"));
+        assertEquals(
+                Map.of(
+                        "model",
+                        "setup-model",
+                        "temperature",
+                        0.2,
+                        "additional_kwargs",
+                        Map.of("top_p", 0.5)),
+                connection.capturedModelParams);
+    }
+
     /** Setup parameters carrying tool-only keys at the top level and nested. */
     private static Map<String, Object> paramsWithToolChoice() {
         Map<String, Object> nested = new HashMap<>();

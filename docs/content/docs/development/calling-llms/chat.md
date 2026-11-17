@@ -109,6 +109,8 @@ A `ChatRequestEvent` can name a model router instead of a chat model. The built-
 
 Pass an optional `user_context` map to the `ChatRequestEvent` constructor (Python `user_context`, Java `userContext`) to carry application-defined data from a request to its corresponding response. Telling responses apart is one use, including when requests come from one Action or from several. The map is propagated to the corresponding `ChatResponseEvent`, including after tool-call rounds, retries, model fallback, and a failed response. It is not added to the prompt. Values follow the same rules as other Event attributes; see [Serialization and Typed Values]({{< ref "docs/development/create-agent/events#json-serialization" >}}) and [User context]({{< ref "docs/development/create-agent/events#user-context" >}}).
 
+Pass an optional `budget` to `ChatRequestEvent` to limit the request's model and tool loop; see [Loop budgets](#loop-budgets).
+
 ### Example {#usage-example}
 
 Start with the Agent and model declarations in the
@@ -191,6 +193,8 @@ async def process_input(event: Event, ctx: RunnerContext) -> None:
 ```
 
 Use the optional `prompt_args` and `output_schema` arguments for prompt parameters and structured output.
+
+Use the optional `budget` argument to limit the loop; see [Loop budgets](#loop-budgets) for options and examples.
 {{< /tab >}}
 {{< tab "Java" >}}
 ```java
@@ -205,7 +209,7 @@ public static void processInput(Event event, RunnerContext ctx) throws Exception
 }
 ```
 
-For prompt arguments or structured output, pass a `ChatRequestEvent` to `ctx.chat(request)`.
+For prompt arguments, structured output, or [loop budgets](#loop-budgets), set the corresponding fields on a `ChatRequestEvent` and pass it to `ctx.chat(request)`.
 {{< /tab >}}
 {{< /tabs >}}
 
@@ -416,6 +420,89 @@ ChatRequestEvent → chat_model_action → ChatResponseEvent
 When the model requests tools, the framework executes them, adds their results to the conversation, and calls the model again. This cycle continues until the model produces a final answer or the chat request fails. The final result reaches your response Action or the awaiting `ctx.chat` caller as described in [Handle Success and Failure](#handle-success-and-failure); intermediate tool calls do not produce a final chat response.
 
 The built-in `chat_model_action` and `tool_call_action` coordinate this cycle. For this flow, you do not need to send or handle `ToolRequestEvent` and `ToolResponseEvent` yourself. For details on tool execution and results, see [Built-in Events and Actions in Tool Use]({{< ref "docs/development/calling-llms/tool_use#built-in-events-and-actions" >}}).
+
+## Loop budgets {#loop-budgets}
+
+A chat request may run a loop with multiple rounds of model inference and tool calls. Budgets limit this loop to prevent indefinite execution and uncontrolled resource consumption. Three limits are supported:
+
+| Limit | What counts |
+| --- | --- |
+| Turns | Each turn calls the model and executes any tools it requests. Routing, retries, and structured-output conversion are included in the same turn. |
+| Time | Elapsed time from loop start, including waits for models, tools, and subagents. |
+| Tokens | Cumulative reported input and output tokens, including routing, retries, and structured-output conversion. Missing usage can cause token consumption to be undercounted; a warning is logged. |
+
+Limits are checked before each turn. An admitted turn may finish even if it exceeds a limit. When any configured limit is reached, one of two modes applies:
+
+- **SOFT** (default): Allow one extra turn with tools disabled to answer from the available context. A failed closing turn fails the request.
+- **HARD**: Fail the request immediately.
+
+See [Handle Success and Failure](#handle-success-and-failure) for how failures are reported.
+
+Configure job-level default budgets through the [`react-loop.budget.*` options]({{< ref "docs/operations/configuration#model-calls-tools-and-retries" >}}), or override them for an individual chat by passing a `ReActLoopBudget` to `ChatRequestEvent` or `ctx.chat`. The built-in [ReActAgent]({{< ref "docs/development/react_agent#budget" >}}) also accepts a `ReActLoopBudget` and applies it independently to each loop.
+
+A request budget replaces the defaults as a whole; unspecified limits are unlimited. `ReActLoopBudget` supports the following options:
+
+| Option (Python / Java) | Type (Python / Java) | Default |
+| --- | --- | --- |
+| `max_turns` / `maxTurns` | `int` / `Integer` | `None` / `null` |
+| `max_time` / `maxTime` | `timedelta` / `Duration` | `None` / `null` |
+| `max_tokens` / `maxTokens` | `int` / `Long` | `None` / `null` |
+| `mode` | `BudgetMode` (`SOFT` or `HARD`) | `SOFT` |
+
+The following examples configure a budget of 2 turns and 60 seconds, using the model from [Using Chat Events](#usage-example). Inside your Action, choose one of the two calling styles below. Imports are omitted.
+
+{{< tabs "Loop Budget" >}}
+{{< tab "Python" >}}
+```python
+budget = ReActLoopBudget(
+    max_turns=2,
+    max_time=timedelta(seconds=60),
+)
+messages = [ChatMessage.user("What is stream processing?")]
+
+# Await the answer in an async Action.
+response = await ctx.chat(
+    "review_model",
+    messages,
+    budget=budget,
+)
+
+# Alternatively, send a request and handle ChatResponseEvent in another Action.
+ctx.send_event(
+    ChatRequestEvent(
+        model="review_model",
+        messages=messages,
+        budget=budget,
+    )
+)
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+ReActLoopBudget budget = ReActLoopBudget.builder()
+        .maxTurns(2)
+        .maxTime(Duration.ofSeconds(60))
+        .build();
+ChatRequestEvent request = new ChatRequestEvent(
+        "reviewModel",
+        List.of(ChatMessage.user("What is stream processing?")),
+        null, // promptArgs
+        null, // outputSchema
+        null, // userContext
+        budget);
+
+// Await the answer in the calling Action.
+ChatResult response = ctx.chat(request).await();
+
+// Alternatively, send a request and handle ChatResponseEvent in another Action.
+ctx.sendEvent(request);
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+[Subagents]({{< ref "docs/development/multi-agent/subagents" >}}) use independent budgets. Their turns and token usage do not reduce the parent's remaining turn or token budget.
+
+Recovery restores recorded budget state. Calls whose results were not persisted may execute again, causing additional consumption not reflected in the restored budget. See [Recovery flow]({{< ref "docs/operations/consistency#recovery-flow" >}}).
 
 ## Next Steps
 
