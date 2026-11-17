@@ -24,7 +24,11 @@ import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
@@ -37,6 +41,125 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BashToolTest {
+
+    @ParameterizedTest
+    @ValueSource(strings = {"pwd", "echo ok | pwd", "echo ok && pwd", "run.sh", ".run.sh"})
+    void cwdDoesNotAllowBareCommand(String command, @TempDir Path tempDir) throws IOException {
+        for (boolean existingFile : List.of(false, true)) {
+            if (existingFile) {
+                for (String name : List.of("pwd", "run.sh", ".run.sh")) {
+                    Files.createFile(tempDir.resolve(name));
+                }
+            }
+            String result =
+                    tool().call(
+                                    new ToolParameters(
+                                            Map.of(
+                                                    "command", command,
+                                                    "cwd", tempDir.toString(),
+                                                    "allowed_commands", List.of("echo"),
+                                                    "allowed_script_dirs",
+                                                            List.of(tempDir.toString()))))
+                            .getText();
+            assertTrue(result.startsWith("Command rejected:"), result);
+            assertTrue(result.contains("is not allowed"), result);
+        }
+    }
+
+    @Test
+    void cwdAllowsExplicitScriptPaths(@TempDir Path tempDir) throws IOException {
+        Path script = tempDir.resolve("scripts/run_task-2.sh");
+        Files.createDirectories(script.getParent());
+        Files.writeString(script, "#!/bin/sh\necho \"script-ok:$1\"\n");
+        assertTrue(script.toFile().setExecutable(true));
+        for (String command :
+                List.of("./scripts/run_task-2.sh", "scripts/run_task-2.sh", script.toString())) {
+            assertEquals(
+                    "script-ok:argument-ok",
+                    tool().call(
+                                    new ToolParameters(
+                                            Map.of(
+                                                    "command",
+                                                            command
+                                                                    + " \"${FLINK_BASH_TEST_UNSET:-argument-ok}\"",
+                                                    "cwd", tempDir.toString(),
+                                                    "allowed_commands", List.of(),
+                                                    "allowed_script_dirs",
+                                                            List.of(tempDir.toString()))))
+                            .getText());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "${FLINK_BASH_TEST_UNSET:+/}pwd",
+                "${FLINK_BASH_TEST_UNSET:-/bin/pwd}",
+                "./$SCRIPT",
+                "./*.sh",
+                "./run?.sh",
+                "./[r]un.sh",
+                "./{run,other}.sh",
+                "~/run.sh",
+                "'./run.sh'",
+                "\"./run.sh\"",
+                "./r\"un\".sh",
+                "./run\\ script.sh"
+            })
+    void nonliteralExecutableRejected(String command, @TempDir Path tempDir) throws IOException {
+        String cwd = tempDir.toRealPath().toString();
+        String result =
+                tool().call(
+                                new ToolParameters(
+                                        Map.of(
+                                                "command",
+                                                command,
+                                                "cwd",
+                                                cwd,
+                                                "allowed_commands",
+                                                List.of(),
+                                                "allowed_script_dirs",
+                                                List.of(cwd))))
+                        .getText();
+        assertTrue(result.startsWith("Command rejected:"), result);
+    }
+
+    @Test
+    void cwdAllowsWhitelistedCommand(@TempDir Path tempDir) {
+        assertEquals(
+                "hello",
+                tool().call(
+                                new ToolParameters(
+                                        Map.of(
+                                                "command", "echo hello",
+                                                "cwd", tempDir.toString(),
+                                                "allowed_commands", List.of("echo"),
+                                                "allowed_script_dirs",
+                                                        List.of(tempDir.toString()))))
+                        .getText());
+    }
+
+    @Test
+    void cwdRejectsScriptOutsideAllowedDir(@TempDir Path tempDir) throws IOException {
+        Path allowed = Files.createDirectory(tempDir.resolve("allowed"));
+        Path outside = tempDir.resolve("outside.sh");
+        Files.writeString(outside, "#!/bin/sh\necho outside\n");
+        assertTrue(outside.toFile().setExecutable(true));
+        Files.createSymbolicLink(allowed.resolve("link.sh"), outside);
+        for (String command : List.of("../outside.sh", "./link.sh", outside.toString())) {
+            String result =
+                    tool().call(
+                                    new ToolParameters(
+                                            Map.of(
+                                                    "command", command,
+                                                    "cwd", allowed.toString(),
+                                                    "allowed_commands", List.of(),
+                                                    "allowed_script_dirs",
+                                                            List.of(allowed.toString()))))
+                            .getText();
+            assertTrue(result.startsWith("Command rejected:"), result);
+        }
+    }
 
     private static BashTool tool() {
         return new BashTool(
