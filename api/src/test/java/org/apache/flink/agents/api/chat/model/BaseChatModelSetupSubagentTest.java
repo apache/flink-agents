@@ -241,6 +241,7 @@ class BaseChatModelSetupSubagentTest {
         setup.open();
 
         assertThat(setup.getTools().get(0).getMetadata().getName()).isEqualTo("_subagent_reviewer");
+        assertThat(setup.getToolNames()).containsExactly("_subagent_reviewer");
         assertThat(setup.getTools().get(0).getMetadata().getDescription())
                 .isEqualTo("Delegate a standalone task to sub-agent reviewer This is subagent.");
         assertThat(setup.getTools().get(0).getMetadata().getInputSchema()).isEqualTo(CUSTOM_SCHEMA);
@@ -337,14 +338,18 @@ class BaseChatModelSetupSubagentTest {
     }
 
     @Test
-    void reopeningDoesNotDuplicateTheCallables() throws Exception {
+    void toolNamesIncludeSubagentsWithoutChangingConfiguredTools() throws Exception {
+        store.put("lookup", new StubTool("lookup"));
         store.put("reviewer", new StubSubagentSetup("Reviews a file.", CUSTOM_SCHEMA));
-        StubChatSetup setup = setupWith(Map.of("subagents", List.of("reviewer")));
+        List<String> configuredTools = List.of("lookup");
+        StubChatSetup setup =
+                setupWith(Map.of("tools", configuredTools, "subagents", List.of("reviewer")));
 
         setup.open();
-        setup.open();
 
-        assertThat(setup.getTools()).hasSize(1);
+        assertThat(setup.getTools()).hasSize(2);
+        assertThat(setup.getToolNames()).containsExactly("lookup", "_subagent_reviewer");
+        assertThat(configuredTools).containsExactly("lookup");
     }
 
     /** Delegation is offered through the callables alone: no listing message is injected. */

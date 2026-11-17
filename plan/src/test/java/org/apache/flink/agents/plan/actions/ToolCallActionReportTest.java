@@ -77,10 +77,39 @@ import static org.mockito.Mockito.withSettings;
 /** Tests for tool-call execution reports. */
 class ToolCallActionReportTest {
 
+    @ParameterizedTest
+    @ValueSource(strings = {"search", "_subagent_reviewer"})
+    void rejectsDisabledCallableBeforeResourceLookup(String name) throws Exception {
+        RunnerContext ctx =
+                mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        when(ctx.getResource("selected-model", ResourceType.CHAT_MODEL))
+                .thenReturn(ChatFixtures.modelWithCallables());
+        when(ctx.getConfig()).thenReturn(toolCallConfig());
+        ToolRequestEvent request =
+                new ToolRequestEvent(
+                        "selected-model",
+                        List.of(
+                                new org.apache.flink.agents.api.chat.messages.ToolCallBlock(
+                                        "call-1", name, Map.of())));
+        ToolCallAction.processToolRequest(request, ctx);
+        ArgumentCaptor<Event> response = ArgumentCaptor.forClass(Event.class);
+        verify(ctx).sendEvent(response.capture());
+        assertThat(((ToolResponseEvent) response.getValue()).getError())
+                .containsEntry(
+                        "call-1", "Tool '" + name + "' is not enabled for model 'selected-model'.");
+        verify(ctx, never()).getResource(name, ResourceType.TOOL);
+        verify(ctx, never()).getResource("reviewer", ResourceType.AGENT);
+        verify(ctx, never()).durableExecute(any());
+    }
+
     @Test
     void processToolRequestReportsEachToolCall() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        when(ctx.getResource(
+                        org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.eq(ResourceType.CHAT_MODEL)))
+                .thenReturn(ChatFixtures.modelWithCallables("search", "missing", "load_skill"));
         List<Event> sentEvents = new ArrayList<>();
         Tool tool =
                 new ReportingTool(
@@ -148,6 +177,10 @@ class ToolCallActionReportTest {
     void processToolRequestMarksErrorResponseAsFailed() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        when(ctx.getResource(
+                        org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.eq(ResourceType.CHAT_MODEL)))
+                .thenReturn(ChatFixtures.modelWithCallables("search", "missing", "load_skill"));
         List<Event> sentEvents = new ArrayList<>();
         Tool tool = mock(Tool.class);
         when(tool.call(any())).thenReturn(ToolResponse.error("tool rejected request"));
@@ -193,6 +226,10 @@ class ToolCallActionReportTest {
     void sequentialToolErrorReportsFailureAndRethrows() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        when(ctx.getResource(
+                        org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.eq(ResourceType.CHAT_MODEL)))
+                .thenReturn(ChatFixtures.modelWithCallables("search", "missing", "load_skill"));
         Tool tool = mock(Tool.class);
         AssertionError failure = new AssertionError("tool died");
         when(tool.call(any())).thenThrow(failure);
@@ -267,6 +304,10 @@ class ToolCallActionReportTest {
     void missingToolReportsCreationAndFailureWithoutStart() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        when(ctx.getResource(
+                        org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.eq(ResourceType.CHAT_MODEL)))
+                .thenReturn(ChatFixtures.modelWithCallables("search", "missing", "load_skill"));
         when(ctx.getResource("missing", ResourceType.TOOL))
                 .thenThrow(new IllegalArgumentException("Tool does not exist."));
         when(ctx.getConfig()).thenReturn(toolCallConfig());
@@ -306,6 +347,10 @@ class ToolCallActionReportTest {
     void parallelToolCallsReportIndependentOutcomes() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        when(ctx.getResource(
+                        org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.eq(ResourceType.CHAT_MODEL)))
+                .thenReturn(ChatFixtures.modelWithCallables("search", "missing", "load_skill"));
         List<Event> sentEvents = new ArrayList<>();
         Tool tool = mock(Tool.class);
         when(tool.call(any()))
@@ -838,6 +883,10 @@ class ToolCallActionReportTest {
     private static RunnerContext parallelContext(Tool tool) throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        when(ctx.getResource(
+                        org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.eq(ResourceType.CHAT_MODEL)))
+                .thenReturn(ChatFixtures.modelWithCallables("search", "missing", "load_skill"));
         when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig(true, 3));
         stubParallelExecution(ctx, ToolCallActionReportTest::executeAll);
@@ -930,6 +979,10 @@ class ToolCallActionReportTest {
     void processLoadSkillToolRequestAddsSkillMetadata() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        when(ctx.getResource(
+                        org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.eq(ResourceType.CHAT_MODEL)))
+                .thenReturn(ChatFixtures.modelWithCallables("search", "missing", "load_skill"));
         Tool tool =
                 new ReportingTool(
                         ToolType.FUNCTION,
@@ -976,6 +1029,10 @@ class ToolCallActionReportTest {
     void durableCacheHitDoesNotRecordToolCallLatency() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        when(ctx.getResource(
+                        org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.eq(ResourceType.CHAT_MODEL)))
+                .thenReturn(ChatFixtures.modelWithCallables("search", "missing", "load_skill"));
         Tool tool = mock(Tool.class);
         when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig());
@@ -1008,6 +1065,10 @@ class ToolCallActionReportTest {
     void interruptionBeforeToolInvocationReportsCreatedWithoutTerminal() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        when(ctx.getResource(
+                        org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.eq(ResourceType.CHAT_MODEL)))
+                .thenReturn(ChatFixtures.modelWithCallables("search", "missing", "load_skill"));
         Tool tool = mock(Tool.class);
         when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig());
@@ -1041,6 +1102,10 @@ class ToolCallActionReportTest {
     void parallelInterruptionReportsStartedToolsWithoutTerminal() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        when(ctx.getResource(
+                        org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.eq(ResourceType.CHAT_MODEL)))
+                .thenReturn(ChatFixtures.modelWithCallables("search", "missing", "load_skill"));
         Tool tool = mock(Tool.class);
         when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig(true, 2));
@@ -1082,6 +1147,10 @@ class ToolCallActionReportTest {
     void executionMetadataCannotMutateToolCallParameters() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        when(ctx.getResource(
+                        org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.eq(ResourceType.CHAT_MODEL)))
+                .thenReturn(ChatFixtures.modelWithCallables("search", "missing", "load_skill"));
         List<Event> sentEvents = new ArrayList<>();
         when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(new MutatingMetadataTool());
         when(ctx.getConfig()).thenReturn(toolCallConfig());

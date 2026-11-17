@@ -40,6 +40,9 @@ for registration methods and scopes. The examples below show declarations on an
 Agent and registration on the execution environment for sharing across Agents.
 In either case, reference the registered tool name in the chat model setup's `tools` list.
 
+A model cannot call tools or sub-agents that are not enabled in its configuration,
+even if they are registered in the Agent.
+
 The following snippets show the tool declaration and registration parts of a job.
 They assume an Ollama connection has been registered using the
 [Programmatic API]({{< ref "docs/development/create-agent/resources#programmatic-api" >}}),

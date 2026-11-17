@@ -71,6 +71,17 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
     }
 
     @Override
+    public List<String> getToolNames() {
+        List<?> names =
+                (List<?>) adapter.invoke("python_java_utils.get_tool_names", chatModelSetup);
+        List<String> result = new ArrayList<>();
+        for (Object name : names) {
+            result.add((String) name);
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    @Override
     public ChatResult chat(
             List<ChatMessage> messages,
             Map<String, Object> promptArgs,

@@ -19,6 +19,7 @@ import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import ANY, MagicMock, patch
 
@@ -144,6 +145,8 @@ class _Context:
         self.gather_outcomes = None
 
     def get_resource(self, name: str, type: ResourceType) -> FunctionTool:
+        if type == ResourceType.CHAT_MODEL:
+            return SimpleNamespace(get_tool_names=lambda: {"query_order", "missing"})
         assert type == ResourceType.TOOL
         if name != "query_order":
             msg = f"Tool `{name}` does not exist."
@@ -553,7 +556,11 @@ def test_parallel_tool_calls_report_independent_occurrences() -> None:
     tool.call = MagicMock(side_effect=call_tool)
     ctx = MagicMock(spec=ExecutionReporter)
     ctx.config = config
-    ctx.get_resource = MagicMock(return_value=tool)
+    ctx.get_resource = MagicMock(
+        side_effect=lambda name, kind: SimpleNamespace(
+            get_tool_names=lambda: {"search", "load_skill"}
+        ) if kind == ResourceType.CHAT_MODEL else tool
+    )
     sent_events = []
     ctx.send_event = MagicMock(side_effect=sent_events.append)
 
@@ -1374,7 +1381,13 @@ def test_missing_tool_reports_creation_and_failure_without_start() -> None:
     ctx = MagicMock(spec=ExecutionReporter)
     ctx.config = AgentConfiguration({})
     ctx.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, False)
-    ctx.get_resource = MagicMock(side_effect=ValueError("Tool does not exist."))
+    def get_resource(name: str, kind: ResourceType) -> SimpleNamespace:
+        if kind == ResourceType.CHAT_MODEL:
+            return SimpleNamespace(get_tool_names=lambda: {"search"})
+        msg = "Tool does not exist."
+        raise ValueError(msg)
+
+    ctx.get_resource = MagicMock(side_effect=get_resource)
     ctx.send_event = MagicMock()
 
     asyncio.run(
@@ -1536,7 +1549,11 @@ def trace_context(tool: object) -> tuple[MagicMock, list[ToolResponseEvent]]:
     )
     ctx = MagicMock(spec=ExecutionReporter)
     ctx.config = config
-    ctx.get_resource = MagicMock(return_value=tool)
+    ctx.get_resource = MagicMock(
+        side_effect=lambda name, kind: SimpleNamespace(
+            get_tool_names=lambda: {"search", "load_skill"}
+        ) if kind == ResourceType.CHAT_MODEL else tool
+    )
     ctx.durable_execute = MagicMock(side_effect=lambda fn, **kwargs: fn(**kwargs))
     ctx.send_event = MagicMock(side_effect=lambda event: sent_events.append(event))
     return ctx, sent_events
@@ -1547,6 +1564,64 @@ def trace_tool_call() -> dict:
         "id": "call-1",
         "function": {"name": "search", "arguments": {"query": "flink"}},
     }
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("name", ["search", "_subagent_reviewer"])
+def test_call_scope_is_checked_before_resource_lookup(enabled: bool, name: str) -> None:
+    """A registered callable is not implicitly enabled for every model."""
+    tool = MagicMock()
+    ctx, events = trace_context(tool)
+    model = SimpleNamespace(get_tool_names=lambda: {name} if enabled else set())
+
+    def resolve(resource_name: str, kind: ResourceType) -> SimpleNamespace:
+        if kind == ResourceType.CHAT_MODEL:
+            assert resource_name == "selected-model"
+            return model
+        msg = "registered resource initialization failed"
+        raise ValueError(msg)
+
+    ctx.get_resource.side_effect = resolve
+    request = ToolRequestEvent(
+        "selected-model", [ToolCallBlock(call_id="id", name=name, input={})]
+    )
+    asyncio.run(process_tool_request(request, ctx))
+    response = events[0]
+    assert not response.success["id"]
+    if enabled:
+        assert "registered resource initialization failed" in response.error["id"]
+        assert ctx.get_resource.call_count == 2
+    else:
+        assert response.error["id"] == (
+            f"Tool '{name}' is not enabled for model 'selected-model'."
+        )
+        ctx.get_resource.assert_called_once_with("selected-model", ResourceType.CHAT_MODEL)
+    tool.assert_not_called()
+    ctx.durable_execute.assert_not_called()
+
+
+def test_disallowed_call_does_not_block_allowed_calls() -> None:
+    ctx = _Context()
+    request = ToolRequestEvent(
+        "model-a",
+        [
+            ToolCallBlock(call_id="denied", name="delete_order", input={}),
+            ToolCallBlock(call_id="allowed", name="query_order", input={"order_id": "1"}),
+        ],
+    )
+    asyncio.run(process_tool_request(request, ctx))
+    response = ctx.sent_events[0]
+    assert response.success == {"denied": False, "allowed": True}
+    assert len(ctx.durable_execute_calls) == 1
+
+
+def test_model_lookup_failure_propagates_without_executing_tools() -> None:
+    ctx, events = trace_context(MagicMock())
+    ctx.get_resource.side_effect = RuntimeError("model initialization failed")
+    with pytest.raises(RuntimeError, match="model initialization failed"):
+        asyncio.run(process_tool_request(_request("model-a", [trace_tool_call()]), ctx))
+    ctx.durable_execute.assert_not_called()
+    assert not events
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])

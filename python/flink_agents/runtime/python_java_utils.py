@@ -156,6 +156,11 @@ def get_model_name(model_setup: Any) -> str:
     return model_setup.model
 
 
+def get_tool_names(model_setup: Any) -> list[str]:
+    """Return initialized tool names as a flat list for the Java bridge."""
+    return model_setup.get_tool_names()
+
+
 def get_resource_context(j_resource_adapter: Any) -> JavaResourceContextWrapper:
     """Create a ResourceContext wrapper for Java resource adapter.
 
