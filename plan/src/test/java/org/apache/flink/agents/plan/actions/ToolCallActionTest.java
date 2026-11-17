@@ -60,6 +60,23 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class ToolCallActionTest {
 
+    @Test
+    void disabledCallDoesNotBlockAllowedCall() throws Exception {
+        FakeRunnerContext ctx = new FakeRunnerContext().withToolCallAsync(false);
+        ToolCallAction.processToolRequest(
+                ChatFixtures.request(
+                        "model",
+                        List.of(
+                                toolCall("deleteOrder", "denied", "order-1"),
+                                toolCall("queryOrder", "allowed", "order-1"))),
+                ctx);
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getSuccess())
+                .containsEntry("denied", false)
+                .containsEntry("allowed", true);
+        assertThat(ctx.durableExecuteIds).containsExactly("tool-call:allowed");
+    }
+
     public static String queryOrder(
             @ToolParam(name = "orderId") String orderId,
             @ToolParam(name = "tenant_id") String tenantId) {
@@ -162,6 +179,9 @@ public class ToolCallActionTest {
 
         @Override
         public Resource getResource(String name, ResourceType type) throws Exception {
+            if (type == ResourceType.CHAT_MODEL) {
+                return ChatFixtures.modelWithCallables("queryOrder");
+            }
             assertThat(name).isEqualTo("queryOrder");
             assertThat(type).isEqualTo(ResourceType.TOOL);
             return new FunctionTool(
@@ -408,7 +428,8 @@ public class ToolCallActionTest {
         assertThat(response.getError())
                 .containsEntry(
                         "call-1",
-                        "Memory path for injected tool parameter must reference a value: request.tenant_id");
+                        "Memory path for injected tool parameter must reference a value:"
+                                + " request.tenant_id");
     }
 
     @Test
@@ -425,7 +446,8 @@ public class ToolCallActionTest {
         assertThat(response.getError())
                 .containsEntry(
                         "call-1",
-                        "Cannot inject tool parameter from sensory_memory because memory is not initialized.");
+                        "Cannot inject tool parameter from sensory_memory because memory is not"
+                                + " initialized.");
     }
 
     @Test
@@ -448,6 +470,9 @@ public class ToolCallActionTest {
                 new FakeRunnerContext() {
                     @Override
                     public Resource getResource(String name, ResourceType type) {
+                        if (type == ResourceType.CHAT_MODEL) {
+                            return ChatFixtures.modelWithCallables("queryOrder");
+                        }
                         return new FailingTool();
                     }
                 };
@@ -475,6 +500,9 @@ public class ToolCallActionTest {
                 new FakeRunnerContext() {
                     @Override
                     public Resource getResource(String name, ResourceType type) {
+                        if (type == ResourceType.CHAT_MODEL) {
+                            return ChatFixtures.modelWithCallables("queryOrder");
+                        }
                         return new FailingTool();
                     }
                 };
@@ -494,6 +522,9 @@ public class ToolCallActionTest {
                 new FakeRunnerContext() {
                     @Override
                     public Resource getResource(String name, ResourceType type) {
+                        if (type == ResourceType.CHAT_MODEL) {
+                            return ChatFixtures.modelWithCallables("queryOrder");
+                        }
                         throw new RuntimeException("missing resource");
                     }
                 };
@@ -513,6 +544,9 @@ public class ToolCallActionTest {
                 new FakeRunnerContext() {
                     @Override
                     public Resource getResource(String name, ResourceType type) {
+                        if (type == ResourceType.CHAT_MODEL) {
+                            return ChatFixtures.modelWithCallables("queryOrder");
+                        }
                         throw new RuntimeException();
                     }
                 };
@@ -578,6 +612,9 @@ public class ToolCallActionTest {
                 new FakeRunnerContext() {
                     @Override
                     public Resource getResource(String name, ResourceType type) throws Exception {
+                        if (type == ResourceType.CHAT_MODEL) {
+                            return ChatFixtures.modelWithCallables("queryOrder", "missingTool");
+                        }
                         if ("missingTool".equals(name)) {
                             throw new RuntimeException("missing resource");
                         }

@@ -800,3 +800,7 @@ class BaseChatModelSetup(Resource):
                 err_msg = f"Expect Tool, but is {tool.__class__.__name__}"
                 raise TypeError(err_msg)
         return self.tools
+
+    def get_tool_names(self) -> list[str]:
+        """Return tool names exposed by this opened setup, including sub-agent calls."""
+        return [tool.name for tool in self._get_tools()]

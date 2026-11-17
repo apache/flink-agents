@@ -183,6 +183,8 @@ def _build_tool_call_executions(
     error: dict,
 ) -> list[_ToolCallExecution]:
     executions = []
+    model = ctx.get_resource(event.model, ResourceType.CHAT_MODEL)
+    allowed_tool_names = set(model.get_tool_names())
     for tool_call in event.tool_calls:
         call_id = tool_call.call_id
         name = tool_call.name
@@ -202,11 +204,17 @@ def _build_tool_call_executions(
         # raises when the name is absent and would otherwise have to be attempted for
         # every plain tool call.
         delegated = name.startswith(CALLABLE_NAME_PREFIX)
-        try:
-            tool, agent = _resolve_callable(name, ctx, delegated=delegated)
-        except Exception as e:
-            raise_if_uncapturable(e)
-            preparation_error = e
+        enabled = name in allowed_tool_names
+        if not enabled:
+            preparation_error = ValueError(
+                f"Tool '{name}' is not enabled for model '{event.model}'."
+            )
+        else:
+            try:
+                tool, agent = _resolve_callable(name, ctx, delegated=delegated)
+            except Exception as e:
+                raise_if_uncapturable(e)
+                preparation_error = e
         # Injection is a tool-only contract, so a sub-agent call carries the model
         # arguments unchanged.
         if tool is not None:
@@ -239,8 +247,12 @@ def _build_tool_call_executions(
             failure = preparation_error or RuntimeError(
                 f"Tool `{name}` does not exist."
             )
-            responses[call_id] = _preparation_failure_message(
-                name, failure, delegated=delegated, unresolved=unresolved
+            responses[call_id] = (
+                _preparation_failure_message(
+                    name, failure, delegated=delegated, unresolved=unresolved
+                )
+                if enabled
+                else str(failure)
             )
             success[call_id] = False
             error[call_id] = str(failure)

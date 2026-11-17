@@ -125,6 +125,9 @@ class BaseChatModelSetupSkillsTest {
         Map<String, Object> args = new HashMap<>();
         args.put("connection", "conn");
         args.put("skills", Arrays.asList("github"));
+        List<String> configuredTools = List.of("lookup");
+        store.put("lookup", new StubTool("lookup"));
+        args.put("tools", configuredTools);
         ResourceDescriptor descriptor = new ResourceDescriptor("X", args);
 
         StubChatSetup setup = new StubChatSetup(descriptor, ctx);
@@ -134,6 +137,9 @@ class BaseChatModelSetupSkillsTest {
         assertTrue(setup.getSkillDiscoveryPrompt().contains("<available_skills>"));
         assertTrue(setup.getToolNames().contains(Skills.LOAD_SKILL_TOOL));
         assertTrue(setup.getToolNames().contains(Skills.BASH_TOOL));
+        assertEquals(
+                List.of("lookup", Skills.LOAD_SKILL_TOOL, Skills.BASH_TOOL), setup.getToolNames());
+        assertEquals(List.of("lookup"), configuredTools);
     }
 
     @Test

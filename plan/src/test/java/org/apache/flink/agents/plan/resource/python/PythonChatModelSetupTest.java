@@ -50,6 +50,15 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 public class PythonChatModelSetupTest {
+
+    @Test
+    void callableNamesComeFromInitializedPythonSetup() {
+        when(mockAdapter.invoke("python_java_utils.get_tool_names", mockChatModelSetup))
+                .thenReturn(List.of("search", "load_skill", "_subagent_review"));
+        assertThat(pythonChatModelSetup.getToolNames())
+                .containsExactlyInAnyOrder("search", "load_skill", "_subagent_review");
+    }
+
     @Mock private PythonResourceAdapter mockAdapter;
 
     @Mock private PyObject mockChatModelSetup;
