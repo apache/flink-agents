@@ -303,8 +303,12 @@ The `bash` tool runs commands under the following chat model settings:
 | `allowed_commands` | Optional | Command names the tool may run, such as `echo` and `bc`. Defaults to an empty list. |
 | `allowed_script_dirs` | Optional | Additional directories from which scripts may be executed. Defaults to an empty list; the framework also permits the directories of the skills enabled on this model. |
 
-Each command must either be on the command list or resolve to a path under a
-permitted script directory. Directly executed scripts need executable permissions;
+Bare command names must be in `allowed_commands`. Explicit paths such as
+`./run.sh` must resolve under an allowed script directory. Executable names and
+paths may contain only ASCII letters, digits, `_`, `-`, `.`, and `/`; arguments
+may still use quoting and variable expansion.
+
+Directly executed scripts need executable permissions;
 all scripts need their runtime dependencies. To run `python scripts/calculate.py`, allow
 `python` and set the tool's `cwd` argument to the skill's base directory returned
 by `load_skill`. An explicit `cwd` must be within a permitted script directory;

@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.tools.bash;
 
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,6 +28,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BashValidatorTest {
+
+    @Test
+    void processCwdDoesNotAllowBareCommand() {
+        assertTrue(
+                BashValidator.validate(
+                                "pwd",
+                                List.of(),
+                                List.of(Path.of("").toAbsolutePath().toString()),
+                                null)
+                        .isPresent());
+    }
 
     @Test
     void emptyCommandRejected() {
