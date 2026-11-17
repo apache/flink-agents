@@ -38,8 +38,9 @@ introduction to the format and its use cases.
 
 Skills use **progressive disclosure**: the model first receives their names and
 descriptions, then calls `load_skill` to read the instructions for a relevant
-skill. It can request additional files and use the built-in `bash` tool to run
-permitted commands. This limits how much skill content enters the model's context.
+skill. It can request additional files and, when explicitly enabled, use the
+built-in `bash` tool to run permitted commands. This limits how much skill content
+enters the model's context.
 
 The following example defines a `math-calculator` skill, registers its source,
 and enables it on a chat model. The [complete example](#complete-example) links
@@ -164,6 +165,7 @@ def math_model() -> ResourceDescriptor:
         clazz=ResourceName.ChatModel.OLLAMA_SETUP,
         connection="ollama_server",
         model="qwen3.5:9b",
+        tools=["bash"],
         # Expose declared skills to this model by name.
         skills=["math-calculator"],
         # Whitelist the shell commands the bash tool is allowed to run.
@@ -179,6 +181,7 @@ public static ResourceDescriptor mathModel() {
     return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
             .addInitialArgument("connection", "ollamaChatModelConnection")
             .addInitialArgument("model", "qwen3.5:9b")
+            .addInitialArgument("tools", List.of("bash"))
             // Expose declared skills to this model by name.
             .addInitialArgument("skills", List.of("math-calculator"))
             // Whitelist the shell commands the bash tool is allowed to run.
@@ -193,8 +196,10 @@ public static ResourceDescriptor mathModel() {
 When skills are enabled:
 
 - The framework includes their names and descriptions in the system messages.
-- The framework adds `load_skill` and `bash` alongside any configured tools.
-  You do not need to register them yourself. The model must support tool calling.
+- The framework adds `load_skill` alongside any configured tools.
+  You do not need to register it yourself. The model must support tool calling.
+- To run commands, explicitly include `bash` in the model's `tools` list.
+  BashTool is built in and requires no registration; it is also available without Skills.
 - `allowed_commands` permits the shell commands used by the skill, here `echo`
   and `bc`. For other command and script permissions, see
   [Using Skill Files and Commands](#using-skill-files-and-commands).
@@ -296,7 +301,8 @@ base directory, and its resource paths.
 reference file shown in [Skill Format](#skill-format). The `path` is relative to
 the skill directory.
 
-The `bash` tool runs commands under the following chat model settings:
+Enable `bash` in the model's `tools` list to run commands under the following
+chat model settings.
 
 | Setting | Required | Description |
 |---------|----------|-------------|

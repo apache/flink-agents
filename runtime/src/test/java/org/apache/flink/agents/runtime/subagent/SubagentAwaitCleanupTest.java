@@ -38,6 +38,7 @@ import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
+import org.apache.flink.agents.runtime.utils.ToolCallTestModel;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
@@ -72,6 +73,8 @@ public class SubagentAwaitCleanupTest {
     void modelHandledFailureAllowsActionToFinish(String mode, String stage, boolean parallel)
             throws Exception {
         Agent agent = new Agent();
+        agent.addResource(
+                "model", ResourceType.CHAT_MODEL, ToolCallTestModel.withTools("_subagent_child"));
         agent.addResource(
                 "child",
                 ResourceType.AGENT,

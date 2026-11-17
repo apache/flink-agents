@@ -77,6 +77,7 @@ public class MathAgent extends Agent {
                 .addInitialArgument("connection", "ollamaChatModelConnection")
                 .addInitialArgument("model", "qwen3.5:9b")
                 .addInitialArgument("prompt", "systemPrompt")
+                .addInitialArgument("tools", List.of("bash"))
                 // Expose the declared skill to this model by name.
                 .addInitialArgument("skills", List.of("math-calculator"))
                 // Whitelist the shell commands the built-in bash tool may run.

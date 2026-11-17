@@ -75,6 +75,7 @@ public class SkillsIntegrationAgent extends Agent {
                         ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP)
                 .addInitialArgument("connection", "openaiConnection")
                 .addInitialArgument("model", MODEL)
+                .addInitialArgument("tools", List.of("bash"))
                 .addInitialArgument("skills", List.of("math-calculator", "joke-generator"))
                 .addInitialArgument("allowed_commands", List.of("echo", "bc", "python", "python3"))
                 .addInitialArgument("prompt", "systemPrompt")

@@ -80,6 +80,7 @@ class MathAgent(Agent):
             connection="ollama_server",
             model="qwen3.5:9b",
             prompt="system_prompt",
+            tools=["bash"],
             # Expose the declared skill to this model by name.
             skills=["math-calculator"],
             # Whitelist the shell commands the built-in bash tool may run.

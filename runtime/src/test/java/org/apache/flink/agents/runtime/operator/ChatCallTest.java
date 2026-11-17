@@ -219,7 +219,9 @@ public class ChatCallTest {
         agent.addResource(
                 "model",
                 ResourceType.CHAT_MODEL,
-                ResourceDescriptor.Builder.newBuilder(Model.class.getName()).build());
+                ResourceDescriptor.Builder.newBuilder(Model.class.getName())
+                        .addInitialArgument("tools", List.of("echo"))
+                        .build());
         agent.addResource(
                 "echo",
                 ResourceType.TOOL,

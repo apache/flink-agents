@@ -19,6 +19,8 @@
 package org.apache.flink.agents.plan;
 
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
@@ -27,6 +29,8 @@ import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -102,6 +106,13 @@ class AgentPlanDeclareSkillsTest {
 
     public static class NoSkillsAgent extends Agent {}
 
+    public static class CustomBashAgent extends SingleSkillsAgent {
+        @org.apache.flink.agents.api.annotation.Tool(description = "Custom bash tool")
+        public static String bash() {
+            return "custom";
+        }
+    }
+
     @Test
     void singleSkillsRegistersConfigAndBuiltInTools() throws Exception {
         AgentPlan plan = new AgentPlan(new SingleSkillsAgent());
@@ -114,7 +125,7 @@ class AgentPlanDeclareSkillsTest {
         assertNotNull(configProvider);
         assertTrue(configProvider instanceof JavaSerializableResourceProvider);
 
-        // load_skill + bash tools as JavaResourceProviders pointing at runtime / plan classes
+        // Skills register load_skill without implicitly registering bash.
         Map<String, ResourceProvider> tools = providers.get(ResourceType.TOOL);
         assertNotNull(tools);
         assertTrue(tools.get(Skills.LOAD_SKILL_TOOL) instanceof JavaResourceProvider);
@@ -123,9 +134,7 @@ class AgentPlanDeclareSkillsTest {
                 ((JavaResourceProvider) tools.get(Skills.LOAD_SKILL_TOOL))
                         .getDescriptor()
                         .getClazz());
-        assertEquals(
-                "org.apache.flink.agents.plan.tools.bash.BashTool",
-                ((JavaResourceProvider) tools.get(Skills.BASH_TOOL)).getDescriptor().getClazz());
+        assertNull(tools.get(Skills.BASH_TOOL));
     }
 
     @Test
@@ -184,6 +193,47 @@ class AgentPlanDeclareSkillsTest {
                 plan.getResourceProviders().getOrDefault(ResourceType.TOOL, Map.of());
         assertNull(tools.get(Skills.LOAD_SKILL_TOOL));
         assertNull(tools.get(Skills.BASH_TOOL));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void modelDeclarationRegistersBashWithoutInstantiatingModel(boolean python) throws Exception {
+        for (Agent agent :
+                List.of(new NoSkillsAgent(), new SingleSkillsAgent(), new CustomBashAgent())) {
+            agent.addResource(
+                    "model",
+                    ResourceType.CHAT_MODEL,
+                    python
+                            ? new PythonResourceDescriptor(
+                                    "unavailable",
+                                    "Model",
+                                    Map.of("tools", List.of(Skills.BASH_TOOL)))
+                            : new ResourceDescriptor(
+                                    "unavailable.Model",
+                                    Map.of("tools", List.of(Skills.BASH_TOOL))));
+            ResourceProvider provider =
+                    new AgentPlan(agent)
+                            .getResourceProviders()
+                            .get(ResourceType.TOOL)
+                            .get(Skills.BASH_TOOL);
+            if (agent instanceof CustomBashAgent) {
+                assertTrue(provider instanceof JavaSerializableResourceProvider);
+            } else {
+                assertEquals(
+                        "org.apache.flink.agents.plan.tools.bash.BashTool",
+                        ((JavaResourceProvider) provider).getDescriptor().getClazz());
+            }
+        }
+    }
+
+    @Test
+    void explicitBashRegistrationIsPreserved() throws Exception {
+        ResourceProvider provider =
+                new AgentPlan(new CustomBashAgent())
+                        .getResourceProviders()
+                        .get(ResourceType.TOOL)
+                        .get(Skills.BASH_TOOL);
+        assertTrue(provider instanceof JavaSerializableResourceProvider);
     }
 
     @Test

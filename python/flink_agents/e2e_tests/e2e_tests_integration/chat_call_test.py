@@ -43,7 +43,7 @@ from flink_agents.api.decorators import action, chat_model_setup, tool
 from flink_agents.api.events.chat_event import ChatResponseError, ChatResponseEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
-from flink_agents.api.resource import ResourceDescriptor
+from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.tools import InjectedArg
 from flink_agents.e2e_tests.e2e_tests_integration.internal_subagent_test import (
@@ -58,7 +58,11 @@ class Model(BaseChatModelSetup):
     """Deterministic provider, with no external services."""
 
     def open(self) -> None:
-        """No connection needed."""
+        """Resolve tools without opening an external connection."""
+        self.tools = [
+            self.resource_context.get_resource(name, ResourceType.TOOL)
+            for name in self.tools
+        ]
 
     @property
     def model_kwargs(self) -> dict[str, Any]:
@@ -94,6 +98,7 @@ class ChatAgent(Agent):
             clazz=f"{Model.__module__}.{Model.__name__}",
             model="fake",
             connection="unused",
+            tools=["echo"],
         )
 
     @tool(injected_args={"caller": InjectedArg.from_short_term_memory("caller")})

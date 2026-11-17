@@ -39,6 +39,7 @@ import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
+import org.apache.flink.agents.runtime.utils.ToolCallTestModel;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
@@ -156,6 +157,8 @@ public class InternalSubagentFrameworkFaultTest {
     private static KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness(
             boolean parallel, FaultingStore store, boolean nested) throws Exception {
         Agent parent = new Agent();
+        parent.addResource(
+                "model", ResourceType.CHAT_MODEL, ToolCallTestModel.withTools("_subagent_child"));
         parent.addResource("child", ResourceType.AGENT, new Child());
         parent.addAction(
                 new String[] {InputEvent.EVENT_TYPE},

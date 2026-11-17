@@ -148,7 +148,8 @@ class MockChatModel(BaseChatModelSetup):
     """Mock chat model setup integrating prompt and tool."""
 
     def open(self) -> None:
-        """Do nothing."""
+        """Resolve the mock connection, prompt, and tools."""
+        super().open()
 
     @property
     def model_kwargs(self) -> Dict[str, Any]:
@@ -180,14 +181,7 @@ class MockChatModel(BaseChatModelSetup):
                 )
                 messages = prompt.format_messages(**str_prompt_args)
 
-        tools = None
-        if self.tools is not None:
-            tools = [
-                self.resource_context.get_resource(tool_name, ResourceType.TOOL)
-                for tool_name in self.tools
-            ]
-
-        return server.chat(messages, tools=tools, **kwargs)
+        return server.chat(messages, tools=self._get_tools(), **kwargs)
 
 
 class BuiltInActionAgent(Agent):
