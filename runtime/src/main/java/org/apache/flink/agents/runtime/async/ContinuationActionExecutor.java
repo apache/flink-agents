@@ -189,6 +189,16 @@ public class ContinuationActionExecutor {
         return future.get();
     }
 
+    /**
+     * Waits for {@code durationMillis}. JDK 11 cannot yield, so this blocks the caller. JDK 21
+     * schedules the wait and yields the mailbox thread.
+     */
+    public void suspend(ContinuationContext context, long durationMillis) throws Exception {
+        if (durationMillis > 0) {
+            Thread.sleep(durationMillis);
+        }
+    }
+
     /** Stops async work without waiting for worker exit cleanup. */
     public void shutdown() {
         batchExecutor.shutdown();

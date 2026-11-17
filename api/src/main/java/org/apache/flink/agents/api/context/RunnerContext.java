@@ -229,6 +229,22 @@ public interface RunnerContext {
         return chat(new ChatRequestEvent(model, messages));
     }
 
+    /**
+     * Suspends the current action for {@code durationMillis} without holding the operator mailbox
+     * thread when asynchronous execution is available.
+     *
+     * <p>The default implementation waits on the caller thread. Runtimes that can yield replace
+     * this with a scheduled resume.
+     *
+     * @param durationMillis how long to wait, in milliseconds. Non-positive values return
+     *     immediately.
+     */
+    default void suspend(long durationMillis) throws Exception {
+        if (durationMillis > 0) {
+            Thread.sleep(durationMillis);
+        }
+    }
+
     /** Clean up the resource. */
     void close() throws Exception;
 }

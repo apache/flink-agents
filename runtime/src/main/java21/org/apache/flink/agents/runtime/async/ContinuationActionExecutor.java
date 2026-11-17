@@ -31,6 +31,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
@@ -62,6 +64,7 @@ public class ContinuationActionExecutor {
 
     private final ThreadPoolExecutor asyncExecutor;
     private final AsyncExecutorThreadFactory asyncThreadFactory;
+    private final ScheduledExecutorService delayScheduler;
     private final AtomicLong submissionSequence = new AtomicLong();
 
     public ContinuationActionExecutor(int numAsyncThreads) {
@@ -88,6 +91,13 @@ public class ContinuationActionExecutor {
                         TimeUnit.MILLISECONDS,
                         new PriorityBlockingQueue<>(),
                         asyncThreadFactory);
+        this.delayScheduler =
+                Executors.newSingleThreadScheduledExecutor(
+                        runnable -> {
+                            Thread thread = new Thread(runnable, "flink-agents-action-delay");
+                            thread.setDaemon(true);
+                            return thread;
+                        });
     }
 
     /**
@@ -454,6 +464,20 @@ public class ContinuationActionExecutor {
         return joinCompletableFuture(future);
     }
 
+    /**
+     * Schedules a delay and yields the current continuation so the mailbox thread can run other
+     * mail. The next {@link #executeAction} resumes this continuation after the delay.
+     */
+    public void suspend(ContinuationContext context, long durationMillis) throws Exception {
+        if (durationMillis <= 0) {
+            return;
+        }
+        CompletableFuture<Void> done = new CompletableFuture<>();
+        delayScheduler.schedule(
+                () -> done.complete(null), durationMillis, TimeUnit.MILLISECONDS);
+        awaitFuture(context, done);
+    }
+
     private static <T> T joinCompletableFuture(CompletableFuture<T> future) throws Exception {
         try {
             return future.join();
@@ -471,6 +495,7 @@ public class ContinuationActionExecutor {
     /** Stops async work without waiting for worker exit cleanup. */
     public void shutdown() {
         asyncExecutor.shutdownNow();
+        delayScheduler.shutdownNow();
     }
 
     public void close() {

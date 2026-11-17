@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -41,6 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -205,6 +207,43 @@ class ChatModelInvokerTest {
         // aborts the retry loop on both. Only the restored flag proves the backoff sleep's catch
         // block restores it instead of leaving it cleared.
         assertTrue(Thread.interrupted(), "interrupt status should be restored on the thread");
+    }
+
+    @Test
+    void testAsyncRetryWaitSuspendsWithoutBlockingCaller() throws Exception {
+        RunnerContext ctx = mock(RunnerContext.class);
+        BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
+        ReadableConfiguration config = mock(ReadableConfiguration.class);
+        when(ctx.getConfig()).thenReturn(config);
+        when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(true);
+        when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
+        when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
+        @SuppressWarnings("unchecked")
+        DurableFuture<ChatModelInvoker.InvocationOutcome> future = mock(DurableFuture.class);
+        doReturn(future).when(ctx).durableExecuteAsync(any());
+        when(future.await())
+                .thenReturn(new ChatModelInvoker.InvocationOutcome(null, "transient failure"));
+
+        long startNanos = System.nanoTime();
+        assertThrows(
+                ChatModelInvoker.ChatAttemptFailed.class,
+                () ->
+                        ChatModelInvoker.chatWithRetries(
+                                UUID.randomUUID(),
+                                "test-model",
+                                "durable-call-id",
+                                List.of(),
+                                Map.of(),
+                                null,
+                                ctx,
+                                1,
+                                1));
+        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+
+        assertTrue(
+                elapsedMs < 500L, "async retry wait blocked the caller for " + elapsedMs + " ms");
+        verify(ctx).suspend(1000L);
+        verify(ctx, times(2)).durableExecuteAsync(any());
     }
 
     @Test
