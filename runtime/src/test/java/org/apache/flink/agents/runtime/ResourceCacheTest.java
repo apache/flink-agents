@@ -257,9 +257,10 @@ public class ResourceCacheTest {
 
         List<Resource> materialized = cache.eagerMaterialize(ResourceType.TOOL);
 
-        assertThat(materialized).hasSize(2).allMatch(resource -> resource instanceof TestTool);
-        assertThat(materialized).contains(cache.getResource("myTool", ResourceType.TOOL));
-        assertThat(materialized).contains(cache.getResource("anotherTool", ResourceType.TOOL));
+        assertThat(materialized)
+                .containsExactlyInAnyOrder(
+                        cache.getResource("myTool", ResourceType.TOOL),
+                        cache.getResource("anotherTool", ResourceType.TOOL));
     }
 
     @Test

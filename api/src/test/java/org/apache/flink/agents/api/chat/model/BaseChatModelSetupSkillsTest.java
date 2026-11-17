@@ -136,9 +136,7 @@ class BaseChatModelSetupSkillsTest {
         assertNotNull(setup.getSkillDiscoveryPrompt());
         assertTrue(setup.getSkillDiscoveryPrompt().contains("<available_skills>"));
         assertTrue(setup.getToolNames().contains(Skills.LOAD_SKILL_TOOL));
-        assertTrue(setup.getToolNames().contains(Skills.BASH_TOOL));
-        assertEquals(
-                List.of("lookup", Skills.LOAD_SKILL_TOOL, Skills.BASH_TOOL), setup.getToolNames());
+        assertEquals(List.of("lookup", Skills.LOAD_SKILL_TOOL), setup.getToolNames());
         assertEquals(List.of("lookup"), configuredTools);
     }
 

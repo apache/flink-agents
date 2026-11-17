@@ -51,6 +51,7 @@ from flink_agents.plan.resource_provider import (
     PythonSerializableResourceProvider,
     ResourceProvider,
 )
+from flink_agents.plan.tools.bash.bash_tool import BashTool
 from flink_agents.plan.tools.function_tool import FunctionTool
 
 BUILT_IN_ACTIONS = [
@@ -505,7 +506,31 @@ def _get_resource_providers(
             )
             resource_providers.append(provider.get(name, descriptor, resource_type))
 
+    _add_builtin_tools(resource_providers)
     return resource_providers
+
+
+def _add_builtin_tools(resource_providers: List[ResourceProvider]) -> None:
+    if not any(
+        provider.type == ResourceType.CHAT_MODEL
+        and isinstance(provider, PythonResourceProvider | JavaResourceProvider)
+        and BASH_TOOL in (provider.descriptor.arguments.get("tools") or [])
+        for provider in resource_providers
+    ):
+        return
+    if not any(
+        provider.type == ResourceType.TOOL and provider.name == BASH_TOOL
+        for provider in resource_providers
+    ):
+        resource_providers.append(
+            PythonResourceProvider.get(
+                name=BASH_TOOL,
+                resource_type=ResourceType.TOOL,
+                descriptor=ResourceDescriptor(
+                    clazz=f"{BashTool.__module__}.{BashTool.__name__}",
+                ),
+            )
+        )
 
 
 def _add_mcp_server(
@@ -533,7 +558,7 @@ def _add_skills(
     """Register skill configuration and skill tools.
 
     Merges all Skills objects into a single Skills config resource,
-    and registers built-in skill tools (load_skill, bash).
+    and registers the built-in load_skill tool.
 
 
     """
@@ -544,21 +569,13 @@ def _add_skills(
     # The tool classes live in flink_agents.runtime.skill_tools and will
     # be instantiated at runtime by PythonResourceProvider.
 
-    resource_providers.extend(
-        [
-            PythonResourceProvider.get(
-                name=LOAD_SKILL_TOOL,
-                descriptor=ResourceDescriptor(
-                    clazz="flink_agents.runtime.skill.skill_tools.LoadSkillTool",
-                ),
+    resource_providers.append(
+        PythonResourceProvider.get(
+            name=LOAD_SKILL_TOOL,
+            descriptor=ResourceDescriptor(
+                clazz="flink_agents.runtime.skill.skill_tools.LoadSkillTool",
             ),
-            PythonResourceProvider.get(
-                name=BASH_TOOL,
-                descriptor=ResourceDescriptor(
-                    clazz="flink_agents.plan.tools.bash.bash_tool.BashTool",
-                ),
-            ),
-        ]
+        )
     )
 
     # TODO: Currently, we construct a global agent skill manager for all skill

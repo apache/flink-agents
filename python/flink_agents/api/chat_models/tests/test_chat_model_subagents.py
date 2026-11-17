@@ -369,7 +369,7 @@ def test_only_the_skill_listing_is_injected_when_subagents_are_declared() -> Non
     }
     setup, connection = _build(store, subagents=["reviewer"], skills=["github"])
     setup.open()
-    assert setup.get_tool_names() == ["load_skill", "bash", "_subagent_reviewer"]
+    assert setup.get_tool_names() == ["load_skill", "_subagent_reviewer"]
 
     setup.chat([ChatMessage.of(role=MessageRole.USER, content="review it")])
 

@@ -34,7 +34,7 @@ from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
-from flink_agents.api.skills import BASH_TOOL, LOAD_SKILL_TOOL, SkillSourceSpec
+from flink_agents.api.skills import LOAD_SKILL_TOOL, SkillSourceSpec
 from flink_agents.api.subagent import CALLABLE_NAME_PREFIX, SubagentSetup
 from flink_agents.api.tools.tool import Tool
 
@@ -529,11 +529,9 @@ class BaseChatModelSetup(Resource):
         declared_names = [
             entry if isinstance(entry, str) else entry.name for entry in declared
         ]
-        if self.skills is not None:
-            for skill_tool in (LOAD_SKILL_TOOL, BASH_TOOL):
-                if skill_tool not in declared_names:
-                    declared.append(skill_tool)
-                    declared_names.append(skill_tool)
+        if self.skills is not None and LOAD_SKILL_TOOL not in declared_names:
+            declared.append(LOAD_SKILL_TOOL)
+            declared_names.append(LOAD_SKILL_TOOL)
 
         callables: List[Tool] = []
         callable_names: set[str] = set()

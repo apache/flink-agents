@@ -440,7 +440,6 @@ public class AgentPlanTest {
                 agentPlan.getResourceProviders();
         assertThat(resourceProviders).isNotNull();
 
-        // The map should be empty for agents without resource annotations
         assertThat(resourceProviders).isEmpty();
     }
 
@@ -498,7 +497,7 @@ public class AgentPlanTest {
         // Verify TOOL resource providers
         Map<String, ResourceProvider> toolProviders = resourceProviders.get(ResourceType.TOOL);
         assertThat(toolProviders).isNotNull();
-        assertThat(toolProviders).hasSize(2); // myTool and anotherTool
+        assertThat(toolProviders).containsOnlyKeys("myTool", "anotherTool");
         assertThat(toolProviders).containsKey("myTool");
         assertThat(toolProviders).containsKey("anotherTool");
 

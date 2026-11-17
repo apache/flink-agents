@@ -129,9 +129,6 @@ public abstract class BaseChatModelSetup extends Resource {
             if (!this.toolNames.contains(Skills.LOAD_SKILL_TOOL)) {
                 this.toolNames.add(Skills.LOAD_SKILL_TOOL);
             }
-            if (!this.toolNames.contains(Skills.BASH_TOOL)) {
-                this.toolNames.add(Skills.BASH_TOOL);
-            }
         }
         Set<String> callableNames = new LinkedHashSet<>();
         for (String name : this.toolNames) {
