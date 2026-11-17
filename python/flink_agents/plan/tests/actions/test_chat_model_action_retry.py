@@ -604,6 +604,40 @@ class TestChatModelActionRetry:
         assert sent_events[0].retry_count == 0
         assert ctx.report_execution_started.call_count == 1
 
+    def test_implicitly_wrapped_client_error_is_not_retried(self) -> None:
+        """A 400 stored on the implicit context must not be retried."""
+
+        class _StatusError(Exception):
+            def __init__(self, status_code: int) -> None:
+                super().__init__(f"status {status_code}")
+                self.status_code = status_code
+
+        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
+            try:
+                raise _StatusError(400)
+            except _StatusError:
+                raise RuntimeError("provider call failed")
+
+        chat_model = MagicMock()
+        chat_model.chat = mock_chat
+        ctx, sent_events, _, _ = _create_mock_runner_context(
+            chat_model, max_retries=2, retry_wait_interval_sec=0
+        )
+
+        asyncio.run(
+            chat(
+                uuid4(),
+                "test-model",
+                [ChatMessage.of(role=MessageRole.USER, content="hi")],
+                {},
+                None,
+                ctx,
+            )
+        )
+
+        assert sent_events[0].retry_count == 0
+        assert ctx.report_execution_started.call_count == 1
+
     @pytest.mark.parametrize("status_code", [429, 503])
     def test_retryable_http_status_uses_the_retry_budget(self, status_code: int) -> None:
         """429 and 5xx are still retried."""

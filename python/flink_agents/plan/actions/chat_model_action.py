@@ -178,8 +178,18 @@ def _is_retryable(error: BaseException) -> bool:
         status = _http_status(current)
         if status is not None and not _is_retryable_http_status(status):
             return False
-        current = current.__cause__
+        current = _linked_failure(current)
     return True
+
+
+def _linked_failure(error: BaseException) -> BaseException | None:
+    """The next failure in the chain. Prefer an explicit cause over the implicit context."""
+    if error.__cause__ is not None:
+        return error.__cause__
+    if error.__suppress_context__:
+        return None
+    context = error.__context__
+    return None if context is error else context
 
 
 def _is_retryable_http_status(status: int) -> bool:
@@ -191,12 +201,12 @@ def _is_retryable_http_status(status: int) -> bool:
 def _http_status(error: BaseException) -> int | None:
     for name in ("status_code", "status"):
         value = getattr(error, name, None)
-        if isinstance(value, int):
+        if isinstance(value, int) and not isinstance(value, bool):
             return value
     response = getattr(error, "response", None)
     if response is not None:
         value = getattr(response, "status_code", None)
-        if isinstance(value, int):
+        if isinstance(value, int) and not isinstance(value, bool):
             return value
     return None
 

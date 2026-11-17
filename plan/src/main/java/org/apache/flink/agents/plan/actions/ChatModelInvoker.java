@@ -38,10 +38,13 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 
 import java.lang.reflect.Method;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
@@ -135,14 +138,14 @@ public final class ChatModelInvoker {
      * cause, so a {@code RuntimeException} wrapper does not hide it.
      */
     static boolean isRetryableProviderFailure(Throwable error) {
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         Throwable current = error;
-        while (current != null) {
+        while (current != null && seen.add(current)) {
             Integer status = httpStatus(current);
             if (status != null && !isRetryableHttpStatus(status)) {
                 return false;
             }
-            Throwable cause = current.getCause();
-            current = cause == current ? null : cause;
+            current = current.getCause();
         }
         return true;
     }
@@ -155,7 +158,7 @@ public final class ChatModelInvoker {
     }
 
     private static Integer httpStatus(Throwable error) {
-        for (String name : new String[] {"statusCode", "getStatusCode"}) {
+        for (String name : new String[] {"statusCode", "getStatusCode", "code"}) {
             try {
                 Method method = error.getClass().getMethod(name);
                 if (method.getParameterCount() != 0) {

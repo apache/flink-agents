@@ -307,6 +307,40 @@ class ChatModelInvokerTest {
     }
 
     @Test
+    void testProviderCodeMethodIsNotRetried() throws Exception {
+        BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
+        RunnerContext ctx = mock(RunnerContext.class);
+        ReadableConfiguration config = mock(ReadableConfiguration.class);
+        when(ctx.getConfig()).thenReturn(config);
+        when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
+        when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
+        when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
+        when(chatModel.chat(any(), any(), any()))
+                .thenThrow(new RuntimeException("provider call failed", new CodedFailure(400)));
+        when(ctx.durableExecute(any()))
+                .thenAnswer(
+                        invocation -> ((DurableCallable<?>) invocation.getArgument(0)).call());
+
+        ChatModelInvoker.ChatAttemptFailed failure =
+                assertThrows(
+                        ChatModelInvoker.ChatAttemptFailed.class,
+                        () ->
+                                ChatModelInvoker.chatWithRetries(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        "durable-call-id",
+                                        List.of(),
+                                        Map.of(),
+                                        null,
+                                        ctx,
+                                        2,
+                                        0));
+
+        verify(chatModel, times(1)).chat(any(), any(), any());
+        assertEquals(0, failure.retryCount);
+    }
+
+    @Test
     void testRateLimitAndServerErrorAreRetried() throws Exception {
         for (int status : new int[] {429, 503}) {
             BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
@@ -387,6 +421,21 @@ class ChatModelInvokerTest {
         @SuppressWarnings("unused")
         public int statusCode() {
             return status;
+        }
+    }
+
+    /** Gemini's ApiException exposes the HTTP status as {@code code()}. */
+    private static final class CodedFailure extends RuntimeException {
+        private final int code;
+
+        private CodedFailure(int code) {
+            super("code " + code);
+            this.code = code;
+        }
+
+        @SuppressWarnings("unused")
+        public int code() {
+            return code;
         }
     }
 

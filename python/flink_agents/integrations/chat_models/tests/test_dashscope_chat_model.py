@@ -349,6 +349,20 @@ def test_dashscope_chat_selects_interface(
     assert sum(call.call_count for call in chat_calls.values()) == 1
 
 
+def test_dashscope_client_error_keeps_http_status(
+    chat_calls: dict[str, MagicMock],
+) -> None:
+    setup = _open_setup(model="qwen-plus")
+    chat_calls["text"].return_value = SimpleNamespace(
+        status_code=400, message="bad request", output=None, usage=None
+    )
+
+    with pytest.raises(RuntimeError, match="bad request") as caught:
+        setup.chat([ChatMessage.user("Hello")])
+
+    assert caught.value.status_code == 400
+
+
 def test_dashscope_multimodal_chat_preserves_user_content_order(
     chat_calls: dict[str, MagicMock],
 ) -> None:
