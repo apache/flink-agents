@@ -54,8 +54,7 @@ class ContinuationSuspendTest {
                         testClasses,
                         ContinuationSuspendTest.class.getClassLoader());
         Class<?> driver =
-                loader.loadClass(
-                        "org.apache.flink.agents.runtime.async.ContinuationSuspendDriver");
+                loader.loadClass("org.apache.flink.agents.runtime.async.ContinuationSuspendDriver");
         try {
             driver.getDeclaredMethod("run").invoke(null);
         } catch (InvocationTargetException e) {

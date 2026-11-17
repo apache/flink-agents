@@ -24,8 +24,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Drives {@link ContinuationActionExecutor#suspend}. Loaded by an isolated class loader so the JDK
- * 21 multi-release classes are used even when surefire's directory classpath would otherwise
- * select the JDK 11 fallback.
+ * 21 multi-release classes are used even when surefire's directory classpath would otherwise select
+ * the JDK 11 fallback.
  */
 public final class ContinuationSuspendDriver {
 
