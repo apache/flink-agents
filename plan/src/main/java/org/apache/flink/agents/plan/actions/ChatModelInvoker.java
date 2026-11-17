@@ -272,6 +272,33 @@ public final class ChatModelInvoker {
             int numRetries,
             long retryWaitMillis)
             throws ChatAttemptFailed, Exception {
+        return chatWithRetries(
+                initialRequestId,
+                model,
+                durableCallId,
+                messages,
+                promptArgs,
+                outputSchema,
+                deferOutputSchema,
+                ctx,
+                numRetries,
+                retryWaitMillis,
+                false);
+    }
+
+    public static ChatAttemptResult chatWithRetries(
+            UUID initialRequestId,
+            String model,
+            String durableCallId,
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            @Nullable Object outputSchema,
+            boolean deferOutputSchema,
+            RunnerContext ctx,
+            int numRetries,
+            long retryWaitMillis,
+            boolean closing)
+            throws Exception {
         BaseChatModelSetup chatModel;
         try {
             chatModel = (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
@@ -330,7 +357,11 @@ public final class ChatModelInvoker {
                     public InvocationOutcome call() throws Exception {
                         try {
                             return new InvocationOutcome(
-                                    chatModel.chat(messages, promptArgs, Map.of()), null);
+                                    closing
+                                            ? chatModel.chatWithoutTools(
+                                                    messages, promptArgs, Map.of())
+                                            : chatModel.chat(messages, promptArgs, Map.of()),
+                                    null);
                         } catch (Exception e) {
                             if (Thread.currentThread().isInterrupted()
                                     || CancellationUtils.isCancellation(e)) {
@@ -361,6 +392,8 @@ public final class ChatModelInvoker {
                 Thread.currentThread().interrupt();
                 throw e;
             }
+            ReActLoopBudgetUtils.updateTokenBudgetState(
+                    ctx.getSensoryMemory(), initialRequestId, outcome.response);
             try {
                 try {
                     if (outcome.error != null) {
@@ -406,7 +439,8 @@ public final class ChatModelInvoker {
                                     llmMetadata,
                                     ctx,
                                     chatAsync,
-                                    requestMetricGroup);
+                                    requestMetricGroup,
+                                    initialRequestId);
                 }
                 return result;
             } catch (DurableExecutionFailure e) {
@@ -476,7 +510,11 @@ public final class ChatModelInvoker {
      *     type, a reporting failure)
      */
     public static ChatAttemptResult applyOutputSchema(
-            ChatAttemptResult attempt, Object outputSchema, String durableCallId, RunnerContext ctx)
+            ChatAttemptResult attempt,
+            Object outputSchema,
+            String durableCallId,
+            RunnerContext ctx,
+            UUID requestId)
             throws Exception {
         BaseChatModelSetup chatModel = Objects.requireNonNull(attempt.chatModel, "chatModel");
         return withOutputSchema(
@@ -486,7 +524,8 @@ public final class ChatModelInvoker {
                 llmMetadata(chatModel),
                 ctx,
                 chatAsync(ctx, chatModel),
-                ctx.getActionMetricGroup());
+                ctx.getActionMetricGroup(),
+                requestId);
     }
 
     /** The schema step of a final answer; an answer that carries tool calls is returned as is. */
@@ -497,7 +536,8 @@ public final class ChatModelInvoker {
             Map<String, Object> llmMetadata,
             RunnerContext ctx,
             boolean chatAsync,
-            @Nullable FlinkAgentsMetricGroup requestMetricGroup)
+            @Nullable FlinkAgentsMetricGroup requestMetricGroup,
+            UUID requestId)
             throws Exception {
         ChatResult response = attempt.response;
         if (!response.getToolCalls().isEmpty()) {
@@ -516,7 +556,8 @@ public final class ChatModelInvoker {
                                 llmMetadata,
                                 ctx,
                                 chatAsync,
-                                requestMetricGroup);
+                                requestMetricGroup,
+                                requestId);
                 // A truncated conversion consumed its token budget; its metrics are recorded
                 // before this rejects it.
                 ChatModelAction.rejectIncompleteResponse(finalized);
@@ -582,7 +623,8 @@ public final class ChatModelInvoker {
             Map<String, Object> llmMetadata,
             RunnerContext ctx,
             boolean chatAsync,
-            @Nullable FlinkAgentsMetricGroup requestMetricGroup)
+            @Nullable FlinkAgentsMetricGroup requestMetricGroup,
+            UUID requestId)
             throws Exception {
         // A fresh user message rather than resending the response object: it carries no
         // provider-specific fields of the loop response, and a single user turn avoids provider
@@ -639,6 +681,8 @@ public final class ChatModelInvoker {
             // Persistence and recovery failures are not request failures, as for the loop call.
             throw new DurableExecutionFailure(e);
         }
+        ReActLoopBudgetUtils.updateTokenBudgetState(
+                ctx.getSensoryMemory(), requestId, outcome.response);
         ChatResult response;
         try {
             if (outcome.error != null) {

@@ -27,6 +27,7 @@ from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.events.event import BuiltInAttribute, Event, copy_user_context
+from flink_agents.api.react_loop_budget import ReActLoopBudget
 
 
 class ChatRequestEvent(Event):
@@ -58,6 +59,7 @@ class ChatRequestEvent(Event):
         BuiltInAttribute.optional("prompt_args", dict),
         BuiltInAttribute.optional_untyped("output_schema"),
         BuiltInAttribute.optional("user_context", dict),
+        BuiltInAttribute.optional_untyped("budget"),
     )
 
     def __init__(
@@ -67,6 +69,7 @@ class ChatRequestEvent(Event):
         prompt_args: Dict[str, Any] | None = None,
         output_schema: OutputSchema | None = None,
         user_context: dict[str, Any] | None = None,
+        budget: ReActLoopBudget | None = None,
     ) -> None:
         """Create a ChatRequestEvent."""
         attributes: Dict[str, Any] = {
@@ -75,6 +78,8 @@ class ChatRequestEvent(Event):
             "prompt_args": prompt_args if prompt_args is not None else {},
             "output_schema": output_schema,
         }
+        if budget is not None:
+            attributes["budget"] = budget
         if user_context is not None:
             attributes["user_context"] = copy_user_context(user_context)
         super().__init__(
@@ -102,8 +107,16 @@ class ChatRequestEvent(Event):
             prompt_args=attributes.get("prompt_args"),
             output_schema=output_schema_raw,
             user_context=attributes.get("user_context"),
+            budget=ReActLoopBudget.model_validate(attributes["budget"])
+            if attributes.get("budget") is not None
+            else None,
         )
         return result.reconstruct_from(event)
+
+    @property
+    def budget(self) -> ReActLoopBudget | None:
+        """Return this request's complete override of loop limits."""
+        return self.get_attr("budget")
 
     @property
     def model(self) -> str:

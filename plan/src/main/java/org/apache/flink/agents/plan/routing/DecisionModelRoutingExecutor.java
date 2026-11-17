@@ -154,7 +154,8 @@ final class DecisionModelRoutingExecutor implements RoutingExecutor {
                         Map.of(),
                         "decide:" + context.getRouter(),
                         "for router '" + context.getRouter() + "'",
-                        false);
+                        false,
+                        context.getRequestId());
         // Retries count against the routed request, like the judge's: response-level totals and
         // the model_resource counters both come from this one call.
         ChatRetryStats.recordAttempt(

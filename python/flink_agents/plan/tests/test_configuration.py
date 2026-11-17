@@ -17,6 +17,7 @@
 #################################################################################
 
 from datetime import timedelta
+from enum import Enum
 
 import pytest
 
@@ -436,3 +437,16 @@ def test_trace_log_target_error_identifies_list_entry() -> None:
             AgentConfigOptions.TRACE_LOG_TARGETS,
             [TraceLogTarget.all(), {"scope": {"unknown": "search"}}],
         )
+
+
+class _TestMode(Enum):
+    ENABLED = "enabled"
+
+
+@pytest.mark.parametrize("value", [_TestMode.ENABLED, "ENABLED", "enabled"])
+def test_generic_enum_configuration(value):
+    option = ConfigOption("custom.mode", _TestMode)
+    config = AgentConfiguration()
+    config.set(option, value)
+    restored = AgentConfiguration.model_validate_json(config.model_dump_json())
+    assert restored.get(option) is _TestMode.ENABLED

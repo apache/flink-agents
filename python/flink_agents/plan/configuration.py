@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 from datetime import timedelta
+from enum import Enum
 from typing import Any, Dict, Type
 
 from pydantic import BaseModel
@@ -90,6 +91,13 @@ class AgentConfiguration(BaseModel, Configuration):
             return _parse_duration_option(key, value)
 
         try:
+            if issubclass(config_type, Enum) and isinstance(value, str):
+                for member in config_type:
+                    if value.casefold() in {
+                        member.name.casefold(),
+                        str(member.value).casefold(),
+                    }:
+                        return member
             return config_type(value)
         except (ValueError, TypeError) as e:
             msg = f"Invalid value for {key}: {value}"
@@ -144,7 +152,7 @@ class AgentConfiguration(BaseModel, Configuration):
         elif option.get_type() is timedelta:
             stored = format_duration(_parse_duration_option(option.get_key(), value))
         else:
-            stored = value
+            stored = value.value if isinstance(value, Enum) else value
         self.conf_data[option.get_key()] = stored
 
     def get_conf_data(self) -> dict:

@@ -24,9 +24,11 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
@@ -69,11 +71,13 @@ import org.junit.jupiter.api.condition.EnabledForJreRange;
 import org.junit.jupiter.api.condition.JRE;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -131,7 +135,12 @@ public class ChatCallTest {
                         ChatMessage.assistant(
                                 List.of(
                                         new ToolCallBlock(
-                                                "tool-1", "echo", Map.of("value", "hello")))));
+                                                "tool-1", "echo", Map.of("value", "hello")))),
+                        null,
+                        null,
+                        new TokenUsage(1L, 1L),
+                        null,
+                        Map.of());
             }
             ORDER.add("model");
             return new ChatResult(ChatMessage.assistant("answer:" + text));
@@ -161,7 +170,7 @@ public class ChatCallTest {
             assertThat(call.await()).isSameAs(response);
             ctx.sendEvent(new OutputEvent(response.getText()));
         } catch (ChatResponseEvent.ChatResponseException error) {
-            org.assertj.core.api.Assertions.assertThatThrownBy(call::await)
+            assertThatThrownBy(call::await)
                     .isInstanceOf(ChatResponseEvent.ChatResponseException.class)
                     .hasMessageContaining("provider refused");
             ctx.sendEvent(new OutputEvent("caught:" + error.getMessage()));
@@ -179,6 +188,32 @@ public class ChatCallTest {
 
     public static void recoveryCaller(Event event, RunnerContext ctx) throws Exception {
         ctx.getShortTermMemory().set("caller", "visible");
+        if (String.valueOf(InputEvent.fromEvent(event).getInput()).startsWith("budget")) {
+            boolean tokens = "budget-tokens".equals(InputEvent.fromEvent(event).getInput());
+            var request =
+                    new ChatRequestEvent(
+                            "model",
+                            List.of(ChatMessage.user("tool")),
+                            null,
+                            null,
+                            null,
+                            ReActLoopBudget.builder()
+                                    .maxTurns(tokens ? 2 : 1)
+                                    .maxTokens(tokens ? 2L : null)
+                                    .maxTime(Duration.ofMinutes(1))
+                                    .mode(ReActLoopBudget.BudgetMode.HARD)
+                                    .build());
+            try {
+                ctx.chat(request).await();
+                throw new AssertionError("The restored loop must not start its second turn");
+            } catch (ChatResponseEvent.ChatResponseException expected) {
+                assertThat(expected)
+                        .hasMessageContaining(
+                                tokens ? "TOKEN_BUDGET_EXCEEDED" : "TURN_BUDGET_EXCEEDED");
+                ctx.sendEvent(new OutputEvent("budget-exhausted"));
+                return;
+            }
+        }
         String prompt = "tool".equals(InputEvent.fromEvent(event).getInput()) ? "tool" : "hello";
         ChatResult response = ctx.chat("model", List.of(ChatMessage.user(prompt))).await();
         ctx.durableExecuteAsync(
@@ -398,23 +433,34 @@ public class ChatCallTest {
     }
 
     @ParameterizedTest
-    @ValueSource(ints = {0, 1, 2, 3, 4})
-    void checkpointRecoveryBeforeDispatchAfterResponseAndAfterAwait(int phase) throws Exception {
+    @CsvSource({
+        "0,false", "1,false", "2,false", "3,false", "4,false", "5,false", "6,false", "5,true",
+        "6,true"
+    })
+    void checkpointRecoveryBeforeDispatchAfterResponseAndAfterAwait(int phase, boolean nested)
+            throws Exception {
         boolean toolRound = phase >= 3;
-        AgentPlan plan = plan("recoveryCaller");
+        AgentPlan plan = nested ? budgetChildPlan() : plan("recoveryCaller");
         // Deterministically stop between event dispatches; the caller still uses a continuation.
         plan.getConfig().set(AgentExecutionOptions.CHAT_ASYNC, false);
         plan.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, false);
         InMemoryActionStateStore store = new InMemoryActionStateStore(false);
         OperatorSubtaskState checkpoint;
         InMemoryActionStateStore saved = new InMemoryActionStateStore(false);
+        Map<String, List<Long>> checkpointStarts = Map.of();
         try (KeyedOneInputStreamOperatorTestHarness<String, String, Object> original =
                 harness(plan, store)) {
             original.open();
-            original.processElement(new StreamRecord<>(toolRound ? "tool" : "key"));
+            original.processElement(
+                    new StreamRecord<>(
+                            phase == 6
+                                    ? "budget-tokens"
+                                    : phase == 5 ? "budget" : toolRound ? "tool" : "key"));
             original.getTaskMailbox().take(TaskMailbox.MIN_PRIORITY).run();
             if (phase >= 1) {
-                original.getTaskMailbox().take(TaskMailbox.MIN_PRIORITY).run();
+                do {
+                    original.getTaskMailbox().take(TaskMailbox.MIN_PRIORITY).run();
+                } while (nested && MODEL_CALLS.get() == 0);
                 assertThat(MODEL_CALLS.get()).isEqualTo(1);
             }
             if (phase == 2) {
@@ -428,9 +474,11 @@ public class ChatCallTest {
                 }
                 assertThat(TOOL_CALLS.get()).isEqualTo(1);
             }
-            if (phase == 4) {
-                // Snapshot after the tool completes, before the second model turn is dispatched.
-                while (TOOL_CALLS.get() < 1) {
+            if (phase >= 4) {
+                // Wait for the action journal, not just the provider counter: a nested
+                // tool may return on a worker before its completion reaches the mailbox.
+                // Snapshot before the second model turn is dispatched.
+                while (TOOL_CALLS.get() < 1 || !hasCompletedToolAction(store)) {
                     original.getTaskMailbox().take(TaskMailbox.MIN_PRIORITY).run();
                 }
                 assertThat(TOOL_CALLS.get()).isEqualTo(1);
@@ -452,6 +500,7 @@ public class ChatCallTest {
                                                                         state))));
                                 saved.getKeyedActionStates().put(key, copies);
                             });
+            if (phase >= 5) checkpointStarts = startTimesByRequest(saved);
         } finally {
             tailGate.countDown();
         }
@@ -460,14 +509,87 @@ public class ChatCallTest {
             restored.initializeState(checkpoint);
             restored.open();
             ((ActionExecutionOperator<?, ?>) restored.getOperator()).waitInFlightEventsFinished();
-            assertThat(MODEL_CALLS.get()).isEqualTo(toolRound ? 2 : 1);
+            assertThat(MODEL_CALLS.get()).isEqualTo(toolRound && phase < 5 ? 2 : 1);
             assertThat(restored.getRecordOutput()).hasSize(1);
             assertThat(restored.getRecordOutput().iterator().next().getValue())
-                    .isEqualTo(toolRound ? "answer:tool" : "answer:hello");
+                    .isEqualTo(
+                            phase >= 5
+                                    ? "budget-exhausted"
+                                    : toolRound ? "answer:tool" : "answer:hello");
+            if (phase >= 5) {
+                assertThat(checkpointStarts).hasSize(1);
+                assertThat(startTimesByRequest(saved)).isEqualTo(checkpointStarts);
+            }
             if (toolRound) {
                 assertThat(TOOL_CALLS.get()).isEqualTo(1);
             }
         }
+    }
+
+    private static boolean hasCompletedToolAction(InMemoryActionStateStore store) {
+        return store.getKeyedActionStates().values().stream()
+                .flatMap(states -> states.values().stream())
+                .anyMatch(
+                        state -> {
+                            Event event = state.getTaskEvent();
+                            if (event instanceof SubgraphEvent)
+                                event = ((SubgraphEvent) event).getDelegate();
+                            return state.isCompleted()
+                                    && ToolRequestEvent.EVENT_TYPE.equals(event.getType());
+                        });
+    }
+
+    public static void budgetSubagentCaller(Event event, RunnerContext ctx) throws Exception {
+        SubagentSetup child = (SubagentSetup) ctx.getResource("child", ResourceType.AGENT);
+        SubagentResult result = child.submit(ctx, InputEvent.fromEvent(event).getInput()).await();
+        ctx.sendEvent(new OutputEvent(((List<?>) result.getResult()).get(0)));
+    }
+
+    private static AgentPlan budgetChildPlan() throws Exception {
+        Agent child = new Agent();
+        child.addResource(
+                "model",
+                ResourceType.CHAT_MODEL,
+                ResourceDescriptor.Builder.newBuilder(Model.class.getName())
+                        .addInitialArgument("tools", List.of("echo"))
+                        .build());
+        child.addResource(
+                "echo",
+                ResourceType.TOOL,
+                Tool.fromMethod(ChatCallTest.class.getMethod("echo", String.class, String.class)));
+        child.addAction(
+                new String[] {InputEvent.EVENT_TYPE},
+                ChatCallTest.class.getMethod("recoveryCaller", Event.class, RunnerContext.class));
+        Agent parent = new Agent();
+        parent.addResource("child", ResourceType.AGENT, child);
+        parent.addAction(
+                new String[] {InputEvent.EVENT_TYPE},
+                ChatCallTest.class.getMethod(
+                        "budgetSubagentCaller", Event.class, RunnerContext.class));
+        AgentPlan plan = new AgentPlan(parent);
+        plan.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2);
+        return plan;
+    }
+
+    private static Map<String, List<Long>> startTimesByRequest(InMemoryActionStateStore store) {
+        Map<String, List<Long>> balances = new LinkedHashMap<>();
+        store.getKeyedActionStates().values().stream()
+                .flatMap(states -> states.values().stream())
+                .flatMap(state -> state.getSensoryMemoryUpdates().stream())
+                .filter(update -> update.getPath().endsWith("_LOOP_BUDGET_CONTEXT"))
+                .flatMap(update -> ((Map<?, ?>) update.getValue()).entrySet().stream())
+                .filter(entry -> ((Map<?, ?>) entry.getValue()).containsKey("started_at_ms"))
+                .forEach(
+                        entry -> {
+                            long start =
+                                    ((Number) ((Map<?, ?>) entry.getValue()).get("started_at_ms"))
+                                            .longValue();
+                            var values =
+                                    balances.computeIfAbsent(
+                                            entry.getKey().toString(), key -> new ArrayList<>());
+                            if (!values.contains(start)) values.add(start);
+                        });
+        return balances;
     }
 
     private static KeyedOneInputStreamOperatorTestHarness<String, String, Object> harness(

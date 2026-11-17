@@ -41,6 +41,7 @@ from flink_agents.api.memory.long_term_memory import (
 )
 from flink_agents.api.memory_object import MemoryType
 from flink_agents.api.metric_group import MetricGroup
+from flink_agents.api.react_loop_budget import ReActLoopBudget
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import (
     AsyncFuture,
@@ -1127,10 +1128,14 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         *,
         prompt_args: dict[str, Any] | None = None,
         output_schema: OutputSchema | None = None,
+        budget: ReActLoopBudget | None = None,
     ) -> DurableFuture[ChatResult]:
         """Create a lazy chat call driven by the operator's event scheduler."""
         return SubgraphFuture.chat(
-            self, ChatRequestEvent(model, messages, prompt_args, output_schema)
+            self,
+            ChatRequestEvent(
+                model, messages, prompt_args, output_schema, budget=budget
+            ),
         )
 
     @override

@@ -108,6 +108,29 @@ public final class DecisionModelInvoker {
             String label,
             boolean recordRetryMetrics)
             throws Exception {
+        return decideWithRetries(
+                ctx,
+                modelName,
+                setup,
+                request,
+                requestParams,
+                durableCallId,
+                label,
+                recordRetryMetrics,
+                null);
+    }
+
+    public static DecisionAttemptResult decideWithRetries(
+            RunnerContext ctx,
+            String modelName,
+            BaseDecisionModelSetup setup,
+            DecisionRequest request,
+            Map<String, Object> requestParams,
+            String durableCallId,
+            String label,
+            boolean recordRetryMetrics,
+            @Nullable java.util.UUID requestId)
+            throws Exception {
         boolean async =
                 ctx.getConfig().get(AgentExecutionOptions.DECISION_ASYNC)
                         && setup.supportsAsyncExecution();
@@ -167,6 +190,16 @@ public final class DecisionModelInvoker {
                     // and propagate immediately.
                     Thread.currentThread().interrupt();
                     throw e;
+                }
+                if (requestId != null && outcome.response != null) {
+                    DecisionResult.TokenUsage usage = outcome.response.getUsage();
+                    ReActLoopBudgetUtils.updateTokenUsage(
+                            ctx.getSensoryMemory(),
+                            requestId,
+                            usage == null
+                                    ? null
+                                    : new org.apache.flink.agents.api.chat.messages.TokenUsage(
+                                            usage.getInputTokens(), usage.getOutputTokens()));
                 }
                 if (outcome.error == null) {
                     ExecutionReporters.succeeded(

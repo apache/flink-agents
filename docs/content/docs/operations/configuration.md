@@ -227,6 +227,10 @@ for retry metrics.
 | `decision.async` | true | boolean | Enable durable async execution for built-in Decision Model calls. `false` selects synchronous execution. |
 | `max-retries` | 0 | int | Maximum retries after the initial attempt of a built-in Chat or Decision Model call, including routing judge calls. Non-positive values disable retries. |
 | `rag.async` | true | boolean | Enable durable async execution for vector-store queries made by the built-in context retrieval Action. `false` selects synchronous execution. |
+| `react-loop.budget.max-time` | none | duration | Elapsed time since loop start, including recovery downtime (e.g. `60 s`); must be a positive whole number of milliseconds. Unlimited if unset. |
+| `react-loop.budget.max-tokens` | none | long | Cumulative reported input and output tokens of the loop. Unlimited if unset. |
+| `react-loop.budget.max-turns` | none | int | Maximum turns per chat request. Unlimited if unset. |
+| `react-loop.budget.mode` | `soft` | enum | `soft` allows one extra turn with tools disabled; `hard` returns a failed chat response. See [Loop budgets]({{< ref "docs/development/calling-llms/chat#loop-budgets" >}}). |
 | `retry-wait-interval` | `1 s` | duration | Initial wait between retries controlled by `max-retries`, doubled for each subsequent retry. Truncated to milliseconds. Non-positive values and values below `1 ms` retry without waiting. |
 | `tool-call.async` | true | boolean | Enable asynchronous tool execution in the built-in Tool Call Action. With `false`, tool calls execute sequentially. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-calls" >}}) for batch behavior. |
 

@@ -119,10 +119,20 @@ public class ReActAgent extends Agent {
             @Nullable Prompt prompt,
             @Nullable Object outputSchema,
             @Nullable List<String> skills) {
+        this(descriptor, prompt, outputSchema, skills, null);
+    }
+
+    public ReActAgent(
+            ResourceDescriptor descriptor,
+            @Nullable Prompt prompt,
+            @Nullable Object outputSchema,
+            @Nullable List<String> skills,
+            @Nullable ReActLoopBudget budget) {
         this.addResource(
                 DEFAULT_CHAT_MODEL, ResourceType.CHAT_MODEL, withSkills(descriptor, skills));
         Map<String, Object> actionConfig = new HashMap<>();
 
+        if (budget != null) actionConfig.put("budget", budget);
         if (outputSchema != null) {
             String jsonSchema;
             if (outputSchema instanceof RowTypeInfo) {
@@ -222,7 +232,16 @@ public class ReActAgent extends Agent {
             @Nullable Prompt prompt,
             @Nullable Object outputSchema,
             @Nullable Skills skills) {
-        this(descriptor, prompt, outputSchema, (List<String>) null);
+        this(descriptor, prompt, outputSchema, skills, null);
+    }
+
+    public ReActAgent(
+            ResourceDescriptor descriptor,
+            @Nullable Prompt prompt,
+            @Nullable Object outputSchema,
+            @Nullable Skills skills,
+            @Nullable ReActLoopBudget budget) {
+        this(descriptor, prompt, outputSchema, (List<String>) null, budget);
         if (skills != null && !skills.getSources().isEmpty()) {
             this.addResource(SKILLS_RESOURCE_NAME, ResourceType.SKILLS, skills);
             this.getResources()
@@ -381,7 +400,10 @@ public class ReActAgent extends Agent {
             }
         }
 
-        ctx.sendEvent(new ChatRequestEvent(DEFAULT_CHAT_MODEL, inputMessages, outputSchema));
+        ReActLoopBudget budget = (ReActLoopBudget) ctx.getActionConfigValue("budget");
+        ctx.sendEvent(
+                new ChatRequestEvent(
+                        DEFAULT_CHAT_MODEL, inputMessages, null, outputSchema, null, budget));
     }
 
     @Nullable

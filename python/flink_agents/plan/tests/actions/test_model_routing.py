@@ -40,6 +40,7 @@ from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEve
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.tools.tool_response import ToolResponse
 from flink_agents.plan.actions import chat_model_action
+from flink_agents.plan.actions import react_loop_budget_utils as budget_utils
 from flink_agents.plan.actions.chat_model_action import (
     chat,
     process_chat_request_or_tool_response,
@@ -475,3 +476,127 @@ def test_fallback_then_tool_round_keeps_user_context():
     assert events[-1].response.text == "final from small"
     assert events[-1].user_context == context
     assert events[-1].attributes["model_routing"]["final_model"] == "small"
+
+
+@pytest.mark.parametrize(
+    ("reason", "state"),
+    [
+        ("TURN_BUDGET_EXCEEDED", {"turns_left": 0}),
+        ("TOKEN_BUDGET_EXCEEDED", {"tokens_left": 0}),
+        ("TIME_BUDGET_EXCEEDED", {"started_at_ms": 0, "max_time_ms": 1}),
+    ],
+)
+def test_hard_budget_stops_before_routing(reason, state):
+    Select.calls = 0
+    ctx, events, models, memory = setup(Strategies.custom(Select, {"model": "big"}))
+    request_id = uuid4()
+    budget_utils.save_budget_state(memory, request_id, dict(state, mode="HARD"))
+    run(ctx, request_id=request_id)
+    assert Select.calls == 0
+    ctx.durable_execute.assert_not_called()
+    assert len(events) == 1
+    assert reason in events[0].error
+    assert not memory.get("_LOOP_BUDGET_CONTEXT")
+    for model in models.values():
+        model.chat.assert_not_called()
+
+
+@pytest.mark.parametrize("chat_async", [False, True])
+def test_fallback_and_retry_share_turn_and_token_budget(chat_async):
+    from flink_agents.api.chat_result import TokenUsage
+    from flink_agents.api.react_loop_budget import ReActLoopBudget
+
+    ctx, events, models, memory = setup(fallback=True, retries=1, chat_async=chat_async)
+    truncated = ChatResult(
+        message=ChatMessage.assistant("partial"),
+        usage=TokenUsage(prompt_tokens=2, completion_tokens=1),
+        finish_reason="length",
+    )
+    models["big"].chat.return_value = truncated
+    models["small"].chat.return_value = ChatResult(
+        message=ChatMessage.assistant(
+            [ToolCallBlock(call_id="c", name="tool", input={})]
+        ),
+        usage=TokenUsage(prompt_tokens=3, completion_tokens=1),
+    )
+    request = ChatRequestEvent(
+        "router",
+        [ChatMessage.user("code")],
+        budget=ReActLoopBudget(max_turns=1, max_tokens=20, mode="hard"),
+    )
+    asyncio.run(process_chat_request_or_tool_response(request, ctx))
+    assert models["big"].chat.call_count == 2
+    models["small"].chat.assert_called_once()
+    assert budget_utils.get_budget_state(memory, request.id) == {
+        "turns_left": 0,
+        "tokens_left": 10,
+        "mode": "HARD",
+    }
+    tool = events[-1]
+    assert isinstance(tool, ToolRequestEvent)
+    asyncio.run(
+        process_chat_request_or_tool_response(
+            ToolResponseEvent(tool.id, {"c": ToolResponse.text("done")}), ctx
+        )
+    )
+    assert "TURN_BUDGET_EXCEEDED" in events[-1].error
+    models["small"].chat.assert_called_once()
+    assert not memory.get("_LOOP_BUDGET_CONTEXT")
+    assert not memory.get("_ROUTING_METADATA_CONTEXT")
+
+
+def test_soft_budget_routes_and_falls_back_with_tools_disabled():
+    ctx, events, models, memory = setup(fallback=True)
+    request_id = uuid4()
+    budget_utils.save_budget_state(
+        memory, request_id, {"turns_left": 0, "mode": "SOFT"}
+    )
+    models["big"]._chat_without_tools.side_effect = RuntimeError("unavailable")
+    models["small"]._chat_without_tools.return_value = result("closed")
+    run(ctx, request_id=request_id)
+    assert events[-1].is_success
+    models["big"]._chat_without_tools.assert_called_once()
+    models["small"]._chat_without_tools.assert_called_once()
+    for model in models.values():
+        model.chat.assert_not_called()
+    assert [c.kwargs["durable_id"] for c in ctx.durable_execute.call_args_list] == [
+        "route:router",
+        "chat:router:big:budget-final",
+        "chat:router:small:budget-final",
+    ]
+    assert not memory.get("_LOOP_BUDGET_CONTEXT")
+
+
+@pytest.mark.parametrize("chat_async", [False, True])
+def test_soft_fallback_tool_calls_fail_before_routing_event(chat_async):
+    ctx, events, models, memory = setup(fallback=True, chat_async=chat_async)
+    request_id = uuid4()
+    budget_utils.save_budget_state(
+        memory, request_id, {"turns_left": 0, "mode": "SOFT"}
+    )
+    models["big"]._chat_without_tools.side_effect = RuntimeError("unavailable")
+    models["small"]._chat_without_tools.return_value = ChatResult(
+        message=ChatMessage.assistant(
+            [ToolCallBlock(call_id="c", name="tool", input={})]
+        )
+    )
+
+    run(ctx, request_id=request_id)
+
+    responses = [event for event in events if isinstance(event, ChatResponseEvent)]
+    assert len(responses) == 1
+    assert not responses[0].is_success
+    assert "Soft finalization returned tool calls" in responses[0].error
+    assert "TURN_BUDGET_EXCEEDED" in responses[0].error
+    routing = [event for event in events if isinstance(event, ModelRoutingEvent)]
+    assert len(routing) == 1
+    assert routing[0].selected_model == "big"
+    assert routing[0].decision_source != "fallback"
+    assert not any(isinstance(event, ToolRequestEvent) for event in events)
+    models["big"]._chat_without_tools.assert_called_once()
+    models["small"]._chat_without_tools.assert_called_once()
+    models["last"]._chat_without_tools.assert_not_called()
+    for model in models.values():
+        model.chat.assert_not_called()
+    assert not memory.get("_LOOP_BUDGET_CONTEXT")
+    assert not memory.get("_ROUTING_METADATA_CONTEXT")

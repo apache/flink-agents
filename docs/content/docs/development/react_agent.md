@@ -403,6 +403,33 @@ Every skill found in the sources becomes available, and the resolved names are a
 
 **Which declaration wins.** Sources reach the agent from three levels. `@Skills`/`@skills` methods are merged first, then the execution environment's `SKILLS` resources, then the agent's own. A declaration from a later level wins when two of them resolve to the same skill name.
 
+#### Budget
+
+Pass a `ReActLoopBudget` to limit each loop started by this agent. See [Loop budgets]({{< ref "docs/development/calling-llms/chat#loop-budgets" >}}) for the `ReActLoopBudget` options, how limits are measured, what happens when a limit is reached, and how to configure job-level defaults.
+
+{{< tabs "ReAct Agent Budget" >}}
+{{< tab "Python" >}}
+```python
+agent = ReActAgent(
+    chat_model=chat_model_descriptor,
+    budget=ReActLoopBudget(
+        max_turns=2,
+        max_time=timedelta(seconds=60),
+    ),
+)
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+ReActLoopBudget budget = ReActLoopBudget.builder()
+        .maxTurns(2)
+        .maxTime(Duration.ofSeconds(60))
+        .build();
+ReActAgent agent = new ReActAgent(chatModelDescriptor, null, null, null, budget);
+```
+{{< /tab >}}
+{{< /tabs >}}
+
 ## As a Sub-Agent
 
 A ReActAgent can run as a sub-agent of another agent, delegated to by the parent's chat model or called from the parent's actions. See [A ReActAgent as the child]({{< ref "docs/development/multi-agent/subagents#a-reactagent-as-the-child" >}}).

@@ -111,6 +111,24 @@ public final class ModelRoutingExecutor {
             @Nullable Object outputSchema,
             RunnerContext ctx)
             throws Exception {
+        return execute(requestId, route, messages, promptArgs, outputSchema, ctx, null);
+    }
+
+    public static Result execute(
+            UUID requestId,
+            ResolvedModelRoute route,
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            @Nullable Object outputSchema,
+            RunnerContext ctx,
+            @Nullable String budgetReason)
+            throws Exception {
+        boolean closing = budgetReason != null;
+        List<ChatMessage> invocationMessages = new ArrayList<>(messages);
+        if (closing)
+            invocationMessages.add(
+                    ChatMessage.user(
+                            "Give your final answer now using the information already available. Do not call tools."));
         int numRetries = ChatModelInvoker.configuredRetries(ctx);
         long retryWaitMillis = ChatModelInvoker.configuredRetryWaitMillis(ctx);
 
@@ -151,16 +169,27 @@ public final class ModelRoutingExecutor {
                         ChatModelInvoker.chatWithRetries(
                                 requestId,
                                 candidate,
-                                route.durableChatCallId(candidate),
-                                messages,
+                                route.durableChatCallId(candidate)
+                                        + (closing ? ":budget-final" : ""),
+                                invocationMessages,
                                 promptArgs,
                                 outputSchema,
                                 gated,
                                 ctx,
                                 numRetries,
-                                retryWaitMillis);
+                                retryWaitMillis,
+                                closing);
                 ChatRetryStats.recordAttempt(
                         ctx, requestId, result.model, result.retryCount, result.totalRetryWaitMs);
+
+                if (closing && !result.response.getToolCalls().isEmpty()) {
+                    RoutingMetadata.take(ctx.getSensoryMemory(), requestId);
+                    throw new ModelRoutingExecutionException(
+                            new IllegalStateException(
+                                    "Soft finalization returned tool calls (budget reason: "
+                                            + budgetReason
+                                            + ")"));
+                }
 
                 // Quality gate: on a tier below the last one, an answer that fails a structural
                 // check or a declared signal is discarded before any of its tool calls runs, and
@@ -192,8 +221,10 @@ public final class ModelRoutingExecutor {
                                 ChatModelInvoker.applyOutputSchema(
                                         result,
                                         outputSchema,
-                                        route.durableChatCallId(candidate),
-                                        ctx);
+                                        route.durableChatCallId(candidate)
+                                                + (closing ? ":budget-final" : ""),
+                                        ctx,
+                                        requestId);
                     } catch (ChatModelInvoker.DurableExecutionFailure e) {
                         // A persistence or recovery failure is not a request failure.
                         throw e.failure;
@@ -339,6 +370,11 @@ public final class ModelRoutingExecutor {
                                         + route.getRequestedModel()
                                         + "' answered and was rejected by the quality policy,"
                                         + " and no candidate is left to answer."));
+    }
+
+    /** Clears routing state when a request ends before another attempt starts. */
+    public static void clearRoutingMetadata(MemoryObject memory, UUID requestId) throws Exception {
+        RoutingMetadata.take(memory, requestId);
     }
 
     /**

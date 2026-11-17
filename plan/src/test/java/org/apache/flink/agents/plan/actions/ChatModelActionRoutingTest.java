@@ -20,11 +20,14 @@ package org.apache.flink.agents.plan.actions;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
@@ -64,6 +67,8 @@ import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -180,6 +185,14 @@ public class ChatModelActionRoutingTest {
                 return (ChatResult) next;
             }
             return ChatFixtures.response("{\"answer\":\"42\"}");
+        }
+
+        @Override
+        public ChatResult chatWithoutTools(
+                List<ChatMessage> messages,
+                Map<String, Object> promptArgs,
+                Map<String, Object> modelParams) {
+            return chat(messages, promptArgs, modelParams);
         }
 
         @Override
@@ -1016,6 +1029,42 @@ public class ChatModelActionRoutingTest {
     }
 
     @Test
+    void softFinalizationPreservesCandidateFallbackAndDistinctCallIds() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        org.apache.flink.agents.api.chat.model.routing.ModelRouter.of(
+                                        "small", "big")
+                                .strategy(Strategies.rules(Map.of("big", "sql")))
+                                .defaultModel("small")
+                                .fallback(true)
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .withRetryBudget(0, 0)
+                        .register(
+                                "big", new FakeChatModel(new IllegalStateException("unavailable")))
+                        .register(
+                                "small", new FakeChatModel(ChatFixtures.response("final answer")));
+        ChatRequestEvent request =
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("write sql")), Map.of(), null);
+        ReActLoopBudgetUtils.saveBudgetState(
+                ctx.getSensoryMemory(), request.getId(), Map.of("turns_left", 0L, "mode", "SOFT"));
+        ChatModelAction.processChatRequestOrToolResponse(request, ctx);
+        assertThat(ctx.resolvedChatModels).containsExactly("big", "small");
+        assertThat(ctx.durableCallIds)
+                .containsExactly(
+                        "route:router",
+                        "chat:router:big:budget-final",
+                        "chat:router:small:budget-final");
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+        assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("final answer");
+        assertThat(ReActLoopBudgetUtils.getBudgetState(ctx.getSensoryMemory(), request.getId()))
+                .isNull();
+    }
+
+    @Test
     void gateFailureFallsBackToTheNextCandidate() throws Exception {
         ModelRouter router =
                 new ModelRouter(
@@ -1653,6 +1702,151 @@ public class ChatModelActionRoutingTest {
                 ctx);
         assertThat(ctx.chatResponse().isFailed()).isTrue();
         assertThat(selected.lastMessages).isNull();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"TIME", "TOKEN", "TURN"})
+    void exhaustedHardBudgetStopsBeforeJudge(String limit) throws Exception {
+        FakeChatModel judge = new FakeChatModel();
+        FakeChatModel target = new FakeChatModel();
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(judgeRouter())
+                        .register("judge", judge)
+                        .register("big", target);
+        ChatRequestEvent request = new ChatRequestEvent("router", List.of(ChatMessage.user("hi")));
+        Map<String, Object> state = new HashMap<>(Map.of("mode", "HARD"));
+        if (limit.equals("TIME")) {
+            state.put("started_at_ms", 0L);
+            state.put("max_time_ms", 1L);
+        } else state.put(limit.equals("TOKEN") ? "tokens_left" : "turns_left", 0L);
+        ReActLoopBudgetUtils.saveBudgetState(ctx.getSensoryMemory(), request.getId(), state);
+        ChatModelAction.processChatRequestOrToolResponse(request, ctx);
+        assertThat(judge.callCount).isZero();
+        assertThat(target.callCount).isZero();
+        assertThat(ctx.durableCallIds).isEmpty();
+        assertThat(ctx.sentEvents).hasSize(1);
+        assertThat(ctx.chatResponse().getError()).contains(limit + "_BUDGET_EXCEEDED");
+        assertThat(ReActLoopBudgetUtils.getBudgetState(ctx.getSensoryMemory(), request.getId()))
+                .isNull();
+    }
+
+    private static ChatResult judgeAnswer(long tokens, String text, String finishReason) {
+        return new ChatResult(
+                ChatMessage.assistant(text),
+                null,
+                null,
+                new TokenUsage(tokens, 0L),
+                finishReason,
+                Map.of());
+    }
+
+    private static ChatResult toolAnswer() {
+        return new ChatResult(
+                ChatMessage.assistant(List.of(new ToolCallBlock("call-1", "lookup", Map.of()))),
+                null,
+                null,
+                new TokenUsage(1L, 1L),
+                null,
+                Map.of());
+    }
+
+    private static ChatRequestEvent budgetRequest() {
+        return new ChatRequestEvent(
+                "router",
+                List.of(ChatMessage.user("hi")),
+                null,
+                null,
+                null,
+                ReActLoopBudget.builder()
+                        .maxTurns(1)
+                        .maxTokens(20L)
+                        .mode(ReActLoopBudget.BudgetMode.HARD)
+                        .build());
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {15L, 20L})
+    void judgeAndTargetShareTokensWithoutChargingAnotherTurn(long judgeTokens) throws Exception {
+        FakeChatModel judge = new FakeChatModel(judgeAnswer(judgeTokens, "big", null));
+        FakeChatModel target = new FakeChatModel(toolAnswer());
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(judgeRouter())
+                        .register("judge", judge)
+                        .register("big", target);
+        ChatRequestEvent request = budgetRequest();
+        ChatModelAction.processChatRequestOrToolResponse(request, ctx);
+        assertThat(ctx.toolRequestEvent()).isNotNull();
+        assertThat(target.callCount)
+                .isEqualTo(1); // An admitted turn finishes even if judge exhausts tokens.
+        assertThat(ReActLoopBudgetUtils.getBudgetState(ctx.getSensoryMemory(), request.getId()))
+                .containsEntry("turns_left", 0L)
+                .containsEntry("tokens_left", Math.max(0L, 20L - judgeTokens - 2L));
+        ToolRequestEvent tool = ctx.toolRequestEvent();
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ToolResponseEvent(
+                        tool.getId(),
+                        Map.of("call-1", ToolResponse.text("done")),
+                        Map.of("call-1", true),
+                        Map.of()),
+                ctx);
+        assertThat(judge.callCount).isEqualTo(1);
+        assertThat(target.callCount).isEqualTo(1);
+        assertThat(ctx.chatResponse().getError())
+                .contains(judgeTokens == 20L ? "TOKEN_BUDGET_EXCEEDED" : "TURN_BUDGET_EXCEEDED");
+    }
+
+    @Test
+    void judgeRetryResponsesAlsoConsumeTokens() throws Exception {
+        FakeChatModel judge =
+                new FakeChatModel(
+                        judgeAnswer(3L, "partial", "length"), judgeAnswer(12L, "big", null));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(judgeRouter())
+                        .withRetryBudget(1, 0)
+                        .register("judge", judge)
+                        .register("big", new FakeChatModel(toolAnswer()));
+        ChatRequestEvent request = budgetRequest();
+        ChatModelAction.processChatRequestOrToolResponse(request, ctx);
+        assertThat(judge.callCount).isEqualTo(2);
+        assertThat(ctx.toolRequestEvent()).isNotNull();
+        assertThat(ReActLoopBudgetUtils.getBudgetState(ctx.getSensoryMemory(), request.getId()))
+                .containsEntry("turns_left", 0L)
+                .containsEntry("tokens_left", 3L);
+    }
+
+    @Test
+    void abstainingJudgeKeepsUsageWhenDefaultModelRuns() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(judgeRouter())
+                        .register(
+                                "judge", new FakeChatModel(judgeAnswer(15L, "no candidate", null)))
+                        .register("small", new FakeChatModel(toolAnswer()));
+        ChatRequestEvent request = budgetRequest();
+        ChatModelAction.processChatRequestOrToolResponse(request, ctx);
+        assertThat(ctx.toolRequestEvent()).isNotNull();
+        assertThat(ReActLoopBudgetUtils.getBudgetState(ctx.getSensoryMemory(), request.getId()))
+                .containsEntry("tokens_left", 3L);
+    }
+
+    @Test
+    void softTurnRoutesNormallyBeforeToolFreeFinalization() throws Exception {
+        FakeChatModel judge = new FakeChatModel(judgeAnswer(15L, "big", null));
+        FakeChatModel target = new FakeChatModel(ChatFixtures.response("final"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(judgeRouter())
+                        .register("judge", judge)
+                        .register("big", target);
+        ChatRequestEvent request = new ChatRequestEvent("router", List.of(ChatMessage.user("hi")));
+        ReActLoopBudgetUtils.saveBudgetState(
+                ctx.getSensoryMemory(),
+                request.getId(),
+                Map.of("turns_left", 0L, "tokens_left", 20L, "mode", "SOFT"));
+        ChatModelAction.processChatRequestOrToolResponse(request, ctx);
+        assertThat(ctx.durableCallIds)
+                .containsExactly("judge:router", "route:router", "chat:router:big:budget-final");
+        assertThat(judge.callCount).isEqualTo(1);
+        assertThat(target.callCount).isEqualTo(1);
+        assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("final");
     }
 
     private static ModelRouter judgeRouter() throws Exception {

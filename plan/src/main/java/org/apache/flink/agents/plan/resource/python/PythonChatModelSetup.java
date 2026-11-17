@@ -86,6 +86,22 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
             List<ChatMessage> messages,
             Map<String, Object> promptArgs,
             Map<String, Object> modelParams) {
+        return invokePythonChat("chat", messages, promptArgs, modelParams);
+    }
+
+    @Override
+    public ChatResult chatWithoutTools(
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            Map<String, Object> modelParams) {
+        return invokePythonChat("_chat_without_tools", messages, promptArgs, modelParams);
+    }
+
+    private ChatResult invokePythonChat(
+            String method,
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            Map<String, Object> modelParams) {
         checkState(
                 chatModelSetup != null,
                 "ChatModelSetup is not initialized. Cannot perform chat operation.");
@@ -102,7 +118,7 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
             kwargs.put("prompt_args", promptArgs != null ? promptArgs : Collections.emptyMap());
 
             Object pythonMessageResponse =
-                    scope.own(adapter.callMethod(chatModelSetup, "chat", kwargs));
+                    scope.own(adapter.callMethod(chatModelSetup, method, kwargs));
             return adapter.fromPythonChatResult(pythonMessageResponse);
         }
     }

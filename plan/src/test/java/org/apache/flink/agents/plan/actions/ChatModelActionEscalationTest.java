@@ -54,6 +54,8 @@ import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
 import org.apache.flink.types.Row;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -77,6 +79,99 @@ import static org.mockito.Mockito.when;
  * stronger tier, and the hops are recorded on the response and as routing events.
  */
 class ChatModelActionEscalationTest {
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void escalationAndVerifierShareOneBudgetedTurn(boolean closing) throws Exception {
+        ChatRequestEvent request =
+                new ChatRequestEvent("router", List.of(ChatMessage.user("hello")));
+        UUID id = request.getId();
+        List<Long> tokensBeforeBig = new ArrayList<>();
+        FakeRunnerContext ctx = new FakeRunnerContext(decisionTiers());
+        FakeChatModel small =
+                new FakeChatModel(
+                        ChatFixtures.response(
+                                "weak", Map.of("promptTokens", 3L, "completionTokens", 2L)));
+        FakeChatModel big =
+                new FakeChatModel(
+                        ChatFixtures.response(
+                                "strong", Map.of("promptTokens", 1L, "completionTokens", 1L))) {
+                    @Override
+                    public ChatResult chat(
+                            List<ChatMessage> messages,
+                            Map<String, Object> args,
+                            Map<String, Object> params) {
+                        try {
+                            Map<String, Object> state =
+                                    ReActLoopBudgetUtils.getBudgetState(ctx.getSensoryMemory(), id);
+                            tokensBeforeBig.add(((Number) state.get("tokens_left")).longValue());
+                            assertThat(((Number) state.get("turns_left")).longValue()).isZero();
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                        if (closing)
+                            assertThat(messages.get(messages.size() - 1).getText())
+                                    .contains("Do not call tools");
+                        return super.chat(messages, args, params);
+                    }
+                };
+        FakeDecisionModel verifier = new FakeDecisionModel(verdict(0.1));
+        ctx.register("small", small).register("big", big).registerDecision("dm", verifier);
+        ReActLoopBudgetUtils.saveBudgetState(
+                ctx.getSensoryMemory(),
+                id,
+                Map.of(
+                        "turns_left",
+                        closing ? 0L : 1L,
+                        "tokens_left",
+                        20L,
+                        "mode",
+                        closing ? "SOFT" : "HARD"));
+        ChatModelAction.processChatRequestOrToolResponse(request, ctx);
+        assertThat(ctx.chatResponse().isSuccess()).isTrue();
+        assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("strong");
+        assertThat(tokensBeforeBig).containsExactly(11L);
+        assertThat(small.callCount).isEqualTo(1);
+        assertThat(big.callCount).isEqualTo(1);
+        assertThat(verifier.callCount).isEqualTo(1);
+    }
+
+    @Test
+    void rejectedNativeConversionAndVerifierAreChargedToTheSameLoop() throws Exception {
+        FakeChatModel small =
+                new FakeChatModel(
+                                ChatFixtures.response(
+                                        "draft",
+                                        Map.of("promptTokens", 20L, "completionTokens", 10L)))
+                        .withNativeStructuredOutput()
+                        .withNativeAnswers(
+                                ChatFixtures.response(
+                                        "not json",
+                                        Map.of("promptTokens", 5L, "completionTokens", 2L)));
+        FakeChatModel big =
+                new FakeChatModel(
+                        ChatFixtures.response(
+                                "",
+                                LOOKUP_CALL,
+                                Map.of("promptTokens", 1L, "completionTokens", 1L)));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register("big", big);
+        ChatRequestEvent request =
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("hi")), Map.of(), Map.class);
+        ReActLoopBudgetUtils.saveBudgetState(
+                ctx.getSensoryMemory(),
+                request.getId(),
+                Map.of("turns_left", 1L, "tokens_left", 100L, "mode", "HARD"));
+        ChatModelAction.processChatRequestOrToolResponse(request, ctx);
+        assertThat(ctx.toolRequestEvent()).isNotNull();
+        assertThat(ReActLoopBudgetUtils.getBudgetState(ctx.getSensoryMemory(), request.getId()))
+                .containsEntry("turns_left", 0L)
+                .containsEntry("tokens_left", 57L);
+    }
 
     /** A tool with a schema requiring {@code q}. */
     static final class LookupTool extends Tool {

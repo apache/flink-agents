@@ -39,21 +39,24 @@ from flink_agents.api.chat_result import ChatResult, TokenUsage
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
 )
-from flink_agents.api.events.chat_event import ChatResponseEvent
+from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.metric_group import Counter, MetricGroup
+from flink_agents.api.react_loop_budget import ReActLoopBudget
 from flink_agents.api.trace import (
     ExecutionEntityTypes,
     ExecutionProblemCategories,
     ExecutionReporter,
     LLMExecutionMetadataKeys,
 )
+from flink_agents.plan.actions import react_loop_budget_utils as budget_utils
 from flink_agents.plan.actions.chat_model_action import (
     _chat_with_retries,
     _ChatAttemptFailed,
     chat,
     process_chat_request_or_tool_response,
 )
+from flink_agents.plan.configuration import AgentConfiguration
 
 _LLM_METADATA = {LLMExecutionMetadataKeys.MODEL: "configured-model"}
 
@@ -1496,3 +1499,741 @@ def test_candidate_native_finalization_uses_attempt_identity():
         "chat:router:candidate",
         "chat:router:candidate:final",
     ]
+
+
+def test_hard_turn_limit_allows_last_batch_and_stops_next_normal_turn() -> None:
+    model = MagicMock()
+    calls = [ToolCallBlock(call_id=k, name="lookup", input={}) for k in ("a", "b")]
+    model.chat.return_value = ChatResult(message=ChatMessage.assistant(calls))
+    ctx, events, _, memory = _create_mock_runner_context(model)
+    request_id = uuid4()
+    memory.set(
+        "_LOOP_BUDGET_CONTEXT", {str(request_id): {"turns_left": 1, "mode": "HARD"}}
+    )
+    asyncio.run(chat(request_id, "model", [ChatMessage.user("hi")], {}, None, ctx))
+    batch = events[0]
+    assert isinstance(batch, ToolRequestEvent)
+    assert batch.tool_calls == calls
+    result = ToolResponseEvent(request_id=batch.id, responses={"a": "A", "b": "B"})
+    asyncio.run(process_chat_request_or_tool_response(result, ctx))
+    assert len(events) == 2
+    assert events[1].request_id == request_id
+    assert events[1].is_failed
+    assert "TURN_BUDGET_EXCEEDED" in events[1].error
+    model.chat.assert_called_once()
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_turn_budget_closes_with_structured_conversion_and_retries(valid: bool) -> None:
+    model = MagicMock()
+    model.chat.return_value = ChatResult(
+        message=ChatMessage.assistant(
+            [ToolCallBlock(call_id="a", name="lookup", input={})]
+        )
+    )
+    model._chat_without_tools.return_value = ChatResult(
+        message=ChatMessage.assistant('{"result":42}' if valid else "invalid"),
+        usage=TokenUsage(prompt_tokens=3, completion_tokens=2),
+    )
+    tool_result = model.chat.return_value
+    model.chat.side_effect = lambda *args, **kwargs: (
+        ChatResult(
+            message=ChatMessage.assistant('{"result":42}' if valid else "invalid")
+        )
+        if "output_schema" in kwargs
+        else tool_result
+    )
+    ctx, events, _, memory = _create_mock_runner_context(
+        model, max_retries=1, retry_wait_interval_sec=0
+    )
+    model.will_apply_native_structured_output.return_value = True
+    schema = OutputSchema(output_schema=_StructuredResult)
+    request_id = uuid4()
+    memory.set(
+        "_LOOP_BUDGET_CONTEXT",
+        {str(request_id): {"turns_left": 1, "tokens_left": 1, "mode": "SOFT"}},
+    )
+    asyncio.run(chat(request_id, "model", [ChatMessage.user("hi")], {}, schema, ctx))
+    asyncio.run(
+        process_chat_request_or_tool_response(
+            ToolResponseEvent(request_id=events[0].id, responses={"a": "42"}), ctx
+        )
+    )
+    assert len(events) == 2
+    assert events[1].is_failed == (not valid)
+    if valid:
+        assert events[1].attributes["structured_output"].result == 42
+    else:
+        assert "TURN_BUDGET_EXCEEDED" in events[1].error
+    assert model.chat.call_count == (2 if valid else 3)
+    assert model._chat_without_tools.call_count == (1 if valid else 2)
+    history, _ = model._chat_without_tools.call_args.args
+    assert history[-2].role == MessageRole.TOOL
+
+
+@pytest.mark.parametrize("soft", [False, True])
+def test_token_limit_allows_current_round_native_schema_conversion(soft: bool) -> None:
+    model = MagicMock()
+    model.chat.return_value = ChatResult(
+        message=ChatMessage.assistant("the answer is 42"),
+        usage=TokenUsage(prompt_tokens=3, completion_tokens=2),
+    )
+    model.chat.side_effect = [
+        model.chat.return_value,
+        ChatResult(message=ChatMessage.assistant('{"result":42}')),
+    ]
+    ctx, events, _, memory = _create_mock_runner_context(model)
+    model.will_apply_native_structured_output.return_value = True
+    request_id = uuid4()
+    memory.set(
+        "_LOOP_BUDGET_CONTEXT",
+        {str(request_id): {"tokens_left": 5, "mode": "SOFT" if soft else "HARD"}},
+    )
+    asyncio.run(
+        chat(
+            request_id,
+            "model",
+            [ChatMessage.user("compute")],
+            {},
+            OutputSchema(output_schema=_StructuredResult),
+            ctx,
+            user_context={"task": "budgeted"},
+        )
+    )
+    assert events[0].user_context == {"task": "budgeted"}
+    assert len(events) == 1
+    assert not events[0].is_failed
+    assert events[0].attributes["structured_output"].result == 42
+    assert model.chat.call_count == 2
+    model._chat_without_tools.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "request_budget",
+    [None, ReActLoopBudget(max_turns=10, max_time=timedelta(seconds=60))],
+)
+def test_budget_initialization_preserves_existing_state_without_reading_config(
+    request_budget,
+) -> None:
+    ctx, _, _, memory = _create_mock_runner_context(MagicMock())
+    request = ChatRequestEvent(
+        model="model", messages=[ChatMessage.user("retry")], budget=request_budget
+    )
+    original = {
+        "turns_left": 1,
+        "tokens_left": 3,
+        "max_time_ms": 40,
+        "started_at_ms": 20,
+        "mode": "HARD",
+    }
+    budget_utils.save_budget_state(memory, request.id, original)
+    ctx.config = MagicMock()
+    ctx.config.get.side_effect = AssertionError("Must not read config on recovery")
+    memory.set = MagicMock(wraps=memory.set)
+
+    budget_utils.initialize(ctx, request)
+
+    ctx.config.get.assert_not_called()
+    ctx.durable_execute.assert_not_called()
+    memory.set.assert_not_called()
+    assert budget_utils.get_budget_state(memory, request.id) == original
+
+
+def test_restored_loop_keeps_start_time_and_includes_recovery(monkeypatch) -> None:
+    model = MagicMock()
+    ctx, events, _, memory = _create_mock_runner_context(model)
+    request_id = uuid4()
+    memory.set(
+        "_LOOP_BUDGET_CONTEXT",
+        {str(request_id): {"max_time_ms": 40, "started_at_ms": 20, "mode": "HARD"}},
+    )
+    monkeypatch.setattr(
+        "flink_agents.plan.actions.react_loop_budget_utils.time.time_ns",
+        lambda: 1_000_000_000,
+    )
+    asyncio.run(chat(request_id, "model", [ChatMessage.user("retry")], {}, None, ctx))
+    model.chat.assert_not_called()
+    assert len(events) == 1
+    assert events[0].is_failed
+    assert "TIME_BUDGET_EXCEEDED" in events[0].error
+
+
+@pytest.mark.parametrize("mode", ["soft", "hard"])
+def test_final_answer_after_time_limit_is_accepted(mode, monkeypatch) -> None:
+    now = 0
+    monkeypatch.setattr(
+        "flink_agents.plan.actions.react_loop_budget_utils.time.time_ns", lambda: now
+    )
+    model = MagicMock()
+
+    def answer(*args: object, **kwargs: object) -> ChatResult:
+        nonlocal now
+        now = 2_000_000
+        return ChatResult(message=ChatMessage.assistant("done"))
+
+    model.chat.side_effect = answer
+    ctx, events, _, _ = _create_mock_runner_context(model)
+    request = ChatRequestEvent(
+        "model",
+        [ChatMessage.user("hi")],
+        budget=ReActLoopBudget(max_time="1 ms", mode=mode),
+    )
+    asyncio.run(process_chat_request_or_tool_response(request, ctx))
+    assert len(events) == 1
+    assert events[0].is_success
+    model.chat.assert_called_once()
+    model._chat_without_tools.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("override", "limited"),
+    [
+        (None, True),
+        (ReActLoopBudget(), False),
+        (ReActLoopBudget(max_tokens=100), False),
+    ],
+)
+def test_request_budget_replaces_global_limits(override, limited: bool) -> None:
+    model = MagicMock()
+    model.chat.side_effect = [
+        ChatResult(
+            message=ChatMessage.assistant(
+                [ToolCallBlock(call_id="a", name="lookup", input={})]
+            )
+        ),
+        ChatResult(message=ChatMessage.assistant("done")),
+    ]
+    ctx, events, _, _ = _create_mock_runner_context(model)
+    ctx.config = AgentConfiguration(
+        {
+            "react-loop.budget.max-turns": 1,
+            "react-loop.budget.max-time": "60 s",
+            "react-loop.budget.mode": "hard",
+        }
+    )
+    ctx.config.set(AgentExecutionOptions.CHAT_ASYNC, False)
+    request = ChatRequestEvent("model", [ChatMessage.user("hi")], budget=override)
+    asyncio.run(process_chat_request_or_tool_response(request, ctx))
+    batch = events[0]
+    asyncio.run(
+        process_chat_request_or_tool_response(
+            ToolResponseEvent(request_id=batch.id, responses={"a": "42"}), ctx
+        )
+    )
+    assert events[1].is_failed == limited
+    assert model.chat.call_count == (1 if limited else 2)
+
+
+@pytest.mark.parametrize(
+    ("turns", "tokens", "elapsed", "reason"),
+    [
+        (1, 10, 0, "TURN_BUDGET_EXCEEDED"),
+        (2, 5, 0, "TOKEN_BUDGET_EXCEEDED"),
+        (2, 10, 1, "TIME_BUDGET_EXCEEDED"),
+    ],
+)
+def test_first_limit_stops_the_next_round(
+    turns, tokens, elapsed, reason, monkeypatch
+) -> None:
+    model = MagicMock()
+    model.chat.return_value = ChatResult(
+        message=ChatMessage.assistant(
+            [ToolCallBlock(call_id="a", name="lookup", input={})]
+        ),
+        usage=TokenUsage(prompt_tokens=2, completion_tokens=3),
+    )
+    ctx, events, _, _ = _create_mock_runner_context(model)
+    now = 0
+    monkeypatch.setattr(
+        "flink_agents.plan.actions.react_loop_budget_utils.time.time_ns",
+        lambda: now * 1_000_000,
+    )
+    budget = ReActLoopBudget(
+        max_turns=turns, max_tokens=tokens, max_time="1 ms", mode="hard"
+    )
+    request = ChatRequestEvent("model", [ChatMessage.user("hi")], budget=budget)
+    asyncio.run(process_chat_request_or_tool_response(request, ctx))
+    (batch,) = events
+    assert isinstance(batch, ToolRequestEvent)
+    now = elapsed
+    asyncio.run(
+        process_chat_request_or_tool_response(
+            ToolResponseEvent(request_id=batch.id, responses={"a": "42"}), ctx
+        )
+    )
+    assert len(events) == 2
+    assert events[1].request_id == request.id
+    assert reason in events[1].error
+    model.chat.assert_called_once()
+    model._chat_without_tools.assert_not_called()
+
+
+@pytest.mark.parametrize("final_answer", [True, False])
+def test_token_usage_spans_rounds_missing_reports_and_retries(
+    final_answer, caplog
+) -> None:
+    model = MagicMock()
+    batch = ChatMessage.assistant([ToolCallBlock(call_id="a", name="lookup", input={})])
+    model.chat.side_effect = [
+        ChatResult(
+            message=batch, usage=TokenUsage(prompt_tokens=1, completion_tokens=1)
+        ),
+        ChatResult(message=batch),
+        ChatResult(
+            message=ChatMessage.assistant("partial"),
+            finish_reason="length",
+            usage=TokenUsage(prompt_tokens=2, completion_tokens=1),
+        ),
+        ChatResult(
+            message=ChatMessage.assistant("done") if final_answer else batch,
+            usage=TokenUsage(prompt_tokens=2, completion_tokens=3),
+        ),
+    ]
+    ctx, events, _, _ = _create_mock_runner_context(model, retry_wait_interval_sec=0)
+    request = ChatRequestEvent(
+        "model",
+        [ChatMessage.user("hi")],
+        budget=ReActLoopBudget(max_tokens=5, mode="hard"),
+    )
+    asyncio.run(process_chat_request_or_tool_response(request, ctx))
+    for _ in range(2 if final_answer else 3):
+        assert isinstance(events[-1], ToolRequestEvent)
+        asyncio.run(
+            process_chat_request_or_tool_response(
+                ToolResponseEvent(request_id=events[-1].id, responses={"a": "42"}), ctx
+            )
+        )
+    end = events[-1]
+    assert end.request_id == request.id
+    assert end.is_failed == (not final_answer)
+    if not final_answer:
+        assert "TOKEN_BUDGET_EXCEEDED" in end.error
+    assert "Missing token usage" in caplog.text
+    assert model.chat.call_count == 4
+    model._chat_without_tools.assert_not_called()
+
+
+def test_closing_tool_request_fails_without_dispatch() -> None:
+    model = MagicMock()
+    tool_reply = ChatResult(
+        message=ChatMessage.assistant(
+            [ToolCallBlock(call_id="unexpected", name="lookup", input={})]
+        )
+    )
+    model.chat.return_value = tool_reply
+    model._chat_without_tools.return_value = tool_reply
+    ctx, events, _, _ = _create_mock_runner_context(
+        model, max_retries=1, retry_wait_interval_sec=0
+    )
+    request = ChatRequestEvent(
+        "model", [ChatMessage.user("hi")], budget=ReActLoopBudget(max_turns=1)
+    )
+    asyncio.run(process_chat_request_or_tool_response(request, ctx))
+    (first,) = events
+    asyncio.run(
+        process_chat_request_or_tool_response(
+            ToolResponseEvent(request_id=first.id, responses={"unexpected": "42"}), ctx
+        )
+    )
+    assert len(events) == 2
+    assert isinstance(events[1], ChatResponseEvent)
+    assert events[1].is_failed
+    assert "TURN_BUDGET_EXCEEDED" in events[1].error
+    assert model._chat_without_tools.call_count == 1
+
+
+@pytest.mark.parametrize("failure_stage", ["resource", "schema", "model"])
+def test_soft_failure_retains_cause_and_budget_reason(failure_stage: str) -> None:
+    model = MagicMock()
+    ctx, events, _, memory = _create_mock_runner_context(
+        model, retry_wait_interval_sec=0
+    )
+    request_id = uuid4()
+    memory.set(
+        "_LOOP_BUDGET_CONTEXT", {str(request_id): {"turns_left": 0, "mode": "SOFT"}}
+    )
+    schema = None
+    if failure_stage == "resource":
+        ctx.get_resource.side_effect = ValueError("missing model")
+        detail = "missing model"
+    elif failure_stage == "schema":
+        schema = OutputSchema(output_schema=_StructuredResult)
+        model.will_apply_native_structured_output.side_effect = ValueError(
+            "unsupported schema"
+        )
+        detail = "unsupported schema"
+    else:
+        model._chat_without_tools.side_effect = ValueError("provider failed")
+        detail = "provider failed"
+    asyncio.run(chat(request_id, "model", [ChatMessage.user("hi")], {}, schema, ctx))
+    assert len(events) == 1
+    assert events[0].is_failed
+    assert "Soft finalization failed:" in events[0].error
+    assert detail in events[0].error
+    assert "budget reason: TURN_BUDGET_EXCEEDED" in events[0].error
+    model.chat.assert_not_called()
+
+
+@pytest.mark.parametrize("soft", [False, True])
+def test_time_limit_allows_round_retries_and_conversion(soft, monkeypatch) -> None:
+    model = MagicMock()
+    ctx, events, _, memory = _create_mock_runner_context(
+        model, max_retries=1, retry_wait=timedelta(milliseconds=100)
+    )
+    model.will_apply_native_structured_output.return_value = True
+    now = 0
+    calls = 0
+    monkeypatch.setattr(
+        "flink_agents.plan.actions.react_loop_budget_utils.time.time_ns",
+        lambda: now * 1_000_000,
+    )
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        assert seconds == 0.1
+        now += 100
+
+    monkeypatch.setattr("flink_agents.plan.actions.chat_model_action.time.sleep", sleep)
+
+    def respond(*args: Any, **kwargs: Any) -> ChatResult:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            message = "retry"
+            raise RuntimeError(message)
+        return ChatResult(
+            message=ChatMessage.assistant(
+                '{"result":42}' if "output_schema" in kwargs else "the answer is 42"
+            )
+        )
+
+    model.chat.side_effect = respond
+    request_id = uuid4()
+    memory.set(
+        "_LOOP_BUDGET_CONTEXT",
+        {
+            str(request_id): {
+                "max_time_ms": 60,
+                "started_at_ms": 0,
+                "turns_left": 1,
+                "mode": "SOFT" if soft else "HARD",
+            }
+        },
+    )
+    asyncio.run(
+        chat(
+            request_id,
+            "model",
+            [ChatMessage.user("hi")],
+            {},
+            OutputSchema(output_schema=_StructuredResult),
+            ctx,
+        )
+    )
+    assert len(events) == 1
+    assert not events[0].is_failed
+    assert events[0].structured_output.result == 42
+    assert events[0].retry_count == 1
+    assert events[0].total_retry_wait_ms == 100
+    assert now == 100
+    assert model.chat.call_count == 3
+    model._chat_without_tools.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "reason", ["TIME_BUDGET_EXCEEDED", "TOKEN_BUDGET_EXCEEDED", "TURN_BUDGET_EXCEEDED"]
+)
+def test_exhausted_budget_does_not_consume_turn(reason: str) -> None:
+    memory = _MockMemoryObject()
+    request_id = uuid4()
+    budget_state = {
+        "turns_left": 0 if reason == "TURN_BUDGET_EXCEEDED" else 2,
+        "tokens_left": 0 if reason == "TOKEN_BUDGET_EXCEEDED" else 10,
+        "max_time_ms": 60,
+        "started_at_ms": 0,
+        "mode": "HARD",
+    }
+    budget_utils.save_budget_state(memory, request_id, budget_state)
+    original = dict(budget_state)
+    now = 60 if reason == "TIME_BUDGET_EXCEEDED" else 20
+    assert budget_utils.try_start_turn(memory, request_id, now) == reason
+    assert budget_state == original
+    assert budget_utils.get_budget_state(memory, request_id) == original
+
+
+def test_admitted_turn_and_token_consumption_persist_independent_state() -> None:
+    memory = _MockMemoryObject()
+    request_id, other_id = uuid4(), uuid4()
+    budget_state = {"turns_left": 2, "tokens_left": 5, "mode": "SOFT"}
+    budget_utils.save_budget_state(memory, other_id, budget_state)
+    budget_utils.save_budget_state(memory, request_id, budget_state)
+    assert budget_utils.try_start_turn(memory, request_id, 0) is None
+    assert budget_utils.get_budget_state(memory, request_id) == {
+        "turns_left": 1,
+        "tokens_left": 5,
+        "mode": "SOFT",
+    }
+    response = ChatResult(
+        message=ChatMessage.assistant("answer"),
+        usage=TokenUsage(prompt_tokens=4, completion_tokens=3),
+    )
+    budget_utils.update_token_budget_state(memory, request_id, response)
+    assert budget_utils.get_budget_state(memory, request_id) == {
+        "turns_left": 1,
+        "tokens_left": 0,
+        "mode": "SOFT",
+    }
+    assert budget_utils.get_budget_state(memory, other_id) == {
+        "turns_left": 2,
+        "tokens_left": 5,
+        "mode": "SOFT",
+    }
+    assert budget_utils.try_start_turn(memory, request_id, 0) == "TOKEN_BUDGET_EXCEEDED"
+
+
+def test_unlimited_turn_does_not_create_state() -> None:
+    memory = _MockMemoryObject()
+    request_id = uuid4()
+    assert budget_utils.try_start_turn(memory, request_id, 0) is None
+    assert budget_utils.get_budget_state(memory, request_id) is None
+
+
+@pytest.mark.parametrize("native_conversion", [False, True])
+def test_closing_uses_normal_conversion_parsing_before_action_tool_check(
+    native_conversion: bool,
+) -> None:
+    model = MagicMock()
+    tool_reply = ChatResult(
+        message=ChatMessage.assistant(
+            [ToolCallBlock(call_id="unexpected", name="lookup", input={})]
+        )
+    )
+    model._chat_without_tools.return_value = (
+        ChatResult(message=ChatMessage.assistant("answer"))
+        if native_conversion
+        else tool_reply
+    )
+    model.chat.return_value = tool_reply
+    ctx, events, _, memory = _create_mock_runner_context(
+        model, max_retries=3, retry_wait_interval_sec=0
+    )
+    model.will_apply_native_structured_output.return_value = True
+    request_id = uuid4()
+    budget_utils.save_budget_state(
+        memory, request_id, {"turns_left": 0, "mode": "SOFT"}
+    )
+    asyncio.run(
+        chat(
+            request_id,
+            "model",
+            [ChatMessage.user("hi")],
+            {},
+            OutputSchema(output_schema=_StructuredResult),
+            ctx,
+        )
+    )
+    assert len(events) == 1
+    assert isinstance(events[0], ChatResponseEvent)
+    assert events[0].is_failed
+    assert (
+        "Soft finalization failed" if native_conversion else "returned tool calls"
+    ) in events[0].error
+    assert "TURN_BUDGET_EXCEEDED" in events[0].error
+    assert model._chat_without_tools.call_count == (4 if native_conversion else 1)
+    assert model.chat.call_count == (4 if native_conversion else 0)
+    assert budget_utils.get_budget_state(memory, request_id) is None
+
+
+@pytest.mark.parametrize(
+    ("before_expired", "after_expired", "mode"),
+    [(False, True, "SOFT"), (True, False, "SOFT"), (False, True, "HARD")],
+)
+def test_recovered_budget_branch_uses_distinct_durable_identity(
+    before_expired, after_expired, mode, monkeypatch
+) -> None:
+    """The action selects a new durable identity when recovery changes its branch."""
+    monkeypatch.setattr(
+        "flink_agents.plan.actions.react_loop_budget_utils.time.time_ns",
+        lambda: 100_000_000,
+    )
+    model = MagicMock()
+    model.chat.return_value = ChatResult(message=ChatMessage.assistant("ordinary"))
+    model._chat_without_tools.return_value = ChatResult(
+        message=ChatMessage.assistant("closing")
+    )
+    request_id = uuid4()
+    identities = []
+    for expired in (before_expired, after_expired):
+        ctx, events, _, memory = _create_mock_runner_context(model)
+        budget_utils.save_budget_state(
+            memory,
+            request_id,
+            {"max_time_ms": 1 if expired else 1000, "started_at_ms": 0, "mode": mode},
+        )
+        asyncio.run(chat(request_id, "model", [ChatMessage.user("hi")], {}, None, ctx))
+        assert len(events) == 1
+        if expired and mode == "HARD":
+            assert events[0].is_failed
+            assert "TIME_BUDGET_EXCEEDED" in events[0].error
+            ctx.durable_execute.assert_not_called()
+        else:
+            assert events[0].response.text == ("closing" if expired else "ordinary")
+            identities.append(ctx.durable_execute.call_args.kwargs["durable_id"])
+    if mode == "SOFT":
+        assert identities[0] != identities[1]
+        assert identities[0].endswith(":budget-final") == before_expired
+        assert identities[1].endswith(":budget-final") == after_expired
+
+
+def test_reused_response_reconstructs_token_and_turn_usage() -> None:
+    """A cached response is charged once in the rebuilt pre-action memory."""
+    model = MagicMock()
+    model.chat.return_value = ChatResult(
+        message=ChatMessage.assistant("done"),
+        usage=TokenUsage(prompt_tokens=3, completion_tokens=2),
+    )
+    request_id = uuid4()
+    original = {"turns_left": 2, "tokens_left": 20, "mode": "HARD"}
+    ctx, events, _, memory = _create_mock_runner_context(model)
+    budget_utils.save_budget_state(memory, request_id, dict(original))
+    cached = []
+
+    class Crash(BaseException):
+        pass
+
+    def persist_then_crash(
+        fn: Callable, *args: Any, durable_id: str | None = None, **kwargs: Any
+    ) -> None:
+        cached.append(fn(*args, **kwargs))
+        raise Crash
+
+    ctx.durable_execute.side_effect = persist_then_crash
+    with pytest.raises(Crash):
+        asyncio.run(chat(request_id, "model", [ChatMessage.user("hi")], {}, None, ctx))
+    assert events == []
+    restored, events, _, memory = _create_mock_runner_context(model)
+    budget_utils.save_budget_state(memory, request_id, dict(original))
+    restored.durable_execute.side_effect = lambda *args, **kwargs: cached[0]
+    states = []
+    original_set = memory.set
+
+    def capture(path: str, value: Any) -> None:
+        if path == "_LOOP_BUDGET_CONTEXT" and str(request_id) in value:
+            states.append(dict(value[str(request_id)]))
+        original_set(path, value)
+
+    memory.set = capture
+    asyncio.run(chat(request_id, "model", [ChatMessage.user("hi")], {}, None, restored))
+    model.chat.assert_called_once()
+    assert len(events) == 1
+    assert states[-1]["turns_left"] == 1
+    assert states[-1]["tokens_left"] == 15
+
+
+def test_budget_updates_read_latest_state_and_preserve_memory_snapshots() -> None:
+    memory = _MockMemoryObject()
+    request_id, other_id = uuid4(), uuid4()
+    budget_utils.save_budget_state(
+        memory, request_id, {"turns_left": 2, "tokens_left": 20, "mode": "HARD"}
+    )
+    budget_utils.save_budget_state(
+        memory, other_id, {"tokens_left": 50, "mode": "SOFT"}
+    )
+    before = memory.get("_LOOP_BUDGET_CONTEXT")
+    assert budget_utils.try_start_turn(memory, request_id, 0) is None
+    budget_utils.update_token_budget_state(
+        memory,
+        request_id,
+        ChatResult(
+            message=ChatMessage.assistant("judge"),
+            usage=TokenUsage(prompt_tokens=10, completion_tokens=5),
+        ),
+    )
+    after_judge = budget_utils.get_budget_state(memory, request_id)
+    budget_utils.update_token_budget_state(
+        memory,
+        request_id,
+        ChatResult(
+            message=ChatMessage.assistant("target"),
+            usage=TokenUsage(prompt_tokens=1, completion_tokens=1),
+        ),
+    )
+    assert budget_utils.get_budget_state(memory, request_id) == {
+        "turns_left": 1,
+        "tokens_left": 3,
+        "mode": "HARD",
+    }
+    assert after_judge == {"turns_left": 1, "tokens_left": 5, "mode": "HARD"}
+    assert before[str(request_id)] == {
+        "turns_left": 2,
+        "tokens_left": 20,
+        "mode": "HARD",
+    }
+    assert budget_utils.get_budget_state(memory, other_id)["tokens_left"] == 50
+
+
+@pytest.mark.parametrize("crash_after", [1, 2])
+@pytest.mark.parametrize("mode", ["hard", "soft"])
+@pytest.mark.parametrize("expired", [False, True])
+def test_first_action_restores_durable_start_time(
+    monkeypatch, crash_after, mode, expired
+):
+    model = MagicMock()
+    model.chat.return_value = ChatResult(message=ChatMessage.assistant("done"))
+    model._chat_without_tools.return_value = ChatResult(
+        message=ChatMessage.assistant("closed")
+    )
+    now = 1000
+    monkeypatch.setattr(
+        "flink_agents.plan.actions.react_loop_budget_utils.time.time_ns",
+        lambda: now * 1_000_000,
+    )
+    request = ChatRequestEvent(
+        "model",
+        [ChatMessage.user("hi")],
+        budget=ReActLoopBudget(max_time="300 ms", mode=mode),
+    )
+    ctx, events, _, _ = _create_mock_runner_context(model)
+    journal = []
+
+    class Crash(BaseException):
+        pass
+
+    def persist(
+        fn: Callable, *args: Any, durable_id: str | None = None, **kwargs: Any
+    ) -> Any:
+        result = fn(*args, **kwargs)
+        journal.append((durable_id, result))
+        if len(journal) == crash_after:
+            raise Crash
+        return result
+
+    ctx.durable_execute.side_effect = persist
+    with pytest.raises(Crash):
+        asyncio.run(process_chat_request_or_tool_response(request, ctx))
+    assert events == []
+    assert journal[0] == ("react-loop:budget-start", 1000)
+    now = 1400 if expired else 1100
+    restored, events, _, _ = _create_mock_runner_context(model)
+
+    def replay(
+        fn: Callable, *args: Any, durable_id: str | None = None, **kwargs: Any
+    ) -> Any:
+        if journal and journal[0][0] == durable_id:
+            return journal.pop(0)[1]
+        journal.clear()
+        return fn(*args, **kwargs)
+
+    restored.durable_execute.side_effect = replay
+    asyncio.run(process_chat_request_or_tool_response(request, restored))
+    assert model.chat.call_count == (crash_after - 1 if expired else 1)
+    assert len(events) == 1
+    if not expired:
+        assert not events[0].is_failed
+        model._chat_without_tools.assert_not_called()
+    elif mode == "hard":
+        assert "TIME_BUDGET_EXCEEDED" in events[0].error
+        model._chat_without_tools.assert_not_called()
+    else:
+        model._chat_without_tools.assert_called_once()
+        assert not events[0].is_failed
