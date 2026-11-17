@@ -579,10 +579,14 @@ class TestChatModelActionRetry:
                 self.status_code = status_code
 
         def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
-            try:
+            def raise_status() -> None:
                 raise _StatusError(400)
+
+            try:
+                raise_status()
             except _StatusError as error:
-                raise RuntimeError("provider call failed") from error
+                msg = "provider call failed"
+                raise RuntimeError(msg) from error
 
         chat_model = MagicMock()
         chat_model.chat = mock_chat
@@ -613,10 +617,14 @@ class TestChatModelActionRetry:
                 self.status_code = status_code
 
         def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
-            try:
+            def raise_status() -> None:
                 raise _StatusError(400)
+
+            try:
+                raise_status()
             except _StatusError:
-                raise RuntimeError("provider call failed")
+                msg = "provider call failed"
+                raise RuntimeError(msg)  # noqa: B904
 
         chat_model = MagicMock()
         chat_model.chat = mock_chat
@@ -639,7 +647,9 @@ class TestChatModelActionRetry:
         assert ctx.report_execution_started.call_count == 1
 
     @pytest.mark.parametrize("status_code", [429, 503])
-    def test_retryable_http_status_uses_the_retry_budget(self, status_code: int) -> None:
+    def test_retryable_http_status_uses_the_retry_budget(
+        self, status_code: int
+    ) -> None:
         """429 and 5xx are still retried."""
 
         class _StatusError(Exception):
@@ -1514,10 +1524,17 @@ def test_candidate_attempt_exhausts_retries_without_emitting_failure(chat_async)
     )
     request_id = uuid4()
     with pytest.raises(_ChatAttemptFailed) as caught:
-        asyncio.run(_chat_with_retries(
-            request_id, "candidate", [ChatMessage.user("hello")], None, None,
-            ctx, durable_id="chat:router:candidate",
-        ))
+        asyncio.run(
+            _chat_with_retries(
+                request_id,
+                "candidate",
+                [ChatMessage.user("hello")],
+                None,
+                None,
+                ctx,
+                durable_id="chat:router:candidate",
+            )
+        )
     assert str(caught.value.error) == "RuntimeError: candidate unavailable"
     assert caught.value.__cause__ is caught.value.error
     assert events == []
@@ -1527,19 +1544,31 @@ def test_candidate_attempt_exhausts_retries_without_emitting_failure(chat_async)
         "chat:router:candidate"
     ] * 3
     assert memory.get("_RETRY_STATS_CONTEXT")[str(request_id)]["total_retry_count"] == 2
-    assert metrics.get_sub_group("model_resource", "candidate").get_counter("retryCount").get_count() == 2
+    assert (
+        metrics.get_sub_group("model_resource", "candidate")
+        .get_counter("retryCount")
+        .get_count()
+        == 2
+    )
 
 
 def test_candidate_native_finalization_uses_attempt_identity():
     model = _native_chat_model()
     ctx, events, _, _ = _native_context(model)
-    result = asyncio.run(_chat_with_retries(
-        uuid4(), "candidate", [ChatMessage.user("hello")], None,
-        OutputSchema(output_schema=_StructuredResult), ctx,
-        durable_id="chat:router:candidate",
-    ))
+    result = asyncio.run(
+        _chat_with_retries(
+            uuid4(),
+            "candidate",
+            [ChatMessage.user("hello")],
+            None,
+            OutputSchema(output_schema=_StructuredResult),
+            ctx,
+            durable_id="chat:router:candidate",
+        )
+    )
     assert result.structured_output is not None
     assert events == []
     assert [c.kwargs["durable_id"] for c in ctx.durable_execute.call_args_list] == [
-        "chat:router:candidate", "chat:router:candidate:final"
+        "chat:router:candidate",
+        "chat:router:candidate:final",
     ]

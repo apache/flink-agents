@@ -183,7 +183,10 @@ def _is_retryable(error: BaseException) -> bool:
 
 
 def _linked_failure(error: BaseException) -> BaseException | None:
-    """The next failure in the chain. Prefer an explicit cause over the implicit context."""
+    """Return the next failure in the chain.
+
+    An explicit cause wins. Otherwise use the implicit context.
+    """
     if error.__cause__ is not None:
         return error.__cause__
     if error.__suppress_context__:
@@ -668,9 +671,7 @@ def _accept_model_response(
             provider did not finish emitting.
     """
     try:
-        response = _require_invocation_response(
-            response, error, retryable=retryable
-        )
+        response = _require_invocation_response(response, error, retryable=retryable)
     except Exception as model_error:
         ExecutionReporters.failed(
             ctx,
@@ -770,14 +771,10 @@ async def _chat_with_retries(
     final_error = None
 
     @wraps(chat_model.chat)
-    def invoke(
-        messages: List[ChatMessage], prompt_args: Dict
-    ) -> tuple:
+    def invoke(messages: List[ChatMessage], prompt_args: Dict) -> tuple:
         return _invoke_chat(chat_model, messages, prompt_args)
 
-    def invoke_structured(
-        answer_text: str, output_schema: OutputSchema
-    ) -> tuple:
+    def invoke_structured(answer_text: str, output_schema: OutputSchema) -> tuple:
         return _invoke_finalization(chat_model, answer_text, output_schema)
 
     def retry_after(attempt: int, error: Exception) -> bool:

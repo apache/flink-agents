@@ -249,9 +249,7 @@ class ChatModelInvokerTest {
         when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
         when(chatModel.chat(any(), any(), any())).thenThrow(new HttpStatusFailure(400));
         when(ctx.durableExecute(any()))
-                .thenAnswer(
-                        invocation ->
-                                ((DurableCallable<?>) invocation.getArgument(0)).call());
+                .thenAnswer(invocation -> ((DurableCallable<?>) invocation.getArgument(0)).call());
 
         ChatModelInvoker.ChatAttemptFailed failure =
                 assertThrows(
@@ -282,10 +280,10 @@ class ChatModelInvokerTest {
         when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
         when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
         when(chatModel.chat(any(), any(), any()))
-                .thenThrow(new RuntimeException("provider call failed", new HttpStatusFailure(400)));
+                .thenThrow(
+                        new RuntimeException("provider call failed", new HttpStatusFailure(400)));
         when(ctx.durableExecute(any()))
-                .thenAnswer(
-                        invocation -> ((DurableCallable<?>) invocation.getArgument(0)).call());
+                .thenAnswer(invocation -> ((DurableCallable<?>) invocation.getArgument(0)).call());
 
         ChatModelInvoker.ChatAttemptFailed failure =
                 assertThrows(
@@ -318,8 +316,7 @@ class ChatModelInvokerTest {
         when(chatModel.chat(any(), any(), any()))
                 .thenThrow(new RuntimeException("provider call failed", new CodedFailure(400)));
         when(ctx.durableExecute(any()))
-                .thenAnswer(
-                        invocation -> ((DurableCallable<?>) invocation.getArgument(0)).call());
+                .thenAnswer(invocation -> ((DurableCallable<?>) invocation.getArgument(0)).call());
 
         ChatModelInvoker.ChatAttemptFailed failure =
                 assertThrows(
@@ -353,8 +350,7 @@ class ChatModelInvokerTest {
             when(chatModel.chat(any(), any(), any())).thenThrow(new HttpStatusFailure(status));
             when(ctx.durableExecute(any()))
                     .thenAnswer(
-                            invocation ->
-                                    ((DurableCallable<?>) invocation.getArgument(0)).call());
+                            invocation -> ((DurableCallable<?>) invocation.getArgument(0)).call());
 
             ChatModelInvoker.ChatAttemptFailed failure =
                     assertThrows(
