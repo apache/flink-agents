@@ -21,6 +21,7 @@ import re
 import time
 from concurrent.futures import CancelledError
 from dataclasses import dataclass
+from datetime import timedelta
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Sequence, cast
 from uuid import UUID
@@ -38,7 +39,7 @@ from flink_agents.api.core_options import (
 )
 from flink_agents.api.duration import (
     format_duration,
-    recorded_retry_wait_millis,
+    is_positive,
     require_whole_milliseconds,
     zero_if_negative,
 )
@@ -94,6 +95,19 @@ _FINALIZE_DIRECTIVE = (
 )
 
 _logger = logging.getLogger(__name__)
+
+
+def recorded_retry_wait_millis(value: timedelta) -> int:
+    """Whole milliseconds of one retry sleep.
+
+    The count matches ``retryWaitMs`` and ``total_retry_wait_ms``, and it is the
+    duration Python sleeps. Chat and decision retries both use this count. A
+    non-positive duration contributes zero. A sub-millisecond remainder is
+    dropped; retry wait rejects that remainder before the sleep.
+    """
+    if not is_positive(value):
+        return 0
+    return value // timedelta(milliseconds=1)
 
 
 class _InvocationFailure(Exception):

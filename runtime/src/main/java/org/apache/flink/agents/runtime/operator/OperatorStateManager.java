@@ -22,7 +22,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.ShortTermMemoryTtlUpdate;
 import org.apache.flink.agents.api.agents.ShortTermMemoryTtlVisibility;
-import org.apache.flink.agents.api.configuration.DurationFormat;
+import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
@@ -153,10 +153,10 @@ class OperatorStateManager {
             MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> descriptor,
             AgentConfiguration agentConfiguration) {
         Duration ttl = agentConfiguration.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL);
-        if (!DurationFormat.isPositive(ttl)) {
+        if (!DurationUtils.isPositive(ttl)) {
             return;
         }
-        DurationFormat.requireShortTermMemoryTtl(
+        AgentConfiguration.requireShortTermMemoryTtl(
                 AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.getKey(), ttl);
 
         ShortTermMemoryTtlUpdate updateType =

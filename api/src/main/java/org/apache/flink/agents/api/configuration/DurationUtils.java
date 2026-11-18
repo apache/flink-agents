@@ -18,8 +18,6 @@
 
 package org.apache.flink.agents.api.configuration;
 
-import org.apache.flink.agents.api.agents.AgentExecutionOptions;
-
 import java.math.BigInteger;
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
@@ -29,7 +27,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Parses and formats framework durations in the style of Flink's duration configuration.
+ * Parses, formats, and checks framework durations in the style of Flink's duration configuration.
  *
  * <p>A value is an integer and one unit, optionally separated by whitespace, such as {@code 30 s}
  * or {@code 5 min}. A leading {@code -} is allowed. A unit is required; a bare number is rejected.
@@ -42,7 +40,7 @@ import java.util.Map;
  * does not truncate to a coarser unit. A consumer that cannot honor microseconds rejects the value
  * when the option is read.
  */
-public final class DurationFormat {
+public final class DurationUtils {
 
     private static final BigInteger NANOS_PER_SECOND = BigInteger.valueOf(1_000_000_000L);
     private static final BigInteger NANOS_PER_MICRO = BigInteger.valueOf(1_000L);
@@ -61,7 +59,7 @@ public final class DurationFormat {
 
     private static final String[] FORMAT_LABELS = {"d", "h", "min", "s", "ms", "us", "ns"};
 
-    private DurationFormat() {}
+    private DurationUtils() {}
 
     /**
      * Parses a duration string or returns a {@link Duration} unchanged after the same alignment
@@ -192,40 +190,6 @@ public final class DurationFormat {
     }
 
     /**
-     * Whole milliseconds recorded for one retry sleep. This is the same count {@link
-     * Thread#sleep(long)} waits and the value added to {@code retryWaitMs} and {@code
-     * total_retry_wait_ms}. A non-positive duration contributes zero. A sub-millisecond remainder
-     * is dropped, matching {@code Duration#toMillis()}; retry wait rejects that remainder before
-     * the sleep. A duration that does not fit in a {@code long} throws {@link ArithmeticException}.
-     */
-    public static long recordedRetryWaitMillis(Duration duration) {
-        if (!isPositive(duration)) {
-            return 0L;
-        }
-        long millis = duration.toMillis();
-        return Math.max(0L, millis);
-    }
-
-    /**
-     * Applies the precision rule of a duration option. Retry wait and short-term memory TTL must be
-     * a whole number of milliseconds when positive. Other durations, including the async batch
-     * timeout, keep the parsed microsecond value.
-     */
-    public static Duration validateConsumedDuration(String optionKey, Duration duration) {
-        if (optionKey == null || duration == null) {
-            return duration;
-        }
-        if (AgentExecutionOptions.RETRY_WAIT_INTERVAL.getKey().equals(optionKey)) {
-            return requireWholeMilliseconds(
-                    optionKey, duration, "or zero or negative to retry without waiting");
-        }
-        if (AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.getKey().equals(optionKey)) {
-            return requireShortTermMemoryTtl(optionKey, duration);
-        }
-        return duration;
-    }
-
-    /**
      * Returns {@code duration} when it is not positive or is a positive whole number of
      * milliseconds. A positive sub-millisecond remainder is rejected.
      */
@@ -243,22 +207,6 @@ public final class DurationFormat {
                             + format(duration));
         }
         return duration;
-    }
-
-    /**
-     * Checks a short-term memory TTL. A non-positive value is left unchanged so the caller can
-     * disable TTL. A positive value shorter than 1 ms, or a longer positive value that is not a
-     * whole number of milliseconds, is rejected.
-     */
-    public static Duration requireShortTermMemoryTtl(String optionKey, Duration duration) {
-        if (!isPositive(duration)) {
-            return duration;
-        }
-        if (duration.toMillis() == 0) {
-            throw new IllegalArgumentException(
-                    optionKey + " must be at least 1 ms, got " + format(duration));
-        }
-        return requireWholeMilliseconds(optionKey, duration, "or zero or negative to disable TTL");
     }
 
     private static Duration requireMicrosecondAligned(Duration duration, String rendered) {

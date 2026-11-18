@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-"""Parse and format framework durations the same way on the Java side.
+"""Parse, format, and check framework durations the same way on the Java side.
 
 A value is an integer and one unit, optionally separated by whitespace, such as
 ``30 s`` or ``5 min``. A leading ``-`` is allowed. A unit is required; a bare
@@ -31,8 +31,6 @@ when the option is read.
 
 from datetime import timedelta
 from typing import Any, NoReturn
-
-from flink_agents.api.core_options import AgentExecutionOptions
 
 _NANOS_PER_MICRO = 1_000
 _NANOS_PER_SECOND = 1_000_000_000
@@ -53,7 +51,7 @@ _add(60 * _NANOS_PER_SECOND, "min", "m", "mins", "minute", "minutes")
 _add(3600 * _NANOS_PER_SECOND, "h", "hour", "hours")
 _add(86400 * _NANOS_PER_SECOND, "d", "day", "days")
 
-# Largest unit first. Names match Java DurationFormat's canonical labels.
+# Largest unit first. Names match Java DurationUtils's canonical labels.
 _FORMAT_UNITS: tuple[tuple[int, str], ...] = (
     (86400 * _NANOS_PER_SECOND, "d"),
     (3600 * _NANOS_PER_SECOND, "h"),
@@ -170,40 +168,11 @@ def positive_seconds(value: timedelta | None) -> float | None:
     """Seconds in a positive duration, or None when it does not set a deadline.
 
     The full microsecond duration is kept. Java's matching budget is
-    ``DurationFormat.positiveNanos``.
+    ``DurationUtils.positiveNanos``.
     """
     if value is None or not is_positive(value):
         return None
     return value.total_seconds()
-
-
-def recorded_retry_wait_millis(value: timedelta) -> int:
-    """Whole milliseconds of one retry sleep.
-
-    The count matches ``retryWaitMs`` and ``total_retry_wait_ms``, and it is the
-    duration Python sleeps. A non-positive duration contributes zero. A
-    sub-millisecond remainder is dropped; retry wait rejects that remainder
-    before the sleep.
-    """
-    if not is_positive(value):
-        return 0
-    return value // timedelta(milliseconds=1)
-
-
-def validate_consumed_duration(option_key: str, value: timedelta) -> timedelta:
-    """Apply one option's precision rule.
-
-    Retry wait and short-term memory TTL must be a whole number of milliseconds
-    when positive. Other durations, including the async batch timeout, keep the
-    parsed microsecond value.
-    """
-    if option_key == AgentExecutionOptions.RETRY_WAIT_INTERVAL.get_key():
-        return require_whole_milliseconds(
-            option_key, value, "or zero or negative to retry without waiting"
-        )
-    if option_key == AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.get_key():
-        return require_short_term_memory_ttl(option_key, value)
-    return value
 
 
 def require_whole_milliseconds(
@@ -219,22 +188,6 @@ def require_whole_milliseconds(
             f"{disabled_by}, got {format_duration(value)}",
         )
     return value
-
-
-def require_short_term_memory_ttl(option_key: str, value: timedelta) -> timedelta:
-    """Reject a positive TTL that Flink would truncate to whole milliseconds.
-
-    A non-positive value is unchanged so the caller can disable TTL.
-    """
-    if not is_positive(value):
-        return value
-    if value // timedelta(milliseconds=1) == 0:
-        _invalid_option(
-            option_key, f"must be at least 1 ms, got {format_duration(value)}"
-        )
-    return require_whole_milliseconds(
-        option_key, value, "or zero or negative to disable TTL"
-    )
 
 
 def _invalid_option(option_key: str, reason: str) -> NoReturn:

@@ -19,7 +19,7 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
-import org.apache.flink.agents.api.configuration.DurationFormat;
+import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.api.common.functions.RuntimeContext;
@@ -54,7 +54,7 @@ class OperatorStateManagerShortTermMemoryTtlTest {
     @ValueSource(strings = {"500 us", "1 us", "999 us"})
     void positiveSubMillisecondTtlIsRejected(String ttl) throws Exception {
         AgentConfiguration configuration = configuration(ttl);
-        String formatted = DurationFormat.format(DurationFormat.parse(ttl));
+        String formatted = DurationUtils.format(DurationUtils.parse(ttl));
 
         assertThatThrownBy(() -> shortTermMemoryDescriptor(configuration))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -83,7 +83,7 @@ class OperatorStateManagerShortTermMemoryTtlTest {
     @ValueSource(strings = {"1500 us", "1001 us"})
     void positiveTtlWithASubMillisecondRemainderIsRejected(String ttl) throws Exception {
         AgentConfiguration configuration = configuration(ttl);
-        String formatted = DurationFormat.format(DurationFormat.parse(ttl));
+        String formatted = DurationUtils.format(DurationUtils.parse(ttl));
 
         assertThatThrownBy(() -> shortTermMemoryDescriptor(configuration))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -100,7 +100,7 @@ class OperatorStateManagerShortTermMemoryTtlTest {
         StateTtlConfig ttlConfig = shortTermMemoryDescriptor(configuration(ttl)).getTtlConfig();
 
         assertThat(ttlConfig.isEnabled()).isTrue();
-        assertThat(ttlConfig.getTimeToLive()).isEqualTo(DurationFormat.parse(ttl));
+        assertThat(ttlConfig.getTimeToLive()).isEqualTo(DurationUtils.parse(ttl));
     }
 
     private static AgentConfiguration configuration(String ttl) {

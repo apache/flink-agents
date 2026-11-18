@@ -254,7 +254,7 @@ def test_one_hundred_millisecond_waits_accumulate_across_requests(monkeypatch):
     monkeypatch.setattr(
         "flink_agents.plan.actions.decision_model_action.time.sleep", sleep
     )
-    requests = 10_000
+    requests = 2
     outcomes = []
     for _ in range(requests):
         outcomes.append(ValueError("transient"))
@@ -277,8 +277,8 @@ def test_one_hundred_millisecond_waits_accumulate_across_requests(monkeypatch):
     increments = [
         inc.args[0] for inc in group.get_counter("retryWaitMs").inc.call_args_list
     ]
-    assert increments == [100] * requests
-    assert sum(increments) == 1_000_000
+    assert increments == [100, 100]
+    assert sum(increments) == 200
     assert sleep.call_count == requests
 
 

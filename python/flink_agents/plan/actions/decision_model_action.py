@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, cast
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.decision_models import DecisionRequest, DecisionResult
 from flink_agents.api.duration import (
-    recorded_retry_wait_millis,
     require_whole_milliseconds,
     zero_if_negative,
 )
@@ -41,6 +40,7 @@ from flink_agents.api.trace import (
     ExecutionReporters,
 )
 from flink_agents.plan.actions.action import Action
+from flink_agents.plan.actions.chat_model_action import recorded_retry_wait_millis
 from flink_agents.plan.function import PythonFunction
 
 if TYPE_CHECKING:

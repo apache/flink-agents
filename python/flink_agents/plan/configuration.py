@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 from datetime import timedelta
-from typing import Any, Dict, Type
+from typing import Any, Dict, NoReturn, Type
 
 from pydantic import BaseModel
 from typing_extensions import override
@@ -25,10 +25,12 @@ from flink_agents.api.configuration import (
     ConfigOption,
     Configuration,
 )
+from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.duration import (
     format_duration,
+    is_positive,
     parse_duration,
-    validate_consumed_duration,
+    require_whole_milliseconds,
 )
 from flink_agents.api.trace_log import _parse_targets, _serialize_targets
 
@@ -190,3 +192,40 @@ class AgentConfiguration(BaseModel, Configuration):
                 sub_key = key[len(prefix) :]
                 result[sub_key] = value
         return result
+
+
+def validate_consumed_duration(option_key: str, value: timedelta) -> timedelta:
+    """Apply one option's precision rule.
+
+    Retry wait and short-term memory TTL must be a whole number of milliseconds
+    when positive. Other durations, including the async batch timeout, keep the
+    parsed microsecond value.
+    """
+    if option_key == AgentExecutionOptions.RETRY_WAIT_INTERVAL.get_key():
+        return require_whole_milliseconds(
+            option_key, value, "or zero or negative to retry without waiting"
+        )
+    if option_key == AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.get_key():
+        return require_short_term_memory_ttl(option_key, value)
+    return value
+
+
+def require_short_term_memory_ttl(option_key: str, value: timedelta) -> timedelta:
+    """Reject a positive TTL that Flink would truncate to whole milliseconds.
+
+    A non-positive value is unchanged so the caller can disable TTL.
+    """
+    if not is_positive(value):
+        return value
+    if value // timedelta(milliseconds=1) == 0:
+        _invalid_option(
+            option_key, f"must be at least 1 ms, got {format_duration(value)}"
+        )
+    return require_whole_milliseconds(
+        option_key, value, "or zero or negative to disable TTL"
+    )
+
+
+def _invalid_option(option_key: str, reason: str) -> NoReturn:
+    msg = f"{option_key} {reason}"
+    raise ValueError(msg)

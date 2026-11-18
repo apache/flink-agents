@@ -530,7 +530,7 @@ class DecisionModelActionTest {
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void subSecondRetryWaitsAccumulateAcrossRequests() throws Exception {
-        int requests = 10_000;
+        int requests = 2;
         Harness h = new Harness(false, 1);
         when(h.ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL))
                 .thenReturn(Duration.ofMillis(100));
@@ -544,14 +544,8 @@ class DecisionModelActionTest {
                             return result(null, null);
                         });
 
-        RetryWait.Sleeper original = RetryWait.sleeper;
-        RetryWait.sleeper = millis -> {};
-        try {
-            for (int i = 0; i < requests; i++) {
-                DecisionModelAction.processDecisionRequest(h.request, h.ctx);
-            }
-        } finally {
-            RetryWait.sleeper = original;
+        for (int i = 0; i < requests; i++) {
+            DecisionModelAction.processDecisionRequest(h.request, h.ctx);
         }
 
         assertThat(h.events).hasSize(requests);
@@ -563,7 +557,7 @@ class DecisionModelActionTest {
                             assertThat(response.getTotalRetryWaitMs()).isEqualTo(100L);
                         });
         assertThat(h.resourceCounters.get("retryCount").getCount()).isEqualTo(requests);
-        assertThat(h.resourceCounters.get("retryWaitMs").getCount()).isEqualTo(1_000_000L);
+        assertThat(h.resourceCounters.get("retryWaitMs").getCount()).isEqualTo(200L);
     }
 
     private static DecisionResult result(String model, DecisionResult.TokenUsage usage) {

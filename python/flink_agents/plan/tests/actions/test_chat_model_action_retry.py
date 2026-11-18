@@ -53,9 +53,26 @@ from flink_agents.plan.actions.chat_model_action import (
     _ChatAttemptFailed,
     chat,
     process_chat_request_or_tool_response,
+    recorded_retry_wait_millis,
 )
 
 _LLM_METADATA = {LLMExecutionMetadataKeys.MODEL: "configured-model"}
+
+
+def test_recorded_retry_wait_millis_keeps_whole_milliseconds() -> None:
+    assert recorded_retry_wait_millis(timedelta(seconds=2)) == 2000
+    assert recorded_retry_wait_millis(timedelta(seconds=1)) == 1000
+    assert recorded_retry_wait_millis(timedelta(milliseconds=1500)) == 1500
+    assert recorded_retry_wait_millis(timedelta(milliseconds=500)) == 500
+    assert recorded_retry_wait_millis(timedelta(milliseconds=100)) == 100
+    assert recorded_retry_wait_millis(timedelta(0)) == 0
+    assert recorded_retry_wait_millis(timedelta(milliseconds=-1)) == 0
+    assert (
+        recorded_retry_wait_millis(timedelta(milliseconds=100))
+        + recorded_retry_wait_millis(timedelta(milliseconds=100))
+        == 200
+    )
+
 
 # ============================================================================
 # Mock infrastructure

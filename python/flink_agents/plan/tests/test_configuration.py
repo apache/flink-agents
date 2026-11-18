@@ -26,10 +26,14 @@ from flink_agents.api.core_options import (
     AgentExecutionOptions,
     LoggerType,
 )
-from flink_agents.api.duration import is_positive
+from flink_agents.api.duration import is_positive, parse_duration
 from flink_agents.api.trace_log import TraceLogLevel, TraceLogScope, TraceLogTarget
 from flink_agents.plan.agent_plan import AgentPlan
-from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.plan.configuration import (
+    AgentConfiguration,
+    require_short_term_memory_ttl,
+    validate_consumed_duration,
+)
 
 
 def test_map_values_remain_intact_through_plan_json() -> None:
@@ -413,8 +417,13 @@ def test_duration_consumers_reject_finer_values_than_they_honor() -> None:
         AgentConfiguration({"retry-wait-interval": "1500 us"}).get(
             AgentExecutionOptions.RETRY_WAIT_INTERVAL
         )
-    assert "retry-wait-interval" in str(retry.value)
-    assert "1500 us" in str(retry.value)
+    assert str(retry.value) == (
+        "retry-wait-interval must be a whole number of milliseconds, "
+        "or zero or negative to retry without waiting, got 1500 us"
+    )
+    assert validate_consumed_duration(
+        "async.batch.timeout", parse_duration("1500 us")
+    ) == timedelta(microseconds=1500)
     assert AgentConfiguration({"retry-wait-interval": "1500 ms"}).get(
         AgentExecutionOptions.RETRY_WAIT_INTERVAL
     ) == timedelta(milliseconds=1500)
@@ -423,12 +432,23 @@ def test_duration_consumers_reject_finer_values_than_they_honor() -> None:
         AgentConfiguration({"short-term-memory.state-ttl": "1500 us"}).get(
             AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL
         )
-    assert "short-term-memory.state-ttl" in str(ttl.value)
-    assert "1500 us" in str(ttl.value)
-    with pytest.raises(ValueError, match="must be at least 1 ms"):
+    assert str(ttl.value) == (
+        "short-term-memory.state-ttl must be a whole number of milliseconds, "
+        "or zero or negative to disable TTL, got 1500 us"
+    )
+    with pytest.raises(
+        ValueError,
+        match="short-term-memory.state-ttl must be at least 1 ms, got 500 us",
+    ):
         AgentConfiguration({"short-term-memory.state-ttl": "500 us"}).get(
             AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL
         )
+    assert require_short_term_memory_ttl(
+        "short-term-memory.state-ttl", parse_duration("1000 us")
+    ) == timedelta(milliseconds=1)
+    assert require_short_term_memory_ttl(
+        "short-term-memory.state-ttl", parse_duration("1 min")
+    ) == timedelta(minutes=1)
     assert AgentConfiguration({"short-term-memory.state-ttl": "1000 us"}).get(
         AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL
     ) == timedelta(milliseconds=1)

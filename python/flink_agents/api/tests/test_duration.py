@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-"""Keep this table aligned with Java DurationFormatTest."""
+"""Keep this table aligned with Java DurationUtilsTest."""
 
 from datetime import timedelta
 
@@ -27,10 +27,7 @@ from flink_agents.api.duration import (
     is_positive,
     parse_duration,
     positive_seconds,
-    recorded_retry_wait_millis,
-    require_short_term_memory_ttl,
     require_whole_milliseconds,
-    validate_consumed_duration,
     zero_if_negative,
 )
 
@@ -110,7 +107,7 @@ def test_option_defaults_match_the_disable_sentinels() -> None:
     assert zero_if_negative(timedelta(seconds=2)) == timedelta(seconds=2)
 
 
-# Deadline budget shared with Java DurationFormat.positiveNanos.
+# Deadline budget shared with Java DurationUtils.positiveNanos.
 # 1_500_000 ns is 0.0015 s.
 @pytest.mark.parametrize(
     ("text", "seconds"),
@@ -125,7 +122,6 @@ def test_option_defaults_match_the_disable_sentinels() -> None:
 def test_positive_deadline_keeps_microseconds(text: str, seconds: float) -> None:
     parsed = parse_duration(text)
     assert positive_seconds(parsed) == seconds
-    assert validate_consumed_duration("async.batch.timeout", parsed) == parsed
 
 
 def test_non_positive_deadline_contributes_no_seconds() -> None:
@@ -134,9 +130,13 @@ def test_non_positive_deadline_contributes_no_seconds() -> None:
     assert positive_seconds(parse_duration("-1 ms")) is None
 
 
-def test_retry_wait_rejects_a_sub_millisecond_remainder() -> None:
+def test_whole_milliseconds_reject_a_sub_millisecond_remainder() -> None:
     with pytest.raises(ValueError, match="whole number of milliseconds") as error:
-        validate_consumed_duration("retry-wait-interval", parse_duration("1500 us"))
+        require_whole_milliseconds(
+            "retry-wait-interval",
+            parse_duration("1500 us"),
+            "or zero or negative to retry without waiting",
+        )
     message = str(error.value)
     assert "retry-wait-interval" in message
     assert "1500 us" in message
@@ -152,38 +152,3 @@ def test_retry_wait_rejects_a_sub_millisecond_remainder() -> None:
         parse_duration("-1 ms"),
         "or zero or negative to retry without waiting",
     ) == timedelta(milliseconds=-1)
-
-
-def test_short_term_memory_ttl_rejects_a_sub_millisecond_remainder() -> None:
-    with pytest.raises(
-        ValueError,
-        match="short-term-memory.state-ttl must be at least 1 ms, got 500 us",
-    ):
-        require_short_term_memory_ttl(
-            "short-term-memory.state-ttl", parse_duration("500 us")
-        )
-    with pytest.raises(ValueError, match="whole number of milliseconds") as error:
-        require_short_term_memory_ttl(
-            "short-term-memory.state-ttl", parse_duration("1500 us")
-        )
-    assert "1500 us" in str(error.value)
-    assert require_short_term_memory_ttl(
-        "short-term-memory.state-ttl", parse_duration("1000 us")
-    ) == timedelta(milliseconds=1)
-    assert require_short_term_memory_ttl(
-        "short-term-memory.state-ttl", parse_duration("1 min")
-    ) == timedelta(minutes=1)
-
-
-def test_retry_statistics_keep_whole_milliseconds_across_requests() -> None:
-    assert recorded_retry_wait_millis(parse_duration("2 s")) == 2000
-    assert recorded_retry_wait_millis(parse_duration("1 s")) == 1000
-    assert recorded_retry_wait_millis(parse_duration("1500 ms")) == 1500
-    assert recorded_retry_wait_millis(parse_duration("500 ms")) == 500
-    assert recorded_retry_wait_millis(parse_duration("100 ms")) == 100
-    assert recorded_retry_wait_millis(parse_duration("0 ms")) == 0
-    assert recorded_retry_wait_millis(parse_duration("-1 ms")) == 0
-    assert (
-        sum(recorded_retry_wait_millis(parse_duration("100 ms")) for _ in range(10_000))
-        == 1_000_000
-    )

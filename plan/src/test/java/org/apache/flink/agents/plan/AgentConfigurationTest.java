@@ -23,7 +23,7 @@ import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions.ConditionEvaluationFailureStrategy;
 import org.apache.flink.agents.api.configuration.ConfigOption;
-import org.apache.flink.agents.api.configuration.DurationFormat;
+import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLogTarget;
@@ -358,9 +358,9 @@ public class AgentConfigurationTest {
         assertEquals(Duration.ofMillis(-1), config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT));
         assertEquals(Duration.ZERO, config.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL));
         assertFalse(
-                DurationFormat.isPositive(config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)));
+                DurationUtils.isPositive(config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)));
         assertFalse(
-                DurationFormat.isPositive(
+                DurationUtils.isPositive(
                         config.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL)));
 
         config.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, Duration.ofSeconds(30));
@@ -372,7 +372,7 @@ public class AgentConfigurationTest {
         assertEquals(Duration.ofSeconds(30), config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
         assertEquals(Duration.ofMinutes(5), config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT));
         assertFalse(
-                DurationFormat.isPositive(
+                DurationUtils.isPositive(
                         config.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL)));
 
         ObjectMapper mapper = new ObjectMapper();
@@ -398,13 +398,13 @@ public class AgentConfigurationTest {
                                 "retry-wait-interval",
                                 "0 s"));
         assertFalse(
-                DurationFormat.isPositive(disabled.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)));
+                DurationUtils.isPositive(disabled.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)));
         assertFalse(
-                DurationFormat.isPositive(
+                DurationUtils.isPositive(
                         disabled.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL)));
         assertEquals(
                 Duration.ZERO,
-                DurationFormat.zeroIfNegative(
+                DurationUtils.zeroIfNegative(
                         disabled.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)));
 
         AgentConfiguration enabled =
@@ -412,7 +412,7 @@ public class AgentConfigurationTest {
         assertEquals(
                 Duration.ofMillis(100), enabled.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT));
         assertTrue(
-                DurationFormat.isPositive(enabled.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)));
+                DurationUtils.isPositive(enabled.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)));
 
         IllegalArgumentException bareNumber =
                 assertThrows(
@@ -438,9 +438,10 @@ public class AgentConfigurationTest {
                         () ->
                                 new AgentConfiguration(Map.of("retry-wait-interval", "1500 us"))
                                         .get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
-        assertTrue(retry.getMessage().contains("retry-wait-interval"));
-        assertTrue(retry.getMessage().contains("whole number of milliseconds"));
-        assertTrue(retry.getMessage().contains("1500 us"));
+        assertEquals(
+                "retry-wait-interval must be a whole number of milliseconds,"
+                        + " or zero or negative to retry without waiting, got 1500 us",
+                retry.getMessage());
         assertEquals(
                 Duration.ofMillis(1500),
                 new AgentConfiguration(Map.of("retry-wait-interval", "1500 ms"))
@@ -453,9 +454,10 @@ public class AgentConfigurationTest {
                                 new AgentConfiguration(
                                                 Map.of("short-term-memory.state-ttl", "1500 us"))
                                         .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL));
-        assertTrue(ttl.getMessage().contains("short-term-memory.state-ttl"));
-        assertTrue(ttl.getMessage().contains("whole number of milliseconds"));
-        assertTrue(ttl.getMessage().contains("1500 us"));
+        assertEquals(
+                "short-term-memory.state-ttl must be a whole number of milliseconds,"
+                        + " or zero or negative to disable TTL, got 1500 us",
+                ttl.getMessage());
         IllegalArgumentException shortTtl =
                 assertThrows(
                         IllegalArgumentException.class,
@@ -463,7 +465,17 @@ public class AgentConfigurationTest {
                                 new AgentConfiguration(
                                                 Map.of("short-term-memory.state-ttl", "500 us"))
                                         .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL));
-        assertTrue(shortTtl.getMessage().contains("must be at least 1 ms"));
+        assertEquals(
+                "short-term-memory.state-ttl must be at least 1 ms, got 500 us",
+                shortTtl.getMessage());
+        assertEquals(
+                Duration.ofMillis(1),
+                AgentConfiguration.requireShortTermMemoryTtl(
+                        "short-term-memory.state-ttl", DurationUtils.parse("1000 us")));
+        assertEquals(
+                Duration.ofMinutes(1),
+                AgentConfiguration.requireShortTermMemoryTtl(
+                        "short-term-memory.state-ttl", DurationUtils.parse("1 min")));
         assertEquals(
                 Duration.ofMillis(1),
                 new AgentConfiguration(Map.of("short-term-memory.state-ttl", "1000 us"))

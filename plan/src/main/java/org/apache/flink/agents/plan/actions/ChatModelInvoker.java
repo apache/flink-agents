@@ -22,7 +22,7 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
-import org.apache.flink.agents.api.configuration.DurationFormat;
+import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
@@ -174,10 +174,25 @@ public final class ChatModelInvoker {
      * remainder.
      */
     public static Duration acceptedRetryWait(Duration configured) {
-        return DurationFormat.requireWholeMilliseconds(
+        return DurationUtils.requireWholeMilliseconds(
                 AgentExecutionOptions.RETRY_WAIT_INTERVAL.getKey(),
-                DurationFormat.zeroIfNegative(configured),
+                DurationUtils.zeroIfNegative(configured),
                 "or zero or negative to retry without waiting");
+    }
+
+    /**
+     * Whole milliseconds recorded for one retry sleep. This is the same count {@link
+     * Thread#sleep(long)} waits and the value added to {@code retryWaitMs} and {@code
+     * total_retry_wait_ms}. A non-positive duration contributes zero. A sub-millisecond remainder
+     * is dropped, matching {@code Duration#toMillis()}; retry wait rejects that remainder before
+     * the sleep. A duration that does not fit in a {@code long} throws {@link ArithmeticException}.
+     */
+    static long recordedRetryWaitMillis(Duration duration) {
+        if (!DurationUtils.isPositive(duration)) {
+            return 0L;
+        }
+        long millis = duration.toMillis();
+        return Math.max(0L, millis);
     }
 
     public static ChatAttemptResult chatWithRetries(
@@ -362,17 +377,17 @@ public final class ChatModelInvoker {
                     actualRetryCount = attempt + 1;
                     Duration currentWait =
                             retryWaitInterval.multipliedBy(1L << (actualRetryCount - 1));
-                    long waitMillis = DurationFormat.recordedRetryWaitMillis(currentWait);
+                    long waitMillis = recordedRetryWaitMillis(currentWait);
                     LOG.warn(
                             "Chat request {} failed with error: {}, retrying {} / {}, waiting {}.",
                             initialRequestId,
                             e,
                             actualRetryCount,
                             numRetries,
-                            DurationFormat.format(currentWait));
+                            DurationUtils.format(currentWait));
                     if (waitMillis > 0) {
                         try {
-                            RetryWait.sleep(waitMillis);
+                            Thread.sleep(waitMillis);
                         } catch (InterruptedException ie) {
                             Thread.currentThread().interrupt();
                             throw ie;

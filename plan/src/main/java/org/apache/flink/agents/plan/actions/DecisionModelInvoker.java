@@ -20,7 +20,7 @@ package org.apache.flink.agents.plan.actions;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
-import org.apache.flink.agents.api.configuration.DurationFormat;
+import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.decision.BaseDecisionModelSetup;
@@ -193,7 +193,7 @@ public final class DecisionModelInvoker {
                     return new DecisionAttemptResult(null, outcome.error, retryCount, totalWaitMs);
                 }
                 Duration currentWait = waitInterval.multipliedBy(1L << retryCount);
-                long waitMillis = DurationFormat.recordedRetryWaitMillis(currentWait);
+                long waitMillis = ChatModelInvoker.recordedRetryWaitMillis(currentWait);
                 retryCount++;
                 LOG.warn(
                         "Decision request {} failed with error: {}, retrying {} / {}, waiting {}.",
@@ -201,10 +201,10 @@ public final class DecisionModelInvoker {
                         outcome.error,
                         retryCount,
                         maxRetries,
-                        DurationFormat.format(currentWait));
+                        DurationUtils.format(currentWait));
                 if (waitMillis > 0) {
                     try {
-                        RetryWait.sleep(waitMillis);
+                        Thread.sleep(waitMillis);
                     } catch (InterruptedException error) {
                         Thread.currentThread().interrupt();
                         throw error;

@@ -17,10 +17,11 @@
  */
 package org.apache.flink.agents.plan;
 
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.apache.flink.agents.api.configuration.Configuration;
-import org.apache.flink.agents.api.configuration.DurationFormat;
+import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.api.logger.TraceLogTarget;
 import org.apache.flink.configuration.ConfigurationUtils;
 
@@ -100,12 +101,12 @@ public class AgentConfiguration implements Configuration {
         if (Duration.class.equals(option.getType())) {
             final Duration parsed;
             try {
-                parsed = DurationFormat.parse(value);
+                parsed = DurationUtils.parse(value);
             } catch (IllegalArgumentException e) {
                 throw invalidDuration(option.getKey(), e);
             }
-            DurationFormat.validateConsumedDuration(option.getKey(), parsed);
-            putValue(option.getKey(), DurationFormat.format(parsed));
+            validateConsumedDuration(option.getKey(), parsed);
+            putValue(option.getKey(), DurationUtils.format(parsed));
             return;
         }
         putValue(option.getKey(), value);
@@ -173,7 +174,7 @@ public class AgentConfiguration implements Configuration {
 
         if (targetType.isAssignableFrom(rawValue.getClass())) {
             if (Duration.class.equals(targetType)) {
-                DurationFormat.validateConsumedDuration(option.getKey(), (Duration) rawValue);
+                validateConsumedDuration(option.getKey(), (Duration) rawValue);
             }
             return targetType.cast(rawValue);
         } else if (String.class.equals(targetType)) {
@@ -191,12 +192,11 @@ public class AgentConfiguration implements Configuration {
         } else if (Duration.class.equals(targetType)) {
             final Duration parsed;
             try {
-                parsed = DurationFormat.parse(rawValue);
+                parsed = DurationUtils.parse(rawValue);
             } catch (IllegalArgumentException e) {
                 throw invalidDuration(option.getKey(), e);
             }
-            return targetType.cast(
-                    DurationFormat.validateConsumedDuration(option.getKey(), parsed));
+            return targetType.cast(validateConsumedDuration(option.getKey(), parsed));
         } else if (targetType.isEnum()) {
             return ConfigurationUtils.convertValue(rawValue, targetType);
         } else {
@@ -214,7 +214,7 @@ public class AgentConfiguration implements Configuration {
 
     private static Object normalizeDurationValue(Object value) {
         if (value instanceof Duration) {
-            return DurationFormat.format(DurationFormat.parse(value));
+            return DurationUtils.format(DurationUtils.parse(value));
         }
         return value;
     }
@@ -223,6 +223,42 @@ public class AgentConfiguration implements Configuration {
             String key, IllegalArgumentException cause) {
         return new IllegalArgumentException(
                 "Invalid duration for '" + key + "': " + cause.getMessage(), cause);
+    }
+
+    /**
+     * Applies the precision rule of a duration option. Retry wait and short-term memory TTL must be
+     * a whole number of milliseconds when positive. Other durations, including the async batch
+     * timeout, keep the parsed microsecond value.
+     */
+    private static Duration validateConsumedDuration(String optionKey, Duration duration) {
+        if (optionKey == null || duration == null) {
+            return duration;
+        }
+        if (AgentExecutionOptions.RETRY_WAIT_INTERVAL.getKey().equals(optionKey)) {
+            return DurationUtils.requireWholeMilliseconds(
+                    optionKey, duration, "or zero or negative to retry without waiting");
+        }
+        if (AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.getKey().equals(optionKey)) {
+            return requireShortTermMemoryTtl(optionKey, duration);
+        }
+        return duration;
+    }
+
+    /**
+     * Checks a short-term memory TTL. A non-positive value is left unchanged so the caller can
+     * disable TTL. A positive value shorter than 1 ms, or a longer positive value that is not a
+     * whole number of milliseconds, is rejected.
+     */
+    public static Duration requireShortTermMemoryTtl(String optionKey, Duration duration) {
+        if (!DurationUtils.isPositive(duration)) {
+            return duration;
+        }
+        if (duration.toMillis() == 0) {
+            throw new IllegalArgumentException(
+                    optionKey + " must be at least 1 ms, got " + DurationUtils.format(duration));
+        }
+        return DurationUtils.requireWholeMilliseconds(
+                optionKey, duration, "or zero or negative to disable TTL");
     }
 
     private static List<Map<String, Object>> traceLogTargetConfig(Object value) {
