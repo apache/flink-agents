@@ -20,6 +20,7 @@ package org.apache.flink.agents.api.configuration;
 
 import java.math.BigInteger;
 import java.time.Duration;
+import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -27,18 +28,22 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Parses, formats, and checks framework durations in the style of Flink's duration configuration.
+ * Parses, formats, and checks framework durations in the style of Flink's {@code TimeUtils}.
  *
  * <p>A value is an integer and one unit, optionally separated by whitespace, such as {@code 30 s}
- * or {@code 5 min}. A leading {@code -} is allowed. A unit is required; a bare number is rejected.
- * Recognized units, case-insensitively, are {@code ns}, {@code us}/{@code µs}, {@code ms}, {@code
- * s}, {@code min}/{@code m}, {@code h}, and {@code d}, plus the longer singular and plural forms
- * ({@code second}, {@code seconds}, {@code millisecond}, and so on). {@code m} means minutes.
+ * or {@code 5 min}. A unitless integer means milliseconds, such as {@code 1000}. When the text does
+ * not start with a number, it is parsed as an ISO-8601 duration, such as {@code PT30S}, {@code
+ * PT1H30M}, or {@code P1DT2H}, including the lower-case forms {@code Duration.parse} accepts. A
+ * leading {@code -} is allowed on every form, so a negative duration can still disable a timeout or
+ * TTL. Recognized units, case-insensitively, are {@code ns}, {@code us}/{@code µs}, {@code ms},
+ * {@code s}, {@code min}/{@code m}, {@code h}, and {@code d}, plus the longer singular and plural
+ * forms ({@code second}, {@code seconds}, {@code millisecond}, and so on). {@code m} means minutes.
  *
  * <p>The value must be a whole number of microseconds, because the Python counterpart is {@code
- * datetime.timedelta}. {@code 1000 ns} is one microsecond; {@code 1 ns} is rejected. This parser
- * does not truncate to a coarser unit. A consumer that cannot honor microseconds rejects the value
- * when the option is read.
+ * datetime.timedelta}. {@code 1000 ns} is one microsecond; {@code 1 ns} is rejected. An ISO-8601 or
+ * unitless value that is not microsecond-aligned is rejected the same way. This parser does not
+ * truncate to a coarser unit. Retry wait and short-term memory TTL apply millisecond truncation
+ * later, when the job is submitted.
  */
 public final class DurationUtils {
 
@@ -87,7 +92,28 @@ public final class DurationUtils {
         if (trimmed.isEmpty()) {
             throw invalid(text, "a duration needs a number and a unit, for example '30 s'");
         }
+        if (startsWithMagnitude(trimmed)) {
+            return parseLabeled(trimmed, text);
+        }
+        return parseIso8601(trimmed, text);
+    }
 
+    /**
+     * True when {@code trimmed} is a labeled duration or a unitless millisecond value. A leading
+     * {@code -} may be followed by spaces. Text that does not start this way is tried as ISO-8601.
+     */
+    private static boolean startsWithMagnitude(String trimmed) {
+        int index = 0;
+        if (trimmed.charAt(0) == '-') {
+            index++;
+            while (index < trimmed.length() && trimmed.charAt(index) == ' ') {
+                index++;
+            }
+        }
+        return index < trimmed.length() && isDigit(trimmed.charAt(index));
+    }
+
+    private static Duration parseLabeled(String trimmed, String original) {
         boolean negative = false;
         int index = 0;
         if (trimmed.charAt(0) == '-') {
@@ -101,38 +127,35 @@ public final class DurationUtils {
         while (numberEnd < trimmed.length() && isDigit(trimmed.charAt(numberEnd))) {
             numberEnd++;
         }
-        if (numberEnd == index) {
-            throw invalid(
-                    text, "a duration needs an integer and a unit, for example '30 s' or '5 min'");
-        }
         String number = trimmed.substring(index, numberEnd);
         String unitLabel = trimmed.substring(numberEnd).trim().toLowerCase(Locale.US);
         if (unitLabel.startsWith(".")) {
-            throw invalid(text, "a duration needs an integer and a unit, for example '1500 ms'");
+            throw invalid(
+                    original, "a duration needs an integer and a unit, for example '1500 ms'");
         }
+        final ChronoUnit unit;
         if (unitLabel.isEmpty()) {
-            throw invalid(
-                    text,
-                    "a duration needs a unit, for example '30 s' or '30 ms', not a bare number");
-        }
-        ChronoUnit unit = UNITS.get(unitLabel);
-        if (unit == null) {
-            throw invalid(
-                    text,
-                    "time unit '"
-                            + unitLabel
-                            + "' is not recognized. Use ns, us, ms, s, min, h, or d");
+            unit = ChronoUnit.MILLIS;
+        } else {
+            unit = UNITS.get(unitLabel);
+            if (unit == null) {
+                throw invalid(
+                        original,
+                        "time unit '"
+                                + unitLabel
+                                + "' is not recognized. Use ns, us, ms, s, min, h, or d");
+            }
         }
 
         final BigInteger magnitude;
         try {
             magnitude = new BigInteger(number);
         } catch (NumberFormatException e) {
-            throw invalid(text, "the number cannot be represented as an integer");
+            throw invalid(original, "the number cannot be represented as an integer");
         }
         BigInteger nanos = magnitude.multiply(BigInteger.valueOf(unit.getDuration().toNanos()));
         if (nanos.mod(NANOS_PER_MICRO).signum() != 0) {
-            throw invalid(text, "durations finer than 1 us are not supported");
+            throw invalid(original, "durations finer than 1 us are not supported");
         }
         if (negative) {
             nanos = nanos.negate();
@@ -140,8 +163,49 @@ public final class DurationUtils {
         try {
             return durationFromNanos(nanos);
         } catch (ArithmeticException e) {
-            throw invalid(text, "the value overflows a duration");
+            throw invalid(original, "the value overflows a duration");
         }
+    }
+
+    /**
+     * ISO-8601 fallback used by Flink {@code TimeUtils} when the text does not start with a number.
+     * Negative durations are kept; {@code TimeUtils} rejects them.
+     */
+    private static Duration parseIso8601(String trimmed, String original) {
+        if (isBareSign(trimmed)) {
+            throw invalid(
+                    original,
+                    "a duration needs an integer and a unit, for example '30 s' or '5 min'");
+        }
+        final Duration parsed;
+        try {
+            parsed = Duration.parse(trimmed);
+        } catch (DateTimeParseException e) {
+            String detail = e.getMessage() == null ? "" : e.getMessage().toLowerCase(Locale.US);
+            if (detail.contains("overflow")) {
+                throw invalid(original, "the value overflows a duration");
+            }
+            throw invalid(
+                    original,
+                    "text does not start with a number, and is not a valid ISO-8601 duration"
+                            + " format");
+        }
+        return requireMicrosecondAligned(parsed, original);
+    }
+
+    /** A lone {@code -} , or a leading {@code -} that is not an ISO-8601 duration. */
+    private static boolean isBareSign(String trimmed) {
+        int index = 0;
+        if (trimmed.charAt(0) == '-') {
+            index++;
+            while (index < trimmed.length() && trimmed.charAt(index) == ' ') {
+                index++;
+            }
+        }
+        if (index >= trimmed.length()) {
+            return true;
+        }
+        return trimmed.charAt(0) == '-' && trimmed.toLowerCase(Locale.US).indexOf('p') < 0;
     }
 
     /**
@@ -187,26 +251,6 @@ public final class DurationUtils {
             return 0L;
         }
         return duration.toNanos();
-    }
-
-    /**
-     * Returns {@code duration} when it is not positive or is a positive whole number of
-     * milliseconds. A positive sub-millisecond remainder is rejected.
-     */
-    public static Duration requireWholeMilliseconds(
-            String optionKey, Duration duration, String disabledBy) {
-        if (!isPositive(duration)) {
-            return duration;
-        }
-        if (duration.getNano() % 1_000_000 != 0) {
-            throw new IllegalArgumentException(
-                    optionKey
-                            + " must be a whole number of milliseconds, "
-                            + disabledBy
-                            + ", got "
-                            + format(duration));
-        }
-        return duration;
     }
 
     private static Duration requireMicrosecondAligned(Duration duration, String rendered) {

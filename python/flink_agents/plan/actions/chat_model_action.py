@@ -38,10 +38,10 @@ from flink_agents.api.core_options import (
     AgentExecutionOptions,
 )
 from flink_agents.api.duration import (
+    accepted_retry_wait,
     format_duration,
     is_positive,
-    require_whole_milliseconds,
-    zero_if_negative,
+    truncated_millis,
 )
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event
@@ -103,11 +103,11 @@ def recorded_retry_wait_millis(value: timedelta) -> int:
     The count matches ``retryWaitMs`` and ``total_retry_wait_ms``, and it is the
     duration Python sleeps. Chat and decision retries both use this count. A
     non-positive duration contributes zero. A sub-millisecond remainder is
-    dropped; retry wait rejects that remainder before the sleep.
+    dropped, matching ``Duration.toMillis``.
     """
     if not is_positive(value):
         return 0
-    return value // timedelta(milliseconds=1)
+    return truncated_millis(value)
 
 
 class _InvocationFailure(Exception):
@@ -699,10 +699,8 @@ async def _chat_with_retries(
         chat_async = False
 
     num_retries = max(0, ctx.config.get(AgentExecutionOptions.MAX_RETRIES))
-    retry_wait_interval = require_whole_milliseconds(
-        AgentExecutionOptions.RETRY_WAIT_INTERVAL.get_key(),
-        zero_if_negative(ctx.config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)),
-        "or zero or negative to retry without waiting",
+    retry_wait_interval = accepted_retry_wait(
+        ctx.config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)
     )
 
     response = None

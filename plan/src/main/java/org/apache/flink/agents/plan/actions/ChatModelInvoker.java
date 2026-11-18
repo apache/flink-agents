@@ -169,23 +169,25 @@ public final class ChatModelInvoker {
     }
 
     /**
-     * Retry backoff after a negative duration is treated as zero. A positive duration must be a
-     * whole number of milliseconds; {@link Thread#sleep(long)} cannot honor a sub-millisecond
-     * remainder.
+     * Retry backoff after a negative duration is treated as zero. A positive duration is truncated
+     * to milliseconds with {@link Duration#toMillis()}, including a result of zero. {@link
+     * Thread#sleep(long)} waits that truncated value. A duration that does not fit in a {@code
+     * long} throws {@link ArithmeticException}.
      */
     public static Duration acceptedRetryWait(Duration configured) {
-        return DurationUtils.requireWholeMilliseconds(
-                AgentExecutionOptions.RETRY_WAIT_INTERVAL.getKey(),
-                DurationUtils.zeroIfNegative(configured),
-                "or zero or negative to retry without waiting");
+        Duration nonNegative = DurationUtils.zeroIfNegative(configured);
+        if (!DurationUtils.isPositive(nonNegative)) {
+            return Duration.ZERO;
+        }
+        return Duration.ofMillis(nonNegative.toMillis());
     }
 
     /**
      * Whole milliseconds recorded for one retry sleep. This is the same count {@link
      * Thread#sleep(long)} waits and the value added to {@code retryWaitMs} and {@code
      * total_retry_wait_ms}. A non-positive duration contributes zero. A sub-millisecond remainder
-     * is dropped, matching {@code Duration#toMillis()}; retry wait rejects that remainder before
-     * the sleep. A duration that does not fit in a {@code long} throws {@link ArithmeticException}.
+     * is dropped, matching {@code Duration#toMillis()}. A duration that does not fit in a {@code
+     * long} throws {@link ArithmeticException}.
      */
     static long recordedRetryWaitMillis(Duration duration) {
         if (!DurationUtils.isPositive(duration)) {

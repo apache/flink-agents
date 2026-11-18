@@ -425,68 +425,134 @@ public class AgentConfigurationTest {
     }
 
     @Test
-    void durationConsumersRejectFinerValuesThanTheyHonor() {
+    void durationOptionsKeepMicrosecondsOnReadAndWrite() {
         AgentConfiguration timeout =
                 new AgentConfiguration(Map.of("async.batch.timeout", "1500 us"));
         assertEquals(
                 Duration.ofNanos(1_500_000),
                 timeout.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT));
 
-        IllegalArgumentException retry =
-                assertThrows(
-                        IllegalArgumentException.class,
-                        () ->
-                                new AgentConfiguration(Map.of("retry-wait-interval", "1500 us"))
-                                        .get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+        AgentConfiguration retry = new AgentConfiguration(Map.of("retry-wait-interval", "1500 us"));
         assertEquals(
-                "retry-wait-interval must be a whole number of milliseconds,"
-                        + " or zero or negative to retry without waiting, got 1500 us",
-                retry.getMessage());
+                Duration.ofNanos(1_500_000), retry.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
         assertEquals(
                 Duration.ofMillis(1500),
                 new AgentConfiguration(Map.of("retry-wait-interval", "1500 ms"))
                         .get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
 
-        IllegalArgumentException ttl =
-                assertThrows(
-                        IllegalArgumentException.class,
-                        () ->
-                                new AgentConfiguration(
-                                                Map.of("short-term-memory.state-ttl", "1500 us"))
-                                        .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL));
+        AgentConfiguration ttl =
+                new AgentConfiguration(Map.of("short-term-memory.state-ttl", "1500 us"));
         assertEquals(
-                "short-term-memory.state-ttl must be a whole number of milliseconds,"
-                        + " or zero or negative to disable TTL, got 1500 us",
-                ttl.getMessage());
-        IllegalArgumentException shortTtl =
-                assertThrows(
-                        IllegalArgumentException.class,
-                        () ->
-                                new AgentConfiguration(
-                                                Map.of("short-term-memory.state-ttl", "500 us"))
-                                        .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL));
+                Duration.ofNanos(1_500_000),
+                ttl.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL));
         assertEquals(
-                "short-term-memory.state-ttl must be at least 1 ms, got 500 us",
-                shortTtl.getMessage());
-        assertEquals(
-                Duration.ofMillis(1),
-                AgentConfiguration.requireShortTermMemoryTtl(
-                        "short-term-memory.state-ttl", DurationUtils.parse("1000 us")));
-        assertEquals(
-                Duration.ofMinutes(1),
-                AgentConfiguration.requireShortTermMemoryTtl(
-                        "short-term-memory.state-ttl", DurationUtils.parse("1 min")));
+                Duration.ofNanos(500_000),
+                new AgentConfiguration(Map.of("short-term-memory.state-ttl", "500 us"))
+                        .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL));
         assertEquals(
                 Duration.ofMillis(1),
                 new AgentConfiguration(Map.of("short-term-memory.state-ttl", "1000 us"))
                         .get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL));
+
+        AgentConfiguration stored = new AgentConfiguration();
+        stored.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, Duration.ofNanos(1_500_000));
+        assertEquals("1500 us", stored.getConfData().get("retry-wait-interval"));
+        assertEquals(
+                Duration.ofNanos(1_500_000), stored.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+    }
+
+    @Test
+    void validateExecutionOptionsTruncatesRetryAndRejectsZeroMillisecondTtl() {
+        AgentConfiguration.validateExecutionOptions(
+                planWith(
+                        Map.of(
+                                "retry-wait-interval",
+                                "1500 us",
+                                "short-term-memory.state-ttl",
+                                "1500 us")));
+        AgentConfiguration.validateExecutionOptions(
+                planWith(
+                        Map.of(
+                                "retry-wait-interval",
+                                "500 us",
+                                "short-term-memory.state-ttl",
+                                "0 ms")));
+        AgentConfiguration.validateExecutionOptions(
+                planWith(
+                        Map.of(
+                                "async.batch.timeout",
+                                "500 ns",
+                                "retry-wait-interval",
+                                "1 s",
+                                "short-term-memory.state-ttl",
+                                "1 min")));
+        AgentConfiguration subMicrosecondTimeout =
+                new AgentConfiguration(Map.of("async.batch.timeout", "500 ns"));
+        AgentConfiguration.validateExecutionOptions(planWith(subMicrosecondTimeout));
+        assertTrue(
+                assertThrows(
+                                IllegalArgumentException.class,
+                                () ->
+                                        subMicrosecondTimeout.get(
+                                                AgentExecutionOptions.ASYNC_BATCH_TIMEOUT))
+                        .getMessage()
+                        .contains("finer than 1 us"));
+
+        IllegalArgumentException shortTtl =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                AgentConfiguration.validateExecutionOptions(
+                                        planWith(Map.of("short-term-memory.state-ttl", "500 us"))));
+        assertEquals(
+                "short-term-memory.state-ttl must be greater than 0 ms after conversion to"
+                        + " milliseconds, or zero or negative to disable TTL, got 500 us",
+                shortTtl.getMessage());
         assertThrows(
                 IllegalArgumentException.class,
                 () ->
-                        new AgentConfiguration()
-                                .set(
-                                        AgentExecutionOptions.RETRY_WAIT_INTERVAL,
-                                        Duration.ofNanos(1_500_000)));
+                        AgentConfiguration.validateExecutionOptions(
+                                planWith(Map.of("short-term-memory.state-ttl", "1 us"))));
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        AgentConfiguration.validateExecutionOptions(
+                                planWith(Map.of("short-term-memory.state-ttl", "999 us"))));
+
+        AgentConfiguration overflow = new AgentConfiguration();
+        overflow.getConfData()
+                .put(
+                        AgentExecutionOptions.RETRY_WAIT_INTERVAL.getKey(),
+                        Duration.ofSeconds(Long.MAX_VALUE));
+        IllegalArgumentException retryOverflow =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> AgentConfiguration.validateExecutionOptions(planWith(overflow)));
+        assertTrue(retryOverflow.getMessage().contains("retry-wait-interval"));
+        assertTrue(retryOverflow.getMessage().contains("overflows when converted to milliseconds"));
+        assertTrue(retryOverflow.getCause() instanceof ArithmeticException);
+
+        AgentConfiguration ttlOverflow = new AgentConfiguration();
+        ttlOverflow
+                .getConfData()
+                .put(
+                        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.getKey(),
+                        Duration.ofSeconds(Long.MAX_VALUE));
+        IllegalArgumentException ttlOverflowError =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> AgentConfiguration.validateExecutionOptions(planWith(ttlOverflow)));
+        assertTrue(ttlOverflowError.getMessage().contains("short-term-memory.state-ttl"));
+        assertTrue(
+                ttlOverflowError.getMessage().contains("overflows when converted to milliseconds"));
+    }
+
+    private static AgentPlan planWith(Map<String, Object> values) {
+        return planWith(new AgentConfiguration(values));
+    }
+
+    private static AgentPlan planWith(AgentConfiguration config) {
+        return new AgentPlan(Map.of(), Map.of(), config);
     }
 
     @Test

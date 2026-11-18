@@ -27,11 +27,12 @@ import pytest
 
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.duration import (
+    accepted_retry_wait,
     format_duration,
     is_positive,
     parse_duration,
     positive_seconds,
-    require_whole_milliseconds,
+    truncated_millis,
     zero_if_negative,
 )
 
@@ -119,25 +120,13 @@ def test_non_positive_deadline_contributes_no_seconds() -> None:
     assert positive_seconds(parse_duration("-1 ms")) is None
 
 
-def test_whole_milliseconds_reject_a_sub_millisecond_remainder() -> None:
-    with pytest.raises(ValueError, match="whole number of milliseconds") as error:
-        require_whole_milliseconds(
-            "retry-wait-interval",
-            parse_duration("1500 us"),
-            "or zero or negative to retry without waiting",
-        )
-    message = str(error.value)
-    assert "retry-wait-interval" in message
-    assert "1500 us" in message
-    wait = require_whole_milliseconds(
-        "retry-wait-interval",
-        parse_duration("1500 ms"),
-        "or zero or negative to retry without waiting",
-    )
+def test_retry_wait_truncates_to_milliseconds() -> None:
+    assert accepted_retry_wait(parse_duration("1500 us")) == timedelta(milliseconds=1)
+    assert truncated_millis(parse_duration("1500 us")) == 1
+    assert accepted_retry_wait(parse_duration("500 us")) == timedelta(0)
+    assert truncated_millis(parse_duration("500 us")) == 0
+    wait = accepted_retry_wait(parse_duration("1500 ms"))
     assert wait == timedelta(milliseconds=1500)
-    assert wait.total_seconds() * 1000 == 1500
-    assert require_whole_milliseconds(
-        "retry-wait-interval",
-        parse_duration("-1 ms"),
-        "or zero or negative to retry without waiting",
-    ) == timedelta(milliseconds=-1)
+    assert truncated_millis(wait) == 1500
+    assert accepted_retry_wait(parse_duration("-1 ms")) == timedelta(0)
+    assert accepted_retry_wait(parse_duration("0 ms")) == timedelta(0)

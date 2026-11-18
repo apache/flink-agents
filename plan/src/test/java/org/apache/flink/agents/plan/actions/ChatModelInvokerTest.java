@@ -166,24 +166,17 @@ class ChatModelInvokerTest {
     }
 
     @Test
-    void testChatWithRetriesRejectsSubMillisecondWaitBeforeSleeping() {
-        IllegalArgumentException error =
-                assertThrows(
-                        IllegalArgumentException.class,
-                        () ->
-                                ChatModelInvoker.chatWithRetries(
-                                        UUID.randomUUID(),
-                                        "test-model",
-                                        "chat",
-                                        List.of(),
-                                        Map.of(),
-                                        null,
-                                        null,
-                                        1,
-                                        Duration.ofNanos(1_500_000)));
-        assertTrue(error.getMessage().contains("retry-wait-interval"));
-        assertTrue(error.getMessage().contains("whole number of milliseconds"));
-        assertTrue(error.getMessage().contains("1500 us"));
+    void acceptedRetryWaitTruncatesToMilliseconds() {
+        assertEquals(
+                Duration.ofMillis(1),
+                ChatModelInvoker.acceptedRetryWait(Duration.ofNanos(1_500_000)));
+        assertEquals(Duration.ZERO, ChatModelInvoker.acceptedRetryWait(Duration.ofNanos(500_000)));
+        assertEquals(Duration.ZERO, ChatModelInvoker.acceptedRetryWait(Duration.ofMillis(-1)));
+        assertEquals(
+                Duration.ofMillis(1500),
+                ChatModelInvoker.acceptedRetryWait(Duration.ofMillis(1500)));
+        assertEquals(1L, ChatModelInvoker.recordedRetryWaitMillis(Duration.ofNanos(1_500_000)));
+        assertEquals(0L, ChatModelInvoker.recordedRetryWaitMillis(Duration.ofNanos(500_000)));
     }
 
     @Test

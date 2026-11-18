@@ -28,13 +28,14 @@ public class AgentExecutionOptions {
             new ConfigOption<>("max-retries", Integer.class, 0);
 
     /**
-     * Base wait between retries controlled by {@link #MAX_RETRIES}. The wait before retry N is this
-     * duration multiplied by {@code 2^(N-1)}. Effective precision is 1 ms: Java sleeps with {@code
-     * Thread.sleep(long)} and Python sleeps the same whole-millisecond duration. A positive
-     * duration that is not a whole number of milliseconds is rejected. A zero or negative duration
-     * retries without waiting. {@code retryWaitMs} and {@code total_retry_wait_ms} add the whole
-     * milliseconds of each sleep, so a {@code 100 ms} sleep contributes {@code 100}. In YAML, write
-     * a duration such as {@code 1 s}.
+     * Base wait between retries controlled by {@link #MAX_RETRIES}. The configured duration is
+     * truncated to milliseconds with {@link Duration#toMillis()}, and the wait before retry N is
+     * that truncated duration multiplied by {@code 2^(N-1)}. A positive value may truncate to zero,
+     * so {@code 1500 us} waits {@code 1 ms} and {@code 500 us} does not wait. A zero or negative
+     * duration retries without waiting. A positive duration that overflows {@code toMillis()} is
+     * rejected when the job is submitted. {@code retryWaitMs} and {@code total_retry_wait_ms} add
+     * those truncated milliseconds, so a {@code 100 ms} sleep contributes {@code 100}. In text,
+     * write a duration such as {@code 1 s}, {@code 1000}, or {@code PT1S}.
      */
     public static final ConfigOption<Duration> RETRY_WAIT_INTERVAL =
             new ConfigOption<>("retry-wait-interval", Duration.class, Duration.ofSeconds(1));
@@ -114,10 +115,12 @@ public class AgentExecutionOptions {
             new ConfigOption<>("agent-run.begin-event", Boolean.class, false);
 
     /**
-     * Short-term memory time-to-live. Effective precision is 1 ms. A positive whole number of
-     * milliseconds, at least 1 ms, enables expiration. A positive duration shorter than 1 ms is
-     * rejected, and so is a longer positive duration that is not a whole number of milliseconds. A
-     * zero or negative duration disables TTL. In YAML, write a duration such as {@code 1 min}.
+     * Short-term memory time-to-live. Effective precision is 1 ms. A positive duration is converted
+     * with {@link Duration#toMillis()} and enables expiration when that value is greater than zero:
+     * {@code 1500 us} enables a {@code 1 ms} TTL, and {@code 500 us} is rejected when the job is
+     * submitted instead of disabling TTL. A zero or negative duration disables TTL. A positive
+     * duration that overflows {@code toMillis()} is rejected at submission. In text, write a
+     * duration such as {@code 1 min}, {@code 1000}, or {@code PT1M}.
      */
     public static final ConfigOption<Duration> SHORT_TERM_MEMORY_STATE_TTL =
             new ConfigOption<>("short-term-memory.state-ttl", Duration.class, Duration.ZERO);

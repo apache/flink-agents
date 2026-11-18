@@ -105,7 +105,6 @@ public class AgentConfiguration implements Configuration {
             } catch (IllegalArgumentException e) {
                 throw invalidDuration(option.getKey(), e);
             }
-            validateConsumedDuration(option.getKey(), parsed);
             confData.put(option.getKey(), DurationUtils.format(parsed));
             return;
         }
@@ -172,8 +171,8 @@ public class AgentConfiguration implements Configuration {
 
         Class<T> targetType = option.getType();
 
-        // Strings and Duration objects share parse(), including microsecond alignment,
-        // then the option's own precision rule.
+        // Strings and Duration objects share parse(), including microsecond alignment.
+        // Retry-wait and short-term memory TTL rules are applied at job submission.
         if (Duration.class.equals(targetType)) {
             final Duration parsed;
             try {
@@ -181,7 +180,7 @@ public class AgentConfiguration implements Configuration {
             } catch (IllegalArgumentException e) {
                 throw invalidDuration(option.getKey(), e);
             }
-            return targetType.cast(validateConsumedDuration(option.getKey(), parsed));
+            return targetType.cast(parsed);
         } else if (targetType.isAssignableFrom(rawValue.getClass())) {
             return targetType.cast(rawValue);
         } else if (String.class.equals(targetType)) {
@@ -221,39 +220,65 @@ public class AgentConfiguration implements Configuration {
     }
 
     /**
-     * Applies the precision rule of a duration option. Retry wait and short-term memory TTL must be
-     * a whole number of milliseconds when positive. Other durations, including the async batch
-     * timeout, keep the parsed microsecond value.
+     * Checks the retry-wait and short-term memory TTL durations on {@code agentPlan} before an
+     * operator is constructed.
+     *
+     * <p>Both values are read through {@link #get(ConfigOption)} and then converted with {@link
+     * Duration#toMillis()}. A non-positive retry wait means no waiting. A positive retry wait is
+     * truncated toward zero, and a truncated result of zero is allowed. A non-positive TTL disables
+     * expiration. A positive TTL must convert to a number of milliseconds greater than zero, so
+     * {@code 500 us} fails instead of disabling TTL, while {@code 1500 us} is kept and later
+     * truncated to {@code 1 ms}. {@code toMillis()} also rejects a duration that overflows a long.
+     * Async batch timeout is not checked and keeps its microsecond duration.
+     *
+     * @throws IllegalArgumentException if a positive TTL converts to {@code 0} ms, or if either
+     *     positive duration overflows {@link Duration#toMillis()}
      */
-    private static Duration validateConsumedDuration(String optionKey, Duration duration) {
-        if (optionKey == null || duration == null) {
-            return duration;
+    public static void validateExecutionOptions(AgentPlan agentPlan) {
+        if (agentPlan == null) {
+            throw new IllegalArgumentException("An agent plan is required.");
         }
-        if (AgentExecutionOptions.RETRY_WAIT_INTERVAL.getKey().equals(optionKey)) {
-            return DurationUtils.requireWholeMilliseconds(
-                    optionKey, duration, "or zero or negative to retry without waiting");
+        AgentConfiguration config = agentPlan.getConfig();
+        if (config == null) {
+            throw new IllegalArgumentException("An agent plan configuration is required.");
         }
-        if (AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.getKey().equals(optionKey)) {
-            return requireShortTermMemoryTtl(optionKey, duration);
-        }
-        return duration;
+        validateRetryWait(config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+        validateShortTermMemoryTtl(config.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL));
     }
 
-    /**
-     * Checks a short-term memory TTL. A non-positive value is left unchanged so the caller can
-     * disable TTL. A positive value shorter than 1 ms, or a longer positive value that is not a
-     * whole number of milliseconds, is rejected.
-     */
-    public static Duration requireShortTermMemoryTtl(String optionKey, Duration duration) {
+    private static void validateRetryWait(Duration duration) {
         if (!DurationUtils.isPositive(duration)) {
-            return duration;
+            return;
         }
-        if (duration.toMillis() == 0) {
+        millisAfterTruncation(AgentExecutionOptions.RETRY_WAIT_INTERVAL.getKey(), duration);
+    }
+
+    private static void validateShortTermMemoryTtl(Duration duration) {
+        if (!DurationUtils.isPositive(duration)) {
+            return;
+        }
+        String optionKey = AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.getKey();
+        long millis = millisAfterTruncation(optionKey, duration);
+        if (millis <= 0) {
             throw new IllegalArgumentException(
-                    optionKey + " must be at least 1 ms, got " + DurationUtils.format(duration));
+                    optionKey
+                            + " must be greater than 0 ms after conversion to milliseconds,"
+                            + " or zero or negative to disable TTL, got "
+                            + DurationUtils.format(duration));
         }
-        return DurationUtils.requireWholeMilliseconds(
-                optionKey, duration, "or zero or negative to disable TTL");
+    }
+
+    /** {@link Duration#toMillis()} detects overflow as well as truncating toward zero. */
+    private static long millisAfterTruncation(String optionKey, Duration duration) {
+        try {
+            return duration.toMillis();
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(
+                    optionKey
+                            + " overflows when converted to milliseconds, got "
+                            + DurationUtils.format(duration),
+                    e);
+        }
     }
 
     private static List<Map<String, Object>> traceLogTargetConfig(Object value) {

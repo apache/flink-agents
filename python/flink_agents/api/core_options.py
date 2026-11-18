@@ -292,13 +292,13 @@ class AgentExecutionOptions:
         default=0,
     )
 
-    # Base wait between retries controlled by max-retries. The wait before retry N
-    # is this duration multiplied by 2^(N-1). Effective precision is 1 ms on Java
-    # and Python. A positive duration that is not a whole number of milliseconds
-    # is rejected. A zero or negative duration retries without waiting.
-    # retryWaitMs and total_retry_wait_ms add the whole milliseconds of each
-    # sleep, so a 100 ms sleep contributes 100. In YAML, write a duration such
-    # as "1 s".
+    # Base wait between retries controlled by max-retries. The duration is
+    # truncated to milliseconds, and the wait before retry N is that value
+    # multiplied by 2^(N-1). A positive value may truncate to zero, so 1500 us
+    # waits 1 ms and 500 us does not wait. A zero or negative duration retries
+    # without waiting. retryWaitMs and total_retry_wait_ms add those truncated
+    # milliseconds, so a 100 ms sleep contributes 100. In text, write "1 s",
+    # "1000", or "PT1S".
     RETRY_WAIT_INTERVAL = ConfigOption(
         key="retry-wait-interval",
         config_type=timedelta,
@@ -380,11 +380,11 @@ class AgentExecutionOptions:
         default=True,
     )
 
-    # Short-term memory time-to-live. Effective precision is 1 ms. A positive whole
-    # number of milliseconds, at least 1 ms, enables expiration. A positive
-    # duration shorter than 1 ms is rejected, and so is a longer positive duration
-    # that is not a whole number of milliseconds. A zero or negative duration
-    # disables TTL. In YAML, write a duration such as "1 min".
+    # Short-term memory time-to-live. Effective precision is 1 ms. A positive
+    # duration enables expiration when conversion to milliseconds is greater
+    # than zero: 1500 us enables 1 ms, and 500 us is rejected at job submission
+    # instead of disabling TTL. A zero or negative duration disables TTL. In
+    # text, write "1 min", "1000", or "PT1M".
     SHORT_TERM_MEMORY_STATE_TTL = ConfigOption(
         key="short-term-memory.state-ttl",
         config_type=timedelta,

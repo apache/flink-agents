@@ -533,10 +533,11 @@ durable state or event delivery propagate to the runtime.
 
 The built-in Action uses the existing `max-retries` (default `0`) and
 `retry-wait-interval` (default `1 s`) options. Each retry doubles the wait.
-Effective precision is 1 ms; a positive duration that is not a whole number of
-milliseconds is rejected. The terminal event reports the retry count and the
-total wait in whole milliseconds (`total_retry_wait_ms`), so a `100 ms` sleep
-contributes `100`. `decision.async`
+Effective precision is 1 ms: a positive duration is truncated toward zero to
+whole milliseconds, including a result of zero, so `1500 us` waits `1 ms` and
+`500 us` does not wait. A zero or negative duration does not wait. The terminal
+event reports the retry count and the total wait in those truncated milliseconds
+(`total_retry_wait_ms`), so a `100 ms` sleep contributes `100`. `decision.async`
 defaults to `true`; Java calls through Python fall back to synchronous execution
 when the runtime does not support asynchronous Python calls.
 

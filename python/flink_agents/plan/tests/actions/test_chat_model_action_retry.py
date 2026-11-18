@@ -65,6 +65,8 @@ def test_recorded_retry_wait_millis_keeps_whole_milliseconds() -> None:
     assert recorded_retry_wait_millis(timedelta(milliseconds=1500)) == 1500
     assert recorded_retry_wait_millis(timedelta(milliseconds=500)) == 500
     assert recorded_retry_wait_millis(timedelta(milliseconds=100)) == 100
+    assert recorded_retry_wait_millis(timedelta(microseconds=1500)) == 1
+    assert recorded_retry_wait_millis(timedelta(microseconds=500)) == 0
     assert recorded_retry_wait_millis(timedelta(0)) == 0
     assert recorded_retry_wait_millis(timedelta(milliseconds=-1)) == 0
     assert (

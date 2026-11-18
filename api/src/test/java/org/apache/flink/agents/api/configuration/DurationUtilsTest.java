@@ -131,32 +131,4 @@ class DurationUtilsTest {
         assertThat(DurationUtils.positiveNanos(DurationUtils.parse("0 ms"))).isZero();
         assertThat(DurationUtils.positiveNanos(DurationUtils.parse("-1 ms"))).isZero();
     }
-
-    @Test
-    void wholeMillisecondsRejectASubMillisecondRemainder() {
-        assertThatThrownBy(
-                        () ->
-                                DurationUtils.requireWholeMilliseconds(
-                                        "retry-wait-interval",
-                                        DurationUtils.parse("1500 us"),
-                                        "or zero or negative to retry without waiting"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(
-                        "retry-wait-interval must be a whole number of milliseconds,"
-                                + " or zero or negative to retry without waiting, got 1500 us");
-
-        Duration wait =
-                DurationUtils.requireWholeMilliseconds(
-                        "retry-wait-interval",
-                        DurationUtils.parse("1500 ms"),
-                        "or zero or negative to retry without waiting");
-        assertThat(wait).isEqualTo(Duration.ofMillis(1500));
-        assertThat(wait.toNanos()).isEqualTo(wait.toMillis() * 1_000_000L);
-        assertThat(
-                        DurationUtils.requireWholeMilliseconds(
-                                "retry-wait-interval",
-                                DurationUtils.parse("-1 ms"),
-                                "or zero or negative to retry without waiting"))
-                .isEqualTo(Duration.ofMillis(-1));
-    }
 }

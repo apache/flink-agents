@@ -24,10 +24,7 @@ from typing import TYPE_CHECKING, cast
 
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.decision_models import DecisionRequest, DecisionResult
-from flink_agents.api.duration import (
-    require_whole_milliseconds,
-    zero_if_negative,
-)
+from flink_agents.api.duration import accepted_retry_wait
 from flink_agents.api.events.decision_event import (
     DecisionRequestEvent,
     DecisionResponseEvent,
@@ -112,10 +109,8 @@ async def process_decision_request(
 
     decision_async = ctx.config.get(AgentExecutionOptions.DECISION_ASYNC)
     max_retries = max(0, ctx.config.get(AgentExecutionOptions.MAX_RETRIES))
-    retry_interval = require_whole_milliseconds(
-        AgentExecutionOptions.RETRY_WAIT_INTERVAL.get_key(),
-        zero_if_negative(ctx.config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)),
-        "or zero or negative to retry without waiting",
+    retry_interval = accepted_retry_wait(
+        ctx.config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)
     )
     retry_count = 0
     total_retry_wait_ms = 0

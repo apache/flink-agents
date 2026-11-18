@@ -32,12 +32,15 @@ Environment settings apply to Agents added to that environment. YAML settings ap
 to jobs that load the same file.
 
 Framework durations use `java.time.Duration` in Java and `datetime.timedelta` in
-Python. In YAML, write an integer and a unit, for example `30 s`, `5 min`, or
-`-1 ms`. A unit is required. Recognized units are `ns`, `us`, `ms`, `s`, `min`
+Python. Text follows Flink's duration syntax: an integer and a unit, such as
+`30 s`, `5 min`, or `-1 ms`; a unitless integer, which means milliseconds, such
+as `1000`; or an ISO-8601 duration, such as `PT30S`, `PT1H30M`, or `P1DT2H`. A
+leading `-` is allowed. Recognized units are `ns`, `us`/`µs`, `ms`, `s`, `min`
 (`m` means minutes), `h`, and `d`, including longer forms such as `seconds` and
-`milliseconds`. The value must be a whole number of microseconds: `1 us` is
-accepted and `1 ns` is rejected. The parser does not truncate to a coarser unit.
-Each option below states the precision its consumer applies.
+`milliseconds`. The value must be a whole number of microseconds: `1000 ns` is
+`1 us`, and `1 ns` is rejected. The parser does not truncate to a coarser unit.
+Retry wait and short-term memory TTL are converted to milliseconds when the job
+is submitted. Async batch timeout keeps the full microsecond duration.
 
 ### Setting via the AgentsExecutionEnvironment
 
@@ -227,7 +230,7 @@ for retry metrics.
 | `decision.async` | true | boolean | Enable durable async execution for built-in Decision Model calls. `false` selects synchronous execution. |
 | `max-retries` | 0 | int | Maximum retries after the initial attempt of a built-in Chat or Decision Model call, including routing judge calls. Non-positive values disable retries. |
 | `rag.async` | true | boolean | Enable durable async execution for vector-store queries made by the built-in context retrieval Action. `false` selects synchronous execution. |
-| `retry-wait-interval` | `1 s` | duration | Base wait between retries controlled by `max-retries`. The wait before retry N is this duration multiplied by `2^(N-1)`. Effective precision is 1 ms on Java and Python. A positive duration that is not a whole number of milliseconds is rejected. A zero or negative duration retries without waiting. `retryWaitMs` and `total_retry_wait_ms` add the whole milliseconds of each sleep, so a `100 ms` sleep contributes `100`. |
+| `retry-wait-interval` | `1 s` | duration | Base wait between retries controlled by `max-retries`. The duration is truncated to milliseconds, and the wait before retry N is that value multiplied by `2^(N-1)`. A positive value may truncate to zero, so `1500 us` waits `1 ms` and `500 us` does not wait. A zero or negative duration retries without waiting. A positive duration that overflows conversion to milliseconds is rejected when the job is submitted. `retryWaitMs` and `total_retry_wait_ms` add those truncated milliseconds, so a `100 ms` sleep contributes `100`. |
 | `tool-call.async` | true | boolean | Enable durable async execution for ordinary tools handled by the built-in Tool Call Action. With `false`, these calls run synchronously, one at a time. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}}) for batch behavior. |
 
 These async switches select how built-in calls execute. Synchronous calls still
@@ -284,7 +287,7 @@ for TTL behavior and setup examples.
 
 | Key | Default | Type | Description |
 | --- | --- | --- | --- |
-| `short-term-memory.state-ttl` | `0 ms` | duration | Short-term memory TTL. Effective precision is 1 ms. A positive whole number of milliseconds, at least 1 ms, enables expiration. A positive duration shorter than 1 ms is rejected. A longer positive duration that is not a whole number of milliseconds, such as `1500 us`, is rejected instead of being truncated. A zero or negative duration disables TTL. `1 ms`, `1000 us`, and `1 min` are valid. |
+| `short-term-memory.state-ttl` | `0 ms` | duration | Short-term memory TTL. Effective precision is 1 ms. A positive duration enables expiration when conversion to milliseconds is greater than zero: `1500 us` and `1000 us` enable a `1 ms` TTL, and `1 min` enables one minute. A positive duration that converts to `0` ms, such as `500 us`, is rejected when the job is submitted instead of disabling TTL. A zero or negative duration disables TTL. A positive duration that overflows conversion to milliseconds is rejected at submission. |
 | `short-term-memory.state-ttl.update-type` | `ON_READ_AND_WRITE` | ShortTermMemoryTtlUpdate | When TTL is enabled, refresh expiration on creation and writes (`ON_CREATE_AND_WRITE`), or also on reads (`ON_READ_AND_WRITE`). |
 | `short-term-memory.state-ttl.visibility` | `NEVER_RETURN_EXPIRED` | ShortTermMemoryTtlVisibility | When TTL is enabled, never return expired state (`NEVER_RETURN_EXPIRED`), or allow it until cleanup (`RETURN_EXPIRED_IF_NOT_CLEANED_UP`). |
 

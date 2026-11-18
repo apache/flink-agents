@@ -35,31 +35,20 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 
 /**
- * Short-term memory state TTL is applied when keyed state is registered. Flink measures that TTL in
- * whole milliseconds, so a positive duration below 1 ms, or a longer positive duration that is not
- * a whole number of milliseconds, must fail before {@link StateTtlConfig}.
+ * Short-term memory state TTL is applied when keyed state is registered. Flink stores that TTL in
+ * whole milliseconds, so a positive duration is truncated with {@link java.time.Duration#toMillis}
+ * before {@link StateTtlConfig} is built. A positive duration that converts to {@code 0} ms is
+ * rejected when the job is submitted, not here.
  */
 class OperatorStateManagerShortTermMemoryTtlTest {
 
     private static final String OPTION_KEY =
             AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.getKey();
-
-    @ParameterizedTest
-    @ValueSource(strings = {"500 us", "1 us", "999 us"})
-    void positiveSubMillisecondTtlIsRejected(String ttl) throws Exception {
-        AgentConfiguration configuration = configuration(ttl);
-        String formatted = DurationUtils.format(DurationUtils.parse(ttl));
-
-        assertThatThrownBy(() -> shortTermMemoryDescriptor(configuration))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(OPTION_KEY + " must be at least 1 ms, got " + formatted);
-    }
 
     @ParameterizedTest
     @ValueSource(strings = {"0 ms", "0 s", "-1 ms", "-1 us"})
@@ -80,27 +69,14 @@ class OperatorStateManagerShortTermMemoryTtlTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"1500 us", "1001 us"})
-    void positiveTtlWithASubMillisecondRemainderIsRejected(String ttl) throws Exception {
-        AgentConfiguration configuration = configuration(ttl);
-        String formatted = DurationUtils.format(DurationUtils.parse(ttl));
-
-        assertThatThrownBy(() -> shortTermMemoryDescriptor(configuration))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(
-                        OPTION_KEY
-                                + " must be a whole number of milliseconds, or zero or negative to"
-                                + " disable TTL, got "
-                                + formatted);
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {"1 ms", "1000 us", "1 min"})
-    void millisecondOrLongerTtlEnablesExpiration(String ttl) throws Exception {
+    @ValueSource(strings = {"1 ms", "1000 us", "1 min", "1500 us", "1001 us"})
+    void positiveTtlUsesTruncatedMilliseconds(String ttl) throws Exception {
         StateTtlConfig ttlConfig = shortTermMemoryDescriptor(configuration(ttl)).getTtlConfig();
+        java.time.Duration parsed = DurationUtils.parse(ttl);
 
         assertThat(ttlConfig.isEnabled()).isTrue();
-        assertThat(ttlConfig.getTimeToLive()).isEqualTo(DurationUtils.parse(ttl));
+        assertThat(ttlConfig.getTimeToLive())
+                .isEqualTo(java.time.Duration.ofMillis(parsed.toMillis()));
     }
 
     private static AgentConfiguration configuration(String ttl) {

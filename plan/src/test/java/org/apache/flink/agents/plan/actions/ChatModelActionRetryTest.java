@@ -613,6 +613,9 @@ class ChatModelActionRetryTest {
                 .isEqualTo(500L);
         assertThat(ChatModelInvoker.recordedRetryWaitMillis(Duration.ofMillis(100)))
                 .isEqualTo(100L);
+        assertThat(ChatModelInvoker.recordedRetryWaitMillis(Duration.ofNanos(1_500_000)))
+                .isEqualTo(1L);
+        assertThat(ChatModelInvoker.recordedRetryWaitMillis(Duration.ofNanos(500_000))).isZero();
         assertThat(ChatModelInvoker.recordedRetryWaitMillis(Duration.ZERO)).isZero();
         assertThat(ChatModelInvoker.recordedRetryWaitMillis(Duration.ofMillis(-1))).isZero();
         assertThat(

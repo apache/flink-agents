@@ -143,11 +143,11 @@ class OperatorStateManager {
 
     /**
      * Attaches Flink {@link StateTtlConfig} when {@link
-     * AgentExecutionOptions#SHORT_TERM_MEMORY_STATE_TTL} is a positive whole number of milliseconds
-     * and at least 1 ms. Unset, null, zero, and negative values disable TTL. A positive duration
-     * shorter than 1 ms is rejected, and so is a longer positive duration that is not a whole
-     * number of milliseconds. Flink state TTL is a number of milliseconds, so a sub-millisecond
-     * remainder would otherwise be truncated.
+     * AgentExecutionOptions#SHORT_TERM_MEMORY_STATE_TTL} is positive. The duration is truncated
+     * with {@link Duration#toMillis()}, which is the precision Flink state TTL stores. Unset, null,
+     * zero, and negative values disable TTL. A positive duration that converts to {@code 0} ms is
+     * rejected by {@link AgentConfiguration#validateExecutionOptions(AgentPlan)} before this
+     * operator is constructed.
      */
     private void maybeEnableShortTermMemoryTTL(
             MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> descriptor,
@@ -156,8 +156,7 @@ class OperatorStateManager {
         if (!DurationUtils.isPositive(ttl)) {
             return;
         }
-        AgentConfiguration.requireShortTermMemoryTtl(
-                AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.getKey(), ttl);
+        Duration truncated = Duration.ofMillis(ttl.toMillis());
 
         ShortTermMemoryTtlUpdate updateType =
                 agentConfiguration.get(
@@ -168,7 +167,7 @@ class OperatorStateManager {
                         AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY);
 
         StateTtlConfig ttlConfig =
-                StateTtlConfig.newBuilder(ttl)
+                StateTtlConfig.newBuilder(truncated)
                         .setUpdateType(toFlinkUpdateType(updateType))
                         .setStateVisibility(toFlinkStateVisibility(stateVisibility))
                         .cleanupFullSnapshot()
