@@ -937,6 +937,8 @@ public class MyAgent extends Agent {
 
 **Multimodal input.** The `ImageBlock`s of a user message are sent as the message's `images`, in block order, next to its text; Ollama's API does not interleave images with text. The images must be Base64 data, and the model must support vision. Images given by URL, other media, and media in system, assistant or tool messages raise `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the request is sent.
 
+**Nullable tool parameters (Java).** Ollama4j takes a single type name per tool parameter, so a parameter declared with `@ToolParam(nullable = true)`, whose schema type is `[<type>, "null"]`, is sent to the model with its non-null type only. The model is not told that it may pass `null`, although the framework still accepts `null` for that parameter when it validates the tool call arguments.
+
 #### Available Models
 
 Visit the [Ollama Models Library](https://ollama.com/library) for the complete and up-to-date list of available chat models.

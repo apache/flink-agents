@@ -144,19 +144,19 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
                         mapper.readValue(
                                 tool.getMetadata().getInputSchema(), new TypeReference<>() {});
 
-                final Map<String, Map<String, String>> properties =
-                        (Map<String, Map<String, String>>) schema.get("properties");
+                final Map<String, Map<String, Object>> properties =
+                        (Map<String, Map<String, Object>>) schema.get("properties");
                 // "required" is optional in JSON Schema; treat a missing list as empty (#1014).
                 final List<String> required =
                         (List<String>) schema.getOrDefault("required", Collections.emptyList());
 
                 Map<String, Tools.Property> propertiesMap = new HashMap<>();
 
-                for (Map.Entry<String, Map<String, String>> entry : properties.entrySet()) {
+                for (Map.Entry<String, Map<String, Object>> entry : properties.entrySet()) {
                     final String paramName = entry.getKey();
-                    final Map<String, String> paramSchema = entry.getValue();
-                    final String type = paramSchema.get("type");
-                    final String description = paramSchema.get("description");
+                    final Map<String, Object> paramSchema = entry.getValue();
+                    final String type = ollamaType(paramSchema.get("type"));
+                    final String description = (String) paramSchema.get("description");
 
                     propertiesMap.put(
                             paramName,
@@ -183,6 +183,22 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /**
+     * Ollama4j takes a single type name, so a type list such as {@code ["string", "null"]}, which a
+     * nullable tool parameter has, is sent as its first non-null type.
+     */
+    private static String ollamaType(Object type) {
+        if (!(type instanceof List)) {
+            return (String) type;
+        }
+        for (Object name : (List<?>) type) {
+            if (!"null".equals(name)) {
+                return (String) name;
+            }
+        }
+        return "null";
     }
 
     /**
