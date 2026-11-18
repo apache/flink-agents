@@ -24,6 +24,8 @@ from unittest.mock import MagicMock
 import pytest
 from dashscope import MultiModalEmbedding, TextEmbedding
 from dashscope.api_entities.dashscope_response import DashScopeAPIResponse
+from dashscope.api_entities.http_request import HttpRequest
+from dashscope.api_entities.websocket_request import WebSocketRequest
 from dashscope.client.base_api import BaseApi
 from dashscope.utils.oss_utils import OssUtils
 
@@ -439,3 +441,40 @@ def test_dashscope_multimodal_embedding_rejects_inline_video_before_request(
         setup.embed(video)
 
     call.assert_not_called()
+
+
+@pytest.mark.parametrize("api_type", ["text", "multimodal"])
+@pytest.mark.parametrize("protocol", ["http", "websocket"])
+@pytest.mark.parametrize(
+    ("connection_options", "call_options", "expected"),
+    [
+        ({}, {}, 30.0),
+        ({"request_timeout": 1.25}, {}, 1.25),
+        ({"request_timeout": 1.25}, {"request_timeout": 2.5}, 2.5),
+    ],
+)
+def test_request_timeout_reaches_sdk_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    api_type: str,
+    protocol: str,
+    connection_options: dict,
+    call_options: dict,
+    expected: float,
+) -> None:
+    """Use real SDK request construction, stopping before network I/O."""
+    captured = []
+
+    def capture(request: HttpRequest | WebSocketRequest) -> None:
+        captured.append(request.timeout)
+        message = "request captured"
+        raise RuntimeError(message)
+
+    transport = HttpRequest if protocol == "http" else WebSocketRequest
+    monkeypatch.setattr(transport, "call", capture)
+    connection = DashScopeEmbeddingModelConnection(
+        api_key="fake-key", **connection_options
+    )
+    options = {"api_type": api_type, "api_protocol": protocol, **call_options}
+    with pytest.raises(RuntimeError, match="request captured"):
+        connection.embed("Hello", **options)
+    assert captured == [expected]

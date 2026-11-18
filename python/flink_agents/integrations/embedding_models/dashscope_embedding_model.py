@@ -201,7 +201,7 @@ class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
         call_params: Dict[str, Any] = {
             "model": model,
             "api_key": req_api_key,
-            "timeout": self.request_timeout,
+            "request_timeout": self.request_timeout,
         }
 
         if dimension is not None:
