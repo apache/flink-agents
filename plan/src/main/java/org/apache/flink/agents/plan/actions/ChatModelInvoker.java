@@ -381,8 +381,7 @@ public final class ChatModelInvoker {
                     }
                     continue;
                 }
-                throw new ChatAttemptFailed(
-                        model, chatModel, e, actualRetryCount, totalWaitTimeMs);
+                throw new ChatAttemptFailed(model, chatModel, e, actualRetryCount, totalWaitTimeMs);
             }
         }
         throw new IllegalStateException("Unreachable chat retry state.");
