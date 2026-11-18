@@ -332,15 +332,14 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             it is available as ``ChatResult.finish_reason``.
         """
         # Snapshotted before the native branch below, so the feasibility check is
-        # asked with the parameters as they arrived. This path strips nothing today,
-        # and the snapshot is what keeps the query's view of them accurate if it ever
-        # does, rather than leaving that to whoever adds the first pop.
+        # asked with the parameters as they arrived, before strict is popped below.
         raw_kwargs = dict(kwargs)
 
+        # A framework parameter for the tool definitions, not a request field.
+        strict = kwargs.pop("strict", False)
         tool_specs = None
         if tools is not None:
             tool_specs = [to_openai_tool(metadata=tool.metadata) for tool in tools]
-            strict = kwargs.get("strict", False)
             for tool_spec in tool_specs:
                 if tool_spec["type"] == "function":
                     tool_spec["function"]["strict"] = strict
@@ -482,6 +481,10 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
         if self.logprobs is not None and self.logprobs is True:
             base_kwargs["logprobs"] = self.logprobs
             base_kwargs["top_logprobs"] = self.top_logprobs
+        if self.strict:
+            base_kwargs["strict"] = self.strict
+        if self.reasoning_effort is not None:
+            base_kwargs["reasoning_effort"] = self.reasoning_effort
 
         all_kwargs = {**base_kwargs, **self.additional_kwargs}
         return all_kwargs
