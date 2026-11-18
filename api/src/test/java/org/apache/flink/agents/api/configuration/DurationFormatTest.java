@@ -209,8 +209,7 @@ class DurationFormatTest {
         assertThat(DurationFormat.recordedRetryWaitMillis(DurationFormat.parse("100 ms")))
                 .isEqualTo(100L);
         assertThat(DurationFormat.recordedRetryWaitMillis(DurationFormat.parse("0 ms"))).isZero();
-        assertThat(DurationFormat.recordedRetryWaitMillis(DurationFormat.parse("-1 ms")))
-                .isZero();
+        assertThat(DurationFormat.recordedRetryWaitMillis(DurationFormat.parse("-1 ms"))).isZero();
 
         long total = 0L;
         for (int request = 0; request < 10_000; request++) {

@@ -196,8 +196,7 @@ public final class DurationFormat {
      * Thread#sleep(long)} waits and the value added to {@code retryWaitMs} and {@code
      * total_retry_wait_ms}. A non-positive duration contributes zero. A sub-millisecond remainder
      * is dropped, matching {@code Duration#toMillis()}; retry wait rejects that remainder before
-     * the sleep. A duration that does not fit in a {@code long} throws {@link
-     * ArithmeticException}.
+     * the sleep. A duration that does not fit in a {@code long} throws {@link ArithmeticException}.
      */
     public static long recordedRetryWaitMillis(Duration duration) {
         if (!isPositive(duration)) {
