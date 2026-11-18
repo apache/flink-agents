@@ -21,7 +21,6 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.model.routing.Escalation;
-import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
 import org.apache.flink.agents.api.chat.model.routing.QualityContext;
 import org.apache.flink.agents.api.chat.model.routing.QualitySignal;
 import org.apache.flink.agents.api.chat.model.routing.QualitySignals;
@@ -45,6 +44,7 @@ import org.apache.flink.agents.plan.actions.ChatModelActionRoutingTest.FakeChatM
 import org.apache.flink.agents.plan.actions.ChatModelActionRoutingTest.FakeDecisionModel;
 import org.apache.flink.agents.plan.actions.ChatModelActionRoutingTest.FakeRunnerContext;
 import org.apache.flink.agents.plan.routing.EscalationGate;
+import org.apache.flink.agents.plan.routing.ModelRouter;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
 import org.junit.jupiter.api.Test;
@@ -54,8 +54,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
+import static org.apache.flink.agents.api.chat.model.routing.ModelRouter.of;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
@@ -133,8 +135,7 @@ class ChatModelActionEscalationTest {
 
     private static ModelRouter tiered(Escalation escalation, boolean fallback) throws Exception {
         return new ModelRouter(
-                ModelRouter.of("small", "big").escalation(escalation).fallback(fallback).build(),
-                null);
+                of("small", "big").escalation(escalation).fallback(fallback).build(), null);
     }
 
     private static ModelRouter decisionTiers() throws Exception {
@@ -152,6 +153,16 @@ class ChatModelActionEscalationTest {
                 .filter(e -> ModelRoutingEvent.EVENT_TYPE.equals(e.getType()))
                 .map(ModelRoutingEvent::fromEvent)
                 .collect(Collectors.toList());
+    }
+
+    /** The most recent tool request; {@code ctx.toolRequestEvent()} returns the first one. */
+    private static ToolRequestEvent lastToolRequest(FakeRunnerContext ctx) {
+        List<ToolRequestEvent> requests =
+                ctx.sentEvents.stream()
+                        .filter(e -> ToolRequestEvent.EVENT_TYPE.equals(e.getType()))
+                        .map(ToolRequestEvent::fromEvent)
+                        .collect(Collectors.toList());
+        return requests.isEmpty() ? null : requests.get(requests.size() - 1);
     }
 
     @SuppressWarnings("unchecked")
@@ -373,12 +384,102 @@ class ChatModelActionEscalationTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void anEscalatedRequestCarriesItsHopThroughALaterToolRoundAndCleansUp() throws Exception {
+        // Round 1: small is rejected and big answers with a tool call. Round 2: the tool result
+        // goes back to big, which calls the tool again. Round 3: big answers. The hop taken in
+        // round 1 has to travel through two parked blocks and come out once on the final response,
+        // and the parked block has to be gone afterwards.
+        FakeChatModel small = new FakeChatModel(ChatFixtures.response("weak"));
+        ToolingChatModel big =
+                new ToolingChatModel(
+                        ChatFixtures.response("", LOOKUP_CALL),
+                        ChatFixtures.response("", LOOKUP_CALL),
+                        ChatFixtures.response("strong"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(
+                                tiered(
+                                        Escalation.tiers("small", "big")
+                                                .when(
+                                                        QualitySignals.custom(
+                                                                WeakAnswerSignal.class)),
+                                        false))
+                        .register("small", small)
+                        .register("big", big);
+        send(ctx, "find it twice");
+        ToolRequestEvent first = ctx.toolRequestEvent();
+        assertThat(first).isNotNull();
+        assertThat(first.getModel()).isEqualTo("big");
+        Map<UUID, Object> parked =
+                (Map<UUID, Object>)
+                        ctx.getSensoryMemory().get("_ROUTING_METADATA_CONTEXT").getValue();
+        assertThat(parked).hasSize(1);
+
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ToolResponseEvent(
+                        first.getId(),
+                        Map.of("call-1", ToolResponse.text("42")),
+                        Map.of("call-1", true),
+                        Map.of()),
+                ctx);
+        ToolRequestEvent second = lastToolRequest(ctx);
+        assertThat(second).isNotNull();
+        assertThat(second.getId()).isNotEqualTo(first.getId());
+        assertThat(second.getModel()).isEqualTo("big");
+        assertThat(ctx.hasChatResponse()).isFalse();
+        // The block is still parked, with the round-1 hop, while the loop runs.
+        parked =
+                (Map<UUID, Object>)
+                        ctx.getSensoryMemory().get("_ROUTING_METADATA_CONTEXT").getValue();
+        assertThat(parked).hasSize(1);
+        Map<String, Object> inFlight = (Map<String, Object>) parked.values().iterator().next();
+        assertThat((List<?>) inFlight.get("escalations")).hasSize(1);
+
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ToolResponseEvent(
+                        second.getId(),
+                        Map.of("call-1", ToolResponse.text("43")),
+                        Map.of("call-1", true),
+                        Map.of()),
+                ctx);
+
+        ChatResponseEvent response = ctx.chatResponse();
+        assertThat(response.isFailed()).isFalse();
+        assertThat(response.getResponse().getText()).isEqualTo("strong");
+        Map<String, Object> routing = routing(response);
+        assertThat(routing)
+                .containsEntry("selected_model", "small")
+                .containsEntry("final_model", "big")
+                .containsEntry("escalation_attempted", true)
+                .containsEntry(
+                        ModelRoutingEvent.DECISION_SOURCE_KEY, ModelRoutingEvent.SOURCE_ESCALATION);
+        List<Map<String, Object>> hops = (List<Map<String, Object>>) routing.get("escalations");
+        assertThat(hops).hasSize(1);
+        assertThat(hops.get(0)).containsEntry("from", "small").containsEntry("to", "big");
+        // Both tool rounds stayed on big with the plain tool-round id; no second verdict was asked
+        // of big, the last tier.
+        assertThat(ctx.durableCallIds)
+                .containsExactly(
+                        "route:router",
+                        "chat:router:small",
+                        "escalate:router:small:0",
+                        "chat:router:big",
+                        "chat",
+                        "chat");
+        // The final response consumed the parked block.
+        parked =
+                (Map<UUID, Object>)
+                        ctx.getSensoryMemory().get("_ROUTING_METADATA_CONTEXT").getValue();
+        assertThat(parked).isEmpty();
+    }
+
+    @Test
     void theHopLimitAndTheLastTierStopEscalating() throws Exception {
         // Three tiers, one hop allowed: medium's weak answer is final.
         FakeDecisionModel dm = new FakeDecisionModel(verdict(0.1), verdict(0.1));
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "medium", "big")
+                        of("small", "medium", "big")
                                 .escalation(
                                         Escalation.tiers("small", "medium", "big")
                                                 .when(QualitySignals.decision("dm", 0.7))
@@ -401,7 +502,7 @@ class ChatModelActionEscalationTest {
         FakeDecisionModel dm2 = new FakeDecisionModel(verdict(0.1), verdict(0.1), verdict(0.1));
         ModelRouter uncapped =
                 new ModelRouter(
-                        ModelRouter.of("small", "medium", "big")
+                        of("small", "medium", "big")
                                 .escalation(
                                         Escalation.tiers("small", "medium", "big")
                                                 .when(QualitySignals.decision("dm", 0.7)))
@@ -538,7 +639,7 @@ class ChatModelActionEscalationTest {
         FakeDecisionModel dm = new FakeDecisionModel(verdict(0.1));
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "medium", "big")
+                        of("small", "medium", "big")
                                 .escalation(
                                         Escalation.tiers("small", "medium", "big")
                                                 .when(QualitySignals.decision("dm", 0.7)))
@@ -620,7 +721,7 @@ class ChatModelActionEscalationTest {
     void aRouterWithoutTiersIsUnchanged() throws Exception {
         ModelRouter plain =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(
                                         org.apache.flink.agents.api.chat.model.routing.Strategies
                                                 .rules(Map.of("big", "\\bsql\\b")))

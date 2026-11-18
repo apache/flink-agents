@@ -18,39 +18,33 @@
 
 package org.apache.flink.agents.api.chat.model.routing;
 
-import org.apache.flink.agents.api.resource.Resource;
-import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceType;
-
-import javax.annotation.Nullable;
+import org.apache.flink.agents.api.resource.ResourceName;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 /**
- * A framework resource that <b>selects</b> a concrete chat model for a request. It does not call
- * the backend itself, nor does it execute routing logic: it carries the candidates plus a {@link
- * RoutingStrategy} <i>declaration</i>, and the engine's plan layer resolves an executor for the
- * declared type ({@code ChatModelAction} runs it, then runs the normal chat path against the chosen
- * model).
+ * Declares a model router: the candidate chat models, how a request's first model is picked and,
+ * optionally, the tiers it may escalate through. The declaration is data only — candidates plus the
+ * strategy as a language-neutral type tag and arguments — so it is plan-serializable across
+ * runtimes. {@link #of(String...)} starts the fluent builder and {@link Builder#build()} produces
+ * the {@link ResourceDescriptor} to register as a {@code MODEL_ROUTER} resource.
  *
- * <p>Built with the fluent {@link #of(String...)} builder, which produces a {@link
- * ResourceDescriptor} the framework instantiates reflectively. The router carries declaration data
- * only — candidates plus the strategy as a language-neutral type tag + arguments — so it is
- * plan-serializable across runtimes; compilation, caching and execution of strategies live in the
- * engine's plan layer (the {@code RoutingExecutor} implementations).
+ * <p>The descriptor names this class ({@link ResourceName.ModelRouter#MODEL_ROUTER}), the
+ * declaration name shared with the Python API, the YAML loader and the cross-language plan format.
+ * The resource the engine instantiates from it lives in the plan module ({@code
+ * org.apache.flink.agents.plan.routing.ModelRouter}): the plan maps the declaration name to that
+ * class and validates the descriptor when the agent plan is built, so the resource only decodes it.
  *
- * <p>Abstain ({@link RoutingDecision#abstain()}) → {@link #getDefaultModel()}. A returned name that
- * is not a candidate is treated as abstain, with the rejected name kept in the routing event's
- * metadata. Declaration errors (a non-candidate default or rule target) still fail at build time.
+ * <p>Abstain ({@link RoutingDecision#abstain()}) → the default model. A returned name that is not a
+ * candidate is treated as abstain, with the rejected name kept in the routing event's metadata.
+ * Declaration errors (a non-candidate default or rule target) fail at build time.
  */
-public class ModelRouter extends Resource {
+public final class ModelRouter {
 
     /** Descriptor key carrying the candidate model names. */
     public static final String CANDIDATES_KEY = "candidates";
@@ -70,118 +64,10 @@ public class ModelRouter extends Resource {
     /** Descriptor argument mapping candidate names to their {@code describe(...)} descriptions. */
     public static final String CANDIDATE_DESCRIPTIONS_KEY = "candidate_descriptions";
 
-    private final List<RoutingCandidate> candidates;
-    private final String defaultModel;
-    private final boolean fallbackEnabled;
-    private final RoutingStrategy strategy;
-    @Nullable private final Escalation escalation;
+    /** Descriptor argument switching fallback on; see {@link Builder#fallback(boolean)}. */
+    public static final String FALLBACK_KEY = "fallback";
 
-    public ModelRouter(ResourceDescriptor descriptor, ResourceContext resourceContext)
-            throws Exception {
-        super(descriptor, resourceContext);
-        List<String> names = descriptor.getArgument(CANDIDATES_KEY);
-        // Read as Object so a deserialized non-String default model is rejected by the validator
-        // with the candidate message instead of failing the cast here.
-        Object defaultModel = descriptor.getArgument(DEFAULT_MODEL_KEY);
-        RoutingCandidateValidator.validate("ModelRouter", names, defaultModel);
-        this.escalation =
-                Escalation.fromArguments("ModelRouter", descriptor.getInitialArguments())
-                        .orElse(null);
-        if (this.escalation != null) {
-            this.escalation.requireTiersAreCandidates("ModelRouter", names);
-        }
-        String typeTag = descriptor.getArgument(STRATEGY_TYPE_KEY);
-        if (typeTag == null || typeTag.isEmpty()) {
-            if (this.escalation == null) {
-                throw new IllegalArgumentException("ModelRouter requires a routing strategy.");
-            }
-            // Tiers without a strategy: every request starts on the first tier. An empty rule
-            // set abstains, and the default model (the first tier unless declared) answers.
-            this.strategy = Strategies.rules(Collections.emptyMap());
-        } else {
-            Map<String, Object> strategyArgs =
-                    descriptor.getArgument(STRATEGY_ARGS_KEY, Collections.emptyMap());
-            String executorClass = descriptor.getArgument(STRATEGY_EXECUTOR_CLASS_KEY);
-            // The declaration constructor owns the per-type argument rules, so a structurally
-            // invalid configuration fails here (resource construction) with the same message as
-            // at build().
-            this.strategy =
-                    new RoutingStrategy(
-                            RoutingStrategyType.fromTag(typeTag), strategyArgs, executorClass);
-        }
-        Object rawDescriptions = descriptor.getArgument(CANDIDATE_DESCRIPTIONS_KEY);
-        if (rawDescriptions != null && !(rawDescriptions instanceof Map)) {
-            // A hand-built or deserialized descriptor may carry any JSON type here; diagnose it
-            // instead of surfacing a raw ClassCastException per routed request.
-            throw new IllegalArgumentException(
-                    String.format(
-                            "ModelRouter declares '%s' as %s; expected a map of candidate name to"
-                                    + " description.",
-                            CANDIDATE_DESCRIPTIONS_KEY,
-                            rawDescriptions.getClass().getSimpleName()));
-        }
-        Map<?, ?> descriptions =
-                rawDescriptions == null ? Collections.emptyMap() : (Map<?, ?>) rawDescriptions;
-        RoutingCandidateValidator.requireStringDescriptions("ModelRouter", names, descriptions);
-        List<RoutingCandidate> parsed = new ArrayList<>();
-        for (String name : names) {
-            parsed.add(new RoutingCandidate(name, (String) descriptions.get(name)));
-        }
-        RoutingCandidateValidator.requireDescriptionsForDecisionStrategy(
-                "ModelRouter", this.strategy, names, descriptions);
-        this.candidates = Collections.unmodifiableList(parsed);
-        this.defaultModel =
-                defaultModel == null && this.escalation != null
-                        ? this.escalation.getTiers().get(0)
-                        : (String) defaultModel;
-        this.fallbackEnabled =
-                Boolean.TRUE.equals(descriptor.getArgument("fallback", Boolean.FALSE));
-    }
-
-    /** The configured strategy declaration (type + arguments). */
-    public RoutingStrategy getStrategy() {
-        return strategy;
-    }
-
-    public List<RoutingCandidate> getCandidates() {
-        return candidates;
-    }
-
-    public List<String> getCandidateNames() {
-        List<String> names = new ArrayList<>();
-        for (RoutingCandidate candidate : candidates) {
-            names.add(candidate.getName());
-        }
-        return names;
-    }
-
-    public Optional<String> getDefaultModel() {
-        return Optional.ofNullable(defaultModel);
-    }
-
-    public boolean isFallbackEnabled() {
-        return fallbackEnabled;
-    }
-
-    /** The quality-triggered escalation policy, when one is declared. */
-    public Optional<Escalation> getEscalation() {
-        return Optional.ofNullable(escalation);
-    }
-
-    /** Whether the given model name is one of this router's candidates. */
-    public boolean isCandidate(String model) {
-        for (RoutingCandidate candidate : candidates) {
-            if (candidate.getName().equals(model)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    @Override
-    public ResourceType getResourceType() {
-        return ResourceType.MODEL_ROUTER;
-    }
+    private ModelRouter() {}
 
     /**
      * Start building a router over the given candidate model names (order matters for fallback).
@@ -190,7 +76,7 @@ public class ModelRouter extends Resource {
         return new Builder(Arrays.asList(candidates));
     }
 
-    /** Fluent builder that produces a {@link ResourceDescriptor} for a {@link ModelRouter}. */
+    /** Fluent builder that produces the {@link ResourceDescriptor} of a model router. */
     public static final class Builder {
         private final List<String> candidates;
         private final Map<String, String> descriptions = new HashMap<>();
@@ -269,12 +155,13 @@ public class ModelRouter extends Resource {
             if (escalation != null) {
                 escalation.requireTiersAreCandidates("ModelRouter", candidates);
             }
-            // Same check as the constructor: a duplicate or blank candidate, or a default model
-            // that is not a candidate, fails at the registration call site.
+            // A duplicate or blank candidate, or a default model that is not a candidate, fails at
+            // the registration call site; the plan applies the same rule to descriptors that did
+            // not pass through here.
             RoutingCandidateValidator.validate("ModelRouter", candidates, defaultModel);
             if (strategy == null) {
                 // Tiers without a strategy: every request starts on the first tier (see the
-                // constructor); the descriptor carries no strategy_type.
+                // plan-side resource); the descriptor carries no strategy_type.
                 Map<String, Object> args = new HashMap<>();
                 args.put(CANDIDATES_KEY, new ArrayList<>(candidates));
                 if (!descriptions.isEmpty()) {
@@ -283,15 +170,15 @@ public class ModelRouter extends Resource {
                 args.put(
                         DEFAULT_MODEL_KEY,
                         defaultModel != null ? defaultModel : escalation.getTiers().get(0));
-                args.put("fallback", fallback);
+                args.put(FALLBACK_KEY, fallback);
                 escalation.toArguments(args);
-                return new ResourceDescriptor(ModelRouter.class.getName(), args);
+                return new ResourceDescriptor(ResourceName.ModelRouter.MODEL_ROUTER, args);
             }
-            // Rule shape/pattern validation ran in the RoutingStrategy constructor (the single
-            // declaration-validation path). build() additionally checks rule keys against the
-            // candidate set so a typo fails at the registration call site; descriptors that skip
-            // the builder get the same check at plan construction (AgentPlan#validateRuleKeys,
-            // with a router-scoped message).
+            // Rule shape/pattern validation ran in the RoutingStrategy constructor (the fluent
+            // declaration path). build() additionally checks rule keys against the candidate set
+            // so a typo fails at the registration call site; descriptors that skip the builder get
+            // the same check at plan construction (AgentPlan#validateRuleKeys, with a
+            // router-scoped message).
             if (strategy.getType() == RoutingStrategyType.RULE_BASED) {
                 Object rules = strategy.getArguments().get(RoutingStrategy.ARG_RULES);
                 if (rules instanceof Map) {
@@ -316,7 +203,7 @@ public class ModelRouter extends Resource {
             if (defaultModel != null) {
                 args.put(DEFAULT_MODEL_KEY, defaultModel);
             }
-            args.put("fallback", fallback);
+            args.put(FALLBACK_KEY, fallback);
             args.put(STRATEGY_TYPE_KEY, strategy.getType().tag());
             args.put(STRATEGY_ARGS_KEY, strategy.getArguments());
             if (strategy.getExecutorClass() != null) {
@@ -325,7 +212,7 @@ public class ModelRouter extends Resource {
             if (escalation != null) {
                 escalation.toArguments(args);
             }
-            return new ResourceDescriptor(ModelRouter.class.getName(), args);
+            return new ResourceDescriptor(ResourceName.ModelRouter.MODEL_ROUTER, args);
         }
     }
 }

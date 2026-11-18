@@ -629,6 +629,7 @@ that candidate's error.
 | A custom signal throws | Fail the request. |
 | The escalation target fails and fallback is enabled | In the initial round, try the remaining candidates that have not answered this request, in declaration order. Once the tool-call loop has started, a failed escalation target fails the request, as any tool-round failure does. |
 | The escalation target fails and no candidate is left | Fail the request with that candidate's error. |
+| Fallback reached a lower tier after a higher tier failed, and a signal rejects the lower tier's answer | The request goes to the next declared tier, which may be the one that already failed this request. A tier that failed is called again, with its retries; if it fails again and no candidate is left, the request fails with its error. |
 
 ## Observability
 

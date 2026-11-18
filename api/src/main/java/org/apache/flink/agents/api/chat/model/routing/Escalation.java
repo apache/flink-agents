@@ -77,7 +77,14 @@ public final class Escalation implements Serializable {
         this.tiers = Collections.unmodifiableList(new ArrayList<>(tiers));
         this.signals = Collections.unmodifiableList(new ArrayList<>(signals));
         this.maxEscalations = maxEscalations;
-        validate(this.tiers, this.maxEscalations);
+    }
+
+    /** The fluent path: the declaration is checked as it is written. */
+    private static Escalation declared(
+            List<String> tiers, List<Signal> signals, int maxEscalations) {
+        Escalation escalation = new Escalation(tiers, signals, maxEscalations);
+        requireDeclaration(escalation.tiers, escalation.maxEscalations);
+        return escalation;
     }
 
     /**
@@ -85,20 +92,19 @@ public final class Escalation implements Serializable {
      * the tier count minus one bounds the hops unless {@link #maxEscalations(int)} caps it lower.
      */
     public static Escalation tiers(String... tiers) {
-        return new Escalation(
-                tiers == null ? List.of() : List.of(tiers), List.of(), Integer.MAX_VALUE);
+        return declared(tiers == null ? List.of() : List.of(tiers), List.of(), Integer.MAX_VALUE);
     }
 
     /** Add a signal, evaluated after the structural checks and the signals added before it. */
     public Escalation when(Signal signal) {
         List<Signal> next = new ArrayList<>(this.signals);
         next.add(Objects.requireNonNull(signal, "signal"));
-        return new Escalation(this.tiers, next, this.maxEscalations);
+        return declared(this.tiers, next, this.maxEscalations);
     }
 
     /** Cap the number of hops for one request below the tier count minus one. */
     public Escalation maxEscalations(int maxEscalations) {
-        return new Escalation(this.tiers, this.signals, maxEscalations);
+        return declared(this.tiers, this.signals, maxEscalations);
     }
 
     public List<String> getTiers() {
@@ -144,11 +150,13 @@ public final class Escalation implements Serializable {
     }
 
     /**
-     * Reads a policy from a router's descriptor arguments; empty when none is declared. A
-     * hand-built or deserialized descriptor may carry any JSON type, so every field is checked and
-     * diagnosed with the router named in {@code subject}.
+     * Reads a policy from a router's descriptor arguments; empty when none is declared. This is the
+     * decoding step only: a hand-built or deserialized descriptor may carry any JSON type, so each
+     * field's shape is checked and diagnosed with the router named in {@code subject}, while the
+     * declaration rules (tier count, distinct names, signal arguments) are applied by {@link
+     * #validate(String)}, which the plan calls once when the agent plan is built.
      *
-     * @throws IllegalArgumentException when the declaration is malformed
+     * @throws IllegalArgumentException when a field cannot be decoded
      */
     public static Optional<Escalation> fromArguments(
             String subject, Map<String, Object> arguments) {
@@ -214,10 +222,31 @@ public final class Escalation implements Serializable {
             }
             maxEscalations = (int) Math.min(Integer.MAX_VALUE, ((Number) rawMax).longValue());
         }
+        return Optional.of(new Escalation(tiers, signals, maxEscalations));
+    }
+
+    /**
+     * The declaration rules a decoded policy must meet: at least two distinct, non-blank tiers, a
+     * cap of at least one hop, and well-formed signals. The fluent path applies them as the policy
+     * is written; the plan applies them to descriptors when the agent plan is built, with the
+     * router named in {@code subject}.
+     *
+     * @throws IllegalArgumentException when a rule is broken
+     */
+    public void validate(String subject) {
         try {
-            return Optional.of(new Escalation(tiers, signals, maxEscalations));
+            requireDeclaration(tiers, maxEscalations);
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException(subject + ": " + e.getMessage(), e);
+            // Same sentence shape as the signal and decoding diagnostics: the router, then the
+            // rule it breaks.
+            String rule = e.getMessage();
+            if (rule.startsWith("Escalation ")) {
+                rule = "e" + rule.substring(1);
+            }
+            throw new IllegalArgumentException(subject + " " + rule, e);
+        }
+        for (Signal signal : signals) {
+            signal.validate(subject);
         }
     }
 
@@ -233,7 +262,7 @@ public final class Escalation implements Serializable {
         }
     }
 
-    private static void validate(List<String> tiers, int maxEscalations) {
+    private static void requireDeclaration(List<String> tiers, int maxEscalations) {
         if (tiers.size() < 2) {
             throw new IllegalArgumentException(
                     "Escalation needs at least two tiers, cheapest first (got " + tiers + ").");
@@ -366,11 +395,10 @@ public final class Escalation implements Serializable {
                     arguments.put((String) entry.getKey(), entry.getValue());
                 }
             }
-            Signal signal = new Signal((String) type, arguments);
-            signal.validate(subject);
-            return signal;
+            return new Signal((String) type, arguments);
         }
 
+        /** The signal's argument rules; see {@link Escalation#validate(String)}. */
         void validate(String subject) {
             switch (type) {
                 case TYPE_DECISION_MODEL:

@@ -29,7 +29,6 @@ import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.chat.model.routing.CustomRoutingExecutor;
-import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
 import org.apache.flink.agents.api.chat.model.routing.RoutingContext;
 import org.apache.flink.agents.api.chat.model.routing.RoutingDecision;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
@@ -59,6 +58,7 @@ import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.ChatFixtures;
+import org.apache.flink.agents.plan.routing.ModelRouter;
 import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
@@ -76,6 +76,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 
+import static org.apache.flink.agents.api.chat.model.routing.ModelRouter.of;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -474,7 +475,7 @@ public class ChatModelActionRoutingTest {
     void routingPersistenceFailurePropagatesWithoutTerminalResponse() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.custom(ExplodingStrategy.class))
                                 .defaultModel("small")
                                 .build(),
@@ -543,7 +544,7 @@ public class ChatModelActionRoutingTest {
 
     private static ModelRouter router() throws Exception {
         return new ModelRouter(
-                ModelRouter.of("small", "big")
+                of("small", "big")
                         .strategy(Strategies.rules(Map.of("big", "\\b(code|sql)\\b")))
                         .defaultModel("small")
                         .build(),
@@ -630,7 +631,7 @@ public class ChatModelActionRoutingTest {
     void customNonCandidateSelectionAbstainsToDefault() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.custom(SelectsUnknownStrategy.class))
                                 .defaultModel("small")
                                 .build(),
@@ -660,7 +661,7 @@ public class ChatModelActionRoutingTest {
     void customNonCandidateSelectionWithoutDefaultUsesFirstCandidate() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.custom(SelectsUnknownStrategy.class))
                                 .build(),
                         null);
@@ -681,7 +682,7 @@ public class ChatModelActionRoutingTest {
         // No default model configured; on abstain the router falls back to the first candidate.
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
                                 .build(),
                         null);
@@ -700,7 +701,7 @@ public class ChatModelActionRoutingTest {
     void llmJudgeVerdictRoutesToNamedCandidate() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .describe("big", "code and sql")
                                 .strategy(Strategies.llm("judge"))
                                 .defaultModel("small")
@@ -738,7 +739,7 @@ public class ChatModelActionRoutingTest {
     void llmJudgeUnparseableVerdictAbstainsToDefault() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.llm("judge"))
                                 .defaultModel("small")
                                 .build(),
@@ -766,7 +767,7 @@ public class ChatModelActionRoutingTest {
         // A hijacked or hallucinating judge cannot steer routing outside the declared candidates.
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.llm("judge"))
                                 .defaultModel("small")
                                 .build(),
@@ -808,7 +809,7 @@ public class ChatModelActionRoutingTest {
         when(judgeMetricGroup.getCounter("retryWaitMs")).thenReturn(retryWaitMs);
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.llm("judge"))
                                 .defaultModel("small")
                                 .build(),
@@ -843,7 +844,7 @@ public class ChatModelActionRoutingTest {
         try {
             router =
                     new ModelRouter(
-                            ModelRouter.of("small", "big")
+                            of("small", "big")
                                     .strategy(Strategies.llm("judge"))
                                     .defaultModel("small")
                                     .build(),
@@ -866,7 +867,7 @@ public class ChatModelActionRoutingTest {
     void llmJudgeExhaustedRetriesFailsRequest() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.llm("judge"))
                                 .defaultModel("small")
                                 .build(),
@@ -910,7 +911,7 @@ public class ChatModelActionRoutingTest {
     void routedRequestUsesRoutedDurableCallIds() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
                                 .defaultModel("small")
                                 .build(),
@@ -942,7 +943,7 @@ public class ChatModelActionRoutingTest {
     void routedNativeSchemaRequestExtendsTheCandidateDurableCallId() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
                                 .defaultModel("small")
                                 .build(),
@@ -978,7 +979,7 @@ public class ChatModelActionRoutingTest {
     void gateFailureFallsBackToTheNextCandidate() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
                                 .defaultModel("small")
                                 .fallback(true)
@@ -1017,7 +1018,7 @@ public class ChatModelActionRoutingTest {
 
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
                                 .defaultModel("small")
                                 .fallback(true)
@@ -1063,7 +1064,7 @@ public class ChatModelActionRoutingTest {
     void fallsBackToRemainingCandidateWhenSelectedModelFails() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
                                 .defaultModel("small")
                                 .fallback(true)
@@ -1115,7 +1116,7 @@ public class ChatModelActionRoutingTest {
     void fallbackExhaustedReturnsFailure() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
                                 .defaultModel("small")
                                 .fallback(true)
@@ -1142,7 +1143,7 @@ public class ChatModelActionRoutingTest {
         Map<String, Object> context = Map.of("task", "summary", "item_id", "42");
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
                                 .defaultModel("small")
                                 .fallback(true)
@@ -1181,7 +1182,7 @@ public class ChatModelActionRoutingTest {
         Map<String, Object> context = Map.of("task", "summary", "item_id", "42");
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
                                 .defaultModel("small")
                                 .fallback(true)
@@ -1231,7 +1232,7 @@ public class ChatModelActionRoutingTest {
         // failure must stay inside the fallback loop so "small" still answers.
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
                                 .defaultModel("small")
                                 .fallback(true)
@@ -1294,7 +1295,7 @@ public class ChatModelActionRoutingTest {
     void failingCustomExecutorConstructorIsNotPersistedAsTheDecision() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.custom(ThrowingCtorExecutor.class))
                                 .defaultModel("small")
                                 .build(),
@@ -1313,7 +1314,7 @@ public class ChatModelActionRoutingTest {
     void strategyFailureIsIgnoredPolicy() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.custom(ExplodingStrategy.class))
                                 .defaultModel("small")
                                 .build(),
@@ -1334,7 +1335,7 @@ public class ChatModelActionRoutingTest {
     void strategyFailurePropagatesUnderDefaultPolicy() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.custom(ExplodingStrategy.class))
                                 .defaultModel("small")
                                 .build(),
@@ -1352,7 +1353,7 @@ public class ChatModelActionRoutingTest {
     void routesOnceThenReusesSelectedModelAcrossToolRound() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
                                 .defaultModel("small")
                                 .build(),
@@ -1421,7 +1422,7 @@ public class ChatModelActionRoutingTest {
     void routedLoopCleansParkedMetadataWhenToolRoundFails() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
                                 .defaultModel("small")
                                 .build(),
@@ -1616,10 +1617,7 @@ public class ChatModelActionRoutingTest {
 
     private static ModelRouter judgeRouter() throws Exception {
         return new ModelRouter(
-                ModelRouter.of("small", "big")
-                        .strategy(Strategies.llm("judge"))
-                        .defaultModel("small")
-                        .build(),
+                of("small", "big").strategy(Strategies.llm("judge")).defaultModel("small").build(),
                 null);
     }
 
@@ -1657,7 +1655,7 @@ public class ChatModelActionRoutingTest {
     void storedAbstainReplaysToCurrentDefaultWithoutRerunningStrategy() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.custom(ExplodingStrategy.class))
                                 .defaultModel("small")
                                 .build(),
@@ -1685,7 +1683,7 @@ public class ChatModelActionRoutingTest {
     void storedDecisionReplaysWithOriginalDecisionMs() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.custom(ExplodingStrategy.class))
                                 .defaultModel("small")
                                 .build(),
@@ -1713,7 +1711,7 @@ public class ChatModelActionRoutingTest {
     void storedDecisionForRemovedCandidateAbstainsToCurrentDefault() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "medium")
+                        of("small", "medium")
                                 .strategy(Strategies.custom(ExplodingStrategy.class))
                                 .defaultModel("medium")
                                 .build(),
@@ -1747,7 +1745,7 @@ public class ChatModelActionRoutingTest {
 
         ModelRouter changedDefault =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.custom(ExplodingStrategy.class))
                                 .defaultModel("big")
                                 .build(),
@@ -1765,7 +1763,7 @@ public class ChatModelActionRoutingTest {
 
         ModelRouter noDefault =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.custom(ExplodingStrategy.class))
                                 .build(),
                         null);
@@ -1788,7 +1786,7 @@ public class ChatModelActionRoutingTest {
     void storedJudgeVerdictForRemovedCandidateAbstainsToCurrentDefault() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "medium")
+                        of("small", "medium")
                                 .strategy(Strategies.llm("judge"))
                                 .defaultModel("medium")
                                 .build(),
@@ -1963,7 +1961,7 @@ public class ChatModelActionRoutingTest {
     void maxContextCharsCapsJudgeInputAndFlagsTruncation() throws Exception {
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .strategy(Strategies.llm("judge").withMaxContextChars(80))
                                 .defaultModel("small")
                                 .build(),
@@ -2019,7 +2017,7 @@ public class ChatModelActionRoutingTest {
 
     private static ModelRouter decisionRouter(RoutingStrategy strategy) throws Exception {
         return new ModelRouter(
-                ModelRouter.of("small", "big")
+                of("small", "big")
                         .describe("small", "cheap chit-chat")
                         .describe("big", "code and sql")
                         .strategy(strategy)
@@ -2170,7 +2168,7 @@ public class ChatModelActionRoutingTest {
         FakeRunnerContext ctx =
                 new FakeRunnerContext(
                                 new ModelRouter(
-                                        ModelRouter.of("small", "big")
+                                        of("small", "big")
                                                 .describe("small", "cheap chit-chat")
                                                 .describe("big", "code and sql")
                                                 .strategy(Strategies.decision("dm"))
@@ -2278,7 +2276,7 @@ public class ChatModelActionRoutingTest {
         FakeRunnerContext ctx =
                 new FakeRunnerContext(
                                 new ModelRouter(
-                                        ModelRouter.of("small", "big")
+                                        of("small", "big")
                                                 .strategy(Strategies.llm("judge"))
                                                 .defaultModel("small")
                                                 .build(),

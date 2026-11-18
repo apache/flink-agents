@@ -262,6 +262,10 @@ public final class ResourceName {
     // ==================== ModelRouter ====================
     public static final class ModelRouter {
 
+        /**
+         * The Java model router declaration ({@code ModelRouter.of(...).build()}). The descriptor
+         * carries this name; the plan module maps it to the resource it instantiates.
+         */
         public static final String MODEL_ROUTER =
                 "org.apache.flink.agents.api.chat.model.routing.ModelRouter";
 

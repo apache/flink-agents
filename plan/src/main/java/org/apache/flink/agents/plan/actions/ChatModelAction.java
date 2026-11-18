@@ -23,11 +23,8 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
-import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
-import org.apache.flink.agents.api.chat.model.routing.Escalation;
-import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
@@ -36,15 +33,14 @@ import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.plan.JavaFunction;
-import org.apache.flink.agents.plan.routing.EscalationGate;
 import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
 import org.apache.flink.agents.plan.routing.ResolvedModelRoute;
+import org.apache.flink.agents.plan.routing.RoutedChatRound;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.types.Row;
 import org.slf4j.Logger;
@@ -52,18 +48,12 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Deque;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 
 import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
@@ -73,8 +63,9 @@ import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
  *
  * <h2>Model routing overview</h2>
  *
- * <p>When a {@link ChatRequestEvent} names a {@code MODEL_ROUTER} instead of a chat model, this
- * action layers five jobs on top of the normal chat path; each is localized to one place:
+ * <p>When a {@link ChatRequestEvent} names a {@code MODEL_ROUTER} instead of a chat model, the
+ * routing layer in {@code org.apache.flink.agents.plan.routing} does five jobs around the normal
+ * chat path; this action only resolves the route, runs one round and processes the accepted answer:
  *
  * <ol>
  *   <li><b>Decide</b> — {@link ModelRoutingResolver} runs the router's strategy and normalizes the
@@ -88,15 +79,18 @@ import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
  *       decision and the chat call re-execute together on recovery, which is self-consistent but
  *       re-derives the decision.
  *   <li><b>Once per reasoning loop</b> — the selected concrete model is saved in the tool-request
- *       context and reused by tool rounds with no re-routing; the routing metadata block is parked
- *       once in an initial-request-keyed context and attached only to the loop's final response.
- *   <li><b>Fallback over retries</b> — {@link ResolvedModelRoute#attemptOrder} tries the selected
- *       model first (with its full retry budget, durable id {@code "chat:<router>:<candidate>"}),
- *       then remaining candidates in declaration order if fallback is enabled.
- *   <li><b>Observably</b> — a {@link ModelRoutingEvent} records the decision (and a second one any
- *       fallback outcome); {@link ResolvedModelRoute#buildResponseMetadata} supplies the {@code
- *       model_routing} extra args stamped on the final response; decision latency feeds {@code
- *       decision_ms} and the {@code routingDecisionLatencyMs} histogram.
+ *       context and reused by tool rounds with no re-routing; {@link RoutedChatRound} parks the
+ *       routing metadata block once, keyed by the initial request, and hands it back for the loop's
+ *       final response.
+ *   <li><b>Fallback and escalation over retries</b> — {@link RoutedChatRound#run} tries the
+ *       selected model first (with its full retry budget, durable id {@code
+ *       "chat:<router>:<candidate>"}), then remaining candidates in declaration order if fallback
+ *       is enabled; an answer a quality signal rejects is discarded and the request moves to the
+ *       next tier.
+ *   <li><b>Observably</b> — a {@link ModelRoutingEvent} records the decision (and further ones for
+ *       fallback and escalation outcomes); {@link ResolvedModelRoute#buildResponseMetadata}
+ *       supplies the {@code model_routing} extra args stamped on the final response; decision
+ *       latency feeds {@code decision_ms} and the {@code routingDecisionLatencyMs} histogram.
  * </ol>
  *
  * <p>A request naming a plain chat model takes the pre-routing path unchanged, including the legacy
@@ -112,7 +106,6 @@ public class ChatModelAction {
     /** Sensory-memory key for the chat request's user context. Matches the event attribute. */
     private static final String USER_CONTEXT = "user_context";
 
-    private static final String ROUTING_METADATA_CONTEXT = "_ROUTING_METADATA_CONTEXT";
     private static final String OUTPUT_SCHEMA = "outputSchema";
     private static final String PROMPT_ARGS = "prompt_args";
     private static final String RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT";
@@ -367,273 +360,58 @@ public class ChatModelAction {
 
     private static void chat(
             UUID initialRequestId,
-            ResolvedModelRoute selection,
+            ResolvedModelRoute route,
             List<ChatMessage> messages,
             Map<String, Object> promptArgs,
             @Nullable Object outputSchema,
             @Nullable Map<String, Object> userContext,
             RunnerContext ctx)
             throws Exception {
-        int numRetries = ChatModelInvoker.configuredRetries(ctx);
-        long retryWaitMillis = ChatModelInvoker.configuredRetryWaitMillis(ctx);
-
-        List<String> triedModels = new ArrayList<>();
-        // Candidates whose answer a quality signal rejected this round: fallback skips them, since
-        // they already answered the request.
-        Set<String> rejected = new HashSet<>();
-        List<Map<String, Object>> hops = new ArrayList<>();
-        long escalatedTokens = 0L;
-        int escalations = selection.getEscalationsSoFar();
-        Deque<String> pending = new ArrayDeque<>(selection.attemptOrder());
-        // viaFallback: the candidate about to answer was reached because the previous one failed
-        // (drives the fallback event); fallbackAttempted: any failure fell through this round.
-        boolean viaFallback = false;
-        boolean fallbackAttempted = false;
-        String lastFailedModel = null;
-        Exception lastError = null;
-        while (!pending.isEmpty()) {
-            String candidate = pending.pollFirst();
-            if (rejected.contains(candidate)) {
-                continue;
-            }
-            triedModels.add(candidate);
-            try {
-                ChatModelInvoker.ChatAttemptResult result =
-                        ChatModelInvoker.chatWithRetries(
-                                initialRequestId,
-                                candidate,
-                                selection.durableChatCallId(candidate),
-                                messages,
-                                promptArgs,
-                                outputSchema,
-                                ctx,
-                                numRetries,
-                                retryWaitMillis);
-                recordAttemptRetryStats(
-                        ctx,
-                        initialRequestId,
-                        result.model,
-                        result.retryCount,
-                        result.totalRetryWaitMs);
-
-                // Quality gate: on a tier below the last one, an answer that fails a structural
-                // check or a declared signal is discarded before any of its tool calls runs, and
-                // the conversation so far goes to the next tier, where the request then stays.
-                Optional<Escalation> policy = selection.getEscalation();
-                if (policy.isPresent()) {
-                    Optional<EscalationGate.Outcome> escalate;
-                    try {
-                        escalate =
-                                EscalationGate.check(
-                                        policy.get(),
-                                        initialRequestId,
-                                        selection.getRequestedModel(),
-                                        candidate,
-                                        escalations,
-                                        messages,
-                                        promptArgs,
-                                        result,
-                                        ctx);
-                    } catch (ModelRoutingResolver.RoutingFailure e) {
-                        // A signal that cannot judge the round (verifier out of retries, custom
-                        // signal threw) fails the logical request, like a failed routing decision.
-                        takeRoutingMetadata(ctx.getSensoryMemory(), initialRequestId);
-                        sendFailure(initialRequestId, e, userContext, ctx);
-                        return;
-                    }
-                    if (escalate.isPresent()) {
-                        EscalationGate.Outcome outcome = escalate.get();
-                        rejected.add(candidate);
-                        escalations++;
-                        long discarded = discardedTokens(result.response);
-                        escalatedTokens += discarded;
-                        hops.add(hop(outcome, discarded));
-                        recordEscalationMetrics(ctx, discarded);
-                        Map<String, Object> eventMetadata = new LinkedHashMap<>();
-                        eventMetadata.put("signal", outcome.signal);
-                        eventMetadata.put("escalated_from", outcome.fromTier);
-                        eventMetadata.put("discarded_tokens", discarded);
-                        ctx.sendEvent(
-                                new ModelRoutingEvent(
-                                        initialRequestId,
-                                        selection.getRequestedModel(),
-                                        selection.getCandidates(),
-                                        outcome.toTier,
-                                        ModelRoutingEvent.SOURCE_ESCALATION,
-                                        selection.isFallbackEnabled(),
-                                        outcome.reason,
-                                        outcome.score,
-                                        eventMetadata,
-                                        null));
-                        LOG.info(
-                                "Chat request {} escalated from '{}' to '{}' on router '{}' ({}: {})",
-                                initialRequestId,
-                                outcome.fromTier,
-                                outcome.toTier,
-                                selection.getRequestedModel(),
-                                outcome.signal,
-                                outcome.reason);
-                        pending.remove(outcome.toTier);
-                        pending.addFirst(outcome.toTier);
-                        viaFallback = false;
-                        continue;
-                    }
-                }
-
-                if (selection.isRouter() && viaFallback) {
-                    // The strategy's pick failed and another candidate answered; emit a
-                    // routing Event to report the fallback outcome.
-                    ctx.sendEvent(
-                            new ModelRoutingEvent(
-                                    initialRequestId,
-                                    selection.getRequestedModel(),
-                                    selection.getCandidates(),
-                                    result.model,
-                                    ModelRoutingEvent.SOURCE_FALLBACK,
-                                    selection.isFallbackEnabled(),
-                                    String.format(
-                                            "fallback after model '%s' failed", lastFailedModel),
-                                    null,
-                                    selection.getMetadata(),
-                                    null));
-                }
-
-                // Routing metadata is observability-only and needed exactly once, on the final
-                // response. If this response starts (or continues) a tool loop, park the block
-                // in an initial-request-keyed context instead of stamping intermediate messages
-                // and copying it through every tool round. A tool round of a tiered request folds
-                // its hops into the parked block.
-                Map<String, Object> routingMetadata = null;
-                if (selection.isRouter()) {
-                    routingMetadata =
-                            selection.buildResponseMetadata(
-                                    result.model,
-                                    triedModels,
-                                    fallbackAttempted,
-                                    hops,
-                                    escalatedTokens);
-                } else if (policy.isPresent()) {
-                    Map<String, Object> parked =
-                            takeRoutingMetadata(ctx.getSensoryMemory(), initialRequestId);
-                    if (parked != null) {
-                        routingMetadata =
-                                ResolvedModelRoute.mergeEscalations(
-                                        parked, result.model, hops, escalatedTokens);
-                    }
-                }
-                if (!Objects.requireNonNull(result.response).getToolCalls().isEmpty()) {
-                    if (routingMetadata != null) {
-                        saveRoutingMetadata(
-                                ctx.getSensoryMemory(), initialRequestId, routingMetadata);
-                    }
-                    handleToolCalls(
-                            result.response,
-                            initialRequestId,
-                            result.model,
-                            result.chatModel,
-                            messages,
-                            promptArgs,
-                            outputSchema,
-                            userContext,
-                            ctx);
-                } else {
-                    if (routingMetadata == null) {
-                        routingMetadata =
-                                takeRoutingMetadata(ctx.getSensoryMemory(), initialRequestId);
-                    }
-                    Map<String, Long> retryStats =
-                            getRetryStats(ctx.getSensoryMemory(), initialRequestId);
-                    int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
-                    long totalRetryWaitMs = retryStats.get(TOTAL_RETRY_WAIT_MS);
-                    clearRequestContext(ctx.getSensoryMemory(), initialRequestId);
-                    ChatResponseEvent completed =
-                            ChatResponseEvent.success(
-                                            initialRequestId,
-                                            result.response,
-                                            totalRetryCount,
-                                            totalRetryWaitMs)
-                                    .withUserContext(userContext);
-                    completed.setStructuredOutput(result.structuredOutput);
-                    if (routingMetadata != null) completed.setRoutingMetadata(routingMetadata);
-                    ctx.sendEvent(completed);
-                }
-                return;
-            } catch (ChatModelInvoker.ChatAttemptFailed e) {
-                recordAttemptRetryStats(
-                        ctx, initialRequestId, e.model, e.retryCount, e.totalRetryWaitMs);
-                // Keep every candidate's failure: chain the previous error into the new one so
-                // exhaustion surfaces A's and B's errors as suppressed of C's, not just C's.
-                if (lastError != null && lastError != e.error) {
-                    e.error.addSuppressed(lastError);
-                }
-                lastError = e.error;
-                lastFailedModel = e.model;
-                viaFallback = true;
-                fallbackAttempted = true;
-                LOG.debug(
-                        "Chat request {} failed for model {} with error: {}. The input chat"
-                                + " messages are {}.",
-                        initialRequestId,
-                        e.model,
-                        e.error.toString(),
-                        messages);
-            }
+        // The routing layer owns the attempts: the strategy's pick, fallback after a failure,
+        // escalation after a rejected answer, and the routing events and metrics. This action
+        // processes the one answer it accepted.
+        RoutedChatRound.Accepted accepted;
+        try {
+            accepted =
+                    RoutedChatRound.run(
+                            initialRequestId, route, messages, promptArgs, outputSchema, ctx);
+        } catch (RoutedChatRound.RoundFailed e) {
+            sendFailure(initialRequestId, e.error, userContext, ctx);
+            return;
         }
-
-        if (selection.isRouter() && triedModels.size() > 1) {
-            LOG.warn(
-                    "Chat request {} exhausted all candidates {} of router '{}'; last error: {}.",
+        ChatModelInvoker.ChatAttemptResult result = accepted.attempt;
+        if (!Objects.requireNonNull(result.response).getToolCalls().isEmpty()) {
+            // The routing block is needed once, on the final response; it waits for the tool loop.
+            accepted.parkForToolRound(ctx.getSensoryMemory());
+            handleToolCalls(
+                    result.response,
                     initialRequestId,
-                    triedModels,
-                    selection.getRequestedModel(),
-                    lastError == null ? null : lastError.toString());
+                    result.model,
+                    result.chatModel,
+                    messages,
+                    promptArgs,
+                    outputSchema,
+                    userContext,
+                    ctx);
+            return;
         }
-        // The reasoning loop is over; a routed loop that dies mid-way must not leak its
-        // parked metadata before completing the failed logical request.
-        takeRoutingMetadata(ctx.getSensoryMemory(), initialRequestId);
-        sendFailure(
-                initialRequestId,
-                lastError != null
-                        ? lastError
-                        : new IllegalStateException(
-                                "Every escalation tier of router '"
-                                        + selection.getRequestedModel()
-                                        + "' answered and was rejected by the quality policy,"
-                                        + " and no candidate is left to answer."),
-                userContext,
-                ctx);
-    }
-
-    /** Prompt plus completion tokens of a discarded attempt, 0 when the provider reported none. */
-    private static long discardedTokens(@Nullable ChatResult response) {
-        TokenUsage usage = response == null ? null : response.getUsage();
-        if (usage == null) {
-            return 0L;
+        Map<String, Object> routingMetadata = accepted.finish(ctx.getSensoryMemory());
+        Map<String, Long> retryStats = getRetryStats(ctx.getSensoryMemory(), initialRequestId);
+        int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
+        long totalRetryWaitMs = retryStats.get(TOTAL_RETRY_WAIT_MS);
+        clearRequestContext(ctx.getSensoryMemory(), initialRequestId);
+        ChatResponseEvent completed =
+                ChatResponseEvent.success(
+                                initialRequestId,
+                                result.response,
+                                totalRetryCount,
+                                totalRetryWaitMs)
+                        .withUserContext(userContext);
+        completed.setStructuredOutput(result.structuredOutput);
+        if (routingMetadata != null) {
+            completed.setRoutingMetadata(routingMetadata);
         }
-        long prompt = usage.getPromptTokens() == null ? 0L : usage.getPromptTokens();
-        long completion = usage.getCompletionTokens() == null ? 0L : usage.getCompletionTokens();
-        return prompt + completion;
-    }
-
-    private static Map<String, Object> hop(EscalationGate.Outcome outcome, long discardedTokens) {
-        Map<String, Object> hop = new LinkedHashMap<>();
-        hop.put("from", outcome.fromTier);
-        hop.put("to", outcome.toTier);
-        hop.put("signal", outcome.signal);
-        hop.put("reason", outcome.reason);
-        if (outcome.score != null) {
-            hop.put("score", outcome.score);
-        }
-        hop.put("discarded_tokens", discardedTokens);
-        return hop;
-    }
-
-    private static void recordEscalationMetrics(RunnerContext ctx, long discardedTokens) {
-        FlinkAgentsMetricGroup metrics = ctx.getActionMetricGroup();
-        if (metrics != null) {
-            metrics.getCounter("routingEscalationCount").inc();
-            metrics.getCounter("routingEscalatedTokens").inc(discardedTokens);
-        }
+        ctx.sendEvent(completed);
     }
 
     private static void sendFailure(
@@ -685,81 +463,6 @@ public class ChatModelAction {
         }
         accumulateRetryStats(ctx.getSensoryMemory(), initialRequestId, retryCount, retryWaitMs);
         recordRetryMetrics(ctx, modelResource, retryCount, retryWaitMs);
-    }
-
-    /**
-     * Parks the routed request's {@code model_routing} block for the lifetime of its reasoning
-     * loop, keyed by the initial request id. Stored once when the loop starts; taken (removed) once
-     * when the final response is produced or the loop is abandoned.
-     */
-    @SuppressWarnings("unchecked")
-    private static void saveRoutingMetadata(
-            MemoryObject sensoryMem, UUID initialRequestId, Map<String, Object> routing)
-            throws Exception {
-        Map<UUID, Object> context;
-        if (sensoryMem.isExist(ROUTING_METADATA_CONTEXT)) {
-            context = (Map<UUID, Object>) sensoryMem.get(ROUTING_METADATA_CONTEXT).getValue();
-        } else {
-            context = new HashMap<>();
-        }
-        context.put(initialRequestId, routing);
-        sensoryMem.set(ROUTING_METADATA_CONTEXT, context);
-    }
-
-    @SuppressWarnings("unchecked")
-    @Nullable
-    private static Map<String, Object> peekRoutingMetadata(
-            MemoryObject sensoryMem, UUID initialRequestId) throws Exception {
-        if (!sensoryMem.isExist(ROUTING_METADATA_CONTEXT)) {
-            return null;
-        }
-        Map<UUID, Object> context =
-                (Map<UUID, Object>) sensoryMem.get(ROUTING_METADATA_CONTEXT).getValue();
-        return (Map<String, Object>) context.get(initialRequestId);
-    }
-
-    /**
-     * The route of a tool round: the already-selected model, with the router's escalation policy
-     * still in force when the initial request was routed through a tiered router.
-     */
-    private static ResolvedModelRoute continuedRoute(
-            MemoryObject sensoryMem, UUID initialRequestId, String model, RunnerContext ctx)
-            throws Exception {
-        Map<String, Object> parked = peekRoutingMetadata(sensoryMem, initialRequestId);
-        if (parked == null || !(parked.get("router") instanceof String)) {
-            return ResolvedModelRoute.direct(model);
-        }
-        String router = (String) parked.get("router");
-        if (!ctx.hasResource(router, ResourceType.MODEL_ROUTER)) {
-            return ResolvedModelRoute.direct(model);
-        }
-        ModelRouter resolved = (ModelRouter) ctx.getResource(router, ResourceType.MODEL_ROUTER);
-        if (resolved.getEscalation().isEmpty()) {
-            return ResolvedModelRoute.direct(model);
-        }
-        return ResolvedModelRoute.continued(
-                router,
-                model,
-                resolved.getCandidateNames(),
-                resolved.isFallbackEnabled(),
-                resolved.getEscalation().get(),
-                ResolvedModelRoute.recordedEscalations(parked));
-    }
-
-    @SuppressWarnings("unchecked")
-    @Nullable
-    private static Map<String, Object> takeRoutingMetadata(
-            MemoryObject sensoryMem, UUID initialRequestId) throws Exception {
-        if (!sensoryMem.isExist(ROUTING_METADATA_CONTEXT)) {
-            return null;
-        }
-        Map<UUID, Object> context =
-                (Map<UUID, Object>) sensoryMem.get(ROUTING_METADATA_CONTEXT).getValue();
-        Map<String, Object> routing = (Map<String, Object>) context.remove(initialRequestId);
-        if (routing != null) {
-            sensoryMem.set(ROUTING_METADATA_CONTEXT, context);
-        }
-        return routing;
     }
 
     /**
@@ -870,12 +573,12 @@ public class ChatModelAction {
                         toolResponseMessages);
 
         // Tool rounds reuse the already-selected concrete model (no re-routing). If the initial
-        // request was routed, its metadata block waits in ROUTING_METADATA_CONTEXT and is
-        // attached when this loop produces its final response. A tiered request keeps its
+        // request was routed, its metadata block waits in the routing layer's parked context and
+        // is attached when this loop produces its final response. A tiered request keeps its
         // escalation policy, so a weak round can still move it up a tier.
         chat(
                 initialRequestId,
-                continuedRoute(sensoryMem, initialRequestId, model, ctx),
+                RoutedChatRound.continuedRoute(sensoryMem, initialRequestId, model, ctx),
                 messages,
                 promptArgs,
                 outputSchema,

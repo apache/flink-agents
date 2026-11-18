@@ -17,7 +17,6 @@
  */
 package org.apache.flink.agents.api.chat.model.routing;
 
-import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
@@ -36,63 +35,6 @@ class EscalationDeclarationTest {
         public QualityVerdict evaluate(QualityContext context) {
             return QualityVerdict.accept();
         }
-    }
-
-    @Test
-    void tiersRoundTripThroughTheDescriptorWithSignalsAndCap() throws Exception {
-        Escalation declared =
-                Escalation.tiers("small", "medium", "big")
-                        .when(QualitySignals.decision("verifier", 0.7, "Does the answer fit?"))
-                        .when(QualitySignals.custom(AlwaysAccept.class))
-                        .maxEscalations(1);
-        ResourceDescriptor descriptor =
-                ModelRouter.of("small", "medium", "big")
-                        .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
-                        .defaultModel("small")
-                        .escalation(declared)
-                        .build();
-        ModelRouter router = new ModelRouter(descriptor, null);
-        assertThat(router.getEscalation()).contains(declared);
-        Escalation parsed = router.getEscalation().get();
-        assertThat(parsed.getTiers()).containsExactly("small", "medium", "big");
-        assertThat(parsed.getMaxEscalations()).isEqualTo(1);
-        assertThat(parsed.getSignals()).hasSize(2);
-        assertThat(parsed.getSignals().get(0).getType())
-                .isEqualTo(Escalation.Signal.TYPE_DECISION_MODEL);
-        assertThat(parsed.getSignals().get(0).decisionModel()).isEqualTo("verifier");
-        assertThat(parsed.getSignals().get(0).minProbability()).isEqualTo(0.7);
-        assertThat(parsed.getSignals().get(0).instructions()).isEqualTo("Does the answer fit?");
-        assertThat(parsed.getSignals().get(1).signalClass())
-                .isEqualTo(AlwaysAccept.class.getName());
-        assertThat(parsed.nextTier("small")).contains("medium");
-        assertThat(parsed.nextTier("big")).isEmpty();
-        assertThat(parsed.tierIndex("medium")).isEqualTo(1);
-        // The strategy is untouched by the policy.
-        assertThat(router.getStrategy().getType()).isEqualTo(RoutingStrategyType.RULE_BASED);
-    }
-
-    @Test
-    void tiersWithoutAStrategyStartOnTheFirstTierWhichBecomesTheDefault() throws Exception {
-        ResourceDescriptor descriptor =
-                ModelRouter.of("small", "big").escalation(Escalation.tiers("small", "big")).build();
-        assertThat(descriptor.getInitialArguments())
-                .doesNotContainKey(ModelRouter.STRATEGY_TYPE_KEY);
-        ModelRouter router = new ModelRouter(descriptor, null);
-        assertThat(router.getDefaultModel()).contains("small");
-        assertThat(router.getStrategy().getType()).isEqualTo(RoutingStrategyType.RULE_BASED);
-        assertThat(router.getEscalation().get().getMaxEscalations()).isEqualTo(1);
-    }
-
-    @Test
-    void aDeclaredDefaultModelWinsOverTheFirstTier() throws Exception {
-        ModelRouter router =
-                new ModelRouter(
-                        ModelRouter.of("small", "big")
-                                .escalation(Escalation.tiers("small", "big"))
-                                .defaultModel("big")
-                                .build(),
-                        null);
-        assertThat(router.getDefaultModel()).contains("big");
     }
 
     @Test
@@ -154,47 +96,103 @@ class EscalationDeclarationTest {
 
     /** A hand-built descriptor (no builder) is diagnosed field by field at construction. */
     @Test
-    void handBuiltDescriptorsAreDiagnosed() {
+    void theDescriptorRoundTripsThroughTheArguments() {
+        Escalation declared =
+                Escalation.tiers("small", "medium", "big")
+                        .when(QualitySignals.decision("verifier", 0.7, "Does the answer fit?"))
+                        .when(QualitySignals.custom(AlwaysAccept.class))
+                        .maxEscalations(1);
         Map<String, Object> args = new HashMap<>();
-        args.put(ModelRouter.CANDIDATES_KEY, List.of("small", "big"));
-        args.put(ModelRouter.STRATEGY_TYPE_KEY, RoutingStrategyType.RULE_BASED.tag());
-        args.put(ModelRouter.STRATEGY_ARGS_KEY, Map.of());
+        declared.toArguments(args);
+        Escalation parsed = Escalation.fromArguments("router", args).orElseThrow();
+        assertThat(parsed).isEqualTo(declared);
+        assertThat(parsed.getTiers()).containsExactly("small", "medium", "big");
+        assertThat(parsed.getMaxEscalations()).isEqualTo(1);
+        assertThat(parsed.getSignals().get(0).getType())
+                .isEqualTo(Escalation.Signal.TYPE_DECISION_MODEL);
+        assertThat(parsed.getSignals().get(0).decisionModel()).isEqualTo("verifier");
+        assertThat(parsed.getSignals().get(0).minProbability()).isEqualTo(0.7);
+        assertThat(parsed.getSignals().get(0).instructions()).isEqualTo("Does the answer fit?");
+        assertThat(parsed.getSignals().get(1).signalClass())
+                .isEqualTo(AlwaysAccept.class.getName());
+        assertThat(parsed.nextTier("small")).contains("medium");
+        assertThat(parsed.nextTier("big")).isEmpty();
+        assertThat(parsed.tierIndex("medium")).isEqualTo(1);
+        assertThat(Escalation.fromArguments("router", Map.of())).isEmpty();
+    }
+
+    @Test
+    void aFieldThatCannotBeDecodedIsDiagnosedWithTheRouterNamed() {
+        Map<String, Object> args = new HashMap<>();
         args.put(Escalation.TIERS_KEY, "small,big");
-        assertThatThrownBy(() -> new ModelRouter(descriptor(args), null))
+        assertThatThrownBy(() -> Escalation.fromArguments("Model router 'r'", args))
                 .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Model router 'r'")
                 .hasMessageContaining("expected a list of names");
 
         args.put(Escalation.TIERS_KEY, List.of("small", 7));
-        assertThatThrownBy(() -> new ModelRouter(descriptor(args), null))
+        assertThatThrownBy(() -> Escalation.fromArguments("Model router 'r'", args))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("non-String escalation tier");
 
         args.put(Escalation.TIERS_KEY, List.of("small", "big"));
-        args.put(Escalation.SIGNALS_KEY, List.of(Map.of("type", "telepathy")));
-        assertThatThrownBy(() -> new ModelRouter(descriptor(args), null))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("unknown type 'telepathy'");
-
-        args.put(Escalation.SIGNALS_KEY, List.of(Map.of("type", "decision_model")));
-        assertThatThrownBy(() -> new ModelRouter(descriptor(args), null))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("decision_model");
-
-        args.remove(Escalation.SIGNALS_KEY);
         args.put(Escalation.MAX_ESCALATIONS_KEY, 0);
-        assertThatThrownBy(() -> new ModelRouter(descriptor(args), null))
+        assertThatThrownBy(() -> Escalation.fromArguments("Model router 'r'", args))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("positive integer");
 
         args.remove(Escalation.TIERS_KEY);
         args.remove(Escalation.MAX_ESCALATIONS_KEY);
         args.put(Escalation.SIGNALS_KEY, List.of());
-        assertThatThrownBy(() -> new ModelRouter(descriptor(args), null))
+        assertThatThrownBy(() -> Escalation.fromArguments("Model router 'r'", args))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("without 'escalation_tiers'");
     }
 
-    private static ResourceDescriptor descriptor(Map<String, Object> args) {
-        return new ResourceDescriptor(ModelRouter.class.getName(), new HashMap<>(args));
+    @Test
+    void decodingDoesNotApplyTheDeclarationRulesButValidateDoes() {
+        // A decoded policy may break the rules the fluent path enforces as it is written; the
+        // plan applies them once with validate(subject) when the agent plan is built.
+        Map<String, Object> single = new HashMap<>();
+        single.put(Escalation.TIERS_KEY, List.of("small"));
+        Escalation oneTier = Escalation.fromArguments("Model router 'r'", single).orElseThrow();
+        assertThatThrownBy(() -> oneTier.validate("Model router 'r'"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Model router 'r'")
+                .hasMessageContaining("at least two tiers");
+
+        Map<String, Object> duplicated = new HashMap<>();
+        duplicated.put(Escalation.TIERS_KEY, List.of("small", "small"));
+        assertThatThrownBy(
+                        () ->
+                                Escalation.fromArguments("Model router 'r'", duplicated)
+                                        .orElseThrow()
+                                        .validate("Model router 'r'"))
+                .hasMessageContaining("more than once");
+
+        Map<String, Object> unknownSignal = new HashMap<>();
+        unknownSignal.put(Escalation.TIERS_KEY, List.of("small", "big"));
+        unknownSignal.put(Escalation.SIGNALS_KEY, List.of(Map.of("type", "telepathy")));
+        assertThatThrownBy(
+                        () ->
+                                Escalation.fromArguments("Model router 'r'", unknownSignal)
+                                        .orElseThrow()
+                                        .validate("Model router 'r'"))
+                .hasMessageContaining("unknown type 'telepathy'");
+
+        Map<String, Object> incomplete = new HashMap<>();
+        incomplete.put(Escalation.TIERS_KEY, List.of("small", "big"));
+        incomplete.put(Escalation.SIGNALS_KEY, List.of(Map.of("type", "decision_model")));
+        assertThatThrownBy(
+                        () ->
+                                Escalation.fromArguments("Model router 'r'", incomplete)
+                                        .orElseThrow()
+                                        .validate("Model router 'r'"))
+                .hasMessageContaining("decision_model");
+
+        // A well-formed declaration passes.
+        Map<String, Object> ok = new HashMap<>();
+        Escalation.tiers("small", "big").when(QualitySignals.decision("v", 0.5)).toArguments(ok);
+        Escalation.fromArguments("Model router 'r'", ok).orElseThrow().validate("Model router 'r'");
     }
 }
