@@ -488,4 +488,39 @@ public class AgentConfigurationTest {
                                         AgentExecutionOptions.RETRY_WAIT_INTERVAL,
                                         Duration.ofNanos(1_500_000)));
     }
+
+    @Test
+    void storedDurationAndTextShareAlignmentChecks() {
+        AgentConfiguration fromDuration = new AgentConfiguration();
+        fromDuration.getConfData().put("async.batch.timeout", Duration.ofNanos(500));
+        IllegalArgumentException durationError =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> fromDuration.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT));
+        assertTrue(durationError.getMessage().contains("async.batch.timeout"));
+        assertTrue(durationError.getMessage().contains("finer than 1 us"));
+
+        IllegalArgumentException textError =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                new AgentConfiguration(Map.of("async.batch.timeout", "500 ns"))
+                                        .get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT));
+        assertTrue(textError.getMessage().contains("async.batch.timeout"));
+        assertTrue(textError.getMessage().contains("finer than 1 us"));
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new AgentConfiguration()
+                                .set(
+                                        AgentExecutionOptions.ASYNC_BATCH_TIMEOUT,
+                                        Duration.ofNanos(500)));
+
+        AgentConfiguration accepted = new AgentConfiguration();
+        accepted.getConfData().put("async.batch.timeout", Duration.ofNanos(1_500_000));
+        assertEquals(
+                Duration.ofNanos(1_500_000),
+                accepted.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT));
+    }
 }

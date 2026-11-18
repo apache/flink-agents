@@ -84,23 +84,19 @@ class AgentConfiguration(BaseModel, Configuration):
         if value is None:
             return default
 
+        if config_type is bool and isinstance(value, str):
+            # The legacy flink-conf.yaml keeps values as strings and Flink
+            # converts them when an option is read, accepting "true"
+            # case-insensitively, so "false" must not stay truthy.
+            return value.strip().lower() == "true"
+        if config_type is timedelta:
+            return _parse_duration_option(key, value)
+
         try:
-            if config_type is bool and isinstance(value, str):
-                # The legacy flink-conf.yaml keeps values as strings and Flink
-                # converts them when an option is read, accepting "true"
-                # case-insensitively, so "false" must not stay truthy.
-                return value.strip().lower() == "true"
-            if config_type is timedelta:
-                parsed = parse_duration(value)
-            else:
-                return config_type(value)
+            return config_type(value)
         except (ValueError, TypeError) as e:
-            if config_type is timedelta:
-                msg = f"Invalid duration for '{key}': {e}"
-            else:
-                msg = f"Invalid value for {key}: {value}"
+            msg = f"Invalid value for {key}: {value}"
             raise ValueError(msg) from e
-        return validate_consumed_duration(key, parsed)
 
     @override
     def get_int(self, key: str, default: int | None = None) -> int:
@@ -128,41 +124,31 @@ class AgentConfiguration(BaseModel, Configuration):
             option.get_key(), option.get_type(), option.get_default_value()
         )
 
-    def _put(self, key: str, value: Any) -> None:
+    @override
+    def set_str(self, key: str, value: str) -> None:
         self.conf_data[key] = value
 
     @override
-    def set_str(self, key: str, value: str) -> None:
-        self._put(key, value)
-
-    @override
     def set_int(self, key: str, value: int) -> None:
-        self._put(key, value)
+        self.conf_data[key] = value
 
     @override
     def set_float(self, key: str, value: float) -> None:
-        self._put(key, value)
+        self.conf_data[key] = value
 
     @override
     def set_bool(self, key: str, value: bool) -> None:
-        self._put(key, value)
+        self.conf_data[key] = value
 
     @override
     def set(self, option: ConfigOption, value: Any) -> None:
         if option.get_key() == _TRACE_LOG_TARGETS_KEY:
             stored = _serialize_targets(value)
         elif option.get_type() is timedelta:
-            try:
-                parsed = parse_duration(value)
-            except ValueError as error:
-                msg = f"Invalid duration for '{option.get_key()}': {error}"
-                raise ValueError(msg) from error
-            stored = format_duration(
-                validate_consumed_duration(option.get_key(), parsed)
-            )
+            stored = format_duration(_parse_duration_option(option.get_key(), value))
         else:
             stored = value
-        self._put(option.get_key(), stored)
+        self.conf_data[option.get_key()] = stored
 
     def get_conf_data(self) -> dict:
         """Get the configuration data dictionary.
@@ -192,6 +178,19 @@ class AgentConfiguration(BaseModel, Configuration):
                 sub_key = key[len(prefix) :]
                 result[sub_key] = value
         return result
+
+
+def _parse_duration_option(key: str, value: Any) -> timedelta:
+    """Parse and validate one duration option.
+
+    The getter returns this timedelta. The setter formats it before storing it.
+    """
+    try:
+        parsed = parse_duration(value)
+    except ValueError as error:
+        msg = f"Invalid duration for '{key}': {error}"
+        raise ValueError(msg) from error
+    return validate_consumed_duration(key, parsed)
 
 
 def validate_consumed_duration(option_key: str, value: timedelta) -> timedelta:

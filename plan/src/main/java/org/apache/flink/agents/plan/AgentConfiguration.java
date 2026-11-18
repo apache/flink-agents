@@ -61,38 +61,38 @@ public class AgentConfiguration implements Configuration {
 
     @Override
     public void setStr(String key, String value) {
-        putValue(key, value);
+        confData.put(key, value);
     }
 
     @Override
     public void setInt(String key, int value) {
-        putValue(key, value);
+        confData.put(key, value);
     }
 
     @Override
     public void setLong(String key, long value) {
-        putValue(key, value);
+        confData.put(key, value);
     }
 
     @Override
     public void setFloat(String key, float value) {
-        putValue(key, value);
+        confData.put(key, value);
     }
 
     @Override
     public void setDouble(String key, double value) {
-        putValue(key, value);
+        confData.put(key, value);
     }
 
     @Override
     public void setBool(String key, boolean value) {
-        putValue(key, value);
+        confData.put(key, value);
     }
 
     @Override
     public <T> void set(ConfigOption<T> option, T value) {
         if (AgentConfigOptions.TRACE_LOG_TARGETS.equals(option)) {
-            putValue(option.getKey(), traceLogTargetConfig(value));
+            confData.put(option.getKey(), traceLogTargetConfig(value));
             return;
         }
         if (value == null && option.getDefaultValue() != null) {
@@ -106,10 +106,10 @@ public class AgentConfiguration implements Configuration {
                 throw invalidDuration(option.getKey(), e);
             }
             validateConsumedDuration(option.getKey(), parsed);
-            putValue(option.getKey(), DurationUtils.format(parsed));
+            confData.put(option.getKey(), DurationUtils.format(parsed));
             return;
         }
-        putValue(option.getKey(), value);
+        confData.put(option.getKey(), value);
     }
 
     @Override
@@ -172,10 +172,17 @@ public class AgentConfiguration implements Configuration {
 
         Class<T> targetType = option.getType();
 
-        if (targetType.isAssignableFrom(rawValue.getClass())) {
-            if (Duration.class.equals(targetType)) {
-                validateConsumedDuration(option.getKey(), (Duration) rawValue);
+        // Strings and Duration objects share parse(), including microsecond alignment,
+        // then the option's own precision rule.
+        if (Duration.class.equals(targetType)) {
+            final Duration parsed;
+            try {
+                parsed = DurationUtils.parse(rawValue);
+            } catch (IllegalArgumentException e) {
+                throw invalidDuration(option.getKey(), e);
             }
+            return targetType.cast(validateConsumedDuration(option.getKey(), parsed));
+        } else if (targetType.isAssignableFrom(rawValue.getClass())) {
             return targetType.cast(rawValue);
         } else if (String.class.equals(targetType)) {
             return targetType.cast(rawValue.toString());
@@ -189,14 +196,6 @@ public class AgentConfiguration implements Configuration {
             return targetType.cast(Double.parseDouble(rawValue.toString()));
         } else if (Boolean.class.equals(targetType)) {
             return targetType.cast(Boolean.parseBoolean(rawValue.toString()));
-        } else if (Duration.class.equals(targetType)) {
-            final Duration parsed;
-            try {
-                parsed = DurationUtils.parse(rawValue);
-            } catch (IllegalArgumentException e) {
-                throw invalidDuration(option.getKey(), e);
-            }
-            return targetType.cast(validateConsumedDuration(option.getKey(), parsed));
         } else if (targetType.isEnum()) {
             return ConfigurationUtils.convertValue(rawValue, targetType);
         } else {
@@ -206,10 +205,6 @@ public class AgentConfiguration implements Configuration {
                             + " to "
                             + targetType.getName());
         }
-    }
-
-    private void putValue(String key, Object value) {
-        confData.put(key, value);
     }
 
     private static Object normalizeDurationValue(Object value) {

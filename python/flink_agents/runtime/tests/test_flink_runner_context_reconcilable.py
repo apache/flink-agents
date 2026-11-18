@@ -1224,6 +1224,7 @@ def test_flink_runner_context_gather_timeout_keeps_completed_results() -> None:
     assert outcomes[0].value == "fast"
     assert outcomes[1].is_failure()
     assert isinstance(outcomes[1].error, TimeoutError)
+    assert str(outcomes[1].error) == "Async batch execution timed out after 100 ms"
     assert j_runner_context.call_results[0].status == "SUCCEEDED"
     assert j_runner_context.call_results[1].status == "FAILED"
     assert j_runner_context.current_call_index == 2

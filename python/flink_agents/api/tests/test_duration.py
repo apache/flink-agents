@@ -15,9 +15,13 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-"""Keep this table aligned with Java DurationUtilsTest."""
+"""Shared text cases live in api/src/test/resources/duration-cases.json."""
 
+import json
+import re
 from datetime import timedelta
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -32,49 +36,34 @@ from flink_agents.api.duration import (
 )
 
 
-@pytest.mark.parametrize(
-    ("text", "expected", "canonical"),
-    [
-        ("30 s", timedelta(seconds=30), "30 s"),
-        ("30s", timedelta(seconds=30), "30 s"),
-        ("5 min", timedelta(minutes=5), "5 min"),
-        ("5m", timedelta(minutes=5), "5 min"),
-        ("1 h", timedelta(hours=1), "1 h"),
-        ("1 d", timedelta(days=1), "1 d"),
-        ("1500 ms", timedelta(milliseconds=1500), "1500 ms"),
-        ("60 s", timedelta(seconds=60), "1 min"),
-        ("1000 ns", timedelta(microseconds=1), "1 us"),
-        ("1 us", timedelta(microseconds=1), "1 us"),
-        ("1 µs", timedelta(microseconds=1), "1 us"),
-        ("0 ms", timedelta(0), "0 ms"),
-        ("0 s", timedelta(0), "0 ms"),
-        ("-1 ms", timedelta(milliseconds=-1), "-1 ms"),
-        ("-1ms", timedelta(milliseconds=-1), "-1 ms"),
-        ("2 seconds", timedelta(seconds=2), "2 s"),
-        ("1 millisecond", timedelta(milliseconds=1), "1 ms"),
-    ],
-)
-def test_parse_and_format(text: str, expected: timedelta, canonical: str) -> None:
+def _duration_cases_path() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        candidate = (
+            parent / "api" / "src" / "test" / "resources" / "duration-cases.json"
+        )
+        if candidate.is_file():
+            return candidate
+    msg = "duration-cases.json is not reachable from the duration tests"
+    raise FileNotFoundError(msg)
+
+
+def _load_duration_cases() -> list[dict[str, Any]]:
+    return json.loads(_duration_cases_path().read_text(encoding="utf-8"))
+
+
+_DURATION_CASES = _load_duration_cases()
+
+
+@pytest.mark.parametrize("case", _DURATION_CASES, ids=lambda case: repr(case["input"]))
+def test_shared_duration_cases(case: dict[str, Any]) -> None:
+    text = case["input"]
+    if "rejection" in case:
+        with pytest.raises(ValueError, match=re.escape(case["rejection"])):
+            parse_duration(text)
+        return
     parsed = parse_duration(text)
-    assert parsed == expected
-    assert format_duration(parsed) == canonical
-    assert parse_duration(parsed) == parsed
-
-
-@pytest.mark.parametrize(
-    ("text", "reason"),
-    [
-        ("30", "bare number"),
-        ("1.5 s", "an integer"),
-        ("1 fortnight", "not recognized"),
-        ("1 ns", "finer than 1 us"),
-        ("", "a number and a unit"),
-        ("-", "an integer"),
-    ],
-)
-def test_rejects_unusable_text(text: str, reason: str) -> None:
-    with pytest.raises(ValueError, match=reason):
-        parse_duration(text)
+    assert parsed == timedelta(microseconds=case["microseconds"])
+    assert format_duration(parsed) == case["canonical"]
 
 
 def test_rejects_bare_numbers() -> None:

@@ -23,6 +23,7 @@ import time
 from collections.abc import Mapping
 from concurrent.futures import CancelledError, ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import timedelta
 from functools import partial
 from typing import Any, Callable, Dict, Literal
 
@@ -403,7 +404,6 @@ class _BatchAsyncExecutionResult:
         deadline = (
             time.monotonic() + timeout_seconds if timeout_seconds is not None else None
         )
-        timeout_label = format_duration(timeout) if deadline is not None else None
         batch_futures: list[Any | None] = [None] * len(suppliers)
         started: list[bool] = [False] * len(suppliers)
         try:
@@ -412,7 +412,7 @@ class _BatchAsyncExecutionResult:
                 suppliers,
                 parallelism,
                 deadline,
-                timeout_label,
+                timeout,
                 batch_futures,
                 started,
             )
@@ -566,7 +566,7 @@ def _execute_sliding_window_batch(
     suppliers: list[Any],
     parallelism: int,
     deadline: float | None,
-    timeout_label: str | None,
+    timeout: timedelta | None,
     futures: list[Any | None],
     started: list[bool],
 ) -> Any:
@@ -588,7 +588,9 @@ def _execute_sliding_window_batch(
 
     while completed < batch_size:
         if deadline is not None and time.monotonic() >= deadline:
-            timeout_message = f"Async batch execution timed out after {timeout_label}"
+            timeout_message = (
+                f"Async batch execution timed out after {format_duration(timeout)}"
+            )
             raise _BatchTimeoutError(timeout_message)
 
         while next_to_submit < batch_size and in_flight() < parallelism_limit:

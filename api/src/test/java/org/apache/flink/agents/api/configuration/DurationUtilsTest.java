@@ -18,71 +18,63 @@
 
 package org.apache.flink.agents.api.configuration;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.time.Duration;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** Parser and precision coverage shared with the Python duration tests. */
+/**
+ * Parser and precision coverage. Text cases shared with the Python duration tests are {@code
+ * duration-cases.json}.
+ */
 class DurationUtilsTest {
 
     @ParameterizedTest
-    @CsvSource({
-        "30 s, 30 s",
-        "30s, 30 s",
-        "5 min, 5 min",
-        "5m, 5 min",
-        "1 h, 1 h",
-        "1 d, 1 d",
-        "1500 ms, 1500 ms",
-        "60 s, 1 min",
-        "1000 ns, 1 us",
-        "1 us, 1 us",
-        "1 µs, 1 us",
-        "0 ms, 0 ms",
-        "0 s, 0 ms",
-        "-1 ms, -1 ms",
-        "-1ms, -1 ms",
-        "2 seconds, 2 s",
-        "1 millisecond, 1 ms"
-    })
-    void parsesAndFormats(String text, String canonical) {
-        Duration parsed = DurationUtils.parse(text);
-        assertThat(DurationUtils.format(parsed)).isEqualTo(canonical);
-        assertThat(DurationUtils.parse(canonical)).isEqualTo(parsed);
-        assertThat(DurationUtils.parse(parsed)).isEqualTo(parsed);
+    @MethodSource("sharedCases")
+    void sharedFixtureParsesOrRejects(SharedCase row) {
+        if (row.rejection != null) {
+            assertThatThrownBy(() -> DurationUtils.parse(row.input))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining(row.rejection);
+            return;
+        }
+        assertThat(row.microseconds).isNotNull();
+        assertThat(row.canonical).isNotNull();
+        Duration parsed = DurationUtils.parse(row.input);
+        assertThat(parsed).isEqualTo(Duration.ofNanos(row.microseconds * 1_000L));
+        assertThat(DurationUtils.format(parsed)).isEqualTo(row.canonical);
     }
 
-    @Test
-    void knownValuesMatchDurationFactories() {
-        assertThat(DurationUtils.parse("30 s")).isEqualTo(Duration.ofSeconds(30));
-        assertThat(DurationUtils.parse("5 min")).isEqualTo(Duration.ofMinutes(5));
-        assertThat(DurationUtils.parse("1 h")).isEqualTo(Duration.ofHours(1));
-        assertThat(DurationUtils.parse("1 d")).isEqualTo(Duration.ofDays(1));
-        assertThat(DurationUtils.parse("1500 ms")).isEqualTo(Duration.ofMillis(1500));
-        assertThat(DurationUtils.parse("1 us")).isEqualTo(Duration.ofNanos(1_000));
-        assertThat(DurationUtils.parse("-1 ms")).isEqualTo(Duration.ofMillis(-1));
-        assertThat(DurationUtils.parse("0 s")).isEqualTo(Duration.ZERO);
+    static List<SharedCase> sharedCases() throws IOException {
+        try (InputStream input =
+                DurationUtilsTest.class.getResourceAsStream("/duration-cases.json")) {
+            assertThat(input).as("duration-cases.json").isNotNull();
+            return new ObjectMapper().readValue(input, new TypeReference<List<SharedCase>>() {});
+        }
     }
 
-    @ParameterizedTest
-    @CsvSource({
-        "30, a bare number",
-        "1.5 s, an integer",
-        "1 fortnight, not recognized",
-        "1 ns, finer than 1 us",
-        "'', a number and a unit",
-        "-, an integer"
-    })
-    void rejectsUnusableText(String text, String reason) {
-        assertThatThrownBy(() -> DurationUtils.parse(text))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining(reason);
+    /** One row of {@code duration-cases.json}. */
+    static final class SharedCase {
+        public String input;
+        public Long microseconds;
+        public String canonical;
+        public String rejection;
+
+        @Override
+        public String toString() {
+            return input == null ? "null" : "'" + input + "'";
+        }
     }
 
     @Test

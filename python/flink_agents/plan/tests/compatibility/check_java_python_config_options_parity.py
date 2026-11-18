@@ -31,7 +31,7 @@ from typing import Any
 
 from py4j.java_collections import JavaList, JavaMap
 from py4j.java_gateway import JavaObject
-from py4j.protocol import Py4JError, Py4JJavaError
+from py4j.protocol import Py4JJavaError
 
 from flink_agents.api.configuration import ConfigOption
 from flink_agents.api.core_options import (
@@ -110,54 +110,31 @@ def _normalize_java_collection(value: Any) -> Any:
     return value
 
 
-def _java_enum_name(java_value: Any) -> Any:
-    """Return a Java enum constant's name, or None when the value is not an enum.
-
-    Py4J presents ``name`` as a callable attribute on every Java object, so
-    ``hasattr(value, "name")`` does not mean the method exists. Calling it on
-    ``java.time.Duration`` raises ``Py4JError`` (``Method name([]) does not
-    exist``). ``Py4JJavaError`` is a subclass of that error. ``Class.isEnum()``
-    is the check that runs before ``name()``.
-    """
-    try:
-        java_class = java_value.getClass()
-        is_enum = bool(java_class.isEnum())
-    except (AttributeError, Py4JError):
-        return None
-    if not is_enum:
-        return None
-    try:
-        return java_value.name()
-    except Py4JError:
-        return None
-
-
 def normalize_java_default(
     java_default: Any, java_type_name: str, python_config_type: type
 ) -> Any:
-    """Convert a Java default value into a Python-comparable form."""
+    """Convert a Java default value into a Python-comparable form.
+
+    The caller has already checked that the Java and Python option types match.
+    A Python ``Enum`` subclass is converted from ``java_default.name()``.
+    """
     if java_default is None:
         return None
 
     if python_config_type is list:
         return [_normalize_java_collection(item) for item in java_default]
 
-    # Duration before any enum probe. A negative Duration is a negative second
-    # count plus a non-negative nano-of-second; ``-1 ms`` is -1s + 999_000_000ns.
-    # timedelta normalizes that pair to the same value Python stores.
+    # A negative Duration is a negative second count plus a non-negative
+    # nano-of-second; ``-1 ms`` is -1s + 999_000_000ns. timedelta normalizes
+    # that pair to the same value Python stores.
     if java_type_name == "java.time.Duration":
         return timedelta(
             seconds=int(java_default.getSeconds()),
             microseconds=int(java_default.getNano()) // 1000,
         )
 
-    enum_name = _java_enum_name(java_default)
-    if enum_name is not None:
-        if isinstance(python_config_type, type) and issubclass(
-            python_config_type, Enum
-        ):
-            return python_config_type[enum_name]
-        return enum_name
+    if isinstance(python_config_type, type) and issubclass(python_config_type, Enum):
+        return python_config_type[java_default.name()]
 
     if python_config_type is int and isinstance(java_default, int | float):
         return int(java_default)
