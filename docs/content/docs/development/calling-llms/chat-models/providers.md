@@ -584,7 +584,7 @@ Azure OpenAI provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azur
 | `api_key` | String | Required | Azure OpenAI API key for authentication |
 | `api_version` | String | Required | Azure OpenAI REST API version (e.g., "2024-10-21"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
 | `azure_endpoint` | String | Required | Azure OpenAI endpoint URL (e.g., `https://{resource-name}.openai.azure.com`) — either a direct Azure resource or a proxy/gateway URL that fronts an Azure OpenAI service |
-| `timeout` | float | `60` | Timeout in seconds for API requests; `0` disables timeouts; must be 0–2,147,483.647 |
+| `timeout` | Duration / String / Number | `Duration.ofSeconds(60)` | API request timeout in [duration format]({{< ref "docs/operations/configuration#duration-values" >}}); `0` disables timeouts |
 | `max_retries` | int | `3` | Maximum number of API retry attempts; must be non-negative |
 | `azure_url_path_mode` | String | `"AUTO"` | Controls how the SDK constructs Azure OpenAI request URLs. One of `"AUTO"`, `"LEGACY"`, or `"UNIFIED"`. Custom gateways that proxy Azure OpenAI typically need `"LEGACY"` to force the `/openai/deployments/{model}` path |
 
@@ -988,7 +988,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 | `api_key` | String | Required | OpenAI API key for authentication |
 | `api_base_url` | String | `"https://api.openai.com/v1"` | Base URL for OpenAI API |
 | `max_retries` | int | `3` | Maximum number of API retry attempts; must be non-negative |
-| `timeout` | float | `60` | Timeout in seconds for API requests; `0` disables timeouts; must be 0–2,147,483.647 |
+| `timeout` | Duration / String / Number | `Duration.ofSeconds(60)` | API request timeout in [duration format]({{< ref "docs/operations/configuration#duration-values" >}}); `0` disables timeouts |
 | `default_headers` | Map<String, String> | None | Default headers for API requests |
 | `model` | String | None | Default model to use if not specified in setup |
 
@@ -1074,7 +1074,7 @@ public class MyAgent extends Agent {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION)
                 .addInitialArgument("api_key", "<your-api-key>")
                 .addInitialArgument("api_base_url", "https://api.openai.com/v1")
-                .addInitialArgument("timeout", 60)
+                .addInitialArgument("timeout", Duration.ofSeconds(60))
                 .addInitialArgument("max_retries", 3)
                 .build();
     }
@@ -1141,7 +1141,7 @@ differ from the Chat Completions integration above, even when both connect to Op
 | `api_key` | String | Required | OpenAI API key for authentication |
 | `api_base_url` | String | `"https://api.openai.com/v1"` | Base URL for OpenAI API (useful for proxies) |
 | `max_retries` | int | `3` | Maximum number of API retry attempts; must be non-negative |
-| `timeout` | float | `60` | Timeout in seconds for API requests; `0` disables timeouts; must be 0–2,147,483.647 |
+| `timeout` | Duration / String / Number | `Duration.ofSeconds(60)` | API request timeout in [duration format]({{< ref "docs/operations/configuration#duration-values" >}}); `0` disables timeouts |
 | `default_headers` | Map<String, String> | None | Default headers for API requests |
 | `model` | String | None | Default model to use if not specified in setup |
 
@@ -1181,7 +1181,7 @@ public class MyAgent extends Agent {
     public static ResourceDescriptor openaiResponsesConnection() {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_RESPONSES_CONNECTION)
                 .addInitialArgument("api_key", "<your-api-key>")
-                .addInitialArgument("timeout", 120)
+                .addInitialArgument("timeout", Duration.ofSeconds(120))
                 .addInitialArgument("max_retries", 3)
                 .build();
     }
@@ -1264,7 +1264,7 @@ Model availability and specifications may change. Always check the official Open
 |-----------|------|---------|-------------|
 | `api_base_url` | String | `"http://localhost:8000/v1"` | vLLM server URL |
 | `api_key` | String | `"EMPTY"` | Only needed when the server is started with `--api-key`; the placeholder default works for unauthenticated servers |
-| `timeout` | float | `60` | Seconds before an API call times out |
+| `timeout` | Duration / String / Number | `Duration.ofSeconds(60)` | API request timeout in [duration format]({{< ref "docs/operations/configuration#duration-values" >}}); `0` disables timeouts |
 | `max_retries` | int | `3` | Retry attempts on failure |
 
 {{< /tab >}}

@@ -25,10 +25,78 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 public class ResourceDescriptorTest {
+    @Test
+    void preservesDescriptorAndUsesDefaultForMissingOrNullValues() {
+        Duration value = Duration.ofNanos(1_000);
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder("example.Connection")
+                        .addInitialArgument("timeout", value)
+                        .addInitialArgument("null", null)
+                        .build();
+        assertThat(descriptor.getDurationArgument("timeout", Duration.ZERO)).isSameAs(value);
+        assertThat(descriptor.<Object>getArgument("timeout")).isSameAs(value);
+        assertThat(descriptor.getDurationArgument("missing", value)).isSameAs(value);
+        assertThat(descriptor.getDurationArgument("null", null)).isNull();
+    }
+
+    @Test
+    void parseErrorsIdentifyArgumentAndRetainCause() {
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder("example.Connection")
+                        .addInitialArgument("request_timeout", "invalid")
+                        .build();
+        assertThatThrownBy(() -> descriptor.getDurationArgument("request_timeout", Duration.ZERO))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("request_timeout")
+                .hasCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void durationArgumentsSerializeAsIsoStringsWithoutChangingOtherArguments() throws Exception {
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder("custom.Connection")
+                        .addInitialArgument("timeout", Duration.ofNanos(1_500_000))
+                        .addInitialArgument("retries", 3)
+                        .addInitialArgument("headers", Map.of("x-test", "value"))
+                        .addInitialArgument("optional", null)
+                        .build();
+        ObjectMapper mapper = new ObjectMapper();
+        ResourceDescriptor restored =
+                mapper.readValue(mapper.writeValueAsString(descriptor), ResourceDescriptor.class);
+        Assertions.assertEquals("PT0.0015S", restored.getArgument("timeout"));
+        assertThat(restored.getDurationArgument("timeout", null))
+                .isEqualTo(Duration.ofNanos(1_500_000));
+        Assertions.assertEquals(Integer.valueOf(3), restored.getArgument("retries"));
+        Assertions.assertEquals(Map.of("x-test", "value"), restored.getArgument("headers"));
+        Assertions.assertNull(restored.getArgument("optional"));
+        Assertions.assertEquals(Duration.ofNanos(1_500_000), descriptor.getArgument("timeout"));
+    }
+
+    @Test
+    void durationPrecisionIsCheckedBeforeAndAfterSerialization() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder("example.Connection")
+                        .addInitialArgument("timeout", Duration.ofNanos(1))
+                        .build();
+        ResourceDescriptor restored =
+                mapper.readValue(mapper.writeValueAsString(descriptor), ResourceDescriptor.class);
+        for (ResourceDescriptor input : List.of(descriptor, restored)) {
+            assertThatThrownBy(() -> input.getDurationArgument("timeout", null))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("timeout")
+                    .hasMessageContaining("finer than 1 us");
+        }
+    }
+
     @Test
     void pythonDeclarationRoundTripsWithoutWrapperMetadata() throws Exception {
         ResourceDescriptor descriptor =

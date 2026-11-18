@@ -52,8 +52,8 @@ import java.util.Map;
  * <ul>
  *   <li><b>api_key</b> (required): OpenAI API key
  *   <li><b>api_base_url</b> (optional): Base URL for OpenAI API (useful for proxies)
- *   <li><b>timeout</b> (optional): Timeout in seconds for API requests; must be non-negative
- *       (default: 60)
+ *   <li><b>timeout</b> (optional): API request timeout (default: 60 seconds); zero disables
+ *       timeouts. See {@link ResourceDescriptor#getDurationArgument(String, Duration)} for inputs.
  *   <li><b>max_retries</b> (optional): Maximum number of retry attempts; must be non-negative
  *       (default: 3)
  *   <li><b>default_headers</b> (optional): Map of default headers to include in all requests
@@ -68,7 +68,7 @@ import java.util.Map;
  *   public static ResourceDesc openAIResponses() {
  *     return ResourceDescriptor.Builder.newBuilder(OpenAIResponsesModelConnection.class.getName())
  *             .addInitialArgument("api_key", System.getenv("OPENAI_API_KEY"))
- *             .addInitialArgument("timeout", 120)
+ *             .addInitialArgument("timeout", Duration.ofSeconds(120))
  *             .addInitialArgument("max_retries", 3)
  *             .build();
  *   }

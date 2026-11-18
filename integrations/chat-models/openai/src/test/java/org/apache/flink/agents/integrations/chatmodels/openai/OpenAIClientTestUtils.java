@@ -22,6 +22,7 @@ import com.openai.client.OpenAIClient;
 import com.openai.core.ClientOptions;
 
 import java.lang.reflect.Field;
+import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -31,14 +32,16 @@ final class OpenAIClientTestUtils {
     private OpenAIClientTestUtils() {}
 
     static void assertNoTimeoutConfigured(Object connection) {
+        assertTimeoutConfigured(connection, Duration.ZERO);
+    }
+
+    static void assertTimeoutConfigured(Object connection, Duration expected) {
         OpenAIClient client = readField(connection, "client", OpenAIClient.class);
         ClientOptions options = readField(client, "clientOptions", ClientOptions.class);
-
-        // A zero duration maps to an unlimited timeout in each OkHttp timeout component.
-        assertThat(options.timeout().connect()).isZero();
-        assertThat(options.timeout().read()).isZero();
-        assertThat(options.timeout().write()).isZero();
-        assertThat(options.timeout().request()).isZero();
+        assertThat(options.timeout().connect()).isEqualTo(expected);
+        assertThat(options.timeout().read()).isEqualTo(expected);
+        assertThat(options.timeout().write()).isEqualTo(expected);
+        assertThat(options.timeout().request()).isEqualTo(expected);
     }
 
     private static <T> T readField(Object target, String name, Class<T> type) {

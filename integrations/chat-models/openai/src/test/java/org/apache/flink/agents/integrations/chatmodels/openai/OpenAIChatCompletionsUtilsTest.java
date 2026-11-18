@@ -80,11 +80,11 @@ class OpenAIChatCompletionsUtilsTest {
     void testPositiveTimeoutBelowMillisecondRoundsUpToSdkPrecision() {
         assertThat(
                         OpenAIChatCompletionsUtils.parseTimeout(
-                                descriptor("timeout", new BigDecimal("0.0000000001"))))
+                                descriptor("timeout", Duration.ofNanos(1000))))
                 .isEqualTo(Duration.ofMillis(1));
     }
 
-    private static ResourceDescriptor descriptor(String argumentName, Number value) {
+    private static ResourceDescriptor descriptor(String argumentName, Object value) {
         return ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
                 .addInitialArgument(argumentName, value)
                 .build();

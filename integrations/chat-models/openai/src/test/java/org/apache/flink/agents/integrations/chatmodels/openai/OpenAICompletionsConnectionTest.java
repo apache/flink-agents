@@ -36,16 +36,21 @@ import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
+import org.apache.flink.agents.api.yaml.YamlLoader;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -212,6 +217,114 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
+    void timeoutSurvivesDescriptorJsonRoundTripAndConfiguresSdk() throws Exception {
+        for (Map.Entry<Duration, Duration> testCase :
+                List.of(
+                        Map.entry(Duration.ZERO, Duration.ZERO),
+                        Map.entry(Duration.ofSeconds(120), Duration.ofSeconds(120)),
+                        Map.entry(Duration.ofNanos(1_000), Duration.ofMillis(1)),
+                        Map.entry(Duration.ofNanos(1_500_000), Duration.ofMillis(2)),
+                        Map.entry(
+                                Duration.ofMillis(Integer.MAX_VALUE),
+                                Duration.ofMillis(Integer.MAX_VALUE)))) {
+            Duration input = testCase.getKey();
+            ResourceDescriptor original = timeoutDescriptor(input);
+            ResourceDescriptor restored =
+                    MAPPER.readValue(MAPPER.writeValueAsString(original), ResourceDescriptor.class);
+            assertThat(restored.<String>getArgument("timeout")).isEqualTo(input.toString());
+            for (ResourceDescriptor descriptor : List.of(original, restored)) {
+                assertTimeoutConfigured(descriptor, testCase.getValue());
+            }
+        }
+    }
+
+    @Test
+    void yamlTimeoutReachesSdk(@TempDir Path directory) throws Exception {
+        Path yaml = directory.resolve("agent.yaml");
+        Files.writeString(
+                yaml,
+                "agents:\n"
+                        + "  - name: example\n"
+                        + "    chat_model_connections:\n"
+                        + "      - name: connection\n"
+                        + "        clazz: openai_completions\n"
+                        + "        type: java\n"
+                        + "        api_key: test-key\n"
+                        + "        timeout: 1500 ms\n");
+        ResourceDescriptor descriptor =
+                (ResourceDescriptor)
+                        YamlLoader.buildAgents(yaml)
+                                .getAgents()
+                                .get("example")
+                                .getResources()
+                                .get(ResourceType.CHAT_MODEL_CONNECTION)
+                                .get("connection");
+        assertTimeoutConfigured(descriptor, Duration.ofMillis(1500));
+    }
+
+    @Test
+    void timeoutDefaultAndStringsConfigureSdk() throws Exception {
+        ResourceDescriptor defaults =
+                ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
+                        .addInitialArgument("api_key", "test-key")
+                        .build();
+        assertTimeoutConfigured(defaults, Duration.ofSeconds(60));
+        assertTimeoutConfigured(timeoutDescriptor("PT1.5S"), Duration.ofMillis(1500));
+        assertTimeoutConfigured(timeoutDescriptor("1500 us"), Duration.ofMillis(2));
+    }
+
+    @Test
+    void unitlessTimeoutUsesMilliseconds() throws Exception {
+        for (Object input : List.of(120, 120L, "120")) {
+            ResourceDescriptor original = timeoutDescriptor(input);
+            ResourceDescriptor restored =
+                    MAPPER.readValue(MAPPER.writeValueAsString(original), ResourceDescriptor.class);
+            for (ResourceDescriptor descriptor : List.of(original, restored)) {
+                assertTimeoutConfigured(descriptor, Duration.ofMillis(120));
+            }
+        }
+    }
+
+    @Test
+    void timeoutRejectsInvalidTypesAndRanges() {
+        for (Object input :
+                List.of(
+                        1.5,
+                        "invalid",
+                        Duration.ofNanos(1),
+                        "1500001 ns",
+                        "PT0.001500001S",
+                        true,
+                        Duration.ofNanos(-1),
+                        "-PT0.001S",
+                        Duration.ofMillis(Integer.MAX_VALUE).plusNanos(1_000),
+                        Duration.ofSeconds(Long.MAX_VALUE))) {
+            assertThatThrownBy(
+                            () -> new OpenAICompletionsConnection(timeoutDescriptor(input), NOOP))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("timeout");
+        }
+    }
+
+    private static void assertTimeoutConfigured(ResourceDescriptor descriptor, Duration expected)
+            throws Exception {
+        OpenAICompletionsConnection connection = new OpenAICompletionsConnection(descriptor, NOOP);
+        try {
+            assertThat(connection.getTimeout()).isEqualTo(expected);
+            OpenAIClientTestUtils.assertTimeoutConfigured(connection, expected);
+        } finally {
+            connection.close();
+        }
+    }
+
+    private static ResourceDescriptor timeoutDescriptor(Object timeout) {
+        return ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
+                .addInitialArgument("api_key", "test-key")
+                .addInitialArgument("timeout", timeout)
+                .build();
+    }
+
+    @Test
     void testConnectionArgumentValidation() {
         ResourceDescriptor missingKey =
                 ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
@@ -225,7 +338,7 @@ class OpenAICompletionsConnectionTest {
                         ResourceDescriptor.Builder.newBuilder(
                                         OpenAICompletionsConnection.class.getName())
                                 .addInitialArgument("api_key", "test-key")
-                                .addInitialArgument("timeout", 0)
+                                .addInitialArgument("timeout", Duration.ZERO)
                                 .addInitialArgument("max_retries", 0)
                                 .build(),
                         NOOP);

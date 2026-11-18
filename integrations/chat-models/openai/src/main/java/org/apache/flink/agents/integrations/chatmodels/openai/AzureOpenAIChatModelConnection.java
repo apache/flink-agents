@@ -70,8 +70,8 @@ import java.util.regex.Pattern;
  * <p>Optional connection arguments:
  *
  * <ul>
- *   <li><b>timeout</b> (Number): seconds before an API call times out; must be greater than 0,
- *       otherwise ignored (SDK default applies)
+ *   <li><b>timeout</b> (optional): API request timeout (default: 60 seconds); zero disables
+ *       timeouts. See {@link ResourceDescriptor#getDurationArgument(String, Duration)} for inputs.
  *   <li><b>max_retries</b> (Number): retry attempts on failure; must be non-negative, otherwise
  *       ignored (SDK default applies)
  *   <li><b>azure_url_path_mode</b> (String): one of {@code "AUTO"}, {@code "LEGACY"}, or {@code

@@ -15,6 +15,12 @@
     <dependencies>
         <dependency>
             <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-integrations-embedding-models-openai</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
             <artifactId>flink-agents-api</artifactId>
             <version>${project.version}</version>
         </dependency>
