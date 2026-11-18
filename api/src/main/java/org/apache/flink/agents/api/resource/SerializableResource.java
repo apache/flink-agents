@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api.resource;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.annotation.Internal;
 
 import java.io.Serializable;
 
@@ -30,6 +31,19 @@ import java.io.Serializable;
 public abstract class SerializableResource extends Resource implements Serializable {
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
+
+    /**
+     * Bind the {@link ResourceContext} to this resource. A serializable resource is registered as
+     * an instance rather than created from a {@link ResourceDescriptor}, so it does not receive the
+     * context in its constructor; the framework calls this before {@link #open()}. User code should
+     * not call it.
+     *
+     * @param resourceContext the resource context to bind
+     */
+    @Internal
+    public void setResourceContext(ResourceContext resourceContext) {
+        this.resourceContext = resourceContext;
+    }
 
     /**
      * Validates that the resource is JSON serializable.
