@@ -35,4 +35,6 @@ Start from `.github/CONTRIBUTING.md` for general contribution guidance, covering
 
 Before implementing changes or reviewing a PR, read `code_review.md`. Apply its relevant design, API, documentation, compatibility, and testing guidance during development, and consult the linked change-type guides as needed.
 
+Before assessing security issues or changing tool execution, permissions, or trust boundaries, read [SECURITY.md](SECURITY.md) and the Security & Threat Model linked from it.
+
 For GitHub PR reviews, read existing unresolved human review threads and include relevant already-raised issues in the local review conclusion, marked as human-raised. Apply the review passes for runtime call paths, Java/Python parity, cross-language bridges, root-cause removal, and targeted verification.
