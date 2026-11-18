@@ -103,7 +103,7 @@ class ChatModelActionRetryTest {
 
     @Mock private Counter mockRetryCountCounter;
 
-    @Mock private Counter mockRetryWaitSecCounter;
+    @Mock private Counter mockRetryWaitMsCounter;
 
     private MemoryObject sensoryMemory;
     private List<Event> sentEvents;
@@ -133,7 +133,7 @@ class ChatModelActionRetryTest {
         when(mockActionMetricGroup.getSubGroup(anyString(), anyString()))
                 .thenReturn(mockModelMetricGroup);
         when(mockModelMetricGroup.getCounter("retryCount")).thenReturn(mockRetryCountCounter);
-        when(mockModelMetricGroup.getCounter("retryWaitSec")).thenReturn(mockRetryWaitSecCounter);
+        when(mockModelMetricGroup.getCounter("retryWaitMs")).thenReturn(mockRetryWaitMsCounter);
     }
 
     @AfterEach
@@ -195,7 +195,7 @@ class ChatModelActionRetryTest {
         assertThat(sentEvents).hasSize(1);
         ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(sentEvents.get(0));
         assertThat(responseEvent.getRetryCount()).isEqualTo(0);
-        assertThat(responseEvent.getTotalRetryWaitSec()).isEqualTo(0);
+        assertThat(responseEvent.getTotalRetryWaitMs()).isEqualTo(0);
 
         // No retry metrics should be recorded
         verify(mockActionMetricGroup, never()).getSubGroup(anyString(), anyString());
@@ -555,15 +555,50 @@ class ChatModelActionRetryTest {
         assertThat(sentEvents).hasSize(1);
         ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(sentEvents.get(0));
         assertThat(responseEvent.getRetryCount()).isEqualTo(1);
-        // Exponential backoff: 1000ms (1s * 2^0) total
-        // 1 retry with 1s interval = 1s total
-        assertThat(responseEvent.getTotalRetryWaitSec()).isEqualTo(1);
+        // 1s interval, one retry: 1000 ms, not a truncated second count.
+        assertThat(responseEvent.getTotalRetryWaitMs()).isEqualTo(1000L);
         assertThat(elapsed).isGreaterThanOrEqualTo(1000L);
 
         // Retry health belongs to the ChatModel resource, not the provider connection or model.
         verify(mockActionMetricGroup).getSubGroup("model_resource", "test-model");
         verify(mockRetryCountCounter).inc(1);
-        verify(mockRetryWaitSecCounter).inc(1);
+        verify(mockRetryWaitMsCounter).inc(1000L);
+    }
+
+    @Test
+    void chatRetryOfOneHundredMillisRecordsOneHundred() throws Exception {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.MAX_RETRIES, 1);
+        config.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, Duration.ofMillis(100));
+        config.set(AgentExecutionOptions.CHAT_ASYNC, false);
+        when(mockCtx.getConfig()).thenReturn(config);
+
+        AtomicInteger callCount = new AtomicInteger(0);
+        when(mockChatModel.chat(any(), any(), any()))
+                .thenAnswer(
+                        inv -> {
+                            if (callCount.incrementAndGet() == 1) {
+                                throw new RuntimeException("transient error");
+                            }
+                            return ChatFixtures.response("success");
+                        });
+
+        long startTime = System.currentTimeMillis();
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                null,
+                mockCtx);
+        long elapsed = System.currentTimeMillis() - startTime;
+
+        ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(sentEvents.get(0));
+        assertThat(responseEvent.getRetryCount()).isEqualTo(1);
+        assertThat(responseEvent.getTotalRetryWaitMs()).isEqualTo(100L);
+        assertThat(elapsed).isGreaterThanOrEqualTo(100L);
+        verify(mockRetryCountCounter).inc(1);
+        verify(mockRetryWaitMsCounter).inc(100L);
     }
 
     @Test
@@ -591,7 +626,7 @@ class ChatModelActionRetryTest {
         assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isTrue();
         verify(mockActionMetricGroup).getSubGroup("model_resource", "test-model");
         verify(mockRetryCountCounter).inc(2);
-        verify(mockRetryWaitSecCounter).inc(0);
+        verify(mockRetryWaitMsCounter).inc(0);
     }
 
     @Test
@@ -601,7 +636,7 @@ class ChatModelActionRetryTest {
         ChatResponseEvent event = ChatResponseEvent.success(requestId, msg);
 
         assertThat(event.getRetryCount()).isEqualTo(0);
-        assertThat(event.getTotalRetryWaitSec()).isEqualTo(0);
+        assertThat(event.getTotalRetryWaitMs()).isEqualTo(0);
         assertThat(event.getRequestId()).isEqualTo(requestId);
     }
 
@@ -612,7 +647,7 @@ class ChatModelActionRetryTest {
         ChatResponseEvent event = ChatResponseEvent.success(requestId, msg, 5, 31);
 
         assertThat(event.getRetryCount()).isEqualTo(5);
-        assertThat(event.getTotalRetryWaitSec()).isEqualTo(31);
+        assertThat(event.getTotalRetryWaitMs()).isEqualTo(31);
     }
 
     @Test

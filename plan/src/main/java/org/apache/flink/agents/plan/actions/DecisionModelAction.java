@@ -69,13 +69,13 @@ public final class DecisionModelAction {
                                         request.getId(),
                                         result.response,
                                         result.retryCount,
-                                        result.totalWaitSec)
+                                        result.totalWaitMs)
                                 .withUserContext(request.getUserContext())
                         : DecisionResponseEvent.failed(
                                         request.getId(),
                                         result.error,
                                         result.retryCount,
-                                        result.totalWaitSec)
+                                        result.totalWaitMs)
                                 .withUserContext(request.getUserContext());
         ctx.sendEvent(terminal);
     }

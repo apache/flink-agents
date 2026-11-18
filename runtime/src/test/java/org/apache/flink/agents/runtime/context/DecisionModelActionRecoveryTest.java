@@ -279,7 +279,7 @@ class DecisionModelActionRecoveryTest {
                 DecisionResponseEvent.fromEvent(context.getPendingEvents().get(0));
         assertThat(response.getRequestId()).isEqualTo(request.getId());
         assertThat(response.getRetryCount()).isEqualTo(retryCount);
-        assertThat(response.getTotalRetryWaitSec()).isZero();
+        assertThat(response.getTotalRetryWaitMs()).isZero();
         assertThat(response.isFailed()).isEqualTo(failed);
         if (failed) {
             assertThat(response.getError()).contains("provider unavailable");

@@ -57,17 +57,17 @@ public final class DecisionModelInvoker {
         @Nullable public final DecisionResult response;
         @Nullable public final String error;
         public final int retryCount;
-        public final int totalWaitSec;
+        public final long totalWaitMs;
 
         DecisionAttemptResult(
                 @Nullable DecisionResult response,
                 @Nullable String error,
                 int retryCount,
-                int totalWaitSec) {
+                long totalWaitMs) {
             this.response = response;
             this.error = error;
             this.retryCount = retryCount;
-            this.totalWaitSec = totalWaitSec;
+            this.totalWaitMs = totalWaitMs;
         }
 
         public boolean isSuccess() {
@@ -151,7 +151,7 @@ public final class DecisionModelInvoker {
                 };
 
         int retryCount = 0;
-        int totalWaitSec = 0;
+        long totalWaitMs = 0;
         try {
             while (true) {
                 String executionId =
@@ -179,7 +179,7 @@ public final class DecisionModelInvoker {
                             Map.of());
                     recordTokenMetrics(resourceMetrics, outcome.response);
                     return new DecisionAttemptResult(
-                            outcome.response, null, retryCount, totalWaitSec);
+                            outcome.response, null, retryCount, totalWaitMs);
                 }
                 ExecutionReporters.failed(
                         ctx,
@@ -190,10 +190,10 @@ public final class DecisionModelInvoker {
                         new Exception(outcome.error),
                         ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
                 if (retryCount == maxRetries) {
-                    return new DecisionAttemptResult(null, outcome.error, retryCount, totalWaitSec);
+                    return new DecisionAttemptResult(null, outcome.error, retryCount, totalWaitMs);
                 }
                 Duration currentWait = waitInterval.multipliedBy(1L << retryCount);
-                long waitMillis = Math.max(0L, currentWait.toMillis());
+                long waitMillis = DurationFormat.recordedRetryWaitMillis(currentWait);
                 retryCount++;
                 LOG.warn(
                         "Decision request {} failed with error: {}, retrying {} / {}, waiting {}.",
@@ -204,18 +204,18 @@ public final class DecisionModelInvoker {
                         DurationFormat.format(currentWait));
                 if (waitMillis > 0) {
                     try {
-                        Thread.sleep(waitMillis);
+                        RetryWait.sleep(waitMillis);
                     } catch (InterruptedException error) {
                         Thread.currentThread().interrupt();
                         throw error;
                     }
-                    totalWaitSec += DurationFormat.recordedRetryWaitSeconds(currentWait);
+                    totalWaitMs += waitMillis;
                 }
             }
         } finally {
             if (recordRetryMetrics && resourceMetrics != null && retryCount > 0) {
                 resourceMetrics.getCounter("retryCount").inc(retryCount);
-                resourceMetrics.getCounter("retryWaitSec").inc(totalWaitSec);
+                resourceMetrics.getCounter("retryWaitMs").inc(totalWaitMs);
             }
         }
     }

@@ -152,8 +152,8 @@ class ChatResponseEvent(Event):
         The response from the chat model.
     retry_count : int
         The total number of retries across all tool call rounds.
-    total_retry_wait_sec : int
-        The total time spent waiting during retries in seconds.
+    total_retry_wait_ms : int
+        The total time spent waiting during retries, in whole milliseconds.
     user_context : dict[str, Any] | None
         Application-defined data from the originating request. Omitted when unset.
     """
@@ -167,7 +167,7 @@ class ChatResponseEvent(Event):
     _RESPONSE: ClassVar[str] = "response"
     _ERROR: ClassVar[str] = "error"
     _RETRY_COUNT: ClassVar[str] = "retry_count"
-    _TOTAL_RETRY_WAIT_SEC: ClassVar[str] = "total_retry_wait_sec"
+    _TOTAL_RETRY_WAIT_MS: ClassVar[str] = "total_retry_wait_ms"
     _STRUCTURED_OUTPUT: ClassVar[str] = "structured_output"
     _MODEL_ROUTING: ClassVar[str] = "model_routing"
 
@@ -177,7 +177,7 @@ class ChatResponseEvent(Event):
         BuiltInAttribute.optional_untyped(_RESPONSE),
         BuiltInAttribute.optional_untyped(_ERROR),
         BuiltInAttribute.optional(_RETRY_COUNT, int),
-        BuiltInAttribute.optional(_TOTAL_RETRY_WAIT_SEC, int),
+        BuiltInAttribute.optional(_TOTAL_RETRY_WAIT_MS, int),
         BuiltInAttribute.optional_untyped(_STRUCTURED_OUTPUT),
         BuiltInAttribute.optional(_MODEL_ROUTING, dict),
         BuiltInAttribute.optional("user_context", dict),
@@ -190,7 +190,7 @@ class ChatResponseEvent(Event):
         response: ChatResult | None = None,
         error: str | None = None,
         retry_count: int = 0,
-        total_retry_wait_sec: int = 0,
+        total_retry_wait_ms: int = 0,
         user_context: dict[str, Any] | None = None,
     ) -> None:
         """Create a ChatResponseEvent."""
@@ -219,7 +219,7 @@ class ChatResponseEvent(Event):
             self._RESPONSE: response,
             self._ERROR: error,
             self._RETRY_COUNT: retry_count,
-            self._TOTAL_RETRY_WAIT_SEC: total_retry_wait_sec,
+            self._TOTAL_RETRY_WAIT_MS: total_retry_wait_ms,
         }
         if user_context is not None:
             attributes["user_context"] = copy_user_context(user_context)
@@ -234,7 +234,7 @@ class ChatResponseEvent(Event):
         request_id: UUID,
         response: ChatResult,
         retry_count: int = 0,
-        total_retry_wait_sec: int = 0,
+        total_retry_wait_ms: int = 0,
         user_context: dict[str, Any] | None = None,
     ) -> "ChatResponseEvent":
         """Create a successful terminal response."""
@@ -243,7 +243,7 @@ class ChatResponseEvent(Event):
             cls.SUCCESS,
             response=response,
             retry_count=retry_count,
-            total_retry_wait_sec=total_retry_wait_sec,
+            total_retry_wait_ms=total_retry_wait_ms,
             user_context=user_context,
         )
 
@@ -253,7 +253,7 @@ class ChatResponseEvent(Event):
         request_id: UUID,
         error: str,
         retry_count: int = 0,
-        total_retry_wait_sec: int = 0,
+        total_retry_wait_ms: int = 0,
         user_context: dict[str, Any] | None = None,
     ) -> "ChatResponseEvent":
         """Create a failed terminal response."""
@@ -262,7 +262,7 @@ class ChatResponseEvent(Event):
             cls.FAILED,
             error=error,
             retry_count=retry_count,
-            total_retry_wait_sec=total_retry_wait_sec,
+            total_retry_wait_ms=total_retry_wait_ms,
             user_context=user_context,
         )
 
@@ -285,7 +285,7 @@ class ChatResponseEvent(Event):
             response=response,
             error=attributes.get(cls._ERROR),
             retry_count=attributes.get(cls._RETRY_COUNT, 0),
-            total_retry_wait_sec=attributes.get(cls._TOTAL_RETRY_WAIT_SEC, 0),
+            total_retry_wait_ms=attributes.get(cls._TOTAL_RETRY_WAIT_MS, 0),
             user_context=attributes.get("user_context"),
         )
         result.attributes[cls._STRUCTURED_OUTPUT] = event.attributes.get(
@@ -342,9 +342,9 @@ class ChatResponseEvent(Event):
         return self.get_attr(self._RETRY_COUNT)
 
     @property
-    def total_retry_wait_sec(self) -> int:
-        """Return the total retry wait time in seconds."""
-        return self.get_attr(self._TOTAL_RETRY_WAIT_SEC)
+    def total_retry_wait_ms(self) -> int:
+        """Return the total retry wait time in whole milliseconds."""
+        return self.get_attr(self._TOTAL_RETRY_WAIT_MS)
 
     @property
     def user_context(self) -> dict[str, Any] | None:

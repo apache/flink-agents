@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, cast
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.decision_models import DecisionRequest, DecisionResult
 from flink_agents.api.duration import (
-    recorded_retry_wait_seconds,
+    recorded_retry_wait_millis,
     require_whole_milliseconds,
     zero_if_negative,
 )
@@ -52,13 +52,13 @@ def _record_retry_metrics(
     metric_group: "MetricGroup | None",
     model_resource: str,
     retry_count: int,
-    total_retry_wait_sec: int,
+    total_retry_wait_ms: int,
 ) -> None:
     if metric_group is None or retry_count == 0:
         return
     resource_group = metric_group.get_sub_group("model_resource", model_resource)
     resource_group.get_counter("retryCount").inc(retry_count)
-    resource_group.get_counter("retryWaitSec").inc(total_retry_wait_sec)
+    resource_group.get_counter("retryWaitMs").inc(total_retry_wait_ms)
 
 
 def _record_token_metrics(
@@ -118,7 +118,7 @@ async def process_decision_request(
         "or zero or negative to retry without waiting",
     )
     retry_count = 0
-    total_retry_wait_sec = 0
+    total_retry_wait_ms = 0
     response = None
     failure = None
 
@@ -154,16 +154,16 @@ async def process_decision_request(
             if attempt < max_retries:
                 retry_count += 1
                 current_wait = retry_interval * (1 << attempt)
-                wait_seconds = current_wait.total_seconds()
-                if wait_seconds > 0:
-                    time.sleep(wait_seconds)
-                    total_retry_wait_sec += recorded_retry_wait_seconds(current_wait)
+                wait_millis = recorded_retry_wait_millis(current_wait)
+                if wait_millis > 0:
+                    time.sleep(wait_millis / 1000)
+                    total_retry_wait_ms += wait_millis
     finally:
         _record_retry_metrics(
             ctx.action_metric_group,
             event.model,
             retry_count,
-            total_retry_wait_sec,
+            total_retry_wait_ms,
         )
     if failure is not None:
         ctx.send_event(
@@ -171,7 +171,7 @@ async def process_decision_request(
                 event.id,
                 failure,
                 retry_count,
-                total_retry_wait_sec,
+                total_retry_wait_ms,
                 user_context=event.user_context,
             )
         )
@@ -181,7 +181,7 @@ async def process_decision_request(
                 event.id,
                 response,
                 retry_count,
-                total_retry_wait_sec,
+                total_retry_wait_ms,
                 user_context=event.user_context,
             )
         )

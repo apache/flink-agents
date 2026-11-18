@@ -106,7 +106,7 @@ def _result(**kwargs: Any) -> DecisionResult:
 
 
 def _context(
-    model, *, decision_async=True, retries=0, interval=1, journal=None
+    model, *, decision_async=True, retries=0, interval=1, wait=None, journal=None
 ) -> tuple[MagicMock, _Journal]:
     action_thread = threading.get_ident()
 
@@ -119,7 +119,7 @@ def _context(
         {
             "decision.async": decision_async,
             "max-retries": retries,
-            "retry-wait-interval": f"{interval} s",
+            "retry-wait-interval": wait if wait is not None else f"{interval} s",
         }
     )
     ctx.get_resource = MagicMock(side_effect=resource)
@@ -206,7 +206,7 @@ def test_success_uses_selected_durable_path_and_action_owned_context(decision_as
     assert response.request_id == event.id
     assert response.response == result
     assert response.retry_count == 0
-    assert response.total_retry_wait_sec == 0
+    assert response.total_retry_wait_ms == 0
     ctx.get_resource.assert_called_once_with(event.model, ResourceType.DECISION_MODEL)
     model.decide.assert_called_once_with(
         event.request, request_params=event.request_params
@@ -231,6 +231,57 @@ def test_success_uses_selected_durable_path_and_action_owned_context(decision_as
     ctx.report_execution_failed.assert_not_called()
 
 
+def test_one_request_records_one_hundred_millisecond_retry(monkeypatch):
+    sleep = MagicMock()
+    monkeypatch.setattr(
+        "flink_agents.plan.actions.decision_model_action.time.sleep", sleep
+    )
+    model = _Model([ValueError("transient"), _result()])
+    ctx, _ = _context(model, decision_async=False, retries=1, wait="100 ms")
+    asyncio.run(process_decision_request(_request(), ctx))
+
+    response = _response(ctx)
+    assert response.retry_count == 1
+    assert response.total_retry_wait_ms == 100
+    sleep.assert_called_once_with(0.1)
+    group = ctx.action_metric_group.get_sub_group.return_value
+    group.get_counter("retryCount").inc.assert_called_once_with(1)
+    group.get_counter("retryWaitMs").inc.assert_called_once_with(100)
+
+
+def test_one_hundred_millisecond_waits_accumulate_across_requests(monkeypatch):
+    sleep = MagicMock()
+    monkeypatch.setattr(
+        "flink_agents.plan.actions.decision_model_action.time.sleep", sleep
+    )
+    requests = 10_000
+    outcomes = []
+    for _ in range(requests):
+        outcomes.append(ValueError("transient"))
+        outcomes.append(_result())
+    model = _Model(outcomes)
+    ctx, _ = _context(model, decision_async=False, retries=1, wait="100 ms")
+
+    async def run_all() -> None:
+        for _ in range(requests):
+            await process_decision_request(_request(), ctx)
+
+    asyncio.run(run_all())
+
+    sent = [sent_call.args[0] for sent_call in ctx.send_event.call_args_list]
+    assert len(sent) == requests
+    assert all(
+        event.retry_count == 1 and event.total_retry_wait_ms == 100 for event in sent
+    )
+    group = ctx.action_metric_group.get_sub_group.return_value
+    increments = [
+        inc.args[0] for inc in group.get_counter("retryWaitMs").inc.call_args_list
+    ]
+    assert increments == [100] * requests
+    assert sum(increments) == 1_000_000
+    assert sleep.call_count == requests
+
+
 def test_decision_async_defaults_to_enabled():
     option = AgentExecutionOptions.DECISION_ASYNC
     assert option.get_key() == "decision.async"
@@ -253,7 +304,7 @@ def test_provider_failures_retry_with_exponential_wait_and_metrics(
     response = _response(ctx)
     assert response.is_success
     assert response.retry_count == 2
-    assert response.total_retry_wait_sec == 6
+    assert response.total_retry_wait_ms == 6000
     assert sleep.call_args_list == [call(2), call(4)]
     assert model.decide.call_count == 3
     assert (
@@ -286,7 +337,7 @@ def test_provider_failures_retry_with_exponential_wait_and_metrics(
     assert failure_report.args[5] == ExecutionProblemCategories.MODEL_CALL_FAILED
     group = ctx.action_metric_group.get_sub_group.return_value
     group.get_counter("retryCount").inc.assert_called_once_with(2)
-    group.get_counter("retryWaitSec").inc.assert_called_once_with(6)
+    group.get_counter("retryWaitMs").inc.assert_called_once_with(6000)
 
 
 def test_request_parameters_are_specific_to_each_call():
@@ -321,7 +372,7 @@ def test_exhausted_retries_emit_one_failure_without_extra_wait(monkeypatch):
     assert response.request_id == event.id
     assert response.error == "ValueError: unavailable"
     assert response.retry_count == 2
-    assert response.total_retry_wait_sec == 3
+    assert response.total_retry_wait_ms == 3000
     assert sleep.call_args_list == [call(1), call(2)]
     assert ctx.report_execution_failed.call_count == 3
     ctx.report_execution_succeeded.assert_not_called()
@@ -477,10 +528,10 @@ def test_started_retry_metrics_survive_durable_failure(
     group = ctx.action_metric_group.get_sub_group.return_value
     assert group.get_counter.call_args_list == [
         call("retryCount"),
-        call("retryWaitSec"),
+        call("retryWaitMs"),
     ]
     group.get_counter("retryCount").inc.assert_called_once_with(1)
-    group.get_counter("retryWaitSec").inc.assert_called_once_with(2)
+    group.get_counter("retryWaitMs").inc.assert_called_once_with(2000)
     ctx.report_execution_failed.assert_called_once()
     ctx.report_execution_succeeded.assert_not_called()
 
@@ -505,11 +556,11 @@ def test_interrupted_backoff_preserves_accumulated_retry_metrics(
     group = ctx.action_metric_group.get_sub_group.return_value
     assert group.get_counter.call_args_list == [
         call("retryCount"),
-        call("retryWaitSec"),
+        call("retryWaitMs"),
     ]
     group.get_counter("retryCount").inc.assert_called_once_with(failed_attempt)
-    group.get_counter("retryWaitSec").inc.assert_called_once_with(
-        2 * (failed_attempt - 1)
+    group.get_counter("retryWaitMs").inc.assert_called_once_with(
+        2000 * (failed_attempt - 1)
     )
 
 

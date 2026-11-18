@@ -158,7 +158,7 @@ final class DecisionModelRoutingExecutor implements RoutingExecutor {
         // Retries count against the routed request, like the judge's: response-level totals and
         // the model_resource counters both come from this one call.
         ChatModelAction.recordAttemptRetryStats(
-                ctx, context.getRequestId(), decisionModel, result.retryCount, result.totalWaitSec);
+                ctx, context.getRequestId(), decisionModel, result.retryCount, result.totalWaitMs);
         if (!result.isSuccess()) {
             throw new ModelRoutingResolver.RoutingFailure(
                     "Decision model '" + decisionModel + "' failed: " + result.error);

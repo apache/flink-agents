@@ -569,13 +569,13 @@ def _mistyped_attribute_cases() -> list[tuple[str, str, object]]:
         (ChatRequestEvent.EVENT_TYPE, "user_context", "not-a-dict"),
         # ChatResponseEvent
         (ChatResponseEvent.EVENT_TYPE, "retry_count", "not-a-number"),
-        (ChatResponseEvent.EVENT_TYPE, "total_retry_wait_sec", "not-a-number"),
+        (ChatResponseEvent.EVENT_TYPE, "total_retry_wait_ms", "not-a-number"),
         (ChatResponseEvent.EVENT_TYPE, "user_context", "not-a-dict"),
         # Decision events
         (DecisionRequestEvent.EVENT_TYPE, "model", 0),
         (DecisionRequestEvent.EVENT_TYPE, "user_context", "not-a-dict"),
         (DecisionResponseEvent.EVENT_TYPE, "retry_count", "not-a-number"),
-        (DecisionResponseEvent.EVENT_TYPE, "total_retry_wait_sec", "not-a-number"),
+        (DecisionResponseEvent.EVENT_TYPE, "total_retry_wait_ms", "not-a-number"),
         (DecisionResponseEvent.EVENT_TYPE, "user_context", "not-a-dict"),
         # ToolRequestEvent
         (ToolRequestEvent.EVENT_TYPE, "model", 0),

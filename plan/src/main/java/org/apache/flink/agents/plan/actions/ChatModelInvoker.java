@@ -118,19 +118,19 @@ public final class ChatModelInvoker {
         public final ChatResult response;
         public Object structuredOutput;
         public final int retryCount;
-        public final int totalRetryWaitSec;
+        public final long totalRetryWaitMs;
 
         ChatAttemptResult(
                 String model,
                 BaseChatModelSetup chatModel,
                 ChatResult response,
                 int retryCount,
-                int totalRetryWaitSec) {
+                long totalRetryWaitMs) {
             this.model = model;
             this.chatModel = chatModel;
             this.response = response;
             this.retryCount = retryCount;
-            this.totalRetryWaitSec = totalRetryWaitSec;
+            this.totalRetryWaitMs = totalRetryWaitMs;
         }
     }
 
@@ -139,20 +139,20 @@ public final class ChatModelInvoker {
         public final BaseChatModelSetup chatModel;
         public final Exception error;
         public final int retryCount;
-        public final int totalRetryWaitSec;
+        public final long totalRetryWaitMs;
 
         ChatAttemptFailed(
                 String model,
                 BaseChatModelSetup chatModel,
                 Exception error,
                 int retryCount,
-                int totalRetryWaitSec) {
+                long totalRetryWaitMs) {
             super(error);
             this.model = model;
             this.chatModel = chatModel;
             this.error = error;
             this.retryCount = retryCount;
-            this.totalRetryWaitSec = totalRetryWaitSec;
+            this.totalRetryWaitMs = totalRetryWaitMs;
         }
     }
 
@@ -235,7 +235,7 @@ public final class ChatModelInvoker {
         }
 
         int actualRetryCount = 0;
-        int totalWaitTimeSec = 0;
+        long totalWaitTimeMs = 0;
         ChatResult response;
 
         DurableCallable<InvocationOutcome> callable =
@@ -337,7 +337,7 @@ public final class ChatModelInvoker {
                 }
                 ChatAttemptResult result =
                         new ChatAttemptResult(
-                                model, chatModel, response, actualRetryCount, totalWaitTimeSec);
+                                model, chatModel, response, actualRetryCount, totalWaitTimeMs);
                 result.structuredOutput = structuredOutput;
                 return result;
             } catch (DurableExecutionFailure e) {
@@ -362,7 +362,7 @@ public final class ChatModelInvoker {
                     actualRetryCount = attempt + 1;
                     Duration currentWait =
                             retryWaitInterval.multipliedBy(1L << (actualRetryCount - 1));
-                    long waitMillis = Math.max(0L, currentWait.toMillis());
+                    long waitMillis = DurationFormat.recordedRetryWaitMillis(currentWait);
                     LOG.warn(
                             "Chat request {} failed with error: {}, retrying {} / {}, waiting {}.",
                             initialRequestId,
@@ -372,17 +372,17 @@ public final class ChatModelInvoker {
                             DurationFormat.format(currentWait));
                     if (waitMillis > 0) {
                         try {
-                            Thread.sleep(waitMillis);
+                            RetryWait.sleep(waitMillis);
                         } catch (InterruptedException ie) {
                             Thread.currentThread().interrupt();
                             throw ie;
                         }
-                        totalWaitTimeSec += DurationFormat.recordedRetryWaitSeconds(currentWait);
+                        totalWaitTimeMs += waitMillis;
                     }
                     continue;
                 }
                 throw new ChatAttemptFailed(
-                        model, chatModel, e, actualRetryCount, totalWaitTimeSec);
+                        model, chatModel, e, actualRetryCount, totalWaitTimeMs);
             }
         }
         throw new IllegalStateException("Unreachable chat retry state.");

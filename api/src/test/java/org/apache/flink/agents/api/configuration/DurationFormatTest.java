@@ -197,13 +197,25 @@ class DurationFormatTest {
     }
 
     @Test
-    void retryStatisticsRecordWholeSecondsOnly() {
-        assertThat(DurationFormat.recordedRetryWaitSeconds(DurationFormat.parse("2 s")))
-                .isEqualTo(2);
-        assertThat(DurationFormat.recordedRetryWaitSeconds(DurationFormat.parse("1500 ms")))
-                .isEqualTo(1);
-        assertThat(DurationFormat.recordedRetryWaitSeconds(DurationFormat.parse("500 ms")))
+    void retryStatisticsKeepWholeMillisecondsAcrossRequests() {
+        assertThat(DurationFormat.recordedRetryWaitMillis(DurationFormat.parse("2 s")))
+                .isEqualTo(2000L);
+        assertThat(DurationFormat.recordedRetryWaitMillis(DurationFormat.parse("1 s")))
+                .isEqualTo(1000L);
+        assertThat(DurationFormat.recordedRetryWaitMillis(DurationFormat.parse("1500 ms")))
+                .isEqualTo(1500L);
+        assertThat(DurationFormat.recordedRetryWaitMillis(DurationFormat.parse("500 ms")))
+                .isEqualTo(500L);
+        assertThat(DurationFormat.recordedRetryWaitMillis(DurationFormat.parse("100 ms")))
+                .isEqualTo(100L);
+        assertThat(DurationFormat.recordedRetryWaitMillis(DurationFormat.parse("0 ms"))).isZero();
+        assertThat(DurationFormat.recordedRetryWaitMillis(DurationFormat.parse("-1 ms")))
                 .isZero();
-        assertThat(DurationFormat.recordedRetryWaitSeconds(DurationFormat.parse("0 ms"))).isZero();
+
+        long total = 0L;
+        for (int request = 0; request < 10_000; request++) {
+            total += DurationFormat.recordedRetryWaitMillis(Duration.ofMillis(100));
+        }
+        assertThat(total).isEqualTo(1_000_000L);
     }
 }

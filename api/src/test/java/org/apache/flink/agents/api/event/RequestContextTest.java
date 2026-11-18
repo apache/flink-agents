@@ -181,7 +181,7 @@ class RequestContextTest {
                         + "\"response\":null,"
                         + "\"error\":\"TimeoutError: timed out\","
                         + "\"retry_count\":2,"
-                        + "\"total_retry_wait_sec\":3,"
+                        + "\"total_retry_wait_ms\":3,"
                         + "\"user_context\":{\"task\":\"summary\",\"item_id\":\"42\"}"
                         + "},"
                         + "\"attachments\":{}"
@@ -274,7 +274,7 @@ class RequestContextTest {
                         + "\"response\":{\"message\":{\"role\":\"assistant\",\"blocks\":[{\"type\":\"text\",\"text\":\"ok\"}],\"metadata\":{}}},"
                         + "\"error\":null,"
                         + "\"retry_count\":0,"
-                        + "\"total_retry_wait_sec\":0,"
+                        + "\"total_retry_wait_ms\":0,"
                         + "\"user_context\":{\"type\":\"Row\",\"values\":[1],\"label\":\"keep\"}"
                         + "}}";
         ChatResponseEvent response = ChatResponseEvent.fromEvent(Event.fromJson(responseJson));

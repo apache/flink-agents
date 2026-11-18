@@ -27,7 +27,7 @@ from flink_agents.api.duration import (
     is_positive,
     parse_duration,
     positive_seconds,
-    recorded_retry_wait_seconds,
+    recorded_retry_wait_millis,
     require_short_term_memory_ttl,
     require_whole_milliseconds,
     validate_consumed_duration,
@@ -175,8 +175,15 @@ def test_short_term_memory_ttl_rejects_a_sub_millisecond_remainder() -> None:
     ) == timedelta(minutes=1)
 
 
-def test_retry_statistics_record_whole_seconds_only() -> None:
-    assert recorded_retry_wait_seconds(parse_duration("2 s")) == 2
-    assert recorded_retry_wait_seconds(parse_duration("1500 ms")) == 1
-    assert recorded_retry_wait_seconds(parse_duration("500 ms")) == 0
-    assert recorded_retry_wait_seconds(parse_duration("0 ms")) == 0
+def test_retry_statistics_keep_whole_milliseconds_across_requests() -> None:
+    assert recorded_retry_wait_millis(parse_duration("2 s")) == 2000
+    assert recorded_retry_wait_millis(parse_duration("1 s")) == 1000
+    assert recorded_retry_wait_millis(parse_duration("1500 ms")) == 1500
+    assert recorded_retry_wait_millis(parse_duration("500 ms")) == 500
+    assert recorded_retry_wait_millis(parse_duration("100 ms")) == 100
+    assert recorded_retry_wait_millis(parse_duration("0 ms")) == 0
+    assert recorded_retry_wait_millis(parse_duration("-1 ms")) == 0
+    assert (
+        sum(recorded_retry_wait_millis(parse_duration("100 ms")) for _ in range(10_000))
+        == 1_000_000
+    )

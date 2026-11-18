@@ -296,9 +296,9 @@ class AgentExecutionOptions:
     # is this duration multiplied by 2^(N-1). Effective precision is 1 ms on Java
     # and Python. A positive duration that is not a whole number of milliseconds
     # is rejected. A zero or negative duration retries without waiting.
-    # retryWaitSec and total_retry_wait_sec add only the whole seconds of each
-    # sleep, so a sub-second sleep can be undercounted. In YAML, write a duration
-    # such as "1 s".
+    # retryWaitMs and total_retry_wait_ms add the whole milliseconds of each
+    # sleep, so a 100 ms sleep contributes 100. In YAML, write a duration such
+    # as "1 s".
     RETRY_WAIT_INTERVAL = ConfigOption(
         key="retry-wait-interval",
         config_type=timedelta,

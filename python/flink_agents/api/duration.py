@@ -177,15 +177,17 @@ def positive_seconds(value: timedelta | None) -> float | None:
     return value.total_seconds()
 
 
-def recorded_retry_wait_seconds(value: timedelta) -> int:
-    """Whole seconds of one retry sleep.
+def recorded_retry_wait_millis(value: timedelta) -> int:
+    """Whole milliseconds of one retry sleep.
 
-    A sub-second remainder is dropped, matching ``retryWaitSec`` and
-    ``total_retry_wait_sec``.
+    The count matches ``retryWaitMs`` and ``total_retry_wait_ms``, and it is the
+    duration Python sleeps. A non-positive duration contributes zero. A
+    sub-millisecond remainder is dropped; retry wait rejects that remainder
+    before the sleep.
     """
     if not is_positive(value):
         return 0
-    return int(value.total_seconds())
+    return value // timedelta(milliseconds=1)
 
 
 def validate_consumed_duration(option_key: str, value: timedelta) -> timedelta:

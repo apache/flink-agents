@@ -32,9 +32,9 @@ public class AgentExecutionOptions {
      * duration multiplied by {@code 2^(N-1)}. Effective precision is 1 ms: Java sleeps with {@code
      * Thread.sleep(long)} and Python sleeps the same whole-millisecond duration. A positive
      * duration that is not a whole number of milliseconds is rejected. A zero or negative duration
-     * retries without waiting. {@code retryWaitSec} and {@code total_retry_wait_sec} add only the
-     * whole seconds of each sleep, so a sub-second sleep can be undercounted. In YAML, write a
-     * duration such as {@code 1 s}.
+     * retries without waiting. {@code retryWaitMs} and {@code total_retry_wait_ms} add the whole
+     * milliseconds of each sleep, so a {@code 100 ms} sleep contributes {@code 100}. In YAML, write
+     * a duration such as {@code 1 s}.
      */
     public static final ConfigOption<Duration> RETRY_WAIT_INTERVAL =
             new ConfigOption<>("retry-wait-interval", Duration.class, Duration.ofSeconds(1));

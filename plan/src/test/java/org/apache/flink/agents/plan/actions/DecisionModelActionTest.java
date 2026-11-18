@@ -40,6 +40,7 @@ import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.metrics.SimpleCounter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -51,6 +52,7 @@ import javax.annotation.Nullable;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.concurrent.TimeUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -111,7 +113,7 @@ class DecisionModelActionTest {
         assertThat(h.response().getRequestId()).isEqualTo(h.request.getId());
         assertThat(h.response().getResponse().getModel()).isEqualTo("provider-model");
         assertThat(h.response().getRetryCount()).isZero();
-        assertThat(h.response().getTotalRetryWaitSec()).isZero();
+        assertThat(h.response().getTotalRetryWaitMs()).isZero();
         assertThat(h.providerCounters.get("promptTokens").getCount()).isEqualTo(7);
         assertThat(h.providerCounters.get("completionTokens").getCount()).isEqualTo(2);
         assertThat(h.providerCounters.get("totalTokens").getCount()).isEqualTo(9);
@@ -144,7 +146,7 @@ class DecisionModelActionTest {
         assertThat(h.response().isSuccess()).isTrue();
         assertThat(h.response().getRetryCount()).isEqualTo(1);
         assertThat(h.resourceCounters.get("retryCount").getCount()).isEqualTo(1);
-        assertThat(h.resourceCounters.get("retryWaitSec").getCount()).isZero();
+        assertThat(h.resourceCounters.get("retryWaitMs").getCount()).isZero();
         verify(h.model, times(2)).decide(h.request.getRequest(), h.request.getRequestParams());
         ArgumentCaptor<String> executionIds = ArgumentCaptor.forClass(String.class);
         verify(h.reporter, times(2))
@@ -363,9 +365,9 @@ class DecisionModelActionTest {
         verify(h.model).decide(any(), anyMap());
         verify(h.ctx, times(async ? 0 : 2)).durableExecute(any());
         verify(h.ctx, times(async ? 2 : 0)).durableExecuteAsync(any());
-        assertThat(h.resourceCounters).containsOnlyKeys("retryCount", "retryWaitSec");
+        assertThat(h.resourceCounters).containsOnlyKeys("retryCount", "retryWaitMs");
         assertThat(h.resourceCounters.get("retryCount").getCount()).isEqualTo(1);
-        assertThat(h.resourceCounters.get("retryWaitSec").getCount()).isZero();
+        assertThat(h.resourceCounters.get("retryWaitMs").getCount()).isZero();
         verify(h.reporter)
                 .reportExecutionFailed(
                         anyString(),
@@ -402,9 +404,10 @@ class DecisionModelActionTest {
         assertThat(Thread.currentThread().isInterrupted()).isTrue();
         assertThat(h.events).isEmpty();
         verify(h.model, times(failedAttempt)).decide(any(), anyMap());
-        assertThat(h.resourceCounters).containsOnlyKeys("retryCount", "retryWaitSec");
+        assertThat(h.resourceCounters).containsOnlyKeys("retryCount", "retryWaitMs");
         assertThat(h.resourceCounters.get("retryCount").getCount()).isEqualTo(failedAttempt);
-        assertThat(h.resourceCounters.get("retryWaitSec").getCount()).isEqualTo(failedAttempt - 1);
+        assertThat(h.resourceCounters.get("retryWaitMs").getCount())
+                .isEqualTo((failedAttempt - 1) * 1000L);
     }
 
     @ParameterizedTest
@@ -522,6 +525,45 @@ class DecisionModelActionTest {
         assertThat(h.response().isSuccess()).isTrue();
         verify(h.ctx, times(asyncSupported ? 0 : 1)).durableExecute(any());
         verify(h.ctx, times(asyncSupported ? 1 : 0)).durableExecuteAsync(any());
+    }
+
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void subSecondRetryWaitsAccumulateAcrossRequests() throws Exception {
+        int requests = 10_000;
+        Harness h = new Harness(false, 1);
+        when(h.ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL))
+                .thenReturn(Duration.ofMillis(100));
+        int[] calls = {0};
+        when(h.model.decide(any(), anyMap()))
+                .thenAnswer(
+                        invocation -> {
+                            if (calls[0]++ % 2 == 0) {
+                                throw new IllegalStateException("transient");
+                            }
+                            return result(null, null);
+                        });
+
+        RetryWait.Sleeper original = RetryWait.sleeper;
+        RetryWait.sleeper = millis -> {};
+        try {
+            for (int i = 0; i < requests; i++) {
+                DecisionModelAction.processDecisionRequest(h.request, h.ctx);
+            }
+        } finally {
+            RetryWait.sleeper = original;
+        }
+
+        assertThat(h.events).hasSize(requests);
+        assertThat(h.events)
+                .allSatisfy(
+                        event -> {
+                            DecisionResponseEvent response = (DecisionResponseEvent) event;
+                            assertThat(response.getRetryCount()).isEqualTo(1);
+                            assertThat(response.getTotalRetryWaitMs()).isEqualTo(100L);
+                        });
+        assertThat(h.resourceCounters.get("retryCount").getCount()).isEqualTo(requests);
+        assertThat(h.resourceCounters.get("retryWaitMs").getCount()).isEqualTo(1_000_000L);
     }
 
     private static DecisionResult result(String model, DecisionResult.TokenUsage usage) {

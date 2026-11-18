@@ -59,7 +59,7 @@ class ChatResponseEventTest {
         assertThat(restored.isFailed()).isTrue();
         assertThat(restored.getError()).isEqualTo("TimeoutException: timed out");
         assertThat(restored.getRetryCount()).isEqualTo(2);
-        assertThat(restored.getTotalRetryWaitSec()).isEqualTo(3);
+        assertThat(restored.getTotalRetryWaitMs()).isEqualTo(3);
         assertThatThrownBy(restored::getResponse)
                 .isInstanceOfSatisfying(
                         ChatResponseEvent.ChatResponseException.class,

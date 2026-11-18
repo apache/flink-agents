@@ -170,7 +170,7 @@ def test_foreign_json_context_survives_the_cross_language_boundary() -> None:
         "response": null,
         "error": "TimeoutError: timed out",
         "retry_count": 2,
-        "total_retry_wait_sec": 3,
+        "total_retry_wait_ms": 3,
         "user_context": {"task": "summary", "item_id": "42"}
       },
       "attachments": {}

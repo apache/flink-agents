@@ -192,18 +192,19 @@ public final class DurationFormat {
     }
 
     /**
-     * Whole seconds recorded for one retry sleep. A sub-second remainder is dropped, which can
-     * undercount {@code retryWaitSec} and {@code total_retry_wait_sec}.
+     * Whole milliseconds recorded for one retry sleep. This is the same count {@link
+     * Thread#sleep(long)} waits and the value added to {@code retryWaitMs} and {@code
+     * total_retry_wait_ms}. A non-positive duration contributes zero. A sub-millisecond remainder
+     * is dropped, matching {@code Duration#toMillis()}; retry wait rejects that remainder before
+     * the sleep. A duration that does not fit in a {@code long} throws {@link
+     * ArithmeticException}.
      */
-    public static int recordedRetryWaitSeconds(Duration duration) {
+    public static long recordedRetryWaitMillis(Duration duration) {
         if (!isPositive(duration)) {
-            return 0;
+            return 0L;
         }
         long millis = duration.toMillis();
-        if (millis <= 0L) {
-            return 0;
-        }
-        return (int) Math.min(Integer.MAX_VALUE, millis / 1000L);
+        return Math.max(0L, millis);
     }
 
     /**
