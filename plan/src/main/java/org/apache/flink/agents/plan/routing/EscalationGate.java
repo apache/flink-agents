@@ -146,16 +146,13 @@ public final class EscalationGate {
             ChatModelInvoker.ChatAttemptResult result,
             RunnerContext ctx)
             throws Exception {
+        if (!canEscalate(policy, candidate, escalationsSoFar)) {
+            // A fallback candidate outside the tiers or a model the policy does not know; the last
+            // tier, which always accepts on quality; a request out of hops.
+            return Optional.empty();
+        }
         int tierIndex = policy.tierIndex(candidate);
-        if (tierIndex < 0) {
-            // A fallback candidate outside the tiers, or a model the policy does not know.
-            return Optional.empty();
-        }
-        Optional<String> next = policy.nextTier(candidate);
-        if (next.isEmpty() || escalationsSoFar >= policy.getMaxEscalations()) {
-            // The last tier always accepts on quality; so does a request out of hops.
-            return Optional.empty();
-        }
+        String next = policy.nextTier(candidate).orElseThrow();
         ChatResult response = Objects.requireNonNull(result.response, "response");
         // A Python-declared candidate binds its tools on the Python side; the Java setup never
         // opens them, so the tool checks cannot be applied to it.
@@ -176,7 +173,7 @@ public final class EscalationGate {
 
         QualityVerdict structural = structural(context, toolsKnown);
         if (structural.isEscalate()) {
-            return Optional.of(outcome(candidate, next.get(), STRUCTURAL, structural));
+            return Optional.of(outcome(candidate, next, STRUCTURAL, structural));
         }
         boolean toolOnly = isToolOnlyRound(response);
         int index = 0;
@@ -205,10 +202,52 @@ public final class EscalationGate {
             }
             index++;
             if (verdict.isEscalate()) {
-                return Optional.of(outcome(candidate, next.get(), name, verdict));
+                return Optional.of(outcome(candidate, next, name, verdict));
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * True when a rejected answer from {@code candidate} would move the request up a tier: the
+     * candidate is a tier below the last one and the request still has hops. A fallback candidate
+     * outside the tiers never escalates.
+     */
+    public static boolean canEscalate(Escalation policy, String candidate, int escalationsSoFar) {
+        return policy.tierIndex(candidate) >= 0
+                && policy.nextTier(candidate).isPresent()
+                && escalationsSoFar < policy.getMaxEscalations();
+    }
+
+    /**
+     * The structural rejection of an answer that could not be shaped into the request's output
+     * schema. The schema is applied once {@link #check} has accepted the answer, so this check runs
+     * outside it; the caller reaches it only for a candidate that {@link #canEscalate}.
+     */
+    public static Outcome outputSchemaRejected(
+            Escalation policy, String candidate, Exception error) {
+        String next =
+                policy.nextTier(candidate)
+                        .orElseThrow(
+                                () ->
+                                        new IllegalStateException(
+                                                "'" + candidate + "' is the last tier"));
+        return new Outcome(
+                candidate,
+                next,
+                STRUCTURAL,
+                "answer could not be shaped into the output schema: " + firstLine(error),
+                null);
+    }
+
+    /**
+     * The failure's text up to its first line break: a parser's message goes on with the input
+     * location, which has no place in a hop reason, an event or a log line.
+     */
+    private static String firstLine(Exception error) {
+        String text = ChatModelInvoker.errorText(error);
+        int eol = text.indexOf('\n');
+        return eol < 0 ? text : text.substring(0, eol).trim();
     }
 
     private static Outcome outcome(String from, String to, String signal, QualityVerdict verdict) {
@@ -220,8 +259,8 @@ public final class EscalationGate {
     /**
      * The built-in checks, in order: an empty answer with no tool call; a call to a tool the
      * candidate does not have; arguments that fail the tool's input schema; the same tool call,
-     * with identical arguments, as the previous assistant round. Pure functions of the response and
-     * the conversation, so replay recomputes them.
+     * with identical arguments, as the previous assistant round of the same turn. Pure functions of
+     * the response and the conversation, so replay recomputes them.
      */
     static QualityVerdict structural(QualityContext context) {
         return structural(context, true);
@@ -353,10 +392,16 @@ public final class EscalationGate {
         }
     }
 
-    /** True when the previous assistant message made exactly these calls (name and arguments). */
+    /**
+     * True when the previous assistant message of the same turn made exactly these calls (name and
+     * arguments). A user message ends the turn: a call the user asked for again is not a loop.
+     */
     static boolean repeatsPreviousRound(List<ChatMessage> messages, List<ToolCallBlock> calls) {
         for (int i = messages.size() - 1; i >= 0; i--) {
             ChatMessage message = messages.get(i);
+            if (message.getRole() == MessageRole.USER) {
+                return false;
+            }
             if (message.getRole() != MessageRole.ASSISTANT) {
                 continue;
             }

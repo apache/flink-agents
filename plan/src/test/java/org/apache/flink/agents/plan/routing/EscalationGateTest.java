@@ -370,6 +370,33 @@ class EscalationGateTest {
     }
 
     @Test
+    void theRepeatCheckStopsAtAUserTurn() {
+        ChatMessage previous =
+                ChatMessage.assistant(
+                        List.of(new ToolCallBlock("call-0", "lookup", Map.of("q", "x"))));
+        List<ChatMessage> messages =
+                List.of(
+                        ChatMessage.user("find it"),
+                        previous,
+                        ChatMessage.tool(
+                                new ToolResultBlock(
+                                        "call-0", List.of(new TextBlock("nothing")), false)),
+                        ChatMessage.user("please run that again"));
+        // The user asked for the same call again: a new turn, not a loop.
+        assertThat(
+                        EscalationGate.repeatsPreviousRound(
+                                messages, toolCall("lookup", Map.of("q", "x")).getToolCalls()))
+                .isFalse();
+        QualityVerdict verdict =
+                EscalationGate.structural(
+                        context(
+                                messages,
+                                toolCall("lookup", Map.of("q", "x")),
+                                List.of(new LookupTool())));
+        assertThat(verdict.isEscalate()).isFalse();
+    }
+
+    @Test
     void theRepeatCheckIgnoresTheOrderOfArgumentKeys() {
         Map<String, Object> firstFilter = new LinkedHashMap<>();
         firstFilter.put("a", 1);

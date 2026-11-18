@@ -561,9 +561,17 @@ The **structural checks** are always on for a tiered router and need no
 configuration. They reject an answer with no text, media or tool call, a call to
 a tool the model does not have, tool arguments that fail the tool's JSON schema,
 and a tool call repeated with identical arguments (whatever the order of their
-keys) in consecutive rounds.
+keys) in consecutive rounds of the same turn; a repeat after a new user message
+is not a loop.
 For a candidate declared in Python the two tool checks are skipped, because its
 tools are bound on the Python side and not visible to the router.
+
+When the request carries an output schema, a tier below the last one answers
+without it: the checks and the signals judge the answer the model wrote, and the
+schema is applied once the answer is accepted. An answer the tier cannot shape
+into the schema (the text does not parse, or the finalizing call fails) is a
+structural rejection and the request moves up a tier. The last tier applies the
+schema inside its attempt, with the request's retries, as a direct request does.
 
 A **decision model signal** asks a registered
 [decision model]({{< ref "docs/development/decision_models" >}})

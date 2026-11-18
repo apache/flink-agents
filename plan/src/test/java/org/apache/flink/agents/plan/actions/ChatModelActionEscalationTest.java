@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.plan.actions;
 
+import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
@@ -45,8 +46,13 @@ import org.apache.flink.agents.plan.actions.ChatModelActionRoutingTest.FakeDecis
 import org.apache.flink.agents.plan.actions.ChatModelActionRoutingTest.FakeRunnerContext;
 import org.apache.flink.agents.plan.routing.EscalationGate;
 import org.apache.flink.agents.plan.routing.ModelRouter;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeinfo.Types;
+import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
+import org.apache.flink.types.Row;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -55,6 +61,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.stream.Collectors;
 
 import static org.apache.flink.agents.api.chat.model.routing.ModelRouter.of;
@@ -254,6 +261,418 @@ class ChatModelActionEscalationTest {
                 (List<Map<String, Object>>) routing(ctx.chatResponse()).get("escalations");
         assertThat(hops.get(0)).containsEntry("signal", "structural");
         assertThat((String) hops.get(0).get("reason")).contains("empty response");
+    }
+
+    private static void sendWithSchema(FakeRunnerContext ctx, String text) throws Exception {
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user(text)), Map.of(), Map.class),
+                ctx);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> hops(ChatResponseEvent response) {
+        return (List<Map<String, Object>>) routing(response).get("escalations");
+    }
+
+    @Test
+    void anEmptyAnswerUnderAnOutputSchemaEscalatesInsteadOfFailingToParse() throws Exception {
+        FakeChatModel small = new FakeChatModel(ChatFixtures.response(""));
+        FakeChatModel big = new FakeChatModel(ChatFixtures.response("{\"answer\":\"42\"}"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register("big", big)
+                        .withRetryBudget(2, 0);
+        sendWithSchema(ctx, "hello");
+
+        ChatResponseEvent response = ctx.chatResponse();
+        assertThat(response.isFailed()).isFalse();
+        assertThat(response.getStructuredOutput()).isEqualTo(Map.of("answer", "42"));
+        // The empty answer is rejected by the gate, not retried as a parse failure.
+        assertThat(small.callCount).isEqualTo(1);
+        assertThat(big.callCount).isEqualTo(1);
+        assertThat(hops(response)).hasSize(1);
+        assertThat(hops(response).get(0))
+                .containsEntry("from", "small")
+                .containsEntry("to", "big")
+                .containsEntry("signal", "structural");
+        assertThat((String) hops(response).get(0).get("reason")).contains("empty response");
+    }
+
+    @Test
+    void anAnswerTheTierCannotShapeIntoTheSchemaIsRejectedAndEscalates() throws Exception {
+        FakeDecisionModel dm = new FakeDecisionModel(verdict(0.99));
+        FakeChatModel small = new FakeChatModel(ChatFixtures.response("Sure, here you go."));
+        FakeChatModel big = new FakeChatModel(ChatFixtures.response("{\"answer\":\"42\"}"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", dm)
+                        .register("small", small)
+                        .register("big", big)
+                        .withRetryBudget(2, 0);
+        sendWithSchema(ctx, "hello");
+
+        ChatResponseEvent response = ctx.chatResponse();
+        assertThat(response.isFailed()).isFalse();
+        assertThat(response.getStructuredOutput()).isEqualTo(Map.of("answer", "42"));
+        // The verifier judged the prose before the schema step rejected it; small is not retried.
+        assertThat(dm.callCount).isEqualTo(1);
+        assertThat(small.callCount).isEqualTo(1);
+        assertThat(big.callCount).isEqualTo(1);
+        assertThat(hops(response)).hasSize(1);
+        assertThat(hops(response).get(0)).containsEntry("signal", "structural");
+        assertThat((String) hops(response).get(0).get("reason")).contains("output schema");
+        // The initial routing event, then the escalation event for the move to big.
+        assertThat(routingEvents(ctx))
+                .filteredOn(
+                        event ->
+                                ModelRoutingEvent.SOURCE_ESCALATION.equals(
+                                        event.getDecisionSource()))
+                .singleElement()
+                .satisfies(event -> assertThat(event.getSelectedModel()).isEqualTo("big"));
+    }
+
+    @Test
+    void theLastTierShapesTheAnswerInsideItsAttemptWithTheRetries() throws Exception {
+        FakeChatModel small = new FakeChatModel(ChatFixtures.response("prose"));
+        FakeChatModel big =
+                new FakeChatModel(
+                        ChatFixtures.response("still prose"),
+                        ChatFixtures.response("{\"answer\":\"42\"}"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register("big", big)
+                        .withRetryBudget(1, 0);
+        sendWithSchema(ctx, "hello");
+
+        ChatResponseEvent response = ctx.chatResponse();
+        assertThat(response.isFailed()).isFalse();
+        assertThat(response.getStructuredOutput()).isEqualTo(Map.of("answer", "42"));
+        // No tier is left above big, so its parse failure is retried as for a direct request.
+        assertThat(small.callCount).isEqualTo(1);
+        assertThat(big.callCount).isEqualTo(2);
+        assertThat(hops(response)).hasSize(1);
+    }
+
+    @Test
+    void aLastTierAnswerThatCannotBeShapedFailsTheRequest() throws Exception {
+        FakeChatModel small = new FakeChatModel(ChatFixtures.response("prose"));
+        FakeChatModel big = new FakeChatModel(ChatFixtures.response("more prose"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register("big", big)
+                        .withRetryBudget(0, 0);
+        sendWithSchema(ctx, "hello");
+
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
+        assertThat(small.callCount).isEqualTo(1);
+        assertThat(big.callCount).isEqualTo(1);
+    }
+
+    @Test
+    void aNativeSchemaIsAppliedAfterTheGateOnATierThatCanEscalate() throws Exception {
+        FakeChatModel small =
+                new FakeChatModel(ChatFixtures.response("the answer is 42"))
+                        .withNativeStructuredOutput();
+        FakeDecisionModel dm = new FakeDecisionModel(verdict(0.99));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", dm)
+                        .register("small", small)
+                        .register("big", new FakeChatModel());
+        sendWithSchema(ctx, "hello");
+
+        ChatResponseEvent response = ctx.chatResponse();
+        assertThat(response.isFailed()).isFalse();
+        assertThat(response.getStructuredOutput()).isEqualTo(Map.of("answer", "42"));
+        assertThat(hops(response)).isEmpty();
+        // The verifier judged the loop answer; the finalizing call followed its verdict.
+        assertThat(dm.callCount).isEqualTo(1);
+        assertThat(ctx.durableCallIds)
+                .containsSubsequence(
+                        "chat:router:small", "escalate:router:small", "chat:router:small:final");
+        assertThat(small.structuredRequests).hasSize(1);
+        assertThat(small.structuredRequests.get(0).get(0).getText()).contains("the answer is 42");
+    }
+
+    @Test
+    void aNativeFinalizingCallThatDoesNotParseEscalatesAndCountsBothCalls() throws Exception {
+        FlinkAgentsMetricGroup actionMetricGroup = mock(FlinkAgentsMetricGroup.class);
+        Counter escalationCount = mock(Counter.class);
+        Counter escalatedTokens = mock(Counter.class);
+        when(actionMetricGroup.getHistogram("routingDecisionLatencyMs"))
+                .thenReturn(mock(Histogram.class));
+        when(actionMetricGroup.getCounter("routingEscalationCount")).thenReturn(escalationCount);
+        when(actionMetricGroup.getCounter("routingEscalatedTokens")).thenReturn(escalatedTokens);
+        FakeChatModel small =
+                new FakeChatModel(
+                                ChatFixtures.response(
+                                        "the answer is 42",
+                                        Map.of("promptTokens", 20L, "completionTokens", 10L)))
+                        .withNativeStructuredOutput()
+                        .withNativeAnswers(
+                                ChatFixtures.response(
+                                        "not json",
+                                        Map.of("promptTokens", 5L, "completionTokens", 2L)));
+        FakeChatModel big = new FakeChatModel(ChatFixtures.response("{\"answer\":\"42\"}"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .withActionMetricGroup(actionMetricGroup)
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register("big", big);
+        sendWithSchema(ctx, "hello");
+
+        ChatResponseEvent response = ctx.chatResponse();
+        assertThat(response.isFailed()).isFalse();
+        assertThat(response.getStructuredOutput()).isEqualTo(Map.of("answer", "42"));
+        // The loop call and the finalizing call were both discarded with the answer.
+        assertThat(hops(response)).hasSize(1);
+        assertThat(hops(response).get(0))
+                .containsEntry("signal", "structural")
+                .containsEntry("discarded_tokens", 37L);
+        assertThat((String) hops(response).get(0).get("reason"))
+                .contains("output schema")
+                .doesNotContain("\n");
+        assertThat(routing(response)).containsEntry("escalated_tokens", 37L);
+        verify(escalationCount).inc();
+        verify(escalatedTokens).inc(37L);
+    }
+
+    @Test
+    void aNativeFinalizingCallThatFailsEscalatesWithTheLoopAnswersTokens() throws Exception {
+        FakeChatModel small =
+                new FakeChatModel(
+                                ChatFixtures.response(
+                                        "the answer is 42",
+                                        Map.of("promptTokens", 20L, "completionTokens", 10L)))
+                        .withNativeStructuredOutput()
+                        .withNativeAnswers(new RuntimeException("provider down"));
+        FakeChatModel big = new FakeChatModel(ChatFixtures.response("{\"answer\":\"42\"}"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register("big", big)
+                        .withRetryBudget(2, 0);
+        sendWithSchema(ctx, "hello");
+
+        ChatResponseEvent response = ctx.chatResponse();
+        assertThat(response.isFailed()).isFalse();
+        assertThat(response.getStructuredOutput()).isEqualTo(Map.of("answer", "42"));
+        // The failed conversion is a rejection of small's answer, not a retried attempt.
+        assertThat(small.callCount).isEqualTo(1);
+        assertThat(small.structuredRequests).hasSize(1);
+        assertThat(hops(response)).hasSize(1);
+        assertThat(hops(response).get(0))
+                .containsEntry("signal", "structural")
+                .containsEntry("discarded_tokens", 30L);
+        assertThat((String) hops(response).get(0).get("reason"))
+                .contains("output schema")
+                .contains("provider down");
+    }
+
+    @Test
+    void aToolCallRoundOnAGatedTierIsNotShaped() throws Exception {
+        // The schema applies to the final answer only; a tool round is dispatched unshaped.
+        FakeChatModel small =
+                new ToolingChatModel(ChatFixtures.response("", LOOKUP_CALL))
+                        .withNativeStructuredOutput();
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register("big", new FakeChatModel(ChatFixtures.response("unused")));
+        sendWithSchema(ctx, "find it");
+
+        assertThat(lastToolRequest(ctx)).isNotNull();
+        assertThat(ctx.hasChatResponse()).isFalse();
+        assertThat(small.structuredRequests).isEmpty();
+    }
+
+    @Test
+    void aTierOutOfHopsShapesTheAnswerInsideItsAttempt() throws Exception {
+        FakeChatModel small = new FakeChatModel(ChatFixtures.response("prose"));
+        FakeChatModel medium = new FakeChatModel(ChatFixtures.response("more prose"));
+        FakeChatModel big = new FakeChatModel(ChatFixtures.response("{\"answer\":\"42\"}"));
+        ModelRouter router =
+                new ModelRouter(
+                        of("small", "medium", "big")
+                                .escalation(
+                                        Escalation.tiers("small", "medium", "big")
+                                                .when(QualitySignals.decision("dm", 0.7))
+                                                .maxEscalations(1))
+                                .fallback(false)
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register("medium", medium)
+                        .register("big", big)
+                        .withRetryBudget(0, 0);
+        sendWithSchema(ctx, "hello");
+
+        // small's prose is rejected by the schema step and the one hop goes to medium; medium is
+        // out of hops, so its answer is shaped inside the attempt and the parse failure fails the
+        // request instead of moving on to big.
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
+        assertThat(small.callCount).isEqualTo(1);
+        assertThat(medium.callCount).isEqualTo(1);
+        assertThat(big.callCount).isZero();
+    }
+
+    @Test
+    void anUnsupportedSchemaTypeFailsTheRequestInsteadOfEscalating() throws Exception {
+        FakeChatModel small = new FakeChatModel(ChatFixtures.response("prose"));
+        FakeChatModel big = new FakeChatModel(ChatFixtures.response("unused"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register("big", big);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("hello")), Map.of(), "not a schema"),
+                ctx);
+
+        // The failure would recur on every tier: the request fails, no tier is tried for it.
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
+        assertThat(small.callCount).isEqualTo(1);
+        assertThat(big.callCount).isZero();
+        assertThat(routingEvents(ctx))
+                .noneMatch(
+                        event ->
+                                ModelRoutingEvent.SOURCE_ESCALATION.equals(
+                                        event.getDecisionSource()));
+    }
+
+    @Test
+    void anInfeasibleNativeSchemaIsTheCandidateFailingNotARejection() throws Exception {
+        FakeChatModel small =
+                new FakeChatModel(ChatFixtures.response("unused"))
+                        .withGateFailure(new IllegalArgumentException("NATIVE infeasible"));
+        FakeChatModel big = new FakeChatModel(ChatFixtures.response("{\"answer\":\"42\"}"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(
+                                tiered(
+                                        Escalation.tiers("small", "big")
+                                                .when(QualitySignals.decision("dm", 0.7)),
+                                        true))
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register("big", big);
+        sendWithSchema(ctx, "hello");
+
+        ChatResponseEvent response = ctx.chatResponse();
+        assertThat(response.isFailed()).isFalse();
+        assertThat(response.getStructuredOutput()).isEqualTo(Map.of("answer", "42"));
+        // The feasibility check ran before any loop call, as it does for a direct request, and
+        // fallback took over; no quality rejection was recorded.
+        assertThat(small.callCount).isZero();
+        assertThat(routing(response))
+                .containsEntry("final_model", "big")
+                .containsEntry("escalation_attempted", false);
+        assertThat(routingEvents(ctx))
+                .filteredOn(
+                        event ->
+                                ModelRoutingEvent.SOURCE_FALLBACK.equals(event.getDecisionSource()))
+                .hasSize(1);
+    }
+
+    @Test
+    void aJsonNullAnswerUnderARowSchemaIsRejectedAndEscalates() throws Exception {
+        OutputSchema schema =
+                new OutputSchema(
+                        new RowTypeInfo(
+                                new TypeInformation<?>[] {Types.STRING}, new String[] {"answer"}));
+        FakeChatModel small = new FakeChatModel(ChatFixtures.response("null"));
+        FakeChatModel big = new FakeChatModel(ChatFixtures.response("{\"answer\":\"42\"}"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register("big", big);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("hello")), Map.of(), schema),
+                ctx);
+
+        ChatResponseEvent response = ctx.chatResponse();
+        assertThat(response.isFailed()).isFalse();
+        assertThat(((Row) response.getStructuredOutput()).getField("answer")).isEqualTo("42");
+        assertThat(hops(response)).hasSize(1);
+        assertThat((String) hops(response).get(0).get("reason")).contains("output schema");
+        assertThat(big.callCount).isEqualTo(1);
+    }
+
+    @Test
+    void aSchemaClassJacksonCannotBuildFailsTheRequestInsteadOfEscalating() throws Exception {
+        FakeChatModel small = new FakeChatModel(ChatFixtures.response("{\"answer\":\"42\"}"));
+        FakeChatModel big = new FakeChatModel(ChatFixtures.response("unused"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register("big", big);
+        // Valid JSON, but an interface has no deserializer: the schema is the problem, and the
+        // problem would recur on every tier.
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("hello")), Map.of(), Runnable.class),
+                ctx);
+
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
+        assertThat(small.callCount).isEqualTo(1);
+        assertThat(big.callCount).isZero();
+        assertThat(routingEvents(ctx))
+                .noneMatch(
+                        event ->
+                                ModelRoutingEvent.SOURCE_ESCALATION.equals(
+                                        event.getDecisionSource()));
+    }
+
+    /** A schema whose setter raises a cancellation while the answer is parsed. */
+    public static final class CancellingTarget {
+        public void setValue(String value) {
+            throw new CancellationException("cancelled while parsing");
+        }
+    }
+
+    @Test
+    void aCancellationRaisedWhileParsingPropagatesInsteadOfEscalating() throws Exception {
+        FakeChatModel small = new FakeChatModel(ChatFixtures.response("{\"value\":\"x\"}"));
+        FakeChatModel big = new FakeChatModel(ChatFixtures.response("unused"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register("big", big);
+
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.processChatRequestOrToolResponse(
+                                        new ChatRequestEvent(
+                                                "router",
+                                                List.of(ChatMessage.user("hello")),
+                                                Map.of(),
+                                                CancellingTarget.class),
+                                        ctx))
+                .satisfies(thrown -> assertThat(CancellationUtils.isCancellation(thrown)).isTrue());
+        assertThat(big.callCount).isZero();
+        assertThat(ctx.hasChatResponse()).isFalse();
+        assertThat(routingEvents(ctx))
+                .noneMatch(
+                        event ->
+                                ModelRoutingEvent.SOURCE_ESCALATION.equals(
+                                        event.getDecisionSource()));
     }
 
     @Test

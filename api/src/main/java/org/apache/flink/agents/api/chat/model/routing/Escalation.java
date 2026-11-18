@@ -38,11 +38,13 @@ import java.util.Set;
  * badly. After each model round of a request that is on a tier below the last one, the engine runs
  * the structural checks (an empty answer with no tool call, a call to a tool the candidate does not
  * have, arguments that fail the tool's input schema, the same tool call repeated with identical
- * arguments in consecutive rounds) and then the declared signals, in order. The first escalating
- * verdict discards that round's answer before any of its tool calls is dispatched and re-sends the
- * conversation so far to the next tier, where the request then stays. The last tier always accepts
- * on quality; if it fails after its retries, fallback (when enabled) skips the candidates that
- * already answered this request, and with none left the request fails.
+ * arguments in consecutive rounds of the same turn) and then the declared signals, in order. Once
+ * the answer is accepted, the request's output schema, if any, is applied; an answer that cannot be
+ * shaped into it is rejected as well. The first escalating verdict discards that round's answer
+ * before any of its tool calls is dispatched and re-sends the conversation so far to the next tier,
+ * where the request then stays. The last tier always accepts on quality; if it fails after its
+ * retries, fallback (when enabled) skips the candidates that already answered this request, and
+ * with none left the request fails.
  *
  * <pre>{@code
  * ModelRouter.of("small", "big")

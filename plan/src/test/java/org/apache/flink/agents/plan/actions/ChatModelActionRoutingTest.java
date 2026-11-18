@@ -109,7 +109,8 @@ public class ChatModelActionRoutingTest {
      */
     static class FakeChatModel extends BaseChatModelSetup {
         private final Deque<Object> outcomes = new ArrayDeque<>();
-        private int callCount;
+        private final Deque<Object> nativeOutcomes = new ArrayDeque<>();
+        int callCount;
         private boolean nativeStructuredOutput;
         private RuntimeException gateFailure;
         private RuntimeException prepareFailure;
@@ -123,6 +124,12 @@ public class ChatModelActionRoutingTest {
         /** Resolves a schema to the native channel; schema-carrying calls answer parseably. */
         FakeChatModel withNativeStructuredOutput() {
             this.nativeStructuredOutput = true;
+            return this;
+        }
+
+        /** Scripts the schema-carrying (finalizing) call's outcomes, as for the loop call. */
+        FakeChatModel withNativeAnswers(Object... outcomes) {
+            Collections.addAll(this.nativeOutcomes, outcomes);
             return this;
         }
 
@@ -163,6 +170,13 @@ public class ChatModelActionRoutingTest {
                 Map<String, Object> modelParams,
                 Object outputSchema) {
             structuredRequests.add(List.copyOf(messages));
+            Object next = nativeOutcomes.poll();
+            if (next instanceof RuntimeException) {
+                throw (RuntimeException) next;
+            }
+            if (next instanceof ChatResult) {
+                return (ChatResult) next;
+            }
             return ChatFixtures.response("{\"answer\":\"42\"}");
         }
 

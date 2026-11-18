@@ -29,6 +29,7 @@ import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ChatModelInvoker;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -151,12 +152,23 @@ public final class RoutedChatRound {
         boolean fallbackAttempted = false;
         String lastFailedModel = null;
         Exception lastError = null;
+        Optional<Escalation> policy = route.getEscalation();
         while (!pending.isEmpty()) {
             String candidate = pending.pollFirst();
             if (rejected.contains(candidate)) {
                 continue;
             }
             triedModels.add(candidate);
+            // On a tier whose answer can still be rejected, the output schema is applied after the
+            // gate: the checks and the signals judge the answer the model wrote, and an answer the
+            // tier cannot shape into the schema is a rejection, not a failed attempt. The schema's
+            // feasibility is still settled before the call, so a schema the candidate can never
+            // carry stays a failed attempt. The last tier, and a request out of hops, shape the
+            // answer inside the attempt with its retries, as a direct request does.
+            boolean gated =
+                    policy.isPresent()
+                            && EscalationGate.canEscalate(policy.get(), candidate, escalations);
+            long schemaDiscarded = 0L;
             try {
                 ChatModelInvoker.ChatAttemptResult result =
                         ChatModelInvoker.chatWithRetries(
@@ -166,6 +178,7 @@ public final class RoutedChatRound {
                                 messages,
                                 promptArgs,
                                 outputSchema,
+                                gated,
                                 ctx,
                                 numRetries,
                                 retryWaitMillis);
@@ -175,9 +188,8 @@ public final class RoutedChatRound {
                 // Quality gate: on a tier below the last one, an answer that fails a structural
                 // check or a declared signal is discarded before any of its tool calls runs, and
                 // the conversation so far goes to the next tier, where the request then stays.
-                Optional<Escalation> policy = route.getEscalation();
+                Optional<EscalationGate.Outcome> escalate = Optional.empty();
                 if (policy.isPresent()) {
-                    Optional<EscalationGate.Outcome> escalate;
                     try {
                         escalate =
                                 EscalationGate.check(
@@ -196,43 +208,77 @@ public final class RoutedChatRound {
                         take(ctx.getSensoryMemory(), requestId);
                         throw new RoundFailed(e);
                     }
-                    if (escalate.isPresent()) {
-                        EscalationGate.Outcome outcome = escalate.get();
-                        rejected.add(candidate);
-                        escalations++;
-                        long discarded = discardedTokens(result.response);
-                        escalatedTokens += discarded;
-                        hops.add(hop(outcome, discarded));
-                        recordEscalationMetrics(ctx, discarded);
-                        Map<String, Object> eventMetadata = new LinkedHashMap<>();
-                        eventMetadata.put("signal", outcome.signal);
-                        eventMetadata.put("escalated_from", outcome.fromTier);
-                        eventMetadata.put("discarded_tokens", discarded);
-                        ctx.sendEvent(
-                                new ModelRoutingEvent(
-                                        requestId,
-                                        route.getRequestedModel(),
-                                        route.getCandidates(),
-                                        outcome.toTier,
-                                        ModelRoutingEvent.SOURCE_ESCALATION,
-                                        route.isFallbackEnabled(),
-                                        outcome.reason,
-                                        outcome.score,
-                                        eventMetadata,
-                                        null));
-                        LOG.info(
-                                "Chat request {} escalated from '{}' to '{}' on router '{}' ({}: {})",
-                                requestId,
-                                outcome.fromTier,
-                                outcome.toTier,
-                                route.getRequestedModel(),
-                                outcome.signal,
-                                outcome.reason);
-                        pending.remove(outcome.toTier);
-                        pending.addFirst(outcome.toTier);
-                        viaFallback = false;
-                        continue;
+                }
+                if (escalate.isEmpty() && gated && outputSchema != null) {
+                    try {
+                        result =
+                                ChatModelInvoker.applyOutputSchema(
+                                        result,
+                                        outputSchema,
+                                        route.durableChatCallId(candidate),
+                                        ctx);
+                    } catch (ChatModelInvoker.DurableExecutionFailure e) {
+                        // A persistence or recovery failure is not a request failure.
+                        throw e.failure;
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw e;
+                    } catch (ChatModelInvoker.OutputSchemaFailure e) {
+                        // A cancellation the parser wrapped, or an interrupted thread, is not a
+                        // rejection.
+                        CancellationUtils.rethrowIfCancellation(e.cause);
+                        // The answer could not be shaped: a structural rejection. A finalizing
+                        // call that answered before the rejection is discarded with it.
+                        schemaDiscarded = discardedTokens(e.finalized);
+                        escalate =
+                                Optional.of(
+                                        EscalationGate.outputSchemaRejected(
+                                                policy.get(), candidate, e.cause));
+                    } catch (Exception e) {
+                        // Not the answer's fault (an unsupported schema type, a setup error): it
+                        // would recur on every tier, so the request fails, as it does when a
+                        // signal cannot judge the round.
+                        CancellationUtils.rethrowIfCancellation(e);
+                        take(ctx.getSensoryMemory(), requestId);
+                        throw new RoundFailed(e);
                     }
+                }
+                if (escalate.isPresent()) {
+                    EscalationGate.Outcome outcome = escalate.get();
+                    rejected.add(candidate);
+                    escalations++;
+                    long discarded = discardedTokens(result.response) + schemaDiscarded;
+                    escalatedTokens += discarded;
+                    hops.add(hop(outcome, discarded));
+                    recordEscalationMetrics(ctx, discarded);
+                    Map<String, Object> eventMetadata = new LinkedHashMap<>();
+                    eventMetadata.put("signal", outcome.signal);
+                    eventMetadata.put("escalated_from", outcome.fromTier);
+                    eventMetadata.put("discarded_tokens", discarded);
+                    ctx.sendEvent(
+                            new ModelRoutingEvent(
+                                    requestId,
+                                    route.getRequestedModel(),
+                                    route.getCandidates(),
+                                    outcome.toTier,
+                                    ModelRoutingEvent.SOURCE_ESCALATION,
+                                    route.isFallbackEnabled(),
+                                    outcome.reason,
+                                    outcome.score,
+                                    eventMetadata,
+                                    null));
+                    LOG.info(
+                            "Chat request {} escalated from '{}' to '{}' on router '{}' ({}: {})",
+                            requestId,
+                            outcome.fromTier,
+                            outcome.toTier,
+                            route.getRequestedModel(),
+                            outcome.signal,
+                            outcome.reason);
+                    pending.remove(outcome.toTier);
+                    pending.addFirst(outcome.toTier);
+                    viaFallback = false;
+                    continue;
                 }
 
                 if (route.isRouter() && viaFallback) {

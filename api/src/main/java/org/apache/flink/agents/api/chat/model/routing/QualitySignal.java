@@ -34,8 +34,9 @@ package org.apache.flink.agents.api.chat.model.routing;
  * accept it.
  *
  * <p>Structural checks (an empty answer, a call to a tool the candidate does not have, arguments
- * that fail the tool's schema, a tool call repeated with identical arguments) run before custom
- * signals and need no implementation here.
+ * that fail the tool's schema, a tool call repeated with identical arguments in the same turn) run
+ * before custom signals and need no implementation here. Once the answer is accepted, the request's
+ * output schema, if any, is applied; an answer that cannot be shaped into it is rejected as well.
  */
 public interface QualitySignal {
 

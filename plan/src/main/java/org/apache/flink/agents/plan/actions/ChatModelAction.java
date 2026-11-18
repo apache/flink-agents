@@ -17,8 +17,10 @@
  */
 package org.apache.flink.agents.plan.actions;
 
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
@@ -319,6 +321,11 @@ public class ChatModelAction {
         } else if (outputSchema instanceof OutputSchema) {
             RowTypeInfo info = ((OutputSchema) outputSchema).getSchema();
             Map<String, Object> fields = mapper.readValue(String.valueOf(output), Map.class);
+            if (fields == null) {
+                // A bare JSON null parses but carries no fields: a parse failure like any other.
+                throw MismatchedInputException.from(
+                        (JsonParser) null, Map.class, "JSON null where an object was expected");
+            }
             structuredOutput = Row.withNames();
             for (String name : info.getFieldNames()) {
                 ((Row) structuredOutput).setField(name, fields.get(name));
