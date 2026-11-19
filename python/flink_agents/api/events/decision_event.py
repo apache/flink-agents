@@ -128,8 +128,8 @@ class DecisionResponseEvent(Event):
         The response from the decision model.
     retry_count : int
         The total number of retries for this request.
-    total_retry_wait_sec : int
-        The total time spent waiting during retries in seconds.
+    total_retry_wait_ms : int
+        The total time spent waiting during retries, in whole milliseconds.
     user_context : dict[str, Any] | None
         Application-defined data from the originating request. Omitted when unset.
     """
@@ -143,7 +143,7 @@ class DecisionResponseEvent(Event):
     _RESPONSE: ClassVar[str] = "response"
     _ERROR: ClassVar[str] = "error"
     _RETRY_COUNT: ClassVar[str] = "retry_count"
-    _TOTAL_RETRY_WAIT_SEC: ClassVar[str] = "total_retry_wait_sec"
+    _TOTAL_RETRY_WAIT_MS: ClassVar[str] = "total_retry_wait_ms"
 
     _ATTRIBUTE_SCHEMA: ClassVar[Tuple[BuiltInAttribute, ...]] = (
         BuiltInAttribute.required_untyped(_REQUEST_ID),
@@ -151,7 +151,7 @@ class DecisionResponseEvent(Event):
         BuiltInAttribute.optional_untyped(_RESPONSE),
         BuiltInAttribute.optional_untyped(_ERROR),
         BuiltInAttribute.optional(_RETRY_COUNT, int),
-        BuiltInAttribute.optional(_TOTAL_RETRY_WAIT_SEC, int),
+        BuiltInAttribute.optional(_TOTAL_RETRY_WAIT_MS, int),
         BuiltInAttribute.optional("user_context", dict),
     )
 
@@ -162,7 +162,7 @@ class DecisionResponseEvent(Event):
         response: DecisionResult | None = None,
         error: str | None = None,
         retry_count: int = 0,
-        total_retry_wait_sec: int = 0,
+        total_retry_wait_ms: int = 0,
         user_context: dict[str, Any] | None = None,
     ) -> None:
         """Create a DecisionResponseEvent."""
@@ -193,7 +193,7 @@ class DecisionResponseEvent(Event):
             self._RESPONSE: response,
             self._ERROR: error,
             self._RETRY_COUNT: retry_count,
-            self._TOTAL_RETRY_WAIT_SEC: total_retry_wait_sec,
+            self._TOTAL_RETRY_WAIT_MS: total_retry_wait_ms,
         }
         if user_context is not None:
             attributes["user_context"] = copy_user_context(user_context)
@@ -208,7 +208,7 @@ class DecisionResponseEvent(Event):
         request_id: UUID,
         response: DecisionResult,
         retry_count: int = 0,
-        total_retry_wait_sec: int = 0,
+        total_retry_wait_ms: int = 0,
         user_context: dict[str, Any] | None = None,
     ) -> "DecisionResponseEvent":
         """Create a successful terminal response."""
@@ -217,7 +217,7 @@ class DecisionResponseEvent(Event):
             cls.SUCCESS,
             response=response,
             retry_count=retry_count,
-            total_retry_wait_sec=total_retry_wait_sec,
+            total_retry_wait_ms=total_retry_wait_ms,
             user_context=user_context,
         )
 
@@ -227,7 +227,7 @@ class DecisionResponseEvent(Event):
         request_id: UUID,
         error: str,
         retry_count: int = 0,
-        total_retry_wait_sec: int = 0,
+        total_retry_wait_ms: int = 0,
         user_context: dict[str, Any] | None = None,
     ) -> "DecisionResponseEvent":
         """Create a failed terminal response."""
@@ -236,7 +236,7 @@ class DecisionResponseEvent(Event):
             cls.FAILED,
             error=error,
             retry_count=retry_count,
-            total_retry_wait_sec=total_retry_wait_sec,
+            total_retry_wait_ms=total_retry_wait_ms,
             user_context=user_context,
         )
 
@@ -261,7 +261,7 @@ class DecisionResponseEvent(Event):
             response=response,
             error=attributes.get(cls._ERROR),
             retry_count=attributes.get(cls._RETRY_COUNT, 0),
-            total_retry_wait_sec=attributes.get(cls._TOTAL_RETRY_WAIT_SEC, 0),
+            total_retry_wait_ms=attributes.get(cls._TOTAL_RETRY_WAIT_MS, 0),
             user_context=attributes.get("user_context"),
         )
         return result.reconstruct_from(event)
@@ -308,9 +308,9 @@ class DecisionResponseEvent(Event):
         return self.get_attr(self._RETRY_COUNT)
 
     @property
-    def total_retry_wait_sec(self) -> int:
-        """Return the total retry wait time in seconds."""
-        return self.get_attr(self._TOTAL_RETRY_WAIT_SEC)
+    def total_retry_wait_ms(self) -> int:
+        """Return the total retry wait time in whole milliseconds."""
+        return self.get_attr(self._TOTAL_RETRY_WAIT_MS)
 
     @property
     def user_context(self) -> dict[str, Any] | None:

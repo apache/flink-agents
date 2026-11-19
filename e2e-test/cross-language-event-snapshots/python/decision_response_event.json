@@ -58,7 +58,7 @@
     },
     "error": null,
     "retry_count": 1,
-    "total_retry_wait_sec": 2
+    "total_retry_wait_ms": 2
   },
   "attachments": {
     "reference": {

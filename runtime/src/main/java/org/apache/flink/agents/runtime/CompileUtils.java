@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -159,6 +160,8 @@ public class CompileUtils {
             boolean pythonKeyIsPickled,
             @Nullable String uid) {
         validateOperatorUid(uid);
+        // Java plans and Python plan JSON both reach this method before the operator exists.
+        AgentConfiguration.validateExecutionOptions(agentPlan);
         String agentName = agentPlan.getAgentName();
         String operatorName =
                 StringUtils.isNullOrWhitespaceOnly(agentName) ? DEFAULT_OPERATOR_NAME : agentName;

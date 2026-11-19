@@ -31,6 +31,17 @@ from YAML.
 Environment settings apply to Agents added to that environment. YAML settings apply
 to jobs that load the same file.
 
+Framework durations use `java.time.Duration` in Java and `datetime.timedelta` in
+Python. Text follows Flink's duration syntax: an integer and a unit, such as
+`30 s`, `5 min`, or `-1 ms`; a unitless integer, which means milliseconds, such
+as `1000`; or an ISO-8601 duration, such as `PT30S`, `PT1H30M`, or `P1DT2H`. A
+leading `-` is allowed. Recognized units are `ns`, `us`/`µs`, `ms`, `s`, `min`
+(`m` means minutes), `h`, and `d`, including longer forms such as `seconds` and
+`milliseconds`. The value must be a whole number of microseconds: `1000 ns` is
+`1 us`, and `1 ns` is rejected. The parser does not truncate to a coarser unit.
+Retry wait and short-term memory TTL are converted to milliseconds when the job
+is submitted. Async batch timeout keeps the full microsecond duration.
+
 ### Setting via the AgentsExecutionEnvironment
 
 Users can explicitly modify the configuration when defining the `AgentsExecutionEnvironment`:
@@ -219,7 +230,7 @@ for retry metrics.
 | `decision.async` | true | boolean | Enable durable async execution for built-in Decision Model calls. `false` selects synchronous execution. |
 | `max-retries` | 0 | int | Maximum retries after the initial attempt of a built-in Chat or Decision Model call, including routing judge calls. Non-positive values disable retries. |
 | `rag.async` | true | boolean | Enable durable async execution for vector-store queries made by the built-in context retrieval Action. `false` selects synchronous execution. |
-| `retry-wait-interval` | 1 | int | Base wait in seconds between retries controlled by `max-retries`. The wait before retry N is `retry-wait-interval * 2^(N-1)`. Non-positive values retry without waiting. |
+| `retry-wait-interval` | `1 s` | duration | Base wait between retries controlled by `max-retries`. The duration is truncated to milliseconds, and the wait before retry N is that value multiplied by `2^(N-1)`. A positive value may truncate to zero, so `1500 us` waits `1 ms` and `500 us` does not wait. A zero or negative duration retries without waiting. A positive duration that overflows conversion to milliseconds is rejected when the job is submitted. `retryWaitMs` and `total_retry_wait_ms` add those truncated milliseconds, so a `100 ms` sleep contributes `100`. |
 | `tool-call.async` | true | boolean | Enable durable async execution for ordinary tools handled by the built-in Tool Call Action. With `false`, these calls run synchronously, one at a time. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}}) for batch behavior. |
 
 These async switches select how built-in calls execute. Synchronous calls still
@@ -242,7 +253,7 @@ the built-in [parallel tool-call batches]({{< ref "docs/development/calling-llms
 | Key | Default | Type | Description |
 | --- | --- | --- | --- |
 | `async.batch.parallelism` | os cpu count | int | Maximum concurrent calls in one `ctx.gather(...)` batch, including ordinary, durable, and built-in tool calls. Values of `1` or less run calls sequentially. Worker-pool capacity can further limit concurrency. |
-| `async.batch.timeout.ms` | -1 (disabled) | long (milliseconds) | Overall timeout for one `ctx.gather(...)` batch, in milliseconds. Non-positive values disable it. A timeout does not guarantee that running calls stop and cannot undo their external effects. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#timeouts-and-external-effects" >}}) for built-in tool-batch behavior. |
+| `async.batch.timeout` | `-1 ms` (disabled) | duration | Overall timeout for one `ctx.gather(...)` batch. Effective precision is 1 µs on Java and Python: the deadline uses the full duration, and a positive value is not truncated to milliseconds. A zero or negative duration disables it. A timeout does not guarantee that running calls stop and cannot undo their external effects. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#timeouts-and-external-effects" >}}) for built-in tool-batch behavior. |
 | `job-identifier` | none | String | Stable job identifier used to scope Mem0 long-term memory. Keep an explicit value unchanged across restores. If unset, the initial Flink JobID is stored in operator state and reused when restoring a checkpoint or savepoint. |
 | `max-in-flight-input-records` | 100 | int | Maximum unfinished input records per Agent operator subtask, including records queued for a busy key. Must be positive. At the limit, the operator waits for an input record to finish before admitting another, applying backpressure upstream. See [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}}). |
 | `num-async-threads` | os cpu count * 2 | int | Controls the thread capacity for asynchronous execution per Agent operator subtask. Must be positive. Increasing this value may improve throughput for concurrent external calls, at the cost of higher resource usage and load on external services. Use `max-in-flight-input-records` to limit unfinished inputs and `async.batch.parallelism` to limit concurrent calls within a batch. |
@@ -294,7 +305,7 @@ for TTL behavior and setup examples.
 
 | Key | Default | Type | Description |
 | --- | --- | --- | --- |
-| `short-term-memory.state-ttl.ms` | 0 | long | Short-term memory TTL in milliseconds. A positive value enables expiration; non-positive values disable it. |
+| `short-term-memory.state-ttl` | `0 ms` | duration | Short-term memory TTL. Effective precision is 1 ms. A positive duration enables expiration when conversion to milliseconds is greater than zero: `1500 us` and `1000 us` enable a `1 ms` TTL, and `1 min` enables one minute. A positive duration that converts to `0` ms, such as `500 us`, is rejected when the job is submitted instead of disabling TTL. A zero or negative duration disables TTL. A positive duration that overflows conversion to milliseconds is rejected at submission. |
 | `short-term-memory.state-ttl.update-type` | `ON_READ_AND_WRITE` | ShortTermMemoryTtlUpdate | When TTL is enabled, refresh expiration on creation and writes (`ON_CREATE_AND_WRITE`), or also on reads (`ON_READ_AND_WRITE`). |
 | `short-term-memory.state-ttl.visibility` | `NEVER_RETURN_EXPIRED` | ShortTermMemoryTtlVisibility | When TTL is enabled, never return expired state (`NEVER_RETURN_EXPIRED`), or allow it until cleanup (`RETURN_EXPIRED_IF_NOT_CLEANED_UP`). |
 

@@ -64,6 +64,7 @@ import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -285,7 +286,8 @@ public class ChatModelActionRoutingTest {
 
         FakeRunnerContext withRetryBudget(int maxRetries, int waitIntervalSec) {
             config.set(AgentExecutionOptions.MAX_RETRIES, maxRetries);
-            config.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, waitIntervalSec);
+            config.set(
+                    AgentExecutionOptions.RETRY_WAIT_INTERVAL, Duration.ofSeconds(waitIntervalSec));
             return this;
         }
 
@@ -798,12 +800,12 @@ public class ChatModelActionRoutingTest {
         FlinkAgentsMetricGroup actionMetricGroup = mock(FlinkAgentsMetricGroup.class);
         FlinkAgentsMetricGroup judgeMetricGroup = mock(FlinkAgentsMetricGroup.class);
         Counter retryCount = mock(Counter.class);
-        Counter retryWaitSec = mock(Counter.class);
+        Counter retryWaitMs = mock(Counter.class);
         when(actionMetricGroup.getHistogram("routingDecisionLatencyMs"))
                 .thenReturn(mock(Histogram.class));
         when(actionMetricGroup.getSubGroup("model_resource", "judge")).thenReturn(judgeMetricGroup);
         when(judgeMetricGroup.getCounter("retryCount")).thenReturn(retryCount);
-        when(judgeMetricGroup.getCounter("retryWaitSec")).thenReturn(retryWaitSec);
+        when(judgeMetricGroup.getCounter("retryWaitMs")).thenReturn(retryWaitMs);
         ModelRouter router =
                 new ModelRouter(
                         ModelRouter.of("small", "big")
@@ -831,7 +833,7 @@ public class ChatModelActionRoutingTest {
         assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_LLM_JUDGE);
         verify(actionMetricGroup).getSubGroup("model_resource", "judge");
         verify(retryCount).inc(1);
-        verify(retryWaitSec).inc(0);
+        verify(retryWaitMs).inc(0);
     }
 
     @Test
@@ -1005,13 +1007,13 @@ public class ChatModelActionRoutingTest {
         FlinkAgentsMetricGroup actionMetricGroup = mock(FlinkAgentsMetricGroup.class);
         FlinkAgentsMetricGroup modelResourceMetricGroup = mock(FlinkAgentsMetricGroup.class);
         Counter retryCount = mock(Counter.class);
-        Counter retryWaitSec = mock(Counter.class);
+        Counter retryWaitMs = mock(Counter.class);
         when(actionMetricGroup.getHistogram("routingDecisionLatencyMs"))
                 .thenReturn(mock(Histogram.class));
         when(actionMetricGroup.getSubGroup("model_resource", "big"))
                 .thenReturn(modelResourceMetricGroup);
         when(modelResourceMetricGroup.getCounter("retryCount")).thenReturn(retryCount);
-        when(modelResourceMetricGroup.getCounter("retryWaitSec")).thenReturn(retryWaitSec);
+        when(modelResourceMetricGroup.getCounter("retryWaitMs")).thenReturn(retryWaitMs);
 
         ModelRouter router =
                 new ModelRouter(
@@ -1043,7 +1045,7 @@ public class ChatModelActionRoutingTest {
         assertThat(ctx.routingEventCount()).isEqualTo(1L);
         verify(actionMetricGroup).getSubGroup("model_resource", "big");
         verify(retryCount).inc(1);
-        verify(retryWaitSec).inc(0);
+        verify(retryWaitMs).inc(0);
     }
 
     @Test
@@ -2123,13 +2125,13 @@ public class ChatModelActionRoutingTest {
         FlinkAgentsMetricGroup dmMetricGroup = mock(FlinkAgentsMetricGroup.class);
         FlinkAgentsMetricGroup tokenMetricGroup = mock(FlinkAgentsMetricGroup.class);
         Counter retryCount = mock(Counter.class);
-        Counter retryWaitSec = mock(Counter.class);
+        Counter retryWaitMs = mock(Counter.class);
         Counter promptTokens = mock(Counter.class);
         when(actionMetricGroup.getHistogram("routingDecisionLatencyMs"))
                 .thenReturn(mock(Histogram.class));
         when(actionMetricGroup.getSubGroup("model_resource", "dm")).thenReturn(dmMetricGroup);
         when(dmMetricGroup.getCounter("retryCount")).thenReturn(retryCount);
-        when(dmMetricGroup.getCounter("retryWaitSec")).thenReturn(retryWaitSec);
+        when(dmMetricGroup.getCounter("retryWaitMs")).thenReturn(retryWaitMs);
         when(dmMetricGroup.getSubGroup("model", "fake-model")).thenReturn(tokenMetricGroup);
         when(tokenMetricGroup.getCounter(anyString())).thenReturn(mock(Counter.class));
         when(tokenMetricGroup.getCounter("promptTokens")).thenReturn(promptTokens);
@@ -2157,7 +2159,7 @@ public class ChatModelActionRoutingTest {
         // token metrics and retry counters both land on the decision model's resource group
         verify(actionMetricGroup, atLeastOnce()).getSubGroup("model_resource", "dm");
         verify(retryCount).inc(1);
-        verify(retryWaitSec).inc(0);
+        verify(retryWaitMs).inc(0);
         verify(promptTokens).inc(10L);
     }
 

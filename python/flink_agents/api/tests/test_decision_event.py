@@ -113,7 +113,7 @@ def test_refusal_is_a_successful_result_not_a_failed_request() -> None:
     assert restored.response == result
     assert restored.request_id == event.request_id
     assert restored.retry_count == 1
-    assert restored.total_retry_wait_sec == 2
+    assert restored.total_retry_wait_ms == 2
     with pytest.raises(RuntimeError, match="no error"):
         _ = restored.error
 
@@ -157,7 +157,7 @@ def test_failure_serializes_without_reading_throwing_response_property() -> None
     assert restored.is_failed
     assert restored.error == "TimeoutError: timed out"
     assert restored.retry_count == 2
-    assert restored.total_retry_wait_sec == 3
+    assert restored.total_retry_wait_ms == 3
     assert restored.get_attr("response") is None
     with pytest.raises(DecisionResponseError, match="TimeoutError: timed out") as error:
         _ = restored.response

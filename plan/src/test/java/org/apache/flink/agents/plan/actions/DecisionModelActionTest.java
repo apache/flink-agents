@@ -40,6 +40,7 @@ import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.metrics.SimpleCounter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -49,11 +50,13 @@ import pemja.core.object.PyObject;
 
 import javax.annotation.Nullable;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -110,7 +113,7 @@ class DecisionModelActionTest {
         assertThat(h.response().getRequestId()).isEqualTo(h.request.getId());
         assertThat(h.response().getResponse().getModel()).isEqualTo("provider-model");
         assertThat(h.response().getRetryCount()).isZero();
-        assertThat(h.response().getTotalRetryWaitSec()).isZero();
+        assertThat(h.response().getTotalRetryWaitMs()).isZero();
         assertThat(h.providerCounters.get("promptTokens").getCount()).isEqualTo(7);
         assertThat(h.providerCounters.get("completionTokens").getCount()).isEqualTo(2);
         assertThat(h.providerCounters.get("totalTokens").getCount()).isEqualTo(9);
@@ -143,7 +146,7 @@ class DecisionModelActionTest {
         assertThat(h.response().isSuccess()).isTrue();
         assertThat(h.response().getRetryCount()).isEqualTo(1);
         assertThat(h.resourceCounters.get("retryCount").getCount()).isEqualTo(1);
-        assertThat(h.resourceCounters.get("retryWaitSec").getCount()).isZero();
+        assertThat(h.resourceCounters.get("retryWaitMs").getCount()).isZero();
         verify(h.model, times(2)).decide(h.request.getRequest(), h.request.getRequestParams());
         ArgumentCaptor<String> executionIds = ArgumentCaptor.forClass(String.class);
         verify(h.reporter, times(2))
@@ -362,9 +365,9 @@ class DecisionModelActionTest {
         verify(h.model).decide(any(), anyMap());
         verify(h.ctx, times(async ? 0 : 2)).durableExecute(any());
         verify(h.ctx, times(async ? 2 : 0)).durableExecuteAsync(any());
-        assertThat(h.resourceCounters).containsOnlyKeys("retryCount", "retryWaitSec");
+        assertThat(h.resourceCounters).containsOnlyKeys("retryCount", "retryWaitMs");
         assertThat(h.resourceCounters.get("retryCount").getCount()).isEqualTo(1);
-        assertThat(h.resourceCounters.get("retryWaitSec").getCount()).isZero();
+        assertThat(h.resourceCounters.get("retryWaitMs").getCount()).isZero();
         verify(h.reporter)
                 .reportExecutionFailed(
                         anyString(),
@@ -381,7 +384,8 @@ class DecisionModelActionTest {
     @ValueSource(ints = {1, 2})
     void interruptedBackoffPreservesAccumulatedRetryMetrics(int failedAttempt) throws Exception {
         Harness h = new Harness(false, 3);
-        when(h.ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)).thenReturn(1);
+        when(h.ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL))
+                .thenReturn(Duration.ofSeconds(1));
         when(h.model.decide(any(), anyMap()))
                 .thenThrow(new IllegalStateException("provider unavailable"));
         doAnswer(
@@ -400,9 +404,10 @@ class DecisionModelActionTest {
         assertThat(Thread.currentThread().isInterrupted()).isTrue();
         assertThat(h.events).isEmpty();
         verify(h.model, times(failedAttempt)).decide(any(), anyMap());
-        assertThat(h.resourceCounters).containsOnlyKeys("retryCount", "retryWaitSec");
+        assertThat(h.resourceCounters).containsOnlyKeys("retryCount", "retryWaitMs");
         assertThat(h.resourceCounters.get("retryCount").getCount()).isEqualTo(failedAttempt);
-        assertThat(h.resourceCounters.get("retryWaitSec").getCount()).isEqualTo(failedAttempt - 1);
+        assertThat(h.resourceCounters.get("retryWaitMs").getCount())
+                .isEqualTo((failedAttempt - 1) * 1000L);
     }
 
     @ParameterizedTest
@@ -522,6 +527,39 @@ class DecisionModelActionTest {
         verify(h.ctx, times(asyncSupported ? 1 : 0)).durableExecuteAsync(any());
     }
 
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void subSecondRetryWaitsAccumulateAcrossRequests() throws Exception {
+        int requests = 2;
+        Harness h = new Harness(false, 1);
+        when(h.ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL))
+                .thenReturn(Duration.ofMillis(100));
+        int[] calls = {0};
+        when(h.model.decide(any(), anyMap()))
+                .thenAnswer(
+                        invocation -> {
+                            if (calls[0]++ % 2 == 0) {
+                                throw new IllegalStateException("transient");
+                            }
+                            return result(null, null);
+                        });
+
+        for (int i = 0; i < requests; i++) {
+            DecisionModelAction.processDecisionRequest(h.request, h.ctx);
+        }
+
+        assertThat(h.events).hasSize(requests);
+        assertThat(h.events)
+                .allSatisfy(
+                        event -> {
+                            DecisionResponseEvent response = (DecisionResponseEvent) event;
+                            assertThat(response.getRetryCount()).isEqualTo(1);
+                            assertThat(response.getTotalRetryWaitMs()).isEqualTo(100L);
+                        });
+        assertThat(h.resourceCounters.get("retryCount").getCount()).isEqualTo(requests);
+        assertThat(h.resourceCounters.get("retryWaitMs").getCount()).isEqualTo(200L);
+    }
+
     private static DecisionResult result(String model, DecisionResult.TokenUsage usage) {
         return new DecisionResult(
                 Map.of("damaged", new DecisionResult.PredicateAnswer(0.8)), model, usage, Map.of());
@@ -559,7 +597,7 @@ class DecisionModelActionTest {
             ReadableConfiguration config = mock(ReadableConfiguration.class);
             when(config.get(AgentExecutionOptions.DECISION_ASYNC)).thenReturn(async);
             when(config.get(AgentExecutionOptions.MAX_RETRIES)).thenReturn(retries);
-            when(config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)).thenReturn(0);
+            when(config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)).thenReturn(Duration.ZERO);
             when(ctx.getConfig()).thenReturn(config);
             when(ctx.getResource(MODEL, ResourceType.DECISION_MODEL)).thenReturn(model);
             when(model.supportsAsyncExecution()).thenReturn(true);

@@ -23,7 +23,7 @@
     },
     "error": null,
     "retry_count": 0,
-    "total_retry_wait_sec": 0
+    "total_retry_wait_ms": 0
   },
   "attachments": {}
 }

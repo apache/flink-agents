@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.actions;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.decision.BaseDecisionModelSetup;
@@ -34,6 +35,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 
@@ -55,17 +57,17 @@ public final class DecisionModelInvoker {
         @Nullable public final DecisionResult response;
         @Nullable public final String error;
         public final int retryCount;
-        public final int totalWaitSec;
+        public final long totalWaitMs;
 
         DecisionAttemptResult(
                 @Nullable DecisionResult response,
                 @Nullable String error,
                 int retryCount,
-                int totalWaitSec) {
+                long totalWaitMs) {
             this.response = response;
             this.error = error;
             this.retryCount = retryCount;
-            this.totalWaitSec = totalWaitSec;
+            this.totalWaitMs = totalWaitMs;
         }
 
         public boolean isSuccess() {
@@ -111,8 +113,9 @@ public final class DecisionModelInvoker {
                 ctx.getConfig().get(AgentExecutionOptions.DECISION_ASYNC)
                         && setup.supportsAsyncExecution();
         int maxRetries = Math.max(0, ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES));
-        int waitInterval =
-                Math.max(0, ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+        Duration waitInterval =
+                ChatModelInvoker.acceptedRetryWait(
+                        ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
         FlinkAgentsMetricGroup actionMetrics = ctx.getActionMetricGroup();
         FlinkAgentsMetricGroup resourceMetrics =
                 actionMetrics == null
@@ -148,7 +151,7 @@ public final class DecisionModelInvoker {
                 };
 
         int retryCount = 0;
-        int totalWaitSec = 0;
+        long totalWaitMs = 0;
         try {
             while (true) {
                 String executionId =
@@ -176,7 +179,7 @@ public final class DecisionModelInvoker {
                             Map.of());
                     recordTokenMetrics(resourceMetrics, outcome.response);
                     return new DecisionAttemptResult(
-                            outcome.response, null, retryCount, totalWaitSec);
+                            outcome.response, null, retryCount, totalWaitMs);
                 }
                 ExecutionReporters.failed(
                         ctx,
@@ -187,31 +190,32 @@ public final class DecisionModelInvoker {
                         new Exception(outcome.error),
                         ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
                 if (retryCount == maxRetries) {
-                    return new DecisionAttemptResult(null, outcome.error, retryCount, totalWaitSec);
+                    return new DecisionAttemptResult(null, outcome.error, retryCount, totalWaitMs);
                 }
-                int waitSec = waitInterval * (1 << retryCount);
+                Duration currentWait = waitInterval.multipliedBy(1L << retryCount);
+                long waitMillis = ChatModelInvoker.recordedRetryWaitMillis(currentWait);
                 retryCount++;
                 LOG.warn(
-                        "Decision request {} failed with error: {}, retrying {} / {}, waiting {} s.",
+                        "Decision request {} failed with error: {}, retrying {} / {}, waiting {}.",
                         label,
                         outcome.error,
                         retryCount,
                         maxRetries,
-                        waitSec);
-                if (waitSec > 0) {
+                        DurationUtils.format(currentWait));
+                if (waitMillis > 0) {
                     try {
-                        Thread.sleep(waitSec * 1000L);
+                        Thread.sleep(waitMillis);
                     } catch (InterruptedException error) {
                         Thread.currentThread().interrupt();
                         throw error;
                     }
-                    totalWaitSec += waitSec;
+                    totalWaitMs += waitMillis;
                 }
             }
         } finally {
             if (recordRetryMetrics && resourceMetrics != null && retryCount > 0) {
                 resourceMetrics.getCounter("retryCount").inc(retryCount);
-                resourceMetrics.getCounter("retryWaitSec").inc(totalWaitSec);
+                resourceMetrics.getCounter("retryWaitMs").inc(totalWaitMs);
             }
         }
     }

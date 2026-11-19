@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
+import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
@@ -37,6 +38,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -116,19 +118,19 @@ public final class ChatModelInvoker {
         public final ChatResult response;
         public Object structuredOutput;
         public final int retryCount;
-        public final int totalRetryWaitSec;
+        public final long totalRetryWaitMs;
 
         ChatAttemptResult(
                 String model,
                 BaseChatModelSetup chatModel,
                 ChatResult response,
                 int retryCount,
-                int totalRetryWaitSec) {
+                long totalRetryWaitMs) {
             this.model = model;
             this.chatModel = chatModel;
             this.response = response;
             this.retryCount = retryCount;
-            this.totalRetryWaitSec = totalRetryWaitSec;
+            this.totalRetryWaitMs = totalRetryWaitMs;
         }
     }
 
@@ -137,20 +139,20 @@ public final class ChatModelInvoker {
         public final BaseChatModelSetup chatModel;
         public final Exception error;
         public final int retryCount;
-        public final int totalRetryWaitSec;
+        public final long totalRetryWaitMs;
 
         ChatAttemptFailed(
                 String model,
                 BaseChatModelSetup chatModel,
                 Exception error,
                 int retryCount,
-                int totalRetryWaitSec) {
+                long totalRetryWaitMs) {
             super(error);
             this.model = model;
             this.chatModel = chatModel;
             this.error = error;
             this.retryCount = retryCount;
-            this.totalRetryWaitSec = totalRetryWaitSec;
+            this.totalRetryWaitMs = totalRetryWaitMs;
         }
     }
 
@@ -159,9 +161,40 @@ public final class ChatModelInvoker {
         return Math.max(ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES), 0);
     }
 
-    /** The request-level retry backoff. */
-    public static int configuredRetryWaitSec(RunnerContext ctx) {
-        return Math.max(ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL), 0);
+    /**
+     * The request-level retry backoff. A negative configured duration waits zero; zero waits zero.
+     */
+    public static Duration configuredRetryWait(RunnerContext ctx) {
+        return acceptedRetryWait(ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+    }
+
+    /**
+     * Retry backoff after a negative duration is treated as zero. A positive duration is truncated
+     * to milliseconds with {@link Duration#toMillis()}, including a result of zero. {@link
+     * Thread#sleep(long)} waits that truncated value. A duration that does not fit in a {@code
+     * long} throws {@link ArithmeticException}.
+     */
+    public static Duration acceptedRetryWait(Duration configured) {
+        Duration nonNegative = DurationUtils.zeroIfNegative(configured);
+        if (!DurationUtils.isPositive(nonNegative)) {
+            return Duration.ZERO;
+        }
+        return Duration.ofMillis(nonNegative.toMillis());
+    }
+
+    /**
+     * Whole milliseconds recorded for one retry sleep. This is the same count {@link
+     * Thread#sleep(long)} waits and the value added to {@code retryWaitMs} and {@code
+     * total_retry_wait_ms}. A non-positive duration contributes zero. A sub-millisecond remainder
+     * is dropped, matching {@code Duration#toMillis()}. A duration that does not fit in a {@code
+     * long} throws {@link ArithmeticException}.
+     */
+    static long recordedRetryWaitMillis(Duration duration) {
+        if (!DurationUtils.isPositive(duration)) {
+            return 0L;
+        }
+        long millis = duration.toMillis();
+        return Math.max(0L, millis);
     }
 
     public static ChatAttemptResult chatWithRetries(
@@ -173,8 +206,9 @@ public final class ChatModelInvoker {
             @Nullable Object outputSchema,
             RunnerContext ctx,
             int numRetries,
-            int retryWaitIntervalSec)
+            Duration retryWaitInterval)
             throws ChatAttemptFailed, Exception {
+        retryWaitInterval = acceptedRetryWait(retryWaitInterval);
         BaseChatModelSetup chatModel;
         try {
             chatModel = (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
@@ -218,7 +252,7 @@ public final class ChatModelInvoker {
         }
 
         int actualRetryCount = 0;
-        int totalWaitTimeSec = 0;
+        long totalWaitTimeMs = 0;
         ChatResult response;
 
         DurableCallable<InvocationOutcome> callable =
@@ -320,7 +354,7 @@ public final class ChatModelInvoker {
                 }
                 ChatAttemptResult result =
                         new ChatAttemptResult(
-                                model, chatModel, response, actualRetryCount, totalWaitTimeSec);
+                                model, chatModel, response, actualRetryCount, totalWaitTimeMs);
                 result.structuredOutput = structuredOutput;
                 return result;
             } catch (DurableExecutionFailure e) {
@@ -343,28 +377,28 @@ public final class ChatModelInvoker {
                 }
                 if (attempt < numRetries) {
                     actualRetryCount = attempt + 1;
-                    int currentWaitSec = retryWaitIntervalSec * (1 << (actualRetryCount - 1));
+                    Duration currentWait =
+                            retryWaitInterval.multipliedBy(1L << (actualRetryCount - 1));
+                    long waitMillis = recordedRetryWaitMillis(currentWait);
                     LOG.warn(
-                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {}"
-                                    + " s.",
+                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {}.",
                             initialRequestId,
                             e,
                             actualRetryCount,
                             numRetries,
-                            currentWaitSec);
-                    if (currentWaitSec > 0) {
+                            DurationUtils.format(currentWait));
+                    if (waitMillis > 0) {
                         try {
-                            Thread.sleep(currentWaitSec * 1000L);
+                            Thread.sleep(waitMillis);
                         } catch (InterruptedException ie) {
                             Thread.currentThread().interrupt();
                             throw ie;
                         }
-                        totalWaitTimeSec += currentWaitSec;
+                        totalWaitTimeMs += waitMillis;
                     }
                     continue;
                 }
-                throw new ChatAttemptFailed(
-                        model, chatModel, e, actualRetryCount, totalWaitTimeSec);
+                throw new ChatAttemptFailed(model, chatModel, e, actualRetryCount, totalWaitTimeMs);
             }
         }
         throw new IllegalStateException("Unreachable chat retry state.");

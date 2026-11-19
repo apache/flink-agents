@@ -35,6 +35,7 @@ import org.junit.jupiter.api.condition.JRE;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.CompletionException;
@@ -89,7 +90,9 @@ class AsyncBatchErrorPropagationTest {
         context.setContinuationContext(continuation);
         Configuration config = (Configuration) context.getConfig();
         config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
-        config.set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS, timeout ? 1000L : -1L);
+        config.set(
+                AgentExecutionOptions.ASYNC_BATCH_TIMEOUT,
+                timeout ? Duration.ofMillis(1000) : Duration.ofMillis(-1));
         AssertionError error = new AssertionError("fatal callback");
         CompletionException businessFailure = new CompletionException(error);
         CountDownLatch release = new CountDownLatch(1);

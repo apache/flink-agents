@@ -133,7 +133,7 @@ class DecisionEventTest {
         DecisionResponseEvent event =
                 DecisionResponseEvent.success(UUID.randomUUID(), result, 0, 0);
         event.getAttributes().remove("retry_count");
-        event.getAttributes().remove("total_retry_wait_sec");
+        event.getAttributes().remove("total_retry_wait_ms");
         DecisionResponseEvent restored =
                 (DecisionResponseEvent) Event.fromJson(MAPPER.writeValueAsString(event));
         assertThat(restored.isSuccess()).isTrue();
@@ -141,7 +141,7 @@ class DecisionEventTest {
                 .isInstanceOf(DecisionResult.RefusalAnswer.class);
         assertThat(restored.getRequestId()).isEqualTo(event.getRequestId());
         assertThat(restored.getRetryCount()).isZero();
-        assertThat(restored.getTotalRetryWaitSec()).isZero();
+        assertThat(restored.getTotalRetryWaitMs()).isZero();
         assertThatThrownBy(restored::getError).isInstanceOf(IllegalStateException.class);
     }
 
@@ -157,7 +157,7 @@ class DecisionEventTest {
         assertThat(restored.isFailed()).isTrue();
         assertThat(restored.getError()).isEqualTo("TimeoutError: timed out");
         assertThat(restored.getRetryCount()).isEqualTo(2);
-        assertThat(restored.getTotalRetryWaitSec()).isEqualTo(3);
+        assertThat(restored.getTotalRetryWaitMs()).isEqualTo(3);
         assertThat(restored.getAttr("response")).isNull();
         assertThatThrownBy(restored::getResponse)
                 .isInstanceOfSatisfying(

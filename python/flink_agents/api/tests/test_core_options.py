@@ -20,6 +20,7 @@ import importlib
 import os
 import sys
 import types
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -128,8 +129,13 @@ def test_agent_execution_options_include_parallel_tool_call_options() -> None:
     assert options["TOOL_CALL_ASYNC"].get_default_value() is True
     assert options["ASYNC_BATCH_PARALLELISM"].get_key() == "async.batch.parallelism"
     assert options["ASYNC_BATCH_PARALLELISM"].get_default_value() == os.cpu_count()
-    assert options["ASYNC_BATCH_TIMEOUT_MS"].get_key() == "async.batch.timeout.ms"
-    assert options["ASYNC_BATCH_TIMEOUT_MS"].get_default_value() == -1
+    assert options["ASYNC_BATCH_TIMEOUT"].get_key() == "async.batch.timeout"
+    assert options["ASYNC_BATCH_TIMEOUT"].get_type() is timedelta
+    assert options["ASYNC_BATCH_TIMEOUT"].get_default_value() == timedelta(milliseconds=-1)
+    assert options["SHORT_TERM_MEMORY_STATE_TTL"].get_key() == "short-term-memory.state-ttl"
+    assert options["SHORT_TERM_MEMORY_STATE_TTL"].get_default_value() == timedelta(0)
+    assert options["RETRY_WAIT_INTERVAL"].get_type() is timedelta
+    assert options["RETRY_WAIT_INTERVAL"].get_default_value() == timedelta(seconds=1)
 
 
 def test_unknown_agent_config_option_raises_attribute_error() -> None:

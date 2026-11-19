@@ -66,6 +66,7 @@ import pemja.core.PythonInterpreterConfig;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -334,7 +335,7 @@ public class DecisionModelCrossLanguageTest {
             throws Exception {
         plan.getConfig().set(AgentExecutionOptions.DECISION_ASYNC, false);
         plan.getConfig().set(AgentExecutionOptions.MAX_RETRIES, 1);
-        plan.getConfig().set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, 0);
+        plan.getConfig().set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, Duration.ZERO);
         for (String input : List.of("cancel", "async-cancel", "interrupt")) {
             DecisionRequest cancelled = request(input);
             boolean interrupted = input.equals("interrupt");

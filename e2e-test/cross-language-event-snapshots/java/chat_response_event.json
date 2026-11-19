@@ -18,7 +18,7 @@
         "metadata": {}
       }
     },
-    "total_retry_wait_sec": 0,
+    "total_retry_wait_ms": 0,
     "retry_count": 0,
     "error": null,
     "request_id": "00000000-0000-0000-0000-000000000002",

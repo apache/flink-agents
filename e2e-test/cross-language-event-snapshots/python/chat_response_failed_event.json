@@ -7,7 +7,7 @@
     "response": null,
     "error": "TimeoutError: timed out",
     "retry_count": 2,
-    "total_retry_wait_sec": 3
+    "total_retry_wait_ms": 3
   },
   "attachments": {}
 }

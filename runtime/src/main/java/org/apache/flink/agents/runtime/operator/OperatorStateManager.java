@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.ShortTermMemoryTtlUpdate;
 import org.apache.flink.agents.api.agents.ShortTermMemoryTtlVisibility;
+import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
@@ -141,17 +142,21 @@ class OperatorStateManager {
     }
 
     /**
-     * When {@link AgentExecutionOptions#SHORT_TERM_MEMORY_STATE_TTL_MS} is positive, attaches Flink
-     * {@link StateTtlConfig} to the short-term memory {@link MapStateDescriptor}. Unset, null, or
-     * non-positive values disable TTL (Flink does not allow zero/negative TTL).
+     * Attaches Flink {@link StateTtlConfig} when {@link
+     * AgentExecutionOptions#SHORT_TERM_MEMORY_STATE_TTL} is positive. The duration is truncated
+     * with {@link Duration#toMillis()}, which is the precision Flink state TTL stores. Unset, null,
+     * zero, and negative values disable TTL. A positive duration that converts to {@code 0} ms is
+     * rejected by {@link AgentConfiguration#validateExecutionOptions(AgentPlan)} before this
+     * operator is constructed.
      */
     private void maybeEnableShortTermMemoryTTL(
             MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> descriptor,
             AgentConfiguration agentConfiguration) {
-        Long ttlMs = agentConfiguration.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_MS);
-        if (ttlMs == null || ttlMs <= 0) {
+        Duration ttl = agentConfiguration.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL);
+        if (!DurationUtils.isPositive(ttl)) {
             return;
         }
+        Duration truncated = Duration.ofMillis(ttl.toMillis());
 
         ShortTermMemoryTtlUpdate updateType =
                 agentConfiguration.get(
@@ -162,7 +167,7 @@ class OperatorStateManager {
                         AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL_VISIBILITY);
 
         StateTtlConfig ttlConfig =
-                StateTtlConfig.newBuilder(Duration.ofMillis(ttlMs))
+                StateTtlConfig.newBuilder(truncated)
                         .setUpdateType(toFlinkUpdateType(updateType))
                         .setStateVisibility(toFlinkStateVisibility(stateVisibility))
                         .cleanupFullSnapshot()

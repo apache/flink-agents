@@ -38,7 +38,7 @@ def test_failed_event_round_trip_and_response_access() -> None:
     assert restored.is_failed
     assert restored.error == "TimeoutError: timed out"
     assert restored.retry_count == 2
-    assert restored.total_retry_wait_sec == 3
+    assert restored.total_retry_wait_ms == 3
     with pytest.raises(ChatResponseError, match="TimeoutError: timed out") as exc:
         _ = restored.response
     assert exc.value.request_id == request_id

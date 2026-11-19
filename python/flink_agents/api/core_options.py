@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import os
+from datetime import timedelta
 from enum import Enum
 
 from flink_agents.api.configuration import ConfigOption
@@ -291,10 +292,17 @@ class AgentExecutionOptions:
         default=0,
     )
 
+    # Base wait between retries controlled by max-retries. The duration is
+    # truncated to milliseconds, and the wait before retry N is that value
+    # multiplied by 2^(N-1). A positive value may truncate to zero, so 1500 us
+    # waits 1 ms and 500 us does not wait. A zero or negative duration retries
+    # without waiting. retryWaitMs and total_retry_wait_ms add those truncated
+    # milliseconds, so a 100 ms sleep contributes 100. In text, write "1 s",
+    # "1000", or "PT1S".
     RETRY_WAIT_INTERVAL = ConfigOption(
         key="retry-wait-interval",
-        config_type=int,
-        default=1,
+        config_type=timedelta,
+        default=timedelta(seconds=1),
     )
 
     NUM_ASYNC_THREADS = ConfigOption(
@@ -353,14 +361,17 @@ class AgentExecutionOptions:
         default=os.cpu_count() or 1,
     )
 
-    # Overall timeout per ctx.gather batch, in milliseconds; non-positive disables
-    # it. Applies to ordinary, durable, and built-in tool calls. Running callbacks
-    # may continue after timeout and occupy their worker until they return, so
-    # blocking operations should also set their own timeouts.
-    ASYNC_BATCH_TIMEOUT_MS = ConfigOption(
-        key="async.batch.timeout.ms",
-        config_type=int,
-        default=-1,
+    # Overall timeout per ctx.gather batch. Effective precision is 1 us on Java
+    # and Python: the deadline uses the full duration and is not truncated to
+    # milliseconds. A zero or negative duration disables it; the default of -1 ms
+    # disables it. Applies to ordinary, durable, and built-in tool calls. In YAML,
+    # write a duration such as "30 s". Running callbacks may continue after
+    # timeout and occupy their worker until they return, so blocking operations
+    # should also set their own timeouts.
+    ASYNC_BATCH_TIMEOUT = ConfigOption(
+        key="async.batch.timeout",
+        config_type=timedelta,
+        default=timedelta(milliseconds=-1),
     )
 
     RAG_ASYNC = ConfigOption(
@@ -369,12 +380,15 @@ class AgentExecutionOptions:
         default=True,
     )
 
-    # Set to a positive value in milliseconds to enable short-term memory TTL;
-    # 0 disables it.
-    SHORT_TERM_MEMORY_STATE_TTL_MS = ConfigOption(
-        key="short-term-memory.state-ttl.ms",
-        config_type=int,
-        default=0,
+    # Short-term memory time-to-live. Effective precision is 1 ms. A positive
+    # duration enables expiration when conversion to milliseconds is greater
+    # than zero: 1500 us enables 1 ms, and 500 us is rejected at job submission
+    # instead of disabling TTL. A zero or negative duration disables TTL. In
+    # text, write "1 min", "1000", or "PT1M".
+    SHORT_TERM_MEMORY_STATE_TTL = ConfigOption(
+        key="short-term-memory.state-ttl",
+        config_type=timedelta,
+        default=timedelta(0),
     )
 
     # Update policy for short-term memory TTL, consulted only when TTL is enabled.

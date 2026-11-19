@@ -15,7 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, Type
+from datetime import timedelta
+from typing import Any, Dict, NoReturn, Type
 
 from pydantic import BaseModel
 from typing_extensions import override
@@ -24,17 +25,28 @@ from flink_agents.api.configuration import (
     ConfigOption,
     Configuration,
 )
+from flink_agents.api.core_options import AgentExecutionOptions
+from flink_agents.api.duration import (
+    format_duration,
+    is_positive,
+    parse_duration,
+    truncated_millis,
+)
 from flink_agents.api.trace_log import _parse_targets, _serialize_targets
 
 _TRACE_LOG_TARGETS_KEY = "trace-log.targets"
 
 
-def _normalize_trace_log_targets(conf_data: Dict[str, Any]) -> Dict[str, Any]:
-    if _TRACE_LOG_TARGETS_KEY not in conf_data:
-        return conf_data
+def _normalize_conf_data(conf_data: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = {
+        key: format_duration(value) if isinstance(value, timedelta) else value
+        for key, value in conf_data.items()
+    }
+    if _TRACE_LOG_TARGETS_KEY not in normalized:
+        return normalized
     return {
-        **conf_data,
-        _TRACE_LOG_TARGETS_KEY: _serialize_targets(conf_data[_TRACE_LOG_TARGETS_KEY]),
+        **normalized,
+        _TRACE_LOG_TARGETS_KEY: _serialize_targets(normalized[_TRACE_LOG_TARGETS_KEY]),
     }
 
 
@@ -52,7 +64,7 @@ class AgentConfiguration(BaseModel, Configuration):
         if conf_data is None:
             super().__init__(conf_data={})
         else:
-            super().__init__(conf_data=_normalize_trace_log_targets(conf_data))
+            super().__init__(conf_data=_normalize_conf_data(conf_data))
 
     def get_value_with_type(
         self, key: str, config_type: Type[Any], default: Any
@@ -62,7 +74,7 @@ class AgentConfiguration(BaseModel, Configuration):
         Args:
             key: The configuration key to retrieve
             config_type: The expected type of the configuration value (int, float, str,
-            or bool)
+            bool, timedelta, or an enum)
             default: The default value to return if key is not found
 
         Returns:
@@ -72,12 +84,15 @@ class AgentConfiguration(BaseModel, Configuration):
         if value is None:
             return default
 
+        if config_type is bool and isinstance(value, str):
+            # The legacy flink-conf.yaml keeps values as strings and Flink
+            # converts them when an option is read, accepting "true"
+            # case-insensitively, so "false" must not stay truthy.
+            return value.strip().lower() == "true"
+        if config_type is timedelta:
+            return _parse_duration_option(key, value)
+
         try:
-            if config_type is bool and isinstance(value, str):
-                # The legacy flink-conf.yaml keeps values as strings and Flink
-                # converts them when an option is read, accepting "true"
-                # case-insensitively, so "false" must not stay truthy.
-                return value.strip().lower() == "true"
             return config_type(value)
         except (ValueError, TypeError) as e:
             msg = f"Invalid value for {key}: {value}"
@@ -127,11 +142,13 @@ class AgentConfiguration(BaseModel, Configuration):
 
     @override
     def set(self, option: ConfigOption, value: Any) -> None:
-        self.conf_data[option.get_key()] = (
-            _serialize_targets(value)
-            if option.get_key() == _TRACE_LOG_TARGETS_KEY
-            else value
-        )
+        if option.get_key() == _TRACE_LOG_TARGETS_KEY:
+            stored = _serialize_targets(value)
+        elif option.get_type() is timedelta:
+            stored = format_duration(_parse_duration_option(option.get_key(), value))
+        else:
+            stored = value
+        self.conf_data[option.get_key()] = stored
 
     def get_conf_data(self) -> dict:
         """Get the configuration data dictionary.
@@ -161,3 +178,58 @@ class AgentConfiguration(BaseModel, Configuration):
                 sub_key = key[len(prefix) :]
                 result[sub_key] = value
         return result
+
+
+def _parse_duration_option(key: str, value: Any) -> timedelta:
+    """Parse one duration option.
+
+    The getter returns this timedelta. The setter formats it before storing it.
+    Retry-wait and short-term memory TTL rules are applied by
+    ``validate_execution_options``, which Java job submission also runs.
+    """
+    try:
+        return parse_duration(value)
+    except ValueError as error:
+        msg = f"Invalid duration for '{key}': {error}"
+        raise ValueError(msg) from error
+
+
+def validate_execution_options(config: AgentConfiguration) -> None:
+    """Check retry wait and short-term memory TTL before a job runs.
+
+    Java ``CompileUtils.connectToAgent`` performs this check for Java plans and
+    for Python plan JSON. This is the same rule for Python callers and tests: a
+    positive retry wait is truncated with millisecond semantics, including a
+    result of zero, and a positive TTL must convert to more than ``0`` ms.
+    ``500 us`` fails TTL. ``1500 us`` is accepted and truncates to ``1`` ms.
+    Async batch timeout is not checked.
+    """
+    _validate_retry_wait(config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL))
+    _validate_short_term_memory_ttl(
+        config.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL)
+    )
+
+
+def _validate_retry_wait(value: timedelta) -> None:
+    if not is_positive(value):
+        return
+    # Positive values are allowed after truncation, including zero. Python
+    # timedelta cannot overflow the way Java Duration.toMillis can.
+    truncated_millis(value)
+
+
+def _validate_short_term_memory_ttl(value: timedelta) -> None:
+    if not is_positive(value):
+        return
+    option_key = AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.get_key()
+    if truncated_millis(value) <= 0:
+        _invalid_option(
+            option_key,
+            "must be greater than 0 ms after conversion to milliseconds, "
+            f"or zero or negative to disable TTL, got {format_duration(value)}",
+        )
+
+
+def _invalid_option(option_key: str, reason: str) -> NoReturn:
+    msg = f"{option_key} {reason}"
+    raise ValueError(msg)
