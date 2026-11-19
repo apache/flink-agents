@@ -21,7 +21,13 @@ package org.apache.flink.agents.integrations.mcp;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
@@ -29,6 +35,7 @@ import io.modelcontextprotocol.spec.McpSchema;
 import org.apache.flink.agents.api.RetryExecutor;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -39,6 +46,7 @@ import org.apache.flink.agents.integrations.mcp.auth.Auth;
 import org.apache.flink.agents.integrations.mcp.auth.BasicAuth;
 import org.apache.flink.agents.integrations.mcp.auth.BearerTokenAuth;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpRequest;
 import java.time.Duration;
@@ -84,10 +92,10 @@ public class MCPServer extends Resource {
     private static final String FIELD_TIMEOUT = "timeout";
     private static final String FIELD_AUTH = "auth";
     private static final String FIELD_MAX_RETRIES = "maxRetries";
-    private static final String FIELD_INITIAL_BACKOFF_MS = "initialBackoffMs";
-    private static final String FIELD_MAX_BACKOFF_MS = "maxBackoffMs";
+    private static final String FIELD_INITIAL_BACKOFF = "initialBackoff";
+    private static final String FIELD_MAX_BACKOFF = "maxBackoff";
 
-    private static final long DEFAULT_TIMEOUT_VALUE = 30L;
+    private static final Duration DEFAULT_TIMEOUT_VALUE = Duration.ofSeconds(30);
 
     @JsonProperty(FIELD_ENDPOINT)
     private final String endpoint;
@@ -96,7 +104,8 @@ public class MCPServer extends Resource {
     private final Map<String, String> headers;
 
     @JsonProperty(FIELD_TIMEOUT)
-    private final long timeoutSeconds;
+    @JsonSerialize(using = ToStringSerializer.class)
+    private final Duration timeout;
 
     @JsonProperty(FIELD_AUTH)
     private final Auth auth;
@@ -115,11 +124,11 @@ public class MCPServer extends Resource {
     public static class Builder {
         private String endpoint;
         private final Map<String, String> headers = new HashMap<>();
-        private long timeoutSeconds = DEFAULT_TIMEOUT_VALUE;
+        private Duration timeout = DEFAULT_TIMEOUT_VALUE;
         private Auth auth = null;
         private Integer maxRetries;
-        private Long initialBackoffMs;
-        private Long maxBackoffMs;
+        private Duration initialBackoff;
+        private Duration maxBackoff;
 
         public Builder endpoint(String endpoint) {
             this.endpoint = endpoint;
@@ -137,7 +146,7 @@ public class MCPServer extends Resource {
         }
 
         public Builder timeout(Duration timeout) {
-            this.timeoutSeconds = timeout.getSeconds();
+            this.timeout = timeout;
             return this;
         }
 
@@ -152,24 +161,18 @@ public class MCPServer extends Resource {
         }
 
         public Builder initialBackoff(Duration backoff) {
-            this.initialBackoffMs = backoff.toMillis();
+            this.initialBackoff = backoff;
             return this;
         }
 
         public Builder maxBackoff(Duration backoff) {
-            this.maxBackoffMs = backoff.toMillis();
+            this.maxBackoff = backoff;
             return this;
         }
 
         public MCPServer build() {
             return new MCPServer(
-                    endpoint,
-                    headers,
-                    timeoutSeconds,
-                    auth,
-                    maxRetries,
-                    initialBackoffMs,
-                    maxBackoffMs);
+                    endpoint, headers, timeout, auth, maxRetries, initialBackoff, maxBackoff);
         }
     }
 
@@ -180,26 +183,22 @@ public class MCPServer extends Resource {
                         descriptor.getArgument(FIELD_ENDPOINT), "endpoint cannot be null");
         Map<String, String> headers = descriptor.getArgument(FIELD_HEADERS);
         this.headers = headers != null ? new HashMap<>(headers) : new HashMap<>();
-        Object timeoutArg = descriptor.getArgument(FIELD_TIMEOUT);
-        this.timeoutSeconds =
-                timeoutArg instanceof Number
-                        ? ((Number) timeoutArg).longValue()
-                        : DEFAULT_TIMEOUT_VALUE;
+        this.timeout =
+                validateTimeout(
+                        descriptor.getDurationArgument(FIELD_TIMEOUT, DEFAULT_TIMEOUT_VALUE));
         this.auth = descriptor.getArgument(FIELD_AUTH);
 
         Object maxRetriesArg = descriptor.getArgument(FIELD_MAX_RETRIES);
         this.maxRetries =
                 maxRetriesArg instanceof Number ? ((Number) maxRetriesArg).intValue() : null;
 
-        Object initialBackoffArg = descriptor.getArgument(FIELD_INITIAL_BACKOFF_MS);
         this.initialBackoffMs =
-                initialBackoffArg instanceof Number
-                        ? ((Number) initialBackoffArg).longValue()
-                        : null;
-
-        Object maxBackoffArg = descriptor.getArgument(FIELD_MAX_BACKOFF_MS);
+                toBackoffMillis(
+                        descriptor.getDurationArgument(FIELD_INITIAL_BACKOFF, null),
+                        FIELD_INITIAL_BACKOFF);
         this.maxBackoffMs =
-                maxBackoffArg instanceof Number ? ((Number) maxBackoffArg).longValue() : null;
+                toBackoffMillis(
+                        descriptor.getDurationArgument(FIELD_MAX_BACKOFF, null), FIELD_MAX_BACKOFF);
     }
 
     /**
@@ -215,18 +214,52 @@ public class MCPServer extends Resource {
     public MCPServer(
             @JsonProperty(FIELD_ENDPOINT) String endpoint,
             @JsonProperty(FIELD_HEADERS) Map<String, String> headers,
-            @JsonProperty(FIELD_TIMEOUT) Long timeoutSeconds,
+            @JsonProperty(FIELD_TIMEOUT) @JsonDeserialize(using = DurationDeserializer.class)
+                    Duration timeout,
             @JsonProperty(FIELD_AUTH) Auth auth,
             @JsonProperty(FIELD_MAX_RETRIES) Integer maxRetries,
-            @JsonProperty(FIELD_INITIAL_BACKOFF_MS) Long initialBackoffMs,
-            @JsonProperty(FIELD_MAX_BACKOFF_MS) Long maxBackoffMs) {
+            @JsonProperty(FIELD_INITIAL_BACKOFF)
+                    @JsonDeserialize(using = DurationDeserializer.class)
+                    Duration initialBackoff,
+            @JsonProperty(FIELD_MAX_BACKOFF) @JsonDeserialize(using = DurationDeserializer.class)
+                    Duration maxBackoff) {
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint cannot be null");
         this.headers = headers != null ? new HashMap<>(headers) : new HashMap<>();
-        this.timeoutSeconds = timeoutSeconds != null ? timeoutSeconds : DEFAULT_TIMEOUT_VALUE;
+        this.timeout = validateTimeout(timeout != null ? timeout : DEFAULT_TIMEOUT_VALUE);
         this.auth = auth;
         this.maxRetries = maxRetries;
-        this.initialBackoffMs = initialBackoffMs;
-        this.maxBackoffMs = maxBackoffMs;
+        this.initialBackoffMs = toBackoffMillis(initialBackoff, FIELD_INITIAL_BACKOFF);
+        this.maxBackoffMs = toBackoffMillis(maxBackoff, FIELD_MAX_BACKOFF);
+    }
+
+    private static Duration validateTimeout(Duration value) {
+        Duration duration = DurationUtils.parse(value);
+        if (!DurationUtils.isPositive(duration)) {
+            throw new IllegalArgumentException("timeout must be a positive duration.");
+        }
+        return duration;
+    }
+
+    private static Long toBackoffMillis(Duration value, String name) {
+        if (value == null) {
+            return null;
+        }
+        if (value.isNegative()
+                || value.getNano() % 1_000_000 != 0
+                || value.compareTo(Duration.ofMillis(Long.MAX_VALUE)) > 0) {
+            throw new IllegalArgumentException(
+                    name
+                            + " must be a non-negative whole number of milliseconds within long range.");
+        }
+        return value.toMillis();
+    }
+
+    static final class DurationDeserializer extends JsonDeserializer<Duration> {
+        @Override
+        public Duration deserialize(JsonParser parser, DeserializationContext context)
+                throws IOException {
+            return DurationUtils.parse(parser.readValueAs(Object.class));
+        }
     }
 
     public static Builder builder(String endpoint) {
@@ -247,8 +280,8 @@ public class MCPServer extends Resource {
         return new HashMap<>(headers);
     }
 
-    public long getTimeoutSeconds() {
-        return timeoutSeconds;
+    public Duration getTimeout() {
+        return timeout;
     }
 
     public Auth getAuth() {
@@ -260,14 +293,14 @@ public class MCPServer extends Resource {
         return maxRetries != null ? maxRetries : getRetryExecutor().getMaxRetries();
     }
 
-    @JsonProperty(FIELD_INITIAL_BACKOFF_MS)
+    @JsonProperty(FIELD_INITIAL_BACKOFF)
     public long getInitialBackoffMs() {
         return initialBackoffMs != null
                 ? initialBackoffMs
                 : getRetryExecutor().getInitialBackoffMs();
     }
 
-    @JsonProperty(FIELD_MAX_BACKOFF_MS)
+    @JsonProperty(FIELD_MAX_BACKOFF)
     public long getMaxBackoffMs() {
         return maxBackoffMs != null ? maxBackoffMs : getRetryExecutor().getMaxBackoffMs();
     }
@@ -316,7 +349,7 @@ public class MCPServer extends Resource {
     private McpSyncClient createClient() {
         validateHttpUrl();
 
-        var requestBuilder = HttpRequest.newBuilder().timeout(Duration.ofSeconds(timeoutSeconds));
+        var requestBuilder = HttpRequest.newBuilder().timeout(timeout);
 
         // Add custom headers
         headers.forEach(requestBuilder::header);
@@ -333,10 +366,7 @@ public class MCPServer extends Resource {
                         .build();
 
         // Build and initialize the client
-        var mcpClient =
-                McpClient.sync(transport)
-                        .requestTimeout(Duration.ofSeconds(timeoutSeconds))
-                        .build();
+        var mcpClient = McpClient.sync(transport).requestTimeout(timeout).build();
 
         mcpClient.initialize();
         return mcpClient;
@@ -583,7 +613,7 @@ public class MCPServer extends Resource {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         MCPServer that = (MCPServer) o;
-        return timeoutSeconds == that.timeoutSeconds
+        return timeout.equals(that.timeout)
                 && getMaxRetries() == that.getMaxRetries()
                 && getInitialBackoffMs() == that.getInitialBackoffMs()
                 && getMaxBackoffMs() == that.getMaxBackoffMs()
@@ -597,7 +627,7 @@ public class MCPServer extends Resource {
         return Objects.hash(
                 endpoint,
                 headers,
-                timeoutSeconds,
+                timeout,
                 auth,
                 getMaxRetries(),
                 getInitialBackoffMs(),
