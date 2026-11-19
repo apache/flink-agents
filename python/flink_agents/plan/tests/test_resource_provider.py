@@ -17,18 +17,64 @@
 #################################################################################
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
+from flink_agents.api.prompts.prompt import LocalPrompt
 from flink_agents.api.resource import Resource, ResourceDescriptor, ResourceType
+from flink_agents.api.resource_context import ResourceContext
+from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.resource_provider import (
     JavaResourceProvider,
     PythonResourceProvider,
+    PythonSerializableResourceProvider,
     ResourceProvider,
     is_python_owned,
 )
 
 current_dir = Path(__file__).parent
+
+
+class ContextDependentPrompt(LocalPrompt):
+    def open(self) -> None:
+        self.resource_context.get_resource("dependency", ResourceType.PROMPT)
+
+
+@pytest.mark.parametrize("deserialize", [False, True])
+def test_serializable_provider_binds_context_before_open(deserialize: bool) -> None:
+    resource = ContextDependentPrompt(template="Hello")
+    provider = PythonSerializableResourceProvider.from_resource("prompt", resource)
+    if deserialize:
+        provider = PythonSerializableResourceProvider.model_validate_json(
+            provider.model_dump_json()
+        )
+    context = Mock(spec=ResourceContext)
+
+    provided = provider.provide(context, AgentConfiguration())
+
+    if deserialize:
+        assert provided is not resource
+    else:
+        assert provided is resource
+    assert provided.resource_context is context
+    provided.open()
+    context.get_resource.assert_called_once_with("dependency", ResourceType.PROMPT)
+
+
+def test_serializable_provider_binds_current_context() -> None:
+    resource = LocalPrompt(template="Hello")
+    provider = PythonSerializableResourceProvider.from_resource("prompt", resource)
+    config = AgentConfiguration()
+    previous_context = Mock(spec=ResourceContext)
+    current_context = Mock(spec=ResourceContext)
+    provider.provide(previous_context, config)
+    assert resource.resource_context is previous_context
+
+    provided = provider.provide(current_context, config)
+
+    assert provided is resource
+    assert provided.resource_context is current_context
 
 
 class MockChatModelImpl(Resource):
