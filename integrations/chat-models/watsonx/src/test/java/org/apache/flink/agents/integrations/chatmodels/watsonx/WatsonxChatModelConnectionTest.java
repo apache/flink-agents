@@ -53,13 +53,17 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
@@ -67,6 +71,7 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 /**
  * Unit tests for {@link WatsonxChatModelConnection}. Request-level tests use a local stub server,
@@ -301,19 +306,49 @@ class WatsonxChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("Request timeout accepts positive fractional seconds and rejects invalid values")
-    void testRequestTimeoutValidation() {
+    @DisplayName("Request timeout accepts durations and rejects invalid values")
+    void testRequestTimeoutValidation() throws Exception {
+        for (Object value : List.of(Duration.ofNanos(1500000), "1500 us", "PT0.0015S", 1500)) {
+            ResourceDescriptor descriptor =
+                    ResourceDescriptor.Builder.newBuilder(
+                                    WatsonxChatModelConnection.class.getName())
+                            .addInitialArgument("url", "https://example.com")
+                            .addInitialArgument("token", "test-token")
+                            .addInitialArgument("project_id", "project")
+                            .addInitialArgument("request_timeout", value)
+                            .build();
+            descriptor =
+                    MAPPER.readValue(
+                            MAPPER.writeValueAsString(descriptor), ResourceDescriptor.class);
+            WatsonxChatModelConnection connection =
+                    new WatsonxChatModelConnection(descriptor, NOOP, NO_ENVIRONMENT);
+            assertThat(connection)
+                    .extracting("httpClient")
+                    .satisfies(
+                            client ->
+                                    assertThat(((HttpClient) client).connectTimeout())
+                                            .contains(
+                                                    value instanceof Number
+                                                            ? Duration.ofMillis(1500)
+                                                            : Duration.ofNanos(1500000)));
+            assertThat(connection)
+                    .extracting("requestTimeout")
+                    .isEqualTo(
+                            value instanceof Number
+                                    ? Duration.ofMillis(1500)
+                                    : Duration.ofNanos(1500000));
+        }
         ResourceDescriptor fractionalTimeout =
                 ResourceDescriptor.Builder.newBuilder(WatsonxChatModelConnection.class.getName())
                         .addInitialArgument("url", "https://us-south.ml.cloud.ibm.com")
                         .addInitialArgument("api_key", "test-key")
                         .addInitialArgument("project_id", "test-project")
-                        .addInitialArgument("request_timeout", 0.5)
+                        .addInitialArgument("request_timeout", "500 ms")
                         .build();
         assertThat(new WatsonxChatModelConnection(fractionalTimeout, NOOP, NO_ENVIRONMENT))
                 .isInstanceOf(BaseChatModelConnection.class);
 
-        for (double invalidTimeout : List.of(0.0, -1.0, Double.NaN, Double.POSITIVE_INFINITY)) {
+        for (Object invalidTimeout : List.of(0, -1, "1 ns", "invalid", Double.NaN)) {
             ResourceDescriptor invalid =
                     ResourceDescriptor.Builder.newBuilder(
                                     WatsonxChatModelConnection.class.getName())
@@ -526,6 +561,47 @@ class WatsonxChatModelConnectionTest {
 
         assertThat(message.getFinishReason()).isEqualTo("tool_calls");
         assertThat(message.getUsage()).isNull();
+    }
+
+    @Test
+    void testIamRequestUsesConfiguredTimeout() throws Exception {
+        HttpServer server = startServer();
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger iamRequests = new AtomicInteger();
+        server.createContext(
+                "/identity/token",
+                exchange -> {
+                    iamRequests.incrementAndGet();
+                    try {
+                        release.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    } finally {
+                        exchange.close();
+                    }
+                });
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder(WatsonxChatModelConnection.class.getName())
+                        .addInitialArgument("url", baseUrl(server))
+                        .addInitialArgument("iam_url", baseUrl(server))
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("project_id", "test-project")
+                        .addInitialArgument("request_timeout", Duration.ofMillis(500))
+                        .addInitialArgument("max_retries", 0)
+                        .build();
+        try {
+            WatsonxChatModelConnection connection =
+                    new WatsonxChatModelConnection(descriptor, NOOP, NO_ENVIRONMENT);
+            assertTimeoutPreemptively(
+                    Duration.ofSeconds(5),
+                    () ->
+                            assertThatThrownBy(() -> chat(connection))
+                                    .hasRootCauseInstanceOf(HttpTimeoutException.class));
+            assertThat(iamRequests).hasValue(1);
+        } finally {
+            release.countDown();
+            server.stop(0);
+        }
     }
 
     @Test
