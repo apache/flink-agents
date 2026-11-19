@@ -79,4 +79,62 @@ public final class ChatFixtures {
                 reason,
                 Map.of());
     }
+
+    /**
+     * Public status base class in {@code org.apache.flink.agents.plan} (outside {@code actions}).
+     */
+    public abstract static class PublicStatusException extends RuntimeException {
+        protected PublicStatusException(String message) {
+            super(message);
+        }
+
+        public abstract int statusCode();
+    }
+
+    private static final class NonPublicStatusSubclass extends PublicStatusException {
+        private final int status;
+
+        private NonPublicStatusSubclass(int status) {
+            super("status " + status);
+            this.status = status;
+        }
+
+        @Override
+        public int statusCode() {
+            return status;
+        }
+    }
+
+    /** Returns a non-public subclass overriding a public {@code statusCode()} accessor. */
+    public static RuntimeException nonPublicSubclassStatusFailure(int status) {
+        return new NonPublicStatusSubclass(status);
+    }
+
+    /** Public provider failure exposing {@code statusCode()} from outside {@code actions}. */
+    public static final class HttpStatusFailure extends RuntimeException {
+        private final int status;
+
+        public HttpStatusFailure(int status) {
+            super("status " + status);
+            this.status = status;
+        }
+
+        public int statusCode() {
+            return status;
+        }
+    }
+
+    /** Public provider failure exposing {@code code()} (like Gemini's {@code ApiException}). */
+    public static final class CodedFailure extends RuntimeException {
+        private final int code;
+
+        public CodedFailure(int code) {
+            super("code " + code);
+            this.code = code;
+        }
+
+        public int code() {
+            return code;
+        }
+    }
 }

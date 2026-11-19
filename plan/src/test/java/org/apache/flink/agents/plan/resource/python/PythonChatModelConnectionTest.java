@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.argThat;
 import static org.mockito.Mockito.eq;
@@ -103,8 +104,11 @@ public class PythonChatModelConnectionTest {
 
         when(mockAdapter.toPythonChatMessage(inputMessage)).thenReturn(pythonInputMessage);
         when(mockAdapter.convertToPythonTool(mockTool)).thenReturn(pythonTool);
-        when(mockAdapter.callMethod(eq(mockChatModel), eq("chat"), any(Map.class)))
-                .thenReturn(pythonOutputMessage);
+        when(mockAdapter.invoke(
+                        eq(PythonChatModelBridge.CALL_CHAT_MODEL),
+                        eq(mockChatModel),
+                        any(Map.class)))
+                .thenReturn(new Object[] {true, pythonOutputMessage});
         when(mockAdapter.fromPythonChatResult(pythonOutputMessage)).thenReturn(outputMessage);
 
         ChatResult result = pythonChatModelConnection.chat(messages, tools, modelParams);
@@ -114,11 +118,13 @@ public class PythonChatModelConnectionTest {
         verify(mockAdapter).toPythonChatMessage(inputMessage);
         verify(mockAdapter).convertToPythonTool(mockTool);
         verify(mockAdapter)
-                .callMethod(
+                .invoke(
+                        eq(PythonChatModelBridge.CALL_CHAT_MODEL),
                         eq(mockChatModel),
-                        eq("chat"),
                         argThat(
-                                kwargs -> {
+                                raw -> {
+                                    @SuppressWarnings("unchecked")
+                                    Map<String, Object> kwargs = (Map<String, Object>) raw;
                                     assertThat(kwargs).containsKey("messages");
                                     assertThat(kwargs).containsKey("tools");
                                     assertThat(kwargs).containsKey("temperature");
@@ -140,6 +146,28 @@ public class PythonChatModelConnectionTest {
         verify(pythonInputMessage).close();
         verify(pythonTool).close();
         verify(pythonOutputMessage).close();
+    }
+
+    @Test
+    void testChatSurfacesHttpStatusFromPythonBridge() throws Exception {
+        ChatMessage inputMessage = mock(ChatMessage.class);
+        PyObject pythonInputMessage = mock(PyObject.class);
+        when(mockAdapter.toPythonChatMessage(inputMessage)).thenReturn(pythonInputMessage);
+        when(mockAdapter.invoke(
+                        eq(PythonChatModelBridge.CALL_CHAT_MODEL),
+                        eq(mockChatModel),
+                        any(Map.class)))
+                .thenReturn(new Object[] {false, 400L, "<class 'StatusError'>: status 400"});
+
+        assertThatThrownBy(
+                        () ->
+                                pythonChatModelConnection.chat(
+                                        List.of(inputMessage), List.of(), Map.of()))
+                .isInstanceOfSatisfying(
+                        PythonChatModelBridge.PythonHttpStatusException.class,
+                        error -> assertThat(error.statusCode()).isEqualTo(400))
+                .hasMessage("<class 'StatusError'>: status 400");
+        verify(pythonInputMessage).close();
     }
 
     @Test

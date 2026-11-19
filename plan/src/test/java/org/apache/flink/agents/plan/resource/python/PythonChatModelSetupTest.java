@@ -115,8 +115,11 @@ public class PythonChatModelSetupTest {
         PyObject pythonOutputMessage = mock(PyObject.class);
 
         when(mockAdapter.toPythonChatMessage(inputMessage)).thenReturn(pythonInputMessage);
-        when(mockAdapter.callMethod(eq(mockChatModelSetup), eq("chat"), any(Map.class)))
-                .thenReturn(pythonOutputMessage);
+        when(mockAdapter.invoke(
+                        eq(PythonChatModelBridge.CALL_CHAT_MODEL),
+                        eq(mockChatModelSetup),
+                        any(Map.class)))
+                .thenReturn(new Object[] {true, pythonOutputMessage});
         when(mockAdapter.fromPythonChatResult(pythonOutputMessage)).thenReturn(outputMessage);
 
         ChatResult result = pythonChatModelSetup.chat(messages, promptArgs, modelParams);
@@ -125,11 +128,13 @@ public class PythonChatModelSetupTest {
 
         verify(mockAdapter).toPythonChatMessage(inputMessage);
         verify(mockAdapter)
-                .callMethod(
+                .invoke(
+                        eq(PythonChatModelBridge.CALL_CHAT_MODEL),
                         eq(mockChatModelSetup),
-                        eq("chat"),
                         argThat(
-                                kwargs -> {
+                                raw -> {
+                                    @SuppressWarnings("unchecked")
+                                    Map<String, Object> kwargs = (Map<String, Object>) raw;
                                     assertThat(kwargs).containsKey("messages");
                                     assertThat(kwargs).containsKey("prompt_args");
                                     assertThat(kwargs).containsKey("temperature");
@@ -145,6 +150,26 @@ public class PythonChatModelSetupTest {
         verify(mockAdapter).fromPythonChatResult(pythonOutputMessage);
         verify(pythonInputMessage).close();
         verify(pythonOutputMessage).close();
+    }
+
+    @Test
+    void testChatSurfacesHttpStatusFromPythonBridge() throws Exception {
+        ChatMessage inputMessage = mock(ChatMessage.class);
+        PyObject pythonInputMessage = mock(PyObject.class);
+        when(mockAdapter.toPythonChatMessage(inputMessage)).thenReturn(pythonInputMessage);
+        when(mockAdapter.invoke(
+                        eq(PythonChatModelBridge.CALL_CHAT_MODEL),
+                        eq(mockChatModelSetup),
+                        any(Map.class)))
+                .thenReturn(new Object[] {false, 400L, "<class 'StatusError'>: status 400"});
+
+        assertThatThrownBy(
+                        () -> pythonChatModelSetup.chat(List.of(inputMessage), Map.of(), Map.of()))
+                .isInstanceOfSatisfying(
+                        PythonChatModelBridge.PythonHttpStatusException.class,
+                        error -> assertThat(error.statusCode()).isEqualTo(400))
+                .hasMessage("<class 'StatusError'>: status 400");
+        verify(pythonInputMessage).close();
     }
 
     @Test

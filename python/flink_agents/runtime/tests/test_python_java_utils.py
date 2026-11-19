@@ -37,7 +37,9 @@ from flink_agents.api.embedding_models.embedding_model import (
 )
 from flink_agents.api.events.event import Event
 from flink_agents.api.tools import InjectedArg, ToolResponse
+from flink_agents.plan.exceptions import UncapturableException
 from flink_agents.runtime.python_java_utils import (
+    call_chat_model,
     call_decision_model,
     call_embedding,
     convert_to_python_key_text,
@@ -302,3 +304,51 @@ def test_call_decision_model_keeps_ordinary_provider_failures(error: Exception) 
         call_decision_model(resource, request.model_dump_json(), None)
 
     assert raised.value is error
+
+
+def test_call_chat_model_wraps_successful_response() -> None:
+    response = object()
+    resource = Mock()
+    resource.chat.return_value = response
+
+    assert call_chat_model(resource, {"messages": [], "temperature": 0.2}) == (
+        True,
+        response,
+    )
+    resource.chat.assert_called_once_with(messages=[], temperature=0.2)
+
+
+def test_call_chat_model_captures_non_retryable_status_across_wrappers() -> None:
+    class _StatusError(Exception):
+        def __init__(self, status_code: int) -> None:
+            super().__init__(f"status {status_code}")
+            self.status_code = status_code
+
+    def fail_chat(**kwargs: object) -> object:
+        def raise_client() -> None:
+            raise _StatusError(400)
+
+        try:
+            raise_client()
+        except _StatusError as inner:
+            raise _StatusError(500) from inner
+
+    resource = Mock()
+    resource.chat.side_effect = fail_chat
+
+    ok, status, message = call_chat_model(resource, {"messages": []})
+
+    assert ok is False
+    assert status == 400
+    assert "status 500" in message
+
+
+def test_call_chat_model_reraises_statusless_and_uncapturable_failures() -> None:
+    for failure in (RuntimeError("transient"), UncapturableException("fault")):
+        resource = Mock()
+        resource.chat.side_effect = failure
+
+        with pytest.raises(type(failure)) as raised:
+            call_chat_model(resource, {"messages": []})
+
+        assert raised.value is failure

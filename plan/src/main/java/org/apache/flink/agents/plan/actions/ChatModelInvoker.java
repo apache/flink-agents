@@ -38,6 +38,8 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -159,24 +161,63 @@ public final class ChatModelInvoker {
 
     private static Integer httpStatus(Throwable error) {
         for (String name : new String[] {"statusCode", "getStatusCode", "code"}) {
+            Method method = findPublicStatusMethod(error.getClass(), name);
+            if (method == null) {
+                continue;
+            }
             try {
-                Method method = error.getClass().getMethod(name);
-                if (method.getParameterCount() != 0) {
-                    continue;
-                }
-                Class<?> returnType = method.getReturnType();
-                if (returnType != int.class && returnType != Integer.class) {
-                    continue;
-                }
                 Object value = method.invoke(error);
                 if (value instanceof Integer) {
                     return (Integer) value;
                 }
             } catch (ReflectiveOperationException ignored) {
-                // This throwable does not expose that status method.
+                // Ignore reflective invocation failures and try remaining accessors.
             }
         }
         return null;
+    }
+
+    @Nullable
+    private static Method findPublicStatusMethod(Class<?> type, String name) {
+        ArrayDeque<Class<?>> interfaces = new ArrayDeque<>();
+        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+            if (Modifier.isPublic(current.getModifiers())) {
+                Method method = declaredPublicIntGetter(current, name);
+                if (method != null) {
+                    return method;
+                }
+            }
+            Collections.addAll(interfaces, current.getInterfaces());
+        }
+        Set<Class<?>> seenInterfaces = Collections.newSetFromMap(new IdentityHashMap<>());
+        while (!interfaces.isEmpty()) {
+            Class<?> iface = interfaces.removeFirst();
+            if (!seenInterfaces.add(iface)) {
+                continue;
+            }
+            if (Modifier.isPublic(iface.getModifiers())) {
+                Method method = declaredPublicIntGetter(iface, name);
+                if (method != null) {
+                    return method;
+                }
+            }
+            Collections.addAll(interfaces, iface.getInterfaces());
+        }
+        return null;
+    }
+
+    @Nullable
+    private static Method declaredPublicIntGetter(Class<?> declaringType, String name) {
+        try {
+            Method method = declaringType.getDeclaredMethod(name);
+            if (!Modifier.isPublic(method.getModifiers()) || method.getParameterCount() != 0) {
+                return null;
+            }
+            Class<?> returnType = method.getReturnType();
+            return returnType == int.class || returnType == Integer.class ? method : null;
+        } catch (NoSuchMethodException e) {
+            return null;
+        }
     }
 
     private static boolean isRetryableFailure(Exception error) {

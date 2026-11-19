@@ -84,6 +84,23 @@ def call_decision_model(
     return {"status": "SUCCESS", "result": result.model_dump_json()}
 
 
+def call_chat_model(resource: Any, kwargs: Dict[str, Any]) -> tuple:
+    """Invoke ``resource.chat(**kwargs)`` while preserving HTTP status across Pemja."""
+    from flink_agents.plan.exceptions import (
+        effective_http_status,
+        raise_if_uncapturable,
+    )
+
+    try:
+        return True, resource.chat(**kwargs)
+    except Exception as error:
+        raise_if_uncapturable(error)
+        status = effective_http_status(error)
+        if status is None:
+            raise
+        return False, status, f"{type(error)}: {error}"
+
+
 def convert_to_python_object(bytesObject: bytes) -> Any:
     """Used for deserializing Python objects (e.g. durable execution results)."""
     return cloudpickle.loads(bytesObject)

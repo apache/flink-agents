@@ -889,7 +889,7 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
     }
 
     /** HTTP status kept on the exception so the chat retry loop can tell 4xx from 5xx. */
-    private static final class HttpStatusException extends RuntimeException {
+    public static final class HttpStatusException extends RuntimeException {
         private final int statusCode;
 
         private HttpStatusException(int statusCode, String message) {
@@ -897,7 +897,6 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
             this.statusCode = statusCode;
         }
 
-        @SuppressWarnings("unused")
         public int statusCode() {
             return statusCode;
         }

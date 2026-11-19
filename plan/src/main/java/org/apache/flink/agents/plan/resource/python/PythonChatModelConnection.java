@@ -95,7 +95,8 @@ public class PythonChatModelConnection extends BaseChatModelConnection
             }
             kwargs.put("tools", pythonTools);
 
-            Object pythonMessageResponse = scope.own(adapter.callMethod(chatModel, "chat", kwargs));
+            Object pythonMessageResponse =
+                    PythonChatModelBridge.chat(adapter, scope, chatModel, kwargs);
             return adapter.fromPythonChatResult(pythonMessageResponse);
         }
     }

@@ -27,6 +27,8 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.ChatFixtures;
+import org.apache.flink.agents.plan.resource.python.PythonChatModelSetup;
+import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -247,7 +249,41 @@ class ChatModelInvokerTest {
         when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
         when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
         when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
-        when(chatModel.chat(any(), any(), any())).thenThrow(new HttpStatusFailure(400));
+        when(chatModel.chat(any(), any(), any()))
+                .thenThrow(new ChatFixtures.HttpStatusFailure(400));
+        when(ctx.durableExecute(any()))
+                .thenAnswer(invocation -> ((DurableCallable<?>) invocation.getArgument(0)).call());
+
+        ChatModelInvoker.ChatAttemptFailed failure =
+                assertThrows(
+                        ChatModelInvoker.ChatAttemptFailed.class,
+                        () ->
+                                ChatModelInvoker.chatWithRetries(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        "durable-call-id",
+                                        List.of(),
+                                        Map.of(),
+                                        null,
+                                        ctx,
+                                        2,
+                                        0));
+
+        verify(chatModel, times(1)).chat(any(), any(), any());
+        assertEquals(0, failure.retryCount);
+    }
+
+    @Test
+    void testNonPublicStatusSubclassInAnotherPackageIsNotRetried() throws Exception {
+        BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
+        RunnerContext ctx = mock(RunnerContext.class);
+        ReadableConfiguration config = mock(ReadableConfiguration.class);
+        when(ctx.getConfig()).thenReturn(config);
+        when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
+        when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
+        when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
+        when(chatModel.chat(any(), any(), any()))
+                .thenThrow(ChatFixtures.nonPublicSubclassStatusFailure(400));
         when(ctx.durableExecute(any()))
                 .thenAnswer(invocation -> ((DurableCallable<?>) invocation.getArgument(0)).call());
 
@@ -281,7 +317,8 @@ class ChatModelInvokerTest {
         when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
         when(chatModel.chat(any(), any(), any()))
                 .thenThrow(
-                        new RuntimeException("provider call failed", new HttpStatusFailure(400)));
+                        new RuntimeException(
+                                "provider call failed", new ChatFixtures.HttpStatusFailure(400)));
         when(ctx.durableExecute(any()))
                 .thenAnswer(invocation -> ((DurableCallable<?>) invocation.getArgument(0)).call());
 
@@ -314,7 +351,9 @@ class ChatModelInvokerTest {
         when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
         when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
         when(chatModel.chat(any(), any(), any()))
-                .thenThrow(new RuntimeException("provider call failed", new CodedFailure(400)));
+                .thenThrow(
+                        new RuntimeException(
+                                "provider call failed", new ChatFixtures.CodedFailure(400)));
         when(ctx.durableExecute(any()))
                 .thenAnswer(invocation -> ((DurableCallable<?>) invocation.getArgument(0)).call());
 
@@ -338,6 +377,59 @@ class ChatModelInvokerTest {
     }
 
     @Test
+    void testPythonChatModelSetupClientErrorIsNotRetried() throws Exception {
+        PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
+        pemja.core.object.PyObject pySetup = mock(pemja.core.object.PyObject.class);
+        org.apache.flink.agents.api.resource.ResourceDescriptor descriptor =
+                org.apache.flink.agents.api.resource.ResourceDescriptor.Builder.newBuilder(
+                                PythonChatModelSetup.class.getName())
+                        .addInitialArgument("model", "py-model")
+                        .build();
+        PythonChatModelSetup chatModel =
+                new PythonChatModelSetup(
+                        adapter,
+                        pySetup,
+                        descriptor,
+                        mock(org.apache.flink.agents.api.resource.ResourceContext.class));
+        when(adapter.invoke(
+                        org.mockito.ArgumentMatchers.eq("python_java_utils.call_chat_model"),
+                        org.mockito.ArgumentMatchers.same(pySetup),
+                        any()))
+                .thenReturn(new Object[] {false, 400L, "<class 'StatusError'>: status 400"});
+
+        RunnerContext ctx = mock(RunnerContext.class);
+        ReadableConfiguration config = mock(ReadableConfiguration.class);
+        when(ctx.getConfig()).thenReturn(config);
+        when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
+        when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
+        when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
+        when(ctx.durableExecute(any()))
+                .thenAnswer(invocation -> ((DurableCallable<?>) invocation.getArgument(0)).call());
+
+        ChatModelInvoker.ChatAttemptFailed failure =
+                assertThrows(
+                        ChatModelInvoker.ChatAttemptFailed.class,
+                        () ->
+                                ChatModelInvoker.chatWithRetries(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        "durable-call-id",
+                                        List.of(),
+                                        Map.of(),
+                                        null,
+                                        ctx,
+                                        2,
+                                        0));
+
+        verify(adapter, times(1))
+                .invoke(
+                        org.mockito.ArgumentMatchers.eq("python_java_utils.call_chat_model"),
+                        org.mockito.ArgumentMatchers.same(pySetup),
+                        any());
+        assertEquals(0, failure.retryCount);
+    }
+
+    @Test
     void testRateLimitAndServerErrorAreRetried() throws Exception {
         for (int status : new int[] {429, 503}) {
             BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
@@ -347,7 +439,8 @@ class ChatModelInvokerTest {
             when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
             when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
             when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
-            when(chatModel.chat(any(), any(), any())).thenThrow(new HttpStatusFailure(status));
+            when(chatModel.chat(any(), any(), any()))
+                    .thenThrow(new ChatFixtures.HttpStatusFailure(status));
             when(ctx.durableExecute(any()))
                     .thenAnswer(
                             invocation -> ((DurableCallable<?>) invocation.getArgument(0)).call());
@@ -403,36 +496,6 @@ class ChatModelInvokerTest {
 
         verify(ctx, times(1)).durableExecute(any());
         assertEquals(0, failure.retryCount);
-    }
-
-    /** Provider failure that exposes an HTTP status the way the OpenAI SDK does. */
-    private static final class HttpStatusFailure extends RuntimeException {
-        private final int status;
-
-        private HttpStatusFailure(int status) {
-            super("status " + status);
-            this.status = status;
-        }
-
-        @SuppressWarnings("unused")
-        public int statusCode() {
-            return status;
-        }
-    }
-
-    /** Gemini's ApiException exposes the HTTP status as {@code code()}. */
-    private static final class CodedFailure extends RuntimeException {
-        private final int code;
-
-        private CodedFailure(int code) {
-            super("code " + code);
-            this.code = code;
-        }
-
-        @SuppressWarnings("unused")
-        public int code() {
-            return code;
-        }
     }
 
     private static RunnerContext syncContext(BaseChatModelSetup model) throws Exception {

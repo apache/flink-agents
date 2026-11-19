@@ -646,6 +646,69 @@ class TestChatModelActionRetry:
         assert sent_events[0].retry_count == 0
         assert ctx.report_execution_started.call_count == 1
 
+    def test_java_bridge_client_error_is_not_retried(self) -> None:
+        """A Java 400 carried in a Pemja PyJObject must not be retried."""
+
+        def java_class(name: str | None) -> Any:
+            if name is None:
+                return None
+            parents = {
+                "com.example.BadRequestException": "java.lang.RuntimeException",
+                "java.lang.RuntimeException": "java.lang.Exception",
+                "java.lang.Exception": "java.lang.Throwable",
+            }
+            parent = parents.get(name)
+            return type(
+                "PyJObject",
+                (),
+                {
+                    "__module__": "pemja",
+                    "getName": lambda self: name,
+                    "getSuperclass": lambda self: java_class(parent),
+                },
+            )()
+
+        inner = type(
+            "PyJObject",
+            (),
+            {
+                "__module__": "pemja",
+                "getClass": lambda self: java_class("com.example.BadRequestException"),
+                "getCause": lambda self: None,
+                "statusCode": lambda self: 400,
+            },
+        )()
+        outer = type(
+            "PyJObject",
+            (),
+            {
+                "__module__": "pemja",
+                "getClass": lambda self: java_class("java.lang.RuntimeException"),
+                "getCause": lambda self: inner,
+            },
+        )()
+
+        chat_model = MagicMock()
+        chat_model.chat = MagicMock(side_effect=RuntimeError(outer))
+        ctx, sent_events, _, _ = _create_mock_runner_context(
+            chat_model, max_retries=2, retry_wait_interval_sec=0
+        )
+
+        asyncio.run(
+            chat(
+                uuid4(),
+                "test-model",
+                [ChatMessage.of(role=MessageRole.USER, content="hi")],
+                {},
+                None,
+                ctx,
+            )
+        )
+
+        assert chat_model.chat.call_count == 1
+        assert sent_events[0].is_failed
+        assert sent_events[0].retry_count == 0
+
     @pytest.mark.parametrize("status_code", [429, 503])
     def test_retryable_http_status_uses_the_retry_budget(
         self, status_code: int

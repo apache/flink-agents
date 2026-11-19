@@ -23,6 +23,7 @@ from typing import Any
 
 _MAX_CAUSE_DEPTH = 64
 _JAVA_FRAMEWORK_FAULT = "org.apache.flink.agents.plan.exceptions.UncapturableException"
+_JAVA_THROWABLE = frozenset({"java.lang.Throwable"})
 
 
 class UncapturableException(RuntimeError):
@@ -100,6 +101,99 @@ def raise_if_uncapturable(exception: BaseException | None) -> None:
     """Keep a marked fault out of an application failure conversion or recording."""
     if is_uncapturable(exception):
         raise exception
+
+
+def is_retryable_http_status(status: int) -> bool:
+    """Return whether an HTTP status should consume the retry budget."""
+    if status in (408, 409, 429):
+        return True
+    return status < 400 or status >= 500
+
+
+def linked_failure(error: BaseException) -> BaseException | None:
+    """Return the next failure in the Python exception chain.
+
+    An explicit cause wins. Otherwise use the implicit context.
+    """
+    if error.__cause__ is not None:
+        return error.__cause__
+    if error.__suppress_context__:
+        return None
+    context = error.__context__
+    return None if context is error else context
+
+
+def _python_http_status(error: BaseException) -> int | None:
+    for name in ("status_code", "status"):
+        value = getattr(error, name, None)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    response = getattr(error, "response", None)
+    if response is not None:
+        value = getattr(response, "status_code", None)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def _java_single_http_status(throwable: Any) -> int | None:
+    for name in ("statusCode", "getStatusCode", "code"):
+        try:
+            accessor = getattr(throwable, name)
+            value = accessor()
+        except BaseException:
+            continue
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def _java_chain_http_status(value: Any) -> int | None:
+    first_retryable: int | None = None
+    try:
+        current = value
+        for _ in range(_MAX_CAUSE_DEPTH):
+            if current is None or not _is_pemja_object(current):
+                break
+            if not _java_class_matches(current.getClass(), _JAVA_THROWABLE):
+                break
+            status = _java_single_http_status(current)
+            if status is not None:
+                if not is_retryable_http_status(status):
+                    return status
+                if first_retryable is None:
+                    first_retryable = status
+            current = current.getCause()
+    except BaseException:
+        return first_retryable
+    return first_retryable
+
+
+def effective_http_status(error: BaseException) -> int | None:
+    """Extract the governing HTTP status from Python causes or bridged Java throwables.
+
+    Any non-retryable status in the chain wins over a retryable status.
+    """
+    first_retryable: int | None = None
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        status = _python_http_status(current)
+        if status is not None:
+            if not is_retryable_http_status(status):
+                return status
+            if first_retryable is None:
+                first_retryable = status
+        for arg in getattr(current, "args", ()):
+            java_status = _java_chain_http_status(arg)
+            if java_status is not None:
+                if not is_retryable_http_status(java_status):
+                    return java_status
+                if first_retryable is None:
+                    first_retryable = java_status
+        current = linked_failure(current)
+    return first_retryable
 
 
 def _message(exception: BaseException) -> str:

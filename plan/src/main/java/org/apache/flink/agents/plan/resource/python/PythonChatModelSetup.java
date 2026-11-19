@@ -91,7 +91,7 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
             kwargs.put("prompt_args", promptArgs != null ? promptArgs : Collections.emptyMap());
 
             Object pythonMessageResponse =
-                    scope.own(adapter.callMethod(chatModelSetup, "chat", kwargs));
+                    PythonChatModelBridge.chat(adapter, scope, chatModelSetup, kwargs);
             return adapter.fromPythonChatResult(pythonMessageResponse);
         }
     }

@@ -51,6 +51,11 @@ from flink_agents.api.trace import (
 )
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.utils import support_async
+from flink_agents.plan.exceptions import (
+    effective_http_status,
+    is_retryable_http_status,
+    linked_failure,
+)
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.resource.java.java_chat_model import JavaChatModelSetup
 from flink_agents.plan.routing.resolved_route import ResolvedModelRoute
@@ -167,51 +172,17 @@ def _is_retryable(error: BaseException) -> bool:
     """Client errors are not retried. 408, 409, 429, and 5xx are.
 
     A failure with no HTTP status, including a timeout, stays retryable. The status
-    is read from the failure or its cause, so a wrapper does not hide a 4xx.
+    is read from the failure, its Python cause chain, or a bridged Java throwable.
     """
     current: BaseException | None = error
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, _InvocationFailure):
-            return current.retryable
-        status = _http_status(current)
-        if status is not None and not _is_retryable_http_status(status):
+        if isinstance(current, _InvocationFailure) and not current.retryable:
             return False
-        current = _linked_failure(current)
-    return True
-
-
-def _linked_failure(error: BaseException) -> BaseException | None:
-    """Return the next failure in the chain.
-
-    An explicit cause wins. Otherwise use the implicit context.
-    """
-    if error.__cause__ is not None:
-        return error.__cause__
-    if error.__suppress_context__:
-        return None
-    context = error.__context__
-    return None if context is error else context
-
-
-def _is_retryable_http_status(status: int) -> bool:
-    if status in (408, 409, 429):
-        return True
-    return status < 400 or status >= 500
-
-
-def _http_status(error: BaseException) -> int | None:
-    for name in ("status_code", "status"):
-        value = getattr(error, name, None)
-        if isinstance(value, int) and not isinstance(value, bool):
-            return value
-    response = getattr(error, "response", None)
-    if response is not None:
-        value = getattr(response, "status_code", None)
-        if isinstance(value, int) and not isinstance(value, bool):
-            return value
-    return None
+        current = linked_failure(current)
+    status = effective_http_status(error)
+    return status is None or is_retryable_http_status(status)
 
 
 def _provider_failure(error: Exception) -> tuple:
