@@ -800,7 +800,7 @@ public class RemoteRunSetup extends BaseAsyncSubagentSetup {
 {{< /tabs >}}
 
 Register the setup like any external sub-agent. The async form adds one descriptor
-argument, `status_poll_interval_millis`, and it defaults to 500.
+argument, `status_poll_interval`, in [duration format]({{< ref "docs/operations/configuration#duration-values" >}}). It defaults to `500 ms`; negative values are rejected. Integers and unitless integer strings are interpreted as milliseconds.
 
 {{< tabs "Register an Async Sub-agent" >}}
 
@@ -817,7 +817,7 @@ parent.add_resource(
             '{"type":"object","properties":{"diff":{"type":"string"}},'
             '"required":["diff"]}'
         ),
-        status_poll_interval_millis=500,
+        status_poll_interval=timedelta(milliseconds=500),
     ),
 )
 ```
@@ -835,7 +835,7 @@ parent.addResource(
                 "input_schema",
                 "{\"type\":\"object\",\"properties\":{\"diff\":{\"type\":\"string\"}},"
                         + "\"required\":[\"diff\"]}")
-        .addInitialArgument("status_poll_interval_millis", 500L)
+        .addInitialArgument("status_poll_interval", Duration.ofMillis(500))
         .build());
 ```
 {{< /tab >}}
@@ -850,7 +850,7 @@ agents:
         endpoint: https://example.com/runs
         description: Run a review task on the remote service
         input_schema: '{"type":"object","properties":{"diff":{"type":"string"}},"required":["diff"]}'
-        status_poll_interval_millis: 500
+        status_poll_interval: 500 ms
 ```
 {{< /tab >}}
 

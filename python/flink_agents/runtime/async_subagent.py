@@ -20,9 +20,13 @@
 import time
 from abc import ABC, abstractmethod
 from concurrent.futures import CancelledError
+from datetime import timedelta
 from enum import Enum
 from typing import Any
 
+from pydantic import field_validator
+
+from flink_agents.api.duration import parse_duration
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.subagent import (
     SubagentFuture,
@@ -192,10 +196,20 @@ class BaseAsyncSubagentSetup(BaseSubagentSetup, ABC):
     """
 
     #: Delay between status probes while waiting for the run to reach a
-    #: terminal state, declared in YAML as ``status_poll_interval_millis``,
+    #: terminal state, declared in YAML as ``status_poll_interval``,
     #: the same argument the Java side reads from the descriptor. Both default
-    #: to 500, and subclasses override the attribute directly.
-    status_poll_interval_millis: int = 500
+    #: to 500 milliseconds, and subclasses override the attribute directly.
+    status_poll_interval: timedelta = timedelta(milliseconds=500)
+
+    @field_validator("status_poll_interval", mode="before")
+    @classmethod
+    def validate_poll_interval(cls, value: Any) -> timedelta:
+        """Parse a non-negative polling interval."""
+        interval = parse_duration(value)
+        if interval < timedelta(0):
+            msg = "status_poll_interval must not be negative."
+            raise ValueError(msg)
+        return interval
 
     async def submit_with_identity(
         self,
@@ -272,7 +286,7 @@ class BaseAsyncSubagentSetup(BaseSubagentSetup, ABC):
             # NOT_STARTED or RUNNING: keep probing. A NOT_STARTED run after a
             # durable POST means the remote session expired; the replay then
             # observes the fresh state instead of the original probe path.
-            time.sleep(self.status_poll_interval_millis / 1000)
+            time.sleep(self.status_poll_interval.total_seconds())
 
     def _post_submit_request(self, session_id: str, call_id: str, prompt: Any) -> None:
         """Run the body of the durable POST by delegating to the transport
