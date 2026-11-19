@@ -358,7 +358,8 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                 response = sendWithRetry(buildChatRequest(requestBody, bearerToken));
             }
             if (response.statusCode() / 100 != 2) {
-                throw new RuntimeException(
+                throw httpStatusFailure(
+                        response.statusCode(),
                         String.format(
                                 "watsonx.ai chat request failed with status %d: %s",
                                 response.statusCode(), response.body()));
@@ -403,6 +404,10 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                 .header("Accept", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                 .build();
+    }
+
+    private static RuntimeException httpStatusFailure(int statusCode, String message) {
+        return new HttpStatusException(statusCode, message);
     }
 
     /**
@@ -855,7 +860,8 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                             .build();
             final HttpResponse<String> response = sendWithRetry(request);
             if (response.statusCode() / 100 != 2) {
-                throw new RuntimeException(
+                throw httpStatusFailure(
+                        response.statusCode(),
                         String.format(
                                 "IAM token request failed with status %d: %s",
                                 response.statusCode(), response.body()));
@@ -879,6 +885,21 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         if (rejectedToken.equals(cachedIamToken)) {
             cachedIamToken = null;
             iamTokenExpirationEpochSec = 0;
+        }
+    }
+
+    /** HTTP status kept on the exception so the chat retry loop can tell 4xx from 5xx. */
+    private static final class HttpStatusException extends RuntimeException {
+        private final int statusCode;
+
+        private HttpStatusException(int statusCode, String message) {
+            super(message);
+            this.statusCode = statusCode;
+        }
+
+        @SuppressWarnings("unused")
+        public int statusCode() {
+            return statusCode;
         }
     }
 }

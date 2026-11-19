@@ -284,6 +284,14 @@ def to_dashscope_tool(
     }
 
 
+class _DashScopeStatusError(RuntimeError):
+    """DashScope HTTP failure that keeps the status for the chat retry loop."""
+
+    def __init__(self, status_code: int, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class _MultiModalConversation(MultiModalConversation):
     @classmethod
     @override
@@ -562,8 +570,9 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         )
 
         if response.status_code != 200:
-            msg = f"DashScope call failed: {response.message}"
-            raise RuntimeError(msg)
+            raise _DashScopeStatusError(
+                response.status_code, f"DashScope call failed: {response.message}"
+            )
 
         blocks = []
         if is_asr:

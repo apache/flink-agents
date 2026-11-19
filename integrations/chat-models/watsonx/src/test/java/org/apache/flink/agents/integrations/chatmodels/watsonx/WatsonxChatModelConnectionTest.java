@@ -662,7 +662,19 @@ class WatsonxChatModelConnectionTest {
                             stubDescriptor(baseUrl(server), false, 3), NOOP, NO_ENVIRONMENT);
             assertThatThrownBy(() -> chat(nonRetryingConnection))
                     .isInstanceOf(RuntimeException.class)
-                    .hasMessageContaining("status 400");
+                    .hasMessageContaining("status 400")
+                    .matches(
+                            error -> {
+                                try {
+                                    return Integer.valueOf(400)
+                                            .equals(
+                                                    error.getClass()
+                                                            .getMethod("statusCode")
+                                                            .invoke(error));
+                                } catch (ReflectiveOperationException e) {
+                                    return false;
+                                }
+                            });
             assertThat(chatRequests).hasValue(1);
         } finally {
             server.stop(0);
