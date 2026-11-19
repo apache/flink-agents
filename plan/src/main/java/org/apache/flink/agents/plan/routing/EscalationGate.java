@@ -45,8 +45,8 @@ import org.apache.flink.agents.api.decision.DecisionRequest;
 import org.apache.flink.agents.api.decision.DecisionResult;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
-import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ChatModelInvoker;
+import org.apache.flink.agents.plan.actions.ChatRetryStats;
 import org.apache.flink.agents.plan.actions.DecisionModelInvoker;
 import org.apache.flink.agents.plan.resource.python.PythonChatModelSetup;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
@@ -482,7 +482,7 @@ public final class EscalationGate {
                         false);
         // Retries count against the routed request, as the decision strategy's do: response-level
         // totals and the model_resource counters both come from this one call.
-        ChatModelAction.recordAttemptRetryStats(
+        ChatRetryStats.recordAttempt(
                 ctx, context.getRequestId(), decisionModel, result.retryCount, result.totalWaitMs);
         if (!result.isSuccess()) {
             throw new ModelRoutingResolver.RoutingFailure(

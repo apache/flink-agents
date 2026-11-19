@@ -27,8 +27,8 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ChatModelInvoker;
+import org.apache.flink.agents.plan.actions.ChatRetryStats;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -182,7 +182,7 @@ public final class RoutedChatRound {
                                 ctx,
                                 numRetries,
                                 retryWaitMillis);
-                ChatModelAction.recordAttemptRetryStats(
+                ChatRetryStats.recordAttempt(
                         ctx, requestId, result.model, result.retryCount, result.totalRetryWaitMs);
 
                 // Quality gate: on a tier below the last one, an answer that fails a structural
@@ -320,7 +320,7 @@ public final class RoutedChatRound {
                 }
                 return new Accepted(requestId, result, routingMetadata);
             } catch (ChatModelInvoker.ChatAttemptFailed e) {
-                ChatModelAction.recordAttemptRetryStats(
+                ChatRetryStats.recordAttempt(
                         ctx, requestId, e.model, e.retryCount, e.totalRetryWaitMs);
                 // Keep every candidate's failure: chain the previous error into the new one so
                 // exhaustion surfaces A's and B's errors as suppressed of C's, not just C's.

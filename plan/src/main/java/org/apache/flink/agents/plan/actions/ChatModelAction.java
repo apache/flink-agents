@@ -34,7 +34,6 @@ import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
-import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
@@ -110,9 +109,6 @@ public class ChatModelAction {
 
     private static final String OUTPUT_SCHEMA = "outputSchema";
     private static final String PROMPT_ARGS = "prompt_args";
-    private static final String RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT";
-    private static final String TOTAL_RETRY_COUNT = "totalRetryCount";
-    private static final String TOTAL_RETRY_WAIT_MS = "totalRetryWaitMs";
     private static final String FINISH_REASON = "finish_reason";
     private static final String TRUNCATED_FINISH_REASON = "length";
     private static final String CONTENT_FILTERED_FINISH_REASON = "content_filter";
@@ -196,50 +192,6 @@ public class ChatModelAction {
                 (Map<String, Object>) toolRequestEventContext.remove(requestId);
         sensoryMem.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
         return Objects.requireNonNull(result, "Missing tool request context");
-    }
-
-    @SuppressWarnings("unchecked")
-    private static void accumulateRetryStats(
-            MemoryObject sensoryMem, UUID initialRequestId, int retryCount, long retryWaitMs)
-            throws Exception {
-        Map<UUID, Map<String, Long>> retryStatsContext;
-        if (sensoryMem.isExist(RETRY_STATS_CONTEXT)) {
-            retryStatsContext =
-                    (Map<UUID, Map<String, Long>>) sensoryMem.get(RETRY_STATS_CONTEXT).getValue();
-        } else {
-            retryStatsContext = new HashMap<>();
-        }
-        Map<String, Long> stats = retryStatsContext.getOrDefault(initialRequestId, new HashMap<>());
-        stats.put(TOTAL_RETRY_COUNT, stats.getOrDefault(TOTAL_RETRY_COUNT, 0L) + retryCount);
-        stats.put(TOTAL_RETRY_WAIT_MS, stats.getOrDefault(TOTAL_RETRY_WAIT_MS, 0L) + retryWaitMs);
-        retryStatsContext.put(initialRequestId, stats);
-        sensoryMem.set(RETRY_STATS_CONTEXT, retryStatsContext);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Long> getRetryStats(MemoryObject sensoryMem, UUID initialRequestId)
-            throws Exception {
-        if (!sensoryMem.isExist(RETRY_STATS_CONTEXT)) {
-            return Map.of(TOTAL_RETRY_COUNT, 0L, TOTAL_RETRY_WAIT_MS, 0L);
-        }
-        Map<UUID, Map<String, Long>> retryStatsContext =
-                (Map<UUID, Map<String, Long>>) sensoryMem.get(RETRY_STATS_CONTEXT).getValue();
-        return retryStatsContext.getOrDefault(
-                initialRequestId, Map.of(TOTAL_RETRY_COUNT, 0L, TOTAL_RETRY_WAIT_MS, 0L));
-    }
-
-    private static void recordRetryMetrics(
-            RunnerContext ctx, String modelResource, int retryCount, long totalRetryWaitMs) {
-        if (retryCount <= 0) {
-            return;
-        }
-        FlinkAgentsMetricGroup metricGroup = ctx.getActionMetricGroup();
-        if (metricGroup != null) {
-            FlinkAgentsMetricGroup modelResourceGroup =
-                    metricGroup.getSubGroup("model_resource", modelResource);
-            modelResourceGroup.getCounter("retryCount").inc(retryCount);
-            modelResourceGroup.getCounter("retryWaitMs").inc(totalRetryWaitMs);
-        }
     }
 
     private static void handleToolCalls(
@@ -403,16 +355,15 @@ public class ChatModelAction {
             return;
         }
         Map<String, Object> routingMetadata = accepted.finish(ctx.getSensoryMemory());
-        Map<String, Long> retryStats = getRetryStats(ctx.getSensoryMemory(), initialRequestId);
-        int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
-        long totalRetryWaitMs = retryStats.get(TOTAL_RETRY_WAIT_MS);
+        ChatRetryStats.Totals retries =
+                ChatRetryStats.totals(ctx.getSensoryMemory(), initialRequestId);
         clearRequestContext(ctx.getSensoryMemory(), initialRequestId);
         ChatResponseEvent completed =
                 ChatResponseEvent.success(
                                 initialRequestId,
                                 result.response,
-                                totalRetryCount,
-                                totalRetryWaitMs)
+                                retries.retryCount,
+                                retries.retryWaitMs)
                         .withUserContext(userContext);
         completed.setStructuredOutput(result.structuredOutput);
         if (routingMetadata != null) {
@@ -428,48 +379,28 @@ public class ChatModelAction {
             RunnerContext ctx)
             throws Exception {
         LOG.warn("Chat request {} failed", requestId, error);
-        Map<String, Long> stats = getRetryStats(ctx.getSensoryMemory(), requestId);
+        ChatRetryStats.Totals retries = ChatRetryStats.totals(ctx.getSensoryMemory(), requestId);
         clearRequestContext(ctx.getSensoryMemory(), requestId);
         ctx.sendEvent(
                 ChatResponseEvent.failed(
                                 requestId,
                                 ChatModelInvoker.errorText(error),
-                                stats.get(TOTAL_RETRY_COUNT).intValue(),
-                                stats.get(TOTAL_RETRY_WAIT_MS))
+                                retries.retryCount,
+                                retries.retryWaitMs)
                         .withUserContext(userContext));
     }
 
+    /** Removes what the request kept in sensory memory: its tool-call context and retry totals. */
     @SuppressWarnings("unchecked")
     private static void clearRequestContext(MemoryObject memory, UUID requestId) throws Exception {
-        for (String key : List.of(TOOL_CALL_CONTEXT, RETRY_STATS_CONTEXT)) {
-            if (memory.isExist(key)) {
-                Map<UUID, Object> context =
-                        new HashMap<>((Map<UUID, Object>) memory.get(key).getValue());
-                if (context.remove(requestId) != null) {
-                    memory.set(key, context);
-                }
+        if (memory.isExist(TOOL_CALL_CONTEXT)) {
+            Map<UUID, Object> context =
+                    new HashMap<>((Map<UUID, Object>) memory.get(TOOL_CALL_CONTEXT).getValue());
+            if (context.remove(requestId) != null) {
+                memory.set(TOOL_CALL_CONTEXT, context);
             }
         }
-    }
-
-    /**
-     * Compatibility note: retry metrics are recorded per attempt (including attempts on the failure
-     * path), where previously they were recorded once with cumulative totals on the final response.
-     * Totals over a completed request are unchanged; requests that ultimately fail now contribute
-     * their retry counts where they previously did not.
-     */
-    public static void recordAttemptRetryStats(
-            RunnerContext ctx,
-            UUID initialRequestId,
-            String modelResource,
-            int retryCount,
-            long retryWaitMs)
-            throws Exception {
-        if (retryCount <= 0) {
-            return;
-        }
-        accumulateRetryStats(ctx.getSensoryMemory(), initialRequestId, retryCount, retryWaitMs);
-        recordRetryMetrics(ctx, modelResource, retryCount, retryWaitMs);
+        ChatRetryStats.clear(memory, requestId);
     }
 
     /**
