@@ -424,6 +424,48 @@ def test_get_with_filter() -> None:
 
 
 @pytest.mark.skipif(not chromadb_available, reason="ChromaDB is not available")
+def test_get_ids_ignores_explicit_limit() -> None:
+    vs = _filter_test_store()
+    got = vs.get(ids=["doc1", "doc2"], limit=1)
+    assert {d.id for d in got} == {"doc1", "doc2"}
+
+
+@pytest.mark.skipif(not chromadb_available, reason="ChromaDB is not available")
+def test_get_ids_exceeds_default_limit(tmp_path) -> None:
+    vs = ChromaVectorStore(
+        name="chroma_vector_store",
+        embedding_model="unused",
+        collection="explicit_ids",
+        persist_directory=str(tmp_path),
+    )
+    ids = [f"doc{i}" for i in range(101)]
+    vs.add(
+        documents=[
+            Document(
+                id=doc_id,
+                content="sample",
+                metadata={"category": "a"},
+                embedding=[1.0, 0.0],
+            )
+            for doc_id in ids
+        ]
+    )
+    assert {d.id for d in vs.get(ids=ids)} == set(ids)
+    assert len(vs.get()) == 100
+
+
+@pytest.mark.skipif(not chromadb_available, reason="ChromaDB is not available")
+def test_get_ids_preserves_filter_and_missing_id_behavior() -> None:
+    vs = _filter_test_store()
+    got = vs.get(
+        ids=["doc1", "doc2", "doc3", "missing"],
+        filters={"category": "a"},
+        limit=1,
+    )
+    assert {d.id for d in got} == {"doc1", "doc2"}
+
+
+@pytest.mark.skipif(not chromadb_available, reason="ChromaDB is not available")
 def test_get_respects_explicit_limit() -> None:
     vs = _filter_test_store()
     got = vs.get(collection_name="filter_tests", limit=2)
