@@ -29,10 +29,7 @@ from flink_agents.api.core_options import (
 from flink_agents.api.duration import is_positive
 from flink_agents.api.trace_log import TraceLogLevel, TraceLogScope, TraceLogTarget
 from flink_agents.plan.agent_plan import AgentPlan
-from flink_agents.plan.configuration import (
-    AgentConfiguration,
-    validate_execution_options,
-)
+from flink_agents.plan.configuration import AgentConfiguration
 
 
 def test_map_values_remain_intact_through_plan_json() -> None:
@@ -380,7 +377,7 @@ def test_duration_options_round_trip_through_plan_json() -> None:
     assert restored.config.get_conf_data() == config.get_conf_data()
 
 
-def test_duration_strings_keep_disable_sentinels_and_reject_bare_numbers() -> None:
+def test_duration_strings_keep_disable_sentinels_and_reject_floating_point_values() -> None:
     disabled = AgentConfiguration(
         {
             "async.batch.timeout": "-1 ms",
@@ -400,10 +397,10 @@ def test_duration_strings_keep_disable_sentinels_and_reject_bare_numbers() -> No
     )
 
     with pytest.raises(ValueError, match="retry-wait-interval") as error:
-        AgentConfiguration({"retry-wait-interval": 1}).get(
+        AgentConfiguration({"retry-wait-interval": 1.5}).get(
             AgentExecutionOptions.RETRY_WAIT_INTERVAL
         )
-    assert "30 s" in str(error.value)
+    assert "an integer" in str(error.value)
 
 
 def test_duration_options_keep_microseconds_on_read_and_write() -> None:
@@ -431,45 +428,6 @@ def test_duration_options_keep_microseconds_on_read_and_write() -> None:
     stored = AgentConfiguration()
     stored.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, "1500 us")
     assert stored.get_conf_data()["retry-wait-interval"] == "1500 us"
-
-
-def test_validate_execution_options_applies_millis_rules() -> None:
-    validate_execution_options(
-        AgentConfiguration(
-            {
-                "retry-wait-interval": "1500 us",
-                "short-term-memory.state-ttl": "1500 us",
-            }
-        )
-    )
-    validate_execution_options(
-        AgentConfiguration(
-            {"retry-wait-interval": "500 us", "short-term-memory.state-ttl": "0 ms"}
-        )
-    )
-    # Async batch timeout keeps sub-microsecond rejection on read, and submission
-    # validation does not apply the TTL rule to it.
-    timeout = AgentConfiguration({"async.batch.timeout": "500 ns"})
-    validate_execution_options(timeout)
-    with pytest.raises(ValueError, match="finer than 1 us"):
-        timeout.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)
-
-    with pytest.raises(ValueError) as short_ttl:
-        validate_execution_options(
-            AgentConfiguration({"short-term-memory.state-ttl": "500 us"})
-        )
-    assert str(short_ttl.value) == (
-        "short-term-memory.state-ttl must be greater than 0 ms after conversion "
-        "to milliseconds, or zero or negative to disable TTL, got 500 us"
-    )
-    with pytest.raises(ValueError, match="greater than 0 ms"):
-        validate_execution_options(
-            AgentConfiguration({"short-term-memory.state-ttl": "1 us"})
-        )
-    with pytest.raises(ValueError, match="greater than 0 ms"):
-        validate_execution_options(
-            AgentConfiguration({"short-term-memory.state-ttl": "999 us"})
-        )
 
 
 def test_trace_log_target_error_identifies_list_entry() -> None:

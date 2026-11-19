@@ -602,29 +602,6 @@ class ChatModelActionRetryTest {
     }
 
     @Test
-    void recordedRetryWaitMillisKeepsWholeMilliseconds() {
-        assertThat(ChatModelInvoker.recordedRetryWaitMillis(Duration.ofSeconds(2)))
-                .isEqualTo(2000L);
-        assertThat(ChatModelInvoker.recordedRetryWaitMillis(Duration.ofSeconds(1)))
-                .isEqualTo(1000L);
-        assertThat(ChatModelInvoker.recordedRetryWaitMillis(Duration.ofMillis(1500)))
-                .isEqualTo(1500L);
-        assertThat(ChatModelInvoker.recordedRetryWaitMillis(Duration.ofMillis(500)))
-                .isEqualTo(500L);
-        assertThat(ChatModelInvoker.recordedRetryWaitMillis(Duration.ofMillis(100)))
-                .isEqualTo(100L);
-        assertThat(ChatModelInvoker.recordedRetryWaitMillis(Duration.ofNanos(1_500_000)))
-                .isEqualTo(1L);
-        assertThat(ChatModelInvoker.recordedRetryWaitMillis(Duration.ofNanos(500_000))).isZero();
-        assertThat(ChatModelInvoker.recordedRetryWaitMillis(Duration.ZERO)).isZero();
-        assertThat(ChatModelInvoker.recordedRetryWaitMillis(Duration.ofMillis(-1))).isZero();
-        assertThat(
-                        ChatModelInvoker.recordedRetryWaitMillis(Duration.ofMillis(100))
-                                + ChatModelInvoker.recordedRetryWaitMillis(Duration.ofMillis(100)))
-                .isEqualTo(200L);
-    }
-
-    @Test
     void chatExhaustsRetriesAndReturnsFailure() throws Exception {
         configureRetryStrategy(2, 0);
 

@@ -146,8 +146,7 @@ class OperatorStateManager {
      * AgentExecutionOptions#SHORT_TERM_MEMORY_STATE_TTL} is positive. The duration is truncated
      * with {@link Duration#toMillis()}, which is the precision Flink state TTL stores. Unset, null,
      * zero, and negative values disable TTL. A positive duration that converts to {@code 0} ms is
-     * rejected by {@link AgentConfiguration#validateExecutionOptions(AgentPlan)} before this
-     * operator is constructed.
+     * rejected at job submission before this operator is constructed.
      */
     private void maybeEnableShortTermMemoryTTL(
             MapStateDescriptor<String, MemoryObjectImpl.MemoryItem> descriptor,

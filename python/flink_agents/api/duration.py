@@ -28,13 +28,16 @@ extra labels this project already accepted: ``ns``, ``us``/``µs``, ``ms``, ``s`
 The value must be a whole number of microseconds, matching ``datetime.timedelta``.
 ``1000 ns`` is one microsecond; ``1 ns`` is rejected. An ISO-8601 value that is
 not microsecond-aligned is rejected the same way. This parser does not truncate
-to a coarser unit. Retry wait and short-term memory TTL apply millisecond
-truncation later, when the job is submitted.
+to a coarser unit.
 """
 
 import re
 from datetime import timedelta
 from typing import Any, NoReturn
+
+_EXPECTED_DURATION_TEXT = (
+    "expected a duration such as '30 s', '1000' (milliseconds), or 'PT30S'"
+)
 
 _NANOS_PER_MICRO = 1_000
 _NANOS_PER_SECOND = 1_000_000_000
@@ -77,33 +80,28 @@ _FORMAT_UNITS: tuple[tuple[int, str], ...] = (
 
 
 def parse_duration(value: Any) -> timedelta:
-    """Parse a duration string or return a timedelta unchanged.
+    """Return a timedelta unchanged, or parse a non-null value's string representation.
 
     Raises:
-        ValueError: The value is not a duration string or timedelta, uses an
-            unknown unit, is not a valid ISO-8601 duration, is not a whole number
-            of microseconds, or overflows timedelta.
+        ValueError: The value is None, its text is not a supported duration format,
+            it is not a whole number of microseconds, or it overflows timedelta.
     """
     if isinstance(value, timedelta):
         return value
-    if not isinstance(value, str):
-        rendered = "null" if value is None else str(value)
-        _invalid(
-            rendered,
-            "a duration needs a number and a unit, for example '30 s' or '5 min',"
-            " not a bare number",
-        )
+    if value is None:
+        _invalid("null", _EXPECTED_DURATION_TEXT)
 
+    value = str(value)
     text = value.strip()
     if not text:
-        _invalid(value, "a duration needs a number and a unit, for example '30 s'")
+        _invalid(value, _EXPECTED_DURATION_TEXT)
     if _starts_with_magnitude(text):
         return _parse_labeled(text, value)
     return _parse_iso8601(text, value)
 
 
 def _starts_with_magnitude(text: str) -> bool:
-    """True for a labeled duration or a unitless millisecond value."""
+    """Return whether text starts with digits, optionally preceded by '-' and spaces."""
     index = 0
     if text[0] == "-":
         index = 1
@@ -128,7 +126,8 @@ def _parse_labeled(text: str, original: str) -> timedelta:
     if unit_label.startswith("."):
         _invalid(
             original,
-            "a duration needs an integer and a unit, for example '1500 ms'",
+            "expected an integer with an optional unit, for example '1500 ms' or '1500';"
+            " use ISO-8601 for fractional seconds, for example 'PT1.5S'",
         )
     if not unit_label:
         unit_nanos = 1_000_000
@@ -157,12 +156,7 @@ def _parse_labeled(text: str, original: str) -> timedelta:
 
 
 def _parse_iso8601(text: str, original: str) -> timedelta:
-    """ISO-8601 fallback. Negative durations are kept; Flink TimeUtils rejects them."""
-    if _is_bare_sign(text):
-        _invalid(
-            original,
-            "a duration needs an integer and a unit, for example '30 s' or '5 min'",
-        )
+    """Parse text without a numeric prefix as an ISO-8601 duration."""
     match = _ISO_DURATION.fullmatch(text)
     if (
         match is None
@@ -174,11 +168,7 @@ def _parse_iso8601(text: str, original: str) -> timedelta:
             and match.group(6) is None
         )
     ):
-        _invalid(
-            original,
-            "text does not start with a number, and is not a valid ISO-8601"
-            " duration format",
-        )
+        _invalid(original, _EXPECTED_DURATION_TEXT)
     sign, days, _tsection, hours, minutes, seconds, fraction = match.groups()
     try:
         total = 0
@@ -214,17 +204,6 @@ def _iso_t_without_time(match: re.Match[str]) -> bool:
     return tsection is not None and len(tsection) == 1
 
 
-def _is_bare_sign(text: str) -> bool:
-    index = 0
-    if text[0] == "-":
-        index = 1
-        while index < len(text) and text[index] == " ":
-            index += 1
-    if index >= len(text):
-        return True
-    return text[0] == "-" and "p" not in text.lower()
-
-
 def format_duration(value: timedelta) -> str:
     """Format a timedelta with the largest unit that does not lose precision.
 
@@ -247,13 +226,6 @@ def is_positive(value: timedelta) -> bool:
     return value > timedelta(0)
 
 
-def zero_if_negative(value: timedelta) -> timedelta:
-    """Return zero when ``value`` is negative."""
-    if value < timedelta(0):
-        return timedelta(0)
-    return value
-
-
 def positive_seconds(value: timedelta | None) -> float | None:
     """Seconds in a positive duration, or None when it does not set a deadline.
 
@@ -263,25 +235,6 @@ def positive_seconds(value: timedelta | None) -> float | None:
     if value is None or not is_positive(value):
         return None
     return value.total_seconds()
-
-
-def truncated_millis(value: timedelta) -> int:
-    """Whole milliseconds, truncated toward zero, matching ``Duration.toMillis``."""
-    if value < timedelta(0):
-        return -((-value) // timedelta(milliseconds=1))
-    return value // timedelta(milliseconds=1)
-
-
-def accepted_retry_wait(value: timedelta) -> timedelta:
-    """Retry backoff in whole milliseconds.
-
-    A negative duration waits zero. A positive duration is truncated toward
-    zero, and a truncated result of zero does not wait.
-    """
-    non_negative = zero_if_negative(value)
-    if not is_positive(non_negative):
-        return timedelta(0)
-    return timedelta(milliseconds=truncated_millis(non_negative))
 
 
 def _timedelta_from_nanos(nanos: int) -> timedelta:

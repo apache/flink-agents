@@ -22,7 +22,6 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
-import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
@@ -162,39 +161,11 @@ public final class ChatModelInvoker {
     }
 
     /**
-     * The request-level retry backoff. A negative configured duration waits zero; zero waits zero.
+     * The request-level retry backoff in whole milliseconds, with negative values treated as zero.
      */
-    public static Duration configuredRetryWait(RunnerContext ctx) {
-        return acceptedRetryWait(ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
-    }
-
-    /**
-     * Retry backoff after a negative duration is treated as zero. A positive duration is truncated
-     * to milliseconds with {@link Duration#toMillis()}, including a result of zero. {@link
-     * Thread#sleep(long)} waits that truncated value. A duration that does not fit in a {@code
-     * long} throws {@link ArithmeticException}.
-     */
-    public static Duration acceptedRetryWait(Duration configured) {
-        Duration nonNegative = DurationUtils.zeroIfNegative(configured);
-        if (!DurationUtils.isPositive(nonNegative)) {
-            return Duration.ZERO;
-        }
-        return Duration.ofMillis(nonNegative.toMillis());
-    }
-
-    /**
-     * Whole milliseconds recorded for one retry sleep. This is the same count {@link
-     * Thread#sleep(long)} waits and the value added to {@code retryWaitMs} and {@code
-     * total_retry_wait_ms}. A non-positive duration contributes zero. A sub-millisecond remainder
-     * is dropped, matching {@code Duration#toMillis()}. A duration that does not fit in a {@code
-     * long} throws {@link ArithmeticException}.
-     */
-    static long recordedRetryWaitMillis(Duration duration) {
-        if (!DurationUtils.isPositive(duration)) {
-            return 0L;
-        }
-        long millis = duration.toMillis();
-        return Math.max(0L, millis);
+    public static long configuredRetryWaitMillis(RunnerContext ctx) {
+        Duration interval = ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL);
+        return interval.isNegative() ? 0L : interval.toMillis();
     }
 
     public static ChatAttemptResult chatWithRetries(
@@ -206,9 +177,8 @@ public final class ChatModelInvoker {
             @Nullable Object outputSchema,
             RunnerContext ctx,
             int numRetries,
-            Duration retryWaitInterval)
+            long retryWaitMillis)
             throws ChatAttemptFailed, Exception {
-        retryWaitInterval = acceptedRetryWait(retryWaitInterval);
         BaseChatModelSetup chatModel;
         try {
             chatModel = (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
@@ -377,16 +347,14 @@ public final class ChatModelInvoker {
                 }
                 if (attempt < numRetries) {
                     actualRetryCount = attempt + 1;
-                    Duration currentWait =
-                            retryWaitInterval.multipliedBy(1L << (actualRetryCount - 1));
-                    long waitMillis = recordedRetryWaitMillis(currentWait);
+                    long waitMillis = Math.multiplyExact(retryWaitMillis, 1L << attempt);
                     LOG.warn(
-                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {}.",
+                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {} ms.",
                             initialRequestId,
                             e,
                             actualRetryCount,
                             numRetries,
-                            DurationUtils.format(currentWait));
+                            waitMillis);
                     if (waitMillis > 0) {
                         try {
                             Thread.sleep(waitMillis);

@@ -32,7 +32,6 @@ import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ChatModelInvoker;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -87,7 +86,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
     public RoutingDecision route(
             RoutingStrategy strategy, RoutingContext context, RunnerContext ctx) throws Exception {
         int numRetries = ChatModelInvoker.configuredRetries(ctx);
-        Duration retryWaitInterval = ChatModelInvoker.configuredRetryWait(ctx);
+        long retryWaitMillis = ChatModelInvoker.configuredRetryWaitMillis(ctx);
         String judgeModel = judgeModel(strategy);
         List<String> candidateNames = candidateNames(context);
 
@@ -118,7 +117,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
                             null,
                             ctx,
                             numRetries,
-                            retryWaitInterval);
+                            retryWaitMillis);
             ChatModelAction.recordAttemptRetryStats(
                     ctx,
                     context.getRequestId(),

@@ -203,6 +203,10 @@ public interface RunnerContext {
      *
      * <p>Resolving the returned future executes eligible uncached calls concurrently, bounded by
      * {@link AgentExecutionOptions#ASYNC_BATCH_PARALLELISM} and the shared async worker pool.
+     *
+     * <p>On timeout, completed calls keep their outcomes. Started durable calls are finalized as
+     * failures, while unstarted durable calls remain pending for recovery. Running callbacks are
+     * not interrupted and their external effects cannot be undone.
      */
     <T> AsyncFuture<List<Outcome<T>>> gather(List<? extends AsyncFuture<T>> futures);
 

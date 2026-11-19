@@ -20,7 +20,6 @@ package org.apache.flink.agents.plan.actions;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
-import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.decision.BaseDecisionModelSetup;
@@ -113,9 +112,8 @@ public final class DecisionModelInvoker {
                 ctx.getConfig().get(AgentExecutionOptions.DECISION_ASYNC)
                         && setup.supportsAsyncExecution();
         int maxRetries = Math.max(0, ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES));
-        Duration waitInterval =
-                ChatModelInvoker.acceptedRetryWait(
-                        ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
+        Duration interval = ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL);
+        long retryWaitMillis = interval.isNegative() ? 0L : interval.toMillis();
         FlinkAgentsMetricGroup actionMetrics = ctx.getActionMetricGroup();
         FlinkAgentsMetricGroup resourceMetrics =
                 actionMetrics == null
@@ -192,16 +190,15 @@ public final class DecisionModelInvoker {
                 if (retryCount == maxRetries) {
                     return new DecisionAttemptResult(null, outcome.error, retryCount, totalWaitMs);
                 }
-                Duration currentWait = waitInterval.multipliedBy(1L << retryCount);
-                long waitMillis = ChatModelInvoker.recordedRetryWaitMillis(currentWait);
+                long waitMillis = Math.multiplyExact(retryWaitMillis, 1L << retryCount);
                 retryCount++;
                 LOG.warn(
-                        "Decision request {} failed with error: {}, retrying {} / {}, waiting {}.",
+                        "Decision request {} failed with error: {}, retrying {} / {}, waiting {} ms.",
                         label,
                         outcome.error,
                         retryCount,
                         maxRetries,
-                        DurationUtils.format(currentWait));
+                        waitMillis);
                 if (waitMillis > 0) {
                     try {
                         Thread.sleep(waitMillis);

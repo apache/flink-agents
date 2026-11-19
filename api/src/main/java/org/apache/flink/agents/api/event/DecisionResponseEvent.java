@@ -209,7 +209,6 @@ public class DecisionResponseEvent extends Event {
         return ((Number) getAttr(RETRY_COUNT)).intValue();
     }
 
-    /** Whole milliseconds waited across retries for this response. */
     @JsonIgnore
     public long getTotalRetryWaitMs() {
         return ((Number) getAttr(TOTAL_RETRY_WAIT_MS)).longValue();

@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 from datetime import timedelta
-from typing import Any, Dict, NoReturn, Type
+from typing import Any, Dict, Type
 
 from pydantic import BaseModel
 from typing_extensions import override
@@ -25,12 +25,9 @@ from flink_agents.api.configuration import (
     ConfigOption,
     Configuration,
 )
-from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.duration import (
     format_duration,
-    is_positive,
     parse_duration,
-    truncated_millis,
 )
 from flink_agents.api.trace_log import _parse_targets, _serialize_targets
 
@@ -184,52 +181,9 @@ def _parse_duration_option(key: str, value: Any) -> timedelta:
     """Parse one duration option.
 
     The getter returns this timedelta. The setter formats it before storing it.
-    Retry-wait and short-term memory TTL rules are applied by
-    ``validate_execution_options``, which Java job submission also runs.
     """
     try:
         return parse_duration(value)
     except ValueError as error:
         msg = f"Invalid duration for '{key}': {error}"
         raise ValueError(msg) from error
-
-
-def validate_execution_options(config: AgentConfiguration) -> None:
-    """Check retry wait and short-term memory TTL before a job runs.
-
-    Java ``CompileUtils.connectToAgent`` performs this check for Java plans and
-    for Python plan JSON. This is the same rule for Python callers and tests: a
-    positive retry wait is truncated with millisecond semantics, including a
-    result of zero, and a positive TTL must convert to more than ``0`` ms.
-    ``500 us`` fails TTL. ``1500 us`` is accepted and truncates to ``1`` ms.
-    Async batch timeout is not checked.
-    """
-    _validate_retry_wait(config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL))
-    _validate_short_term_memory_ttl(
-        config.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL)
-    )
-
-
-def _validate_retry_wait(value: timedelta) -> None:
-    if not is_positive(value):
-        return
-    # Positive values are allowed after truncation, including zero. Python
-    # timedelta cannot overflow the way Java Duration.toMillis can.
-    truncated_millis(value)
-
-
-def _validate_short_term_memory_ttl(value: timedelta) -> None:
-    if not is_positive(value):
-        return
-    option_key = AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.get_key()
-    if truncated_millis(value) <= 0:
-        _invalid_option(
-            option_key,
-            "must be greater than 0 ms after conversion to milliseconds, "
-            f"or zero or negative to disable TTL, got {format_duration(value)}",
-        )
-
-
-def _invalid_option(option_key: str, reason: str) -> NoReturn:
-    msg = f"{option_key} {reason}"
-    raise ValueError(msg)
