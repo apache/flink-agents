@@ -33,11 +33,15 @@
   {"input": "1.5 s", "rejection": "an integer"},
   {"input": "1 fortnight", "rejection": "not recognized"},
   {"input": "1 ns", "rejection": "finer than 1 us"},
-  {"input": "", "rejection": "a number and a unit"},
-  {"input": "-", "rejection": "an integer"},
+  {"input": null, "rejection": "expected a duration"},
+  {"input": "", "rejection": "expected a duration"},
+  {"input": "   ", "rejection": "expected a duration"},
+  {"input": "-", "rejection": "expected a duration"},
+  {"input": "-   ", "rejection": "expected a duration"},
+  {"input": "-invalid", "rejection": "expected a duration"},
   {"input": "PT0.0000005S", "rejection": "finer than 1 us"},
   {"input": "PT1.0000005S", "rejection": "finer than 1 us"},
-  {"input": "P1W", "rejection": "ISO-8601"},
-  {"input": "PT", "rejection": "ISO-8601"},
-  {"input": "not-a-duration", "rejection": "ISO-8601"}
+  {"input": "P1W", "rejection": "expected a duration"},
+  {"input": "PT", "rejection": "expected a duration"},
+  {"input": "not-a-duration", "rejection": "expected a duration"}
 ]

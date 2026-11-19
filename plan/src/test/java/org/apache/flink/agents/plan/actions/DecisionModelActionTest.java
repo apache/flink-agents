@@ -527,6 +527,19 @@ class DecisionModelActionTest {
         verify(h.ctx, times(asyncSupported ? 1 : 0)).durableExecuteAsync(any());
     }
 
+    @ParameterizedTest
+    @CsvSource({"1500,3", "500,0", "-1500,0", "0,0"})
+    void retriesTruncateBeforeExponentialBackoff(long micros, long totalMillis) throws Exception {
+        Harness h = new Harness(false, 2);
+        when(h.ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL))
+                .thenReturn(Duration.ofNanos(micros * 1000));
+        when(h.model.decide(any(), anyMap())).thenThrow(new IllegalStateException("transient"));
+        DecisionModelAction.processDecisionRequest(h.request, h.ctx);
+        assertThat(h.response().getRetryCount()).isEqualTo(2);
+        assertThat(h.response().getTotalRetryWaitMs()).isEqualTo(totalMillis);
+        assertThat(h.resourceCounters.get("retryWaitMs").getCount()).isEqualTo(totalMillis);
+    }
+
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void subSecondRetryWaitsAccumulateAcrossRequests() throws Exception {

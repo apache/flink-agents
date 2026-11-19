@@ -431,6 +431,11 @@ class RunnerContext(ABC):
         created by this context are accepted; duplicates, foreign handles and nested
         batches are rejected before work starts. Mixed batches persist only durable
         children, in their relative input order.
+
+        On timeout, completed calls keep their outcomes. Started durable calls are
+        finalized as failures; unstarted durable calls remain pending for recovery.
+        Running callbacks are not interrupted and their external effects cannot be
+        undone.
         """
 
     def chat(

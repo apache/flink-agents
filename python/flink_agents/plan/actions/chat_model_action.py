@@ -37,12 +37,6 @@ from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
 )
-from flink_agents.api.duration import (
-    accepted_retry_wait,
-    format_duration,
-    is_positive,
-    truncated_millis,
-)
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event
 from flink_agents.api.events.model_routing_event import ModelRoutingEvent
@@ -95,19 +89,6 @@ _FINALIZE_DIRECTIVE = (
 )
 
 _logger = logging.getLogger(__name__)
-
-
-def recorded_retry_wait_millis(value: timedelta) -> int:
-    """Whole milliseconds of one retry sleep.
-
-    The count matches ``retryWaitMs`` and ``total_retry_wait_ms``, and it is the
-    duration Python sleeps. Chat and decision retries both use this count. A
-    non-positive duration contributes zero. A sub-millisecond remainder is
-    dropped, matching ``Duration.toMillis``.
-    """
-    if not is_positive(value):
-        return 0
-    return truncated_millis(value)
 
 
 class _InvocationFailure(Exception):
@@ -699,9 +680,8 @@ async def _chat_with_retries(
         chat_async = False
 
     num_retries = max(0, ctx.config.get(AgentExecutionOptions.MAX_RETRIES))
-    retry_wait_interval = accepted_retry_wait(
-        ctx.config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)
-    )
+    interval = ctx.config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)
+    retry_wait_millis = max(0, interval // timedelta(milliseconds=1))
 
     response = None
     structured_output = None
@@ -733,12 +713,11 @@ async def _chat_with_retries(
             final_error = error
             return False
         actual_retry_count = attempt + 1
-        current_wait = retry_wait_interval * (1 << (actual_retry_count - 1))
-        wait_millis = recorded_retry_wait_millis(current_wait)
+        wait_millis = retry_wait_millis * (1 << attempt)
         _logger.warning(
             f"Chat request {initial_request_id} failed with error: {error}, "
             f"retrying {actual_retry_count} / {num_retries}, "
-            f"waiting {format_duration(current_wait)}."
+            f"waiting {wait_millis} ms."
         )
         if wait_millis > 0:
             time.sleep(wait_millis / 1000)

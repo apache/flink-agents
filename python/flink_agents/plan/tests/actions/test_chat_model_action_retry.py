@@ -53,27 +53,9 @@ from flink_agents.plan.actions.chat_model_action import (
     _ChatAttemptFailed,
     chat,
     process_chat_request_or_tool_response,
-    recorded_retry_wait_millis,
 )
 
 _LLM_METADATA = {LLMExecutionMetadataKeys.MODEL: "configured-model"}
-
-
-def test_recorded_retry_wait_millis_keeps_whole_milliseconds() -> None:
-    assert recorded_retry_wait_millis(timedelta(seconds=2)) == 2000
-    assert recorded_retry_wait_millis(timedelta(seconds=1)) == 1000
-    assert recorded_retry_wait_millis(timedelta(milliseconds=1500)) == 1500
-    assert recorded_retry_wait_millis(timedelta(milliseconds=500)) == 500
-    assert recorded_retry_wait_millis(timedelta(milliseconds=100)) == 100
-    assert recorded_retry_wait_millis(timedelta(microseconds=1500)) == 1
-    assert recorded_retry_wait_millis(timedelta(microseconds=500)) == 0
-    assert recorded_retry_wait_millis(timedelta(0)) == 0
-    assert recorded_retry_wait_millis(timedelta(milliseconds=-1)) == 0
-    assert (
-        recorded_retry_wait_millis(timedelta(milliseconds=100))
-        + recorded_retry_wait_millis(timedelta(milliseconds=100))
-        == 200
-    )
 
 
 # ============================================================================
@@ -513,8 +495,12 @@ class TestChatModelActionRetry:
         assert model_resource_group.get_counter("retryCount").get_count() == 1
         assert model_resource_group.get_counter("retryWaitMs").get_count() == 1000
 
-    def test_chat_retry_of_one_hundred_millis_is_recorded_in_full(
-        self, monkeypatch
+    @pytest.mark.parametrize(
+        ("micros", "millis"),
+        [(100000, 100), (1500, 1), (500, 0), (-1500, 0), (0, 0)],
+    )
+    def test_chat_retry_wait_matches_recorded_milliseconds(
+        self, monkeypatch, micros, millis
     ) -> None:
         sleep = MagicMock()
         monkeypatch.setattr(
@@ -533,7 +519,7 @@ class TestChatModelActionRetry:
         chat_model = MagicMock()
         chat_model.chat = mock_chat
         ctx, sent_events, metric_group, _ = _create_mock_runner_context(
-            chat_model, max_retries=1, retry_wait=timedelta(milliseconds=100)
+            chat_model, max_retries=1, retry_wait=timedelta(microseconds=micros)
         )
         asyncio.run(
             chat(
@@ -549,13 +535,16 @@ class TestChatModelActionRetry:
         event = sent_events[0]
         assert isinstance(event, ChatResponseEvent)
         assert event.retry_count == 1
-        assert event.total_retry_wait_ms == 100
-        sleep.assert_called_once_with(0.1)
+        assert event.total_retry_wait_ms == millis
+        if millis:
+            sleep.assert_called_once_with(millis / 1000)
+        else:
+            sleep.assert_not_called()
         model_resource_group = metric_group.get_sub_group(
             "model_resource", "test-model"
         )
         assert model_resource_group.get_counter("retryCount").get_count() == 1
-        assert model_resource_group.get_counter("retryWaitMs").get_count() == 100
+        assert model_resource_group.get_counter("retryWaitMs").get_count() == millis
         _assert_report_identities(ctx)
         assert ctx.report_execution_started.call_count == 2
         ctx.report_execution_failed.assert_called_once()

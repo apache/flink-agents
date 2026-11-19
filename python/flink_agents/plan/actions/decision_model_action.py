@@ -19,12 +19,12 @@
 
 import time
 from concurrent.futures import CancelledError
+from datetime import timedelta
 from functools import wraps
 from typing import TYPE_CHECKING, cast
 
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.decision_models import DecisionRequest, DecisionResult
-from flink_agents.api.duration import accepted_retry_wait
 from flink_agents.api.events.decision_event import (
     DecisionRequestEvent,
     DecisionResponseEvent,
@@ -37,7 +37,6 @@ from flink_agents.api.trace import (
     ExecutionReporters,
 )
 from flink_agents.plan.actions.action import Action
-from flink_agents.plan.actions.chat_model_action import recorded_retry_wait_millis
 from flink_agents.plan.function import PythonFunction
 
 if TYPE_CHECKING:
@@ -109,9 +108,8 @@ async def process_decision_request(
 
     decision_async = ctx.config.get(AgentExecutionOptions.DECISION_ASYNC)
     max_retries = max(0, ctx.config.get(AgentExecutionOptions.MAX_RETRIES))
-    retry_interval = accepted_retry_wait(
-        ctx.config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)
-    )
+    interval = ctx.config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)
+    retry_wait_millis = max(0, interval // timedelta(milliseconds=1))
     retry_count = 0
     total_retry_wait_ms = 0
     response = None
@@ -148,8 +146,7 @@ async def process_decision_request(
             )
             if attempt < max_retries:
                 retry_count += 1
-                current_wait = retry_interval * (1 << attempt)
-                wait_millis = recorded_retry_wait_millis(current_wait)
+                wait_millis = retry_wait_millis * (1 << attempt)
                 if wait_millis > 0:
                     time.sleep(wait_millis / 1000)
                     total_retry_wait_ms += wait_millis

@@ -292,13 +292,8 @@ class AgentExecutionOptions:
         default=0,
     )
 
-    # Base wait between retries controlled by max-retries. The duration is
-    # truncated to milliseconds, and the wait before retry N is that value
-    # multiplied by 2^(N-1). A positive value may truncate to zero, so 1500 us
-    # waits 1 ms and 500 us does not wait. A zero or negative duration retries
-    # without waiting. retryWaitMs and total_retry_wait_ms add those truncated
-    # milliseconds, so a 100 ms sleep contributes 100. In text, write "1 s",
-    # "1000", or "PT1S".
+    # Initial retry wait, doubled for each subsequent retry. Truncated to
+    # milliseconds; non-positive values and values below 1 ms do not wait.
     RETRY_WAIT_INTERVAL = ConfigOption(
         key="retry-wait-interval",
         config_type=timedelta,
@@ -361,13 +356,10 @@ class AgentExecutionOptions:
         default=os.cpu_count() or 1,
     )
 
-    # Overall timeout per ctx.gather batch. Effective precision is 1 us on Java
-    # and Python: the deadline uses the full duration and is not truncated to
-    # milliseconds. A zero or negative duration disables it; the default of -1 ms
-    # disables it. Applies to ordinary, durable, and built-in tool calls. In YAML,
-    # write a duration such as "30 s". Running callbacks may continue after
-    # timeout and occupy their worker until they return, so blocking operations
-    # should also set their own timeouts.
+    # Overall timeout for one ctx.gather batch, with microsecond precision.
+    # Non-positive values disable it. Completed results are retained; unfinished
+    # calls receive timeout failures. Running callbacks cannot be interrupted
+    # and their external effects cannot be undone.
     ASYNC_BATCH_TIMEOUT = ConfigOption(
         key="async.batch.timeout",
         config_type=timedelta,
@@ -380,11 +372,8 @@ class AgentExecutionOptions:
         default=True,
     )
 
-    # Short-term memory time-to-live. Effective precision is 1 ms. A positive
-    # duration enables expiration when conversion to milliseconds is greater
-    # than zero: 1500 us enables 1 ms, and 500 us is rejected at job submission
-    # instead of disabling TTL. A zero or negative duration disables TTL. In
-    # text, write "1 min", "1000", or "PT1M".
+    # Short-term memory time-to-live. Non-positive values disable expiration.
+    # Positive values must be at least 1 ms and are truncated to milliseconds.
     SHORT_TERM_MEMORY_STATE_TTL = ConfigOption(
         key="short-term-memory.state-ttl",
         config_type=timedelta,

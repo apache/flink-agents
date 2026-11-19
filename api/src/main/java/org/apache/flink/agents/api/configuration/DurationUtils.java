@@ -34,18 +34,20 @@ import java.util.Map;
  * or {@code 5 min}. A unitless integer means milliseconds, such as {@code 1000}. When the text does
  * not start with a number, it is parsed as an ISO-8601 duration, such as {@code PT30S}, {@code
  * PT1H30M}, or {@code P1DT2H}, including the lower-case forms {@code Duration.parse} accepts. A
- * leading {@code -} is allowed on every form, so a negative duration can still disable a timeout or
- * TTL. Recognized units, case-insensitively, are {@code ns}, {@code us}/{@code µs}, {@code ms},
- * {@code s}, {@code min}/{@code m}, {@code h}, and {@code d}, plus the longer singular and plural
- * forms ({@code second}, {@code seconds}, {@code millisecond}, and so on). {@code m} means minutes.
+ * leading {@code -} is allowed on every form. Recognized units, case-insensitively, are {@code ns},
+ * {@code us}/{@code µs}, {@code ms}, {@code s}, {@code min}/{@code m}, {@code h}, and {@code d},
+ * plus the longer singular and plural forms ({@code second}, {@code seconds}, {@code millisecond},
+ * and so on). {@code m} means minutes.
  *
  * <p>The value must be a whole number of microseconds, because the Python counterpart is {@code
  * datetime.timedelta}. {@code 1000 ns} is one microsecond; {@code 1 ns} is rejected. An ISO-8601 or
  * unitless value that is not microsecond-aligned is rejected the same way. This parser does not
- * truncate to a coarser unit. Retry wait and short-term memory TTL apply millisecond truncation
- * later, when the job is submitted.
+ * truncate to a coarser unit.
  */
 public final class DurationUtils {
+
+    private static final String EXPECTED_DURATION_TEXT =
+            "expected a duration such as '30 s', '1000' (milliseconds), or 'PT30S'";
 
     private static final BigInteger NANOS_PER_SECOND = BigInteger.valueOf(1_000_000_000L);
     private static final BigInteger NANOS_PER_MICRO = BigInteger.valueOf(1_000L);
@@ -67,30 +69,20 @@ public final class DurationUtils {
     private DurationUtils() {}
 
     /**
-     * Parses a duration string or returns a {@link Duration} unchanged after the same alignment
-     * check.
+     * Returns a {@link Duration} after checking microsecond alignment. Other non-null values are
+     * parsed from their string representation.
      */
     public static Duration parse(Object value) {
         if (value instanceof Duration) {
             return requireMicrosecondAligned((Duration) value, value.toString());
         }
-        if (value instanceof CharSequence) {
-            return parse(value.toString());
+        if (value == null) {
+            throw invalid("null", EXPECTED_DURATION_TEXT);
         }
-        throw invalid(
-                String.valueOf(value),
-                "a duration needs a number and a unit, for example '30 s' or '5 min',"
-                        + " not a bare number");
-    }
-
-    /** Parses one duration string. */
-    public static Duration parse(String text) {
-        if (text == null) {
-            throw invalid("null", "a duration needs a number and a unit, for example '30 s'");
-        }
+        String text = value.toString();
         String trimmed = text.trim();
         if (trimmed.isEmpty()) {
-            throw invalid(text, "a duration needs a number and a unit, for example '30 s'");
+            throw invalid(text, EXPECTED_DURATION_TEXT);
         }
         if (startsWithMagnitude(trimmed)) {
             return parseLabeled(trimmed, text);
@@ -98,10 +90,7 @@ public final class DurationUtils {
         return parseIso8601(trimmed, text);
     }
 
-    /**
-     * True when {@code trimmed} is a labeled duration or a unitless millisecond value. A leading
-     * {@code -} may be followed by spaces. Text that does not start this way is tried as ISO-8601.
-     */
+    /** Returns whether the text starts with digits, optionally preceded by {@code -} and spaces. */
     private static boolean startsWithMagnitude(String trimmed) {
         int index = 0;
         if (trimmed.charAt(0) == '-') {
@@ -131,7 +120,9 @@ public final class DurationUtils {
         String unitLabel = trimmed.substring(numberEnd).trim().toLowerCase(Locale.US);
         if (unitLabel.startsWith(".")) {
             throw invalid(
-                    original, "a duration needs an integer and a unit, for example '1500 ms'");
+                    original,
+                    "expected an integer with an optional unit, for example '1500 ms' or '1500';"
+                            + " use ISO-8601 for fractional seconds, for example 'PT1.5S'");
         }
         final ChronoUnit unit;
         if (unitLabel.isEmpty()) {
@@ -167,16 +158,8 @@ public final class DurationUtils {
         }
     }
 
-    /**
-     * ISO-8601 fallback used by Flink {@code TimeUtils} when the text does not start with a number.
-     * Negative durations are kept; {@code TimeUtils} rejects them.
-     */
+    /** Parses text that does not start with a numeric magnitude as an ISO-8601 duration. */
     private static Duration parseIso8601(String trimmed, String original) {
-        if (isBareSign(trimmed)) {
-            throw invalid(
-                    original,
-                    "a duration needs an integer and a unit, for example '30 s' or '5 min'");
-        }
         final Duration parsed;
         try {
             parsed = Duration.parse(trimmed);
@@ -185,27 +168,9 @@ public final class DurationUtils {
             if (detail.contains("overflow")) {
                 throw invalid(original, "the value overflows a duration");
             }
-            throw invalid(
-                    original,
-                    "text does not start with a number, and is not a valid ISO-8601 duration"
-                            + " format");
+            throw invalid(original, EXPECTED_DURATION_TEXT);
         }
         return requireMicrosecondAligned(parsed, original);
-    }
-
-    /** A lone {@code -} , or a leading {@code -} that is not an ISO-8601 duration. */
-    private static boolean isBareSign(String trimmed) {
-        int index = 0;
-        if (trimmed.charAt(0) == '-') {
-            index++;
-            while (index < trimmed.length() && trimmed.charAt(index) == ' ') {
-                index++;
-            }
-        }
-        if (index >= trimmed.length()) {
-            return true;
-        }
-        return trimmed.charAt(0) == '-' && trimmed.toLowerCase(Locale.US).indexOf('p') < 0;
     }
 
     /**
@@ -232,14 +197,6 @@ public final class DurationUtils {
     /** True when the duration is non-null and strictly greater than zero. */
     public static boolean isPositive(Duration duration) {
         return duration != null && !duration.isZero() && !duration.isNegative();
-    }
-
-    /** Returns {@link Duration#ZERO} when {@code duration} is null or negative. */
-    public static Duration zeroIfNegative(Duration duration) {
-        if (duration == null || duration.isNegative()) {
-            return Duration.ZERO;
-        }
-        return duration;
     }
 
     /**

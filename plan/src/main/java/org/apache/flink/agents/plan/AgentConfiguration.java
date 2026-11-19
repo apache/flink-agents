@@ -17,7 +17,6 @@
  */
 package org.apache.flink.agents.plan;
 
-import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.apache.flink.agents.api.configuration.Configuration;
@@ -217,68 +216,6 @@ public class AgentConfiguration implements Configuration {
             String key, IllegalArgumentException cause) {
         return new IllegalArgumentException(
                 "Invalid duration for '" + key + "': " + cause.getMessage(), cause);
-    }
-
-    /**
-     * Checks the retry-wait and short-term memory TTL durations on {@code agentPlan} before an
-     * operator is constructed.
-     *
-     * <p>Both values are read through {@link #get(ConfigOption)} and then converted with {@link
-     * Duration#toMillis()}. A non-positive retry wait means no waiting. A positive retry wait is
-     * truncated toward zero, and a truncated result of zero is allowed. A non-positive TTL disables
-     * expiration. A positive TTL must convert to a number of milliseconds greater than zero, so
-     * {@code 500 us} fails instead of disabling TTL, while {@code 1500 us} is kept and later
-     * truncated to {@code 1 ms}. {@code toMillis()} also rejects a duration that overflows a long.
-     * Async batch timeout is not checked and keeps its microsecond duration.
-     *
-     * @throws IllegalArgumentException if a positive TTL converts to {@code 0} ms, or if either
-     *     positive duration overflows {@link Duration#toMillis()}
-     */
-    public static void validateExecutionOptions(AgentPlan agentPlan) {
-        if (agentPlan == null) {
-            throw new IllegalArgumentException("An agent plan is required.");
-        }
-        AgentConfiguration config = agentPlan.getConfig();
-        if (config == null) {
-            throw new IllegalArgumentException("An agent plan configuration is required.");
-        }
-        validateRetryWait(config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL));
-        validateShortTermMemoryTtl(config.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL));
-    }
-
-    private static void validateRetryWait(Duration duration) {
-        if (!DurationUtils.isPositive(duration)) {
-            return;
-        }
-        millisAfterTruncation(AgentExecutionOptions.RETRY_WAIT_INTERVAL.getKey(), duration);
-    }
-
-    private static void validateShortTermMemoryTtl(Duration duration) {
-        if (!DurationUtils.isPositive(duration)) {
-            return;
-        }
-        String optionKey = AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.getKey();
-        long millis = millisAfterTruncation(optionKey, duration);
-        if (millis <= 0) {
-            throw new IllegalArgumentException(
-                    optionKey
-                            + " must be greater than 0 ms after conversion to milliseconds,"
-                            + " or zero or negative to disable TTL, got "
-                            + DurationUtils.format(duration));
-        }
-    }
-
-    /** {@link Duration#toMillis()} detects overflow as well as truncating toward zero. */
-    private static long millisAfterTruncation(String optionKey, Duration duration) {
-        try {
-            return duration.toMillis();
-        } catch (ArithmeticException e) {
-            throw new IllegalArgumentException(
-                    optionKey
-                            + " overflows when converted to milliseconds, got "
-                            + DurationUtils.format(duration),
-                    e);
-        }
     }
 
     private static List<Map<String, Object>> traceLogTargetConfig(Object value) {

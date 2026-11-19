@@ -17,12 +17,17 @@
 #################################################################################
 import json
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 import yaml
 
-from flink_agents.api.core_options import AgentConfigOptions, LoggerType
+from flink_agents.api.core_options import (
+    AgentConfigOptions,
+    AgentExecutionOptions,
+    LoggerType,
+)
 from flink_agents.api.trace_log import TraceLogLevel, TraceLogTarget
 from flink_agents.api.version_compatibility import flink_version_manager
 from flink_agents.plan.agent_plan import AgentPlan
@@ -586,3 +591,34 @@ def test_trace_log_targets_survive_yaml_and_plan_json(
     restored = AgentPlan.model_validate_json(serialized)
     assert restored.config.get(AgentConfigOptions.TRACE_LOG_TARGETS) == expected
     assert json.loads(serialized)["config"]["conf_data"] == config.get_conf_data()
+
+
+@pytest.mark.parametrize("value", ["1000", '"1000"', "0", '"0"', "-1000", '"-1000"'])
+def test_duration_yaml_integer_and_string_values(tmp_path, flink_2, value):
+    _write_config_yaml(
+        tmp_path,
+        "agent:",
+        f"  retry-wait-interval: {value}",
+        f"  async.batch.timeout: {value}",
+        f"  short-term-memory.state-ttl: {value}",
+    )
+    config = load_agent_configuration(str(tmp_path))
+    expected = timedelta(milliseconds=int(value.strip('"')))
+    for option in (
+        AgentExecutionOptions.RETRY_WAIT_INTERVAL,
+        AgentExecutionOptions.ASYNC_BATCH_TIMEOUT,
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL,
+    ):
+        assert config.get(option) == expected
+    restored = AgentPlan.model_validate_json(
+        AgentPlan(actions={}, config=config).model_dump_json()
+    )
+    assert restored.config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL) == expected
+
+
+@pytest.mark.parametrize("value", ["1000.0", "true", "false"])
+def test_duration_yaml_rejects_float_and_boolean(tmp_path, flink_2, value):
+    _write_config_yaml(tmp_path, "agent:", f"  retry-wait-interval: {value}")
+    config = load_agent_configuration(str(tmp_path))
+    with pytest.raises(ValueError, match="retry-wait-interval"):
+        config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)

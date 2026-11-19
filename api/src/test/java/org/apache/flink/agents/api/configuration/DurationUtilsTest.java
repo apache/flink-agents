@@ -28,6 +28,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.time.Duration;
 import java.util.List;
 
@@ -78,14 +80,40 @@ class DurationUtilsTest {
     }
 
     @Test
-    void rejectsBareNumbersAndSubMicrosecondDurations() {
-        assertThatThrownBy(() -> DurationUtils.parse(30))
+    void rejectsFloatingPointValuesAndSubMicrosecondDurations() {
+        assertThatThrownBy(() -> DurationUtils.parse(30.0))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("30")
-                .hasMessageContaining("bare number");
+                .hasMessageContaining("an integer");
         assertThatThrownBy(() -> DurationUtils.parse(Duration.ofNanos(500)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("finer than 1 us");
+    }
+
+    @Test
+    void integerMillisecondsMatchUnitlessText() {
+        for (Object value :
+                List.of((byte) 1, (short) 1000, 1000, -1000L, 1L << 40, BigInteger.valueOf(1000))) {
+            assertThat(DurationUtils.parse(value)).isEqualTo(DurationUtils.parse(value.toString()));
+        }
+        assertThatThrownBy(() -> DurationUtils.parse(true))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void otherValuesUseTheirTextRepresentation() {
+        assertThat(DurationUtils.parse(new BigDecimal("1000"))).isEqualTo(Duration.ofSeconds(1));
+        assertThat(DurationUtils.parse(new StringBuilder("PT1S"))).isEqualTo(Duration.ofSeconds(1));
+        assertThatThrownBy(() -> DurationUtils.parse(new BigDecimal("1000.0")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("an integer");
+        assertThatThrownBy(() -> DurationUtils.parse(BigInteger.TEN.pow(100)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("overflows");
+        assertThatThrownBy(() -> DurationUtils.parse(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid duration 'null'")
+                .hasMessageContaining("expected a duration");
     }
 
     @Test
@@ -106,9 +134,6 @@ class DurationUtilsTest {
                 .isEqualTo("short-term-memory.state-ttl");
         assertThat(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.getDefaultValue())
                 .isEqualTo(Duration.ZERO);
-        assertThat(DurationUtils.zeroIfNegative(Duration.ofMillis(-1))).isEqualTo(Duration.ZERO);
-        assertThat(DurationUtils.zeroIfNegative(Duration.ofSeconds(2)))
-                .isEqualTo(Duration.ofSeconds(2));
     }
 
     /** Deadline budget shared with Python {@code positive_seconds}. 1_500_000 ns is 0.0015 s. */

@@ -155,6 +155,26 @@ public class CompileUtilsTest {
                 .hasMessageContaining("must not be empty or blank");
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"retry-wait-interval", "short-term-memory.state-ttl"})
+    void connectToAgentRejectsMillisecondOverflow(String key) throws Exception {
+        AgentPlan plan = planWithExecutionDurations("1 s", "1 ms");
+        plan.getConfig().getConfData().put(key, "9223372036854775807 s");
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        KeyedStream<Long, Long> keyed = env.fromData(1L).keyBy(value -> value);
+        assertThatThrownBy(() -> CompileUtils.connectToAgent(keyed, plan))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(key)
+                .hasMessageContaining("overflows when converted to milliseconds")
+                .hasCauseInstanceOf(ArithmeticException.class);
+        String json = new ObjectMapper().writeValueAsString(plan);
+        KeyedStream<Row, Row> pythonInput = pickledPythonInput();
+        assertThatThrownBy(() -> CompileUtils.connectToAgent(pythonInput, json))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(key)
+                .hasMessageContaining("overflows when converted to milliseconds");
+    }
+
     @Test
     void connectToAgentRejectsTtlThatTruncatesToZero() {
         AgentPlan plan = planWithExecutionDurations("1 s", "500 us");

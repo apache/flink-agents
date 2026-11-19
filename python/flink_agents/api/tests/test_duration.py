@@ -20,6 +20,7 @@
 import json
 import re
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -27,13 +28,10 @@ import pytest
 
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.duration import (
-    accepted_retry_wait,
     format_duration,
     is_positive,
     parse_duration,
     positive_seconds,
-    truncated_millis,
-    zero_if_negative,
 )
 
 
@@ -67,11 +65,33 @@ def test_shared_duration_cases(case: dict[str, Any]) -> None:
     assert format_duration(parsed) == case["canonical"]
 
 
-def test_rejects_bare_numbers() -> None:
-    with pytest.raises(ValueError, match="bare number"):
-        parse_duration(30)
-    with pytest.raises(ValueError, match="bare number"):
-        parse_duration(True)
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        (1.5, "an integer"),
+        (1000.0, "an integer"),
+        (True, "expected a duration"),
+        (False, "expected a duration"),
+        (Decimal("1000.0"), "an integer"),
+    ],
+)
+def test_rejects_invalid_text_representations(value: object, reason: str) -> None:
+    with pytest.raises(ValueError, match=reason):
+        parse_duration(value)
+
+
+@pytest.mark.parametrize("value", [0, 1000, -1000, 2**40])
+def test_integer_milliseconds_match_unitless_text(value: int) -> None:
+    assert parse_duration(value) == parse_duration(str(value))
+
+
+def test_decimal_uses_its_text_representation() -> None:
+    assert parse_duration(Decimal("1000")) == timedelta(seconds=1)
+
+
+def test_large_integer_reports_overflow() -> None:
+    with pytest.raises(ValueError, match="overflows"):
+        parse_duration(10**100)
 
 
 def test_option_defaults_match_the_disable_sentinels() -> None:
@@ -93,8 +113,6 @@ def test_option_defaults_match_the_disable_sentinels() -> None:
     assert AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.get_default_value() == (
         timedelta(0)
     )
-    assert zero_if_negative(timedelta(milliseconds=-1)) == timedelta(0)
-    assert zero_if_negative(timedelta(seconds=2)) == timedelta(seconds=2)
 
 
 # Deadline budget shared with Java DurationUtils.positiveNanos.
@@ -118,15 +136,3 @@ def test_non_positive_deadline_contributes_no_seconds() -> None:
     assert positive_seconds(None) is None
     assert positive_seconds(parse_duration("0 ms")) is None
     assert positive_seconds(parse_duration("-1 ms")) is None
-
-
-def test_retry_wait_truncates_to_milliseconds() -> None:
-    assert accepted_retry_wait(parse_duration("1500 us")) == timedelta(milliseconds=1)
-    assert truncated_millis(parse_duration("1500 us")) == 1
-    assert accepted_retry_wait(parse_duration("500 us")) == timedelta(0)
-    assert truncated_millis(parse_duration("500 us")) == 0
-    wait = accepted_retry_wait(parse_duration("1500 ms"))
-    assert wait == timedelta(milliseconds=1500)
-    assert truncated_millis(wait) == 1500
-    assert accepted_retry_wait(parse_duration("-1 ms")) == timedelta(0)
-    assert accepted_retry_wait(parse_duration("0 ms")) == timedelta(0)

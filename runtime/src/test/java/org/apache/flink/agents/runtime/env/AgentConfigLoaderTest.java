@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.env;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLogTarget;
@@ -28,12 +29,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.nio.file.Files;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +53,42 @@ class AgentConfigLoaderTest {
     private static final String FLINK_2_3 = "2.3.0";
 
     @TempDir private File tmpDir;
+
+    @ParameterizedTest
+    @CsvSource({"1000,1000", "\"1000\",1000", "0,0", "\"0\",0", "-1000,-1000", "\"-1000\",-1000"})
+    void durationIntegersAndStringsHaveTheSameUnits(String yamlValue, long millis)
+            throws Exception {
+        Files.writeString(
+                new File(tmpDir, FLINK_CONF_FILENAME).toPath(),
+                "agent:\n  retry-wait-interval: "
+                        + yamlValue
+                        + "\n  async.batch.timeout: "
+                        + yamlValue
+                        + "\n  short-term-memory.state-ttl: "
+                        + yamlValue
+                        + "\n");
+        AgentConfiguration config =
+                AgentConfigLoader.loadAgentConfiguration(tmpDir.getAbsolutePath());
+        assertThat(config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL))
+                .isEqualTo(Duration.ofMillis(millis));
+        assertThat(config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT))
+                .isEqualTo(Duration.ofMillis(millis));
+        assertThat(config.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL))
+                .isEqualTo(Duration.ofMillis(millis));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"1000.0", "true", "false"})
+    void durationRejectsFloatingPointAndBooleanYamlValues(String value) throws Exception {
+        Files.writeString(
+                new File(tmpDir, FLINK_CONF_FILENAME).toPath(),
+                "agent:\n  retry-wait-interval: " + value + "\n");
+        AgentConfiguration config =
+                AgentConfigLoader.loadAgentConfiguration(tmpDir.getAbsolutePath());
+        assertThatThrownBy(() -> config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("retry-wait-interval");
+    }
 
     @Test
     void testLoadAgentConfiguration() throws FileNotFoundException {
