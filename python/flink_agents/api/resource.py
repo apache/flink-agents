@@ -443,9 +443,13 @@ class ResourceName:
         MODEL_ROUTER = "flink_agents.api.chat_models.routing.ModelRouter"
 
         class Java:
-            """Java implementation of ModelRouter."""
+            """Java ModelRouter declaration.
 
-            MODEL_ROUTER = "org.apache.flink.agents.api.chat.model.routing.ModelRouter"
+            A placeholder, as in the Java API: the Java plan names the router
+            resource class when it builds the agent plan.
+            """
+
+            MODEL_ROUTER = "DECIDE_IN_RUNTIME_ModelRouter"
 
     # MCP resource names
     MCP_SERVER = "flink_agents.integrations.mcp.mcp.MCPServer"

@@ -414,6 +414,13 @@ public class AgentPlan implements Serializable {
         if (isPython || isPythonResource(descriptor)) {
             return new PythonResourceProvider(name, type, descriptor);
         }
+        if (type == ResourceType.MODEL_ROUTER) {
+            // A router declaration carries a placeholder for its class. The plan names the router
+            // resource before it creates the provider, as extractJavaMCPServer does for a Java MCP
+            // server.
+            descriptor =
+                    org.apache.flink.agents.plan.routing.ModelRouter.resourceDescriptor(descriptor);
+        }
         return new JavaResourceProvider(name, type, descriptor);
     }
 

@@ -263,11 +263,12 @@ public final class ResourceName {
     public static final class ModelRouter {
 
         /**
-         * The Java model router declaration ({@code ModelRouter.of(...).build()}). The descriptor
-         * carries this name; the plan module maps it to the resource it instantiates.
+         * Placeholder that {@code ModelRouter.of(...).build()} and the YAML {@code router} alias
+         * put where a descriptor names its class. The router resource lives in the plan module, and
+         * the plan names it when it builds the agent plan, as it does for a Java MCP server ({@link
+         * ResourceName#MCP_SERVER}).
          */
-        public static final String MODEL_ROUTER =
-                "org.apache.flink.agents.api.chat.model.routing.ModelRouter";
+        public static final String MODEL_ROUTER = "DECIDE_IN_RUNTIME_ModelRouter";
 
         /** Python implementation of ModelRouter. */
         public static final class Python {

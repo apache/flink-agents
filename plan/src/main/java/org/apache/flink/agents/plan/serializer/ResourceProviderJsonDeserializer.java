@@ -31,6 +31,7 @@ import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourcePro
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.routing.ModelRouter;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -106,7 +107,14 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
         try {
             ResourceDescriptor descriptor =
                     mapper.treeToValue(node.get("descriptor"), ResourceDescriptor.class);
-            return new JavaResourceProvider(name, ResourceType.fromValue(type), descriptor);
+            ResourceType resourceType = ResourceType.fromValue(type);
+            if (resourceType == ResourceType.MODEL_ROUTER) {
+                // As when a plan is compiled: the router resource is named whatever class the
+                // descriptor carries, so a plan compiled before the router declaration and its
+                // resource were two classes, which names the api class, restores as well.
+                descriptor = ModelRouter.resourceDescriptor(descriptor);
+            }
+            return new JavaResourceProvider(name, resourceType, descriptor);
         } catch (JsonProcessingException e) {
             throw new RuntimeException(e);
         }

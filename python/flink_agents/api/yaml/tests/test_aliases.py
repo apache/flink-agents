@@ -41,6 +41,17 @@ from flink_agents.api.yaml.aliases import (
 )
 
 
+def _is_java_router_placeholder(
+    resource_type: ResourceType, lang: str, alias: str
+) -> bool:
+    """Whether the entry is the one alias that is not a class path.
+
+    A Java model router declaration carries a placeholder; the Java plan
+    names the router resource.
+    """
+    return (resource_type, lang, alias) == (ResourceType.MODEL_ROUTER, "java", "router")
+
+
 def test_event_aliases_map_to_real_event_types() -> None:
     assert EVENT_ALIASES["input"] == InputEvent.EVENT_TYPE
     assert EVENT_ALIASES["output"] == OutputEvent.EVENT_TYPE
@@ -78,6 +89,9 @@ def test_clazz_aliases_are_strings_with_dots() -> None:
             for alias, fqn in bucket.items():
                 assert isinstance(alias, str)
                 assert isinstance(fqn, str)
+                if _is_java_router_placeholder(resource_type, lang, alias):
+                    assert fqn == ResourceName.ModelRouter.Java.MODEL_ROUTER
+                    continue
                 assert "." in fqn, (
                     f"alias {alias!r} -> {fqn!r} in ({resource_type}, {lang}) is "
                     "not a qualified name"
@@ -120,6 +134,9 @@ def test_clazz_aliases_have_per_language_buckets() -> None:
             for alias, fqn in bucket.items():
                 assert isinstance(alias, str)
                 assert isinstance(fqn, str)
+                if _is_java_router_placeholder(resource_type, lang, alias):
+                    assert fqn == ResourceName.ModelRouter.Java.MODEL_ROUTER
+                    continue
                 assert "." in fqn
 
 

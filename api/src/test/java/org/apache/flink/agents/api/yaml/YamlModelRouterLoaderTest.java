@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
 import org.apache.flink.agents.api.configuration.Configuration;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.yaml.YamlLoader.LoadedFile;
 import org.apache.flink.api.java.functions.KeySelector;
@@ -55,7 +56,9 @@ class YamlModelRouterLoaderTest {
 
         assertThat(shared.getLanguage()).isEqualTo("java");
         assertThat(local.getLanguage()).isEqualTo("java");
-        assertThat(shared.getClazz()).isEqualTo(ModelRouter.class.getName());
+        // The alias carries the declaration's placeholder and an explicit class passes through
+        // unchanged; the agent plan names the router resource for either.
+        assertThat(shared.getClazz()).isEqualTo(ResourceName.ModelRouter.MODEL_ROUTER);
         assertThat(local.getClazz()).isEqualTo(ModelRouter.class.getName());
         assertThat(shared.getModule()).isEmpty();
         assertThat(shared.getInitialArguments())

@@ -34,11 +34,12 @@ import java.util.Map;
  * runtimes. {@link #of(String...)} starts the fluent builder and {@link Builder#build()} produces
  * the {@link ResourceDescriptor} to register as a {@code MODEL_ROUTER} resource.
  *
- * <p>The descriptor names this class ({@link ResourceName.ModelRouter#MODEL_ROUTER}), the
- * declaration name shared with the Python API, the YAML loader and the cross-language plan format.
- * The resource the engine instantiates from it lives in the plan module ({@code
- * org.apache.flink.agents.plan.routing.ModelRouter}): the plan maps the declaration name to that
- * class and validates the descriptor when the agent plan is built, so the resource only decodes it.
+ * <p>The descriptor carries a placeholder for its class ({@link
+ * ResourceName.ModelRouter#MODEL_ROUTER}), as a Java MCP server declaration does. The resource the
+ * engine instantiates lives in the plan module ({@code
+ * org.apache.flink.agents.plan.routing.ModelRouter}): when an agent plan is built, the plan names
+ * that class in the router's provider and validates the descriptor, so the resource only decodes
+ * it.
  *
  * <p>Abstain ({@link RoutingDecision#abstain()}) → the default model. A returned name that is not a
  * candidate is treated as abstain, with the rejected name kept in the routing event's metadata.

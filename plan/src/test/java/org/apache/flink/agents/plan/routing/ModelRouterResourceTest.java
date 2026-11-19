@@ -29,11 +29,10 @@ import org.apache.flink.agents.api.chat.model.routing.RoutingContext;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategyType;
 import org.apache.flink.agents.api.chat.model.routing.Strategies;
-import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
@@ -48,10 +47,7 @@ import static org.apache.flink.agents.api.chat.model.routing.ModelRouter.STRATEG
 import static org.apache.flink.agents.api.chat.model.routing.ModelRouter.of;
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * The plan-side {@link ModelRouter} resource decodes the descriptor the api builder produced, and
- * the Java resource provider instantiates it for the declaration name the descriptor carries.
- */
+/** The plan-side {@link ModelRouter} resource decodes the descriptor the api builder produced. */
 class ModelRouterResourceTest {
 
     /** A loadable custom signal for the round-trip. */
@@ -63,26 +59,45 @@ class ModelRouterResourceTest {
     }
 
     @Test
-    void theProviderInstantiatesThePlanResourceForTheDeclarationName() throws Exception {
+    void theResourceDecodesADeclarationThatCarriesThePlaceholder() {
         ResourceDescriptor descriptor =
                 of("small", "big").strategy(Strategies.rules(Map.of())).build();
-        // The descriptor keeps the api declaration name, which Python, the YAML loader and the
-        // cross-language plan format share; the provider maps it to this module's resource.
+        // A declaration does not choose the resource class: it carries a placeholder, and the
+        // plan names this class before it creates a provider (AgentPlanModelRouterProviderTest).
         assertThat(descriptor.getClazz()).isEqualTo(ResourceName.ModelRouter.MODEL_ROUTER);
-        Resource resource =
-                new JavaResourceProvider("router", ResourceType.MODEL_ROUTER, descriptor)
-                        .provide(null);
-        assertThat(resource).isInstanceOf(ModelRouter.class);
-        assertThat(resource.getResourceType()).isEqualTo(ResourceType.MODEL_ROUTER);
-        assertThat(((ModelRouter) resource).getCandidateNames()).containsExactly("small", "big");
-        // The resource is chosen by type, not by the declaration name: a descriptor that names
-        // the router differently (hand-written plan JSON) still gets the plan-side class.
-        ResourceDescriptor renamed =
-                new ResourceDescriptor("org.example.SomeRouter", descriptor.getInitialArguments());
+        ModelRouter router = new ModelRouter(descriptor, null);
+        assertThat(router.getResourceType()).isEqualTo(ResourceType.MODEL_ROUTER);
+        assertThat(router.getCandidateNames()).containsExactly("small", "big");
+    }
+
+    @Test
+    void theResourceDescriptorNamesThisClassAndKeepsTheDeclaration() {
+        Map<String, Object> arguments =
+                of("small", "big")
+                        .strategy(Strategies.rules(Map.of()))
+                        .build()
+                        .getInitialArguments();
+        // Whatever class a Java descriptor names, and whatever module it carries.
+        ResourceDescriptor provided =
+                ModelRouter.resourceDescriptor(
+                        new ResourceDescriptor(null, "example.OtherRouter", arguments));
+        assertThat(provided.getClazz()).isEqualTo(ModelRouter.class.getName());
+        assertThat(provided.getModule()).isNull();
+        assertThat(provided.getInitialArguments()).isSameAs(arguments);
+        // Already named: returned as it is.
+        assertThat(ModelRouter.resourceDescriptor(provided)).isSameAs(provided);
+        // A descriptor without arguments keeps none, so the plan can still report it by name.
         assertThat(
-                        new JavaResourceProvider("router", ResourceType.MODEL_ROUTER, renamed)
-                                .provide(null))
-                .isInstanceOf(ModelRouter.class);
+                        ModelRouter.resourceDescriptor(
+                                        new ResourceDescriptor(
+                                                "some.Other", (Map<String, Object>) null))
+                                .getInitialArguments())
+                .isNull();
+        // A descriptor of another language is not this resource's to name: it stays as it is,
+        // for the Java provider to reject.
+        ResourceDescriptor python =
+                new PythonResourceDescriptor("some_module", "SomeRouter", arguments);
+        assertThat(ModelRouter.resourceDescriptor(python)).isSameAs(python);
     }
 
     @Test

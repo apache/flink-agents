@@ -93,7 +93,7 @@ def test_java_router_rejected_only_when_compiling_python_agent():
     with pytest.raises(TypeError, match="Python descriptor"):
         compile_router(
             JavaResourceDescriptor(
-                clazz="org.apache.flink.agents.api.chat.model.routing.ModelRouter",
+                clazz="org.apache.flink.agents.plan.routing.ModelRouter",
                 candidates=["small"],
                 strategy_type="rule_based",
             )

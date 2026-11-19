@@ -9,7 +9,7 @@
         "descriptor" : {
           "language" : "java",
           "target_module" : "",
-          "target_clazz" : "org.apache.flink.agents.api.chat.model.routing.ModelRouter",
+          "target_clazz" : "org.apache.flink.agents.plan.routing.ModelRouter",
           "arguments" : {
             "candidates" : [ "small", "big" ],
             "candidate_descriptions" : {
@@ -33,7 +33,7 @@
         "descriptor" : {
           "language" : "java",
           "target_module" : "",
-          "target_clazz" : "org.apache.flink.agents.api.chat.model.routing.ModelRouter",
+          "target_clazz" : "org.apache.flink.agents.plan.routing.ModelRouter",
           "arguments" : {
             "candidates" : [ "small", "big" ],
             "candidate_descriptions" : {

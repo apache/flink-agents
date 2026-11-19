@@ -51,12 +51,14 @@ import static org.apache.flink.agents.api.chat.model.routing.ModelRouter.STRATEG
  * the strategy for the first model, and {@link EscalationGate} applies the escalation policy after
  * each model round.
  *
- * <p>The constructor only decodes the descriptor. The declaration rules are applied once, when the
- * agent plan is built ({@code AgentPlan#validateRoutingStrategies}), so every construction path —
- * the Java builder, a YAML declaration, a Python-declared router with a Java target — meets the
- * same checks before a request reaches this class. The descriptor names the api declaration class
- * ({@link org.apache.flink.agents.api.resource.ResourceName.ModelRouter#MODEL_ROUTER}), and {@code
- * JavaResourceProvider} maps that name to this class.
+ * <p>The constructor only decodes the descriptor. The declaration rules are applied when the agent
+ * plan is built ({@code AgentPlan#validateRoutingStrategies}), the one point every construction
+ * path passes — the Java builder, a YAML declaration, a descriptor built by hand, a plan restored
+ * from JSON — so each meets the same checks before a request reaches this class. The builder and
+ * the YAML {@code router} alias put a placeholder where the descriptor names its class ({@link
+ * org.apache.flink.agents.api.resource.ResourceName.ModelRouter#MODEL_ROUTER}); the plan names this
+ * class before it creates a provider, from a declaration or from a restored plan ({@link
+ * #resourceDescriptor}).
  */
 public class ModelRouter extends Resource {
 
@@ -65,6 +67,24 @@ public class ModelRouter extends Resource {
     private final boolean fallbackEnabled;
     private final RoutingStrategy strategy;
     @Nullable private final Escalation escalation;
+
+    /**
+     * The descriptor this resource is provided from: {@code declaration} with this class named. The
+     * router resource is framework-owned, so a declaration does not choose the class it is provided
+     * as. The api builder and the YAML {@code router} alias put a placeholder there, as a Java MCP
+     * server declaration does, and whatever class a Java descriptor names is replaced. A descriptor
+     * that names the api declaration class, as descriptors did before the declaration and the
+     * resource were two classes, is provided as this resource like any other. A descriptor of
+     * another language is not this resource's to name and is returned as it is.
+     */
+    public static ResourceDescriptor resourceDescriptor(ResourceDescriptor declaration) {
+        String resource = ModelRouter.class.getName();
+        if (!"java".equals(declaration.getLanguage()) || resource.equals(declaration.getClazz())) {
+            return declaration;
+        }
+        return new ResourceDescriptor(
+                declaration.getModule(), resource, declaration.getInitialArguments());
+    }
 
     public ModelRouter(ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);

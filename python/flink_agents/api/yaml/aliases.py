@@ -26,6 +26,10 @@ Two tables:
 
 For Java resources, the loader resolves the alias to the Java FQN and
 creates a JavaResourceDescriptor. Plan selects the execution wrapper.
+
+The Java ``router`` alias is the one entry that is not a class path: a Java
+model router declaration carries a placeholder, and the Java plan names the
+class.
 """
 
 from typing import Dict
@@ -188,6 +192,8 @@ def resolve_clazz(
 
     Returns the fully-qualified class path on hit, or ``name`` unchanged
     on miss (so users can supply a fully-qualified class path directly).
+    The Java ``router`` alias returns the declaration placeholder instead
+    of a class path; see the module docstring.
     """
     bucket = CLAZZ_ALIASES.get(resource_type, {}).get(language, {})
     return bucket.get(name, name)

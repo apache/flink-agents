@@ -21,15 +21,12 @@ package org.apache.flink.agents.plan.resourceprovider;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.plan.routing.ModelRouter;
 
 import java.lang.reflect.Constructor;
 
 /** Java Resource provider that carries resource instance to be used at runtime. */
 public class JavaResourceProvider extends ResourceProvider {
-
     private final ResourceDescriptor descriptor;
 
     public JavaResourceProvider(String name, ResourceType type, ResourceDescriptor descriptor) {
@@ -42,7 +39,9 @@ public class JavaResourceProvider extends ResourceProvider {
 
     @Override
     public Resource provide(ResourceContext resourceContext) throws Exception {
-        Class<?> clazz = implementationOf(descriptor);
+        String clazzName = descriptor.getClazz();
+        Class<?> clazz =
+                Class.forName(clazzName, true, Thread.currentThread().getContextClassLoader());
         Constructor<?> constructor =
                 clazz.getConstructor(ResourceDescriptor.class, ResourceContext.class);
         return (Resource) constructor.newInstance(descriptor, resourceContext);
@@ -50,20 +49,5 @@ public class JavaResourceProvider extends ResourceProvider {
 
     public ResourceDescriptor getDescriptor() {
         return descriptor;
-    }
-
-    /**
-     * The class to instantiate for a descriptor. A model router is framework-owned: its descriptor
-     * carries the api declaration name ({@link ResourceName.ModelRouter#MODEL_ROUTER}, shared with
-     * the Python API, the YAML loader and the cross-language plan format), and every {@code
-     * MODEL_ROUTER} descriptor instantiates the plan-side {@link ModelRouter}, whatever name it
-     * carries. Every other resource names its own implementation class.
-     */
-    private Class<?> implementationOf(ResourceDescriptor descriptor) throws ClassNotFoundException {
-        if (getType() == ResourceType.MODEL_ROUTER) {
-            return ModelRouter.class;
-        }
-        return Class.forName(
-                descriptor.getClazz(), true, Thread.currentThread().getContextClassLoader());
     }
 }
