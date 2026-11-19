@@ -36,6 +36,7 @@ import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.routing.ModelRouter;
 import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
 import org.apache.flink.agents.plan.routing.ResolvedModelRoute;
+import org.apache.flink.agents.plan.routing.RoutingMetadata;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -214,8 +215,13 @@ class YamlModelRouterDeclarationTest {
     }
 
     private static Map<String, Object> metadata(ResolvedModelRoute route) {
-        return route.buildResponseMetadata(
-                route.getSelectedModel(), List.of(route.getSelectedModel()));
+        return RoutingMetadata.build(
+                route,
+                route.getSelectedModel(),
+                List.of(route.getSelectedModel()),
+                false,
+                List.of(),
+                0L);
     }
 
     private Path write(String yaml) throws Exception {

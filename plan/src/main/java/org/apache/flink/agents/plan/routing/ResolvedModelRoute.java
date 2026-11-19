@@ -18,14 +18,12 @@
 package org.apache.flink.agents.plan.routing;
 
 import org.apache.flink.agents.api.chat.model.routing.Escalation;
-import org.apache.flink.agents.api.event.ModelRoutingEvent;
 
 import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -33,8 +31,8 @@ import java.util.Optional;
 /**
  * The outcome of route resolution for one chat request: the concrete model to call first, the
  * candidate set and fallback policy, and the decision facts (source, reason, score, metadata) that
- * feed the {@code model_routing} observability block. A plain (unrouted) request is the degenerate
- * {@link #direct(String)} route.
+ * {@link RoutingMetadata} turns into the {@code model_routing} observability block. A plain
+ * (unrouted) request is the degenerate {@link #direct(String)} route.
  */
 public final class ResolvedModelRoute {
     final String requestedModel;
@@ -206,112 +204,5 @@ public final class ResolvedModelRoute {
             return "chat:" + this.requestedModel + ":" + candidate;
         }
         return "chat";
-    }
-
-    /** Key of the hop list in the {@code model_routing} block. */
-    public static final String ESCALATIONS_KEY = "escalations";
-
-    /** Key of the discarded-attempt token total in the {@code model_routing} block. */
-    public static final String ESCALATED_TOKENS_KEY = "escalated_tokens";
-
-    /** Key of the escalation flag in the {@code model_routing} block. */
-    public static final String ESCALATION_ATTEMPTED_KEY = "escalation_attempted";
-
-    /** The {@code model_routing} extra-args block stamped on the loop's final response. */
-    public Map<String, Object> buildResponseMetadata(String finalModel, List<String> triedModels) {
-        return buildResponseMetadata(
-                finalModel, triedModels, !finalModel.equals(this.selectedModel), List.of(), 0L);
-    }
-
-    /**
-     * The {@code model_routing} block with the escalation facts: {@code fallbackAttempted} is an
-     * actual fallback attempt (a candidate answered after another failed), {@code hops} the
-     * escalations taken (each a map with {@code from}, {@code to}, {@code signal}, {@code reason}
-     * and optional {@code score}) and {@code escalatedTokens} the tokens of the discarded attempts.
-     * {@code decision_source} records the last step that changed the model.
-     */
-    public Map<String, Object> buildResponseMetadata(
-            String finalModel,
-            List<String> triedModels,
-            boolean fallbackAttempted,
-            List<Map<String, Object>> hops,
-            long escalatedTokens) {
-        List<String> fallbackModelsTried = new ArrayList<>();
-        List<String> escalatedTo = new ArrayList<>();
-        for (Map<String, Object> hop : hops) {
-            escalatedTo.add(String.valueOf(hop.get("to")));
-        }
-        for (int i = 1; i < triedModels.size(); i++) {
-            if (!escalatedTo.contains(triedModels.get(i))) {
-                fallbackModelsTried.add(triedModels.get(i));
-            }
-        }
-        Map<String, Object> routing = new LinkedHashMap<>();
-        routing.put("router", this.requestedModel);
-        routing.put("selected_model", this.selectedModel);
-        routing.put("final_model", finalModel);
-        routing.put("candidates", new ArrayList<>(this.candidates));
-        // The last step that changed the model: an escalation whose target answered, else the
-        // fallback that stepped in after a failure, else the routing decision.
-        String source = this.decisionSource;
-        if (escalatedTo.contains(finalModel)) {
-            source = ModelRoutingEvent.SOURCE_ESCALATION;
-        } else if (fallbackAttempted) {
-            source = ModelRoutingEvent.SOURCE_FALLBACK;
-        }
-        routing.put(ModelRoutingEvent.DECISION_SOURCE_KEY, source);
-        routing.put("fallback_enabled", this.fallbackEnabled);
-        routing.put("fallback_attempted", fallbackAttempted);
-        routing.put("fallback_models_tried", fallbackModelsTried);
-        routing.put(ESCALATION_ATTEMPTED_KEY, !hops.isEmpty());
-        routing.put(ESCALATIONS_KEY, new ArrayList<>(hops));
-        routing.put(ESCALATED_TOKENS_KEY, escalatedTokens);
-        routing.put("metadata", new LinkedHashMap<>(this.metadata));
-        if (this.reason != null) {
-            routing.put("reason", this.reason);
-        }
-        if (this.score != null) {
-            routing.put("score", this.score);
-        }
-        return routing;
-    }
-
-    /**
-     * Folds the hops of a later round into the block parked when a tiered request started its tool
-     * loop: the final model, the appended hop list, the token total and the source.
-     */
-    @SuppressWarnings("unchecked")
-    public static Map<String, Object> mergeEscalations(
-            Map<String, Object> parked,
-            String finalModel,
-            List<Map<String, Object>> hops,
-            long escalatedTokens) {
-        Map<String, Object> routing = new LinkedHashMap<>(parked);
-        routing.put("final_model", finalModel);
-        List<Map<String, Object>> all = new ArrayList<>();
-        Object existing = parked.get(ESCALATIONS_KEY);
-        if (existing instanceof List) {
-            all.addAll((List<Map<String, Object>>) existing);
-        }
-        all.addAll(hops);
-        routing.put(ESCALATIONS_KEY, all);
-        routing.put(ESCALATION_ATTEMPTED_KEY, !all.isEmpty());
-        Object tokens = parked.get(ESCALATED_TOKENS_KEY);
-        long total = tokens instanceof Number ? ((Number) tokens).longValue() : 0L;
-        routing.put(ESCALATED_TOKENS_KEY, total + escalatedTokens);
-        if (!hops.isEmpty()) {
-            routing.put(ModelRoutingEvent.DECISION_SOURCE_KEY, ModelRoutingEvent.SOURCE_ESCALATION);
-        }
-        return routing;
-    }
-
-    /** Hops already recorded in a parked block. */
-    @SuppressWarnings("unchecked")
-    public static int recordedEscalations(@Nullable Map<String, Object> parked) {
-        if (parked == null) {
-            return 0;
-        }
-        Object existing = parked.get(ESCALATIONS_KEY);
-        return existing instanceof List ? ((List<Object>) existing).size() : 0;
     }
 }

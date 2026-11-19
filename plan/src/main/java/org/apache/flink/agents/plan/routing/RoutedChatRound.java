@@ -38,7 +38,6 @@ import javax.annotation.Nullable;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -56,29 +55,36 @@ import java.util.UUID;
  * block are produced here. {@code ChatModelAction} resolves the route, runs the round and processes
  * the accepted answer; it never sees the individual attempts.
  *
- * <p>The block is observability-only and needed once, on the final response. A round whose answer
- * starts or continues a tool loop parks it in sensory memory, keyed by the initial request id, and
- * the round that produces the final response takes it ({@link Accepted#parkForToolRound} and {@link
- * Accepted#finish}). A tool round of a tiered request keeps the escalation policy in force ({@link
- * #continuedRoute}) and folds its hops into the parked block.
+ * <p>The block is attached once, to the final response. {@code ChatModelAction} decides what the
+ * accepted answer means and calls back: when the answer starts or continues a tool loop, {@link
+ * #saveRoutingMetadata} keeps the block in sensory memory, keyed by the initial request id; when it
+ * completes the request, {@link #getAndClearRoutingMetadata} hands the block back. The saved block
+ * is also what a tool round is routed from: {@link #continuedRoute} reads the router and the hops
+ * already taken from it, so a tiered request keeps its escalation policy and folds its new hops
+ * into the block. {@link RoutingMetadata} assembles and stores the block; {@link
+ * ResolvedModelRoute} carries the route.
  */
 public final class RoutedChatRound {
 
     private static final Logger LOG = LoggerFactory.getLogger(RoutedChatRound.class);
 
-    /** Sensory-memory key of the parked {@code model_routing} blocks, by initial request id. */
-    static final String ROUTING_METADATA_CONTEXT = "_ROUTING_METADATA_CONTEXT";
-
     private RoutedChatRound() {}
 
-    /** The accepted attempt of a round, with the routing block that belongs to the request. */
+    /** The accepted attempt of a round and the routing block as of that round. Plain data. */
     public static final class Accepted {
-        private final UUID requestId;
+
+        /** The initial request the round belongs to; the routing block is saved under it. */
+        public final UUID requestId;
 
         /** The attempt whose answer was accepted: model, response and retry statistics. */
         public final ChatModelInvoker.ChatAttemptResult attempt;
 
-        @Nullable private final Map<String, Object> routingMetadata;
+        /**
+         * The {@code model_routing} block as of this round, or null when the round has none of its
+         * own: a request that never went through a router, or a tool round of a request whose
+         * router declares no tiers, for which the block saved by the initial round stands.
+         */
+        @Nullable public final Map<String, Object> routingMetadata;
 
         Accepted(
                 UUID requestId,
@@ -87,26 +93,6 @@ public final class RoutedChatRound {
             this.requestId = requestId;
             this.attempt = attempt;
             this.routingMetadata = routingMetadata;
-        }
-
-        /**
-         * The answer starts or continues a tool loop: the block waits for the final response
-         * instead of being stamped on intermediate messages and copied through every tool round.
-         */
-        public void parkForToolRound(MemoryObject sensoryMemory) throws Exception {
-            if (routingMetadata != null) {
-                park(sensoryMemory, requestId, routingMetadata);
-            }
-        }
-
-        /**
-         * The answer completes the request: the block to attach to the response, or null when the
-         * request never went through a router. Removes whatever the request had parked.
-         */
-        @Nullable
-        public Map<String, Object> finish(MemoryObject sensoryMemory) throws Exception {
-            Map<String, Object> parked = take(sensoryMemory, requestId);
-            return routingMetadata != null ? routingMetadata : parked;
         }
     }
 
@@ -124,7 +110,7 @@ public final class RoutedChatRound {
      * Runs one round over the route's candidates.
      *
      * @throws RoundFailed when every reachable candidate failed, when a quality signal could not
-     *     judge the round, or when every tier answered and was rejected; the request's parked block
+     *     judge the round, or when every tier answered and was rejected; the request's saved block
      *     has been removed when it is thrown
      */
     public static Accepted run(
@@ -205,7 +191,7 @@ public final class RoutedChatRound {
                     } catch (ModelRoutingResolver.RoutingFailure e) {
                         // A signal that cannot judge the round (verifier out of retries, custom
                         // signal threw) fails the logical request, like a failed routing decision.
-                        take(ctx.getSensoryMemory(), requestId);
+                        RoutingMetadata.take(ctx.getSensoryMemory(), requestId);
                         throw new RoundFailed(e);
                     }
                 }
@@ -239,7 +225,7 @@ public final class RoutedChatRound {
                         // would recur on every tier, so the request fails, as it does when a
                         // signal cannot judge the round.
                         CancellationUtils.rethrowIfCancellation(e);
-                        take(ctx.getSensoryMemory(), requestId);
+                        RoutingMetadata.take(ctx.getSensoryMemory(), requestId);
                         throw new RoundFailed(e);
                     }
                 }
@@ -300,22 +286,24 @@ public final class RoutedChatRound {
                 }
 
                 // The block of a routed initial round is built here; a tool round of a tiered
-                // request folds its hops into the block the initial round parked.
+                // request folds its hops into the block the initial round saved.
                 Map<String, Object> routingMetadata = null;
                 if (route.isRouter()) {
                     routingMetadata =
-                            route.buildResponseMetadata(
+                            RoutingMetadata.build(
+                                    route,
                                     result.model,
                                     triedModels,
                                     fallbackAttempted,
                                     hops,
                                     escalatedTokens);
                 } else if (policy.isPresent()) {
-                    Map<String, Object> parked = peek(ctx.getSensoryMemory(), requestId);
-                    if (parked != null) {
+                    Map<String, Object> saved =
+                            RoutingMetadata.peek(ctx.getSensoryMemory(), requestId);
+                    if (saved != null) {
                         routingMetadata =
-                                ResolvedModelRoute.mergeEscalations(
-                                        parked, result.model, hops, escalatedTokens);
+                                RoutingMetadata.mergeEscalations(
+                                        saved, result.model, hops, escalatedTokens);
                     }
                 }
                 return new Accepted(requestId, result, routingMetadata);
@@ -350,8 +338,8 @@ public final class RoutedChatRound {
                     lastError == null ? null : lastError.toString());
         }
         // The reasoning loop is over; a routed loop that dies mid-way must not leak its
-        // parked block before the failed logical request completes.
-        take(ctx.getSensoryMemory(), requestId);
+        // saved block before the failed logical request completes.
+        RoutingMetadata.take(ctx.getSensoryMemory(), requestId);
         throw new RoundFailed(
                 lastError != null
                         ? lastError
@@ -363,19 +351,42 @@ public final class RoutedChatRound {
     }
 
     /**
+     * The accepted answer starts or continues a tool loop: keeps the round's block for the final
+     * response instead of stamping it on intermediate messages and copying it through every tool
+     * round. A round without a block of its own leaves the saved one in place.
+     */
+    public static void saveRoutingMetadata(MemoryObject sensoryMemory, Accepted accepted)
+            throws Exception {
+        if (accepted.routingMetadata != null) {
+            RoutingMetadata.save(sensoryMemory, accepted.requestId, accepted.routingMetadata);
+        }
+    }
+
+    /**
+     * The accepted answer completes the request: the block to attach to the response, or null when
+     * the request never went through a router. Removes whatever the request had saved.
+     */
+    @Nullable
+    public static Map<String, Object> getAndClearRoutingMetadata(
+            MemoryObject sensoryMemory, Accepted accepted) throws Exception {
+        Map<String, Object> ofThisRound = accepted.routingMetadata;
+        Map<String, Object> saved = RoutingMetadata.take(sensoryMemory, accepted.requestId);
+        return ofThisRound != null ? ofThisRound : saved;
+    }
+
+    /**
      * The route of a tool round: the already-selected model, with the router's escalation policy
      * still in force when the initial request was routed through a tiered router. Tool rounds never
      * re-route and never fall back; the policy is the one thing that can still move the request.
+     * The router's name and the hops already taken are read from the block the earlier round saved;
+     * a request with no saved block continues as a direct one.
      */
     public static ResolvedModelRoute continuedRoute(
             MemoryObject sensoryMemory, UUID requestId, String model, RunnerContext ctx)
             throws Exception {
-        Map<String, Object> parked = peek(sensoryMemory, requestId);
-        if (parked == null || !(parked.get("router") instanceof String)) {
-            return ResolvedModelRoute.direct(model);
-        }
-        String router = (String) parked.get("router");
-        if (!ctx.hasResource(router, ResourceType.MODEL_ROUTER)) {
+        Map<String, Object> saved = RoutingMetadata.peek(sensoryMemory, requestId);
+        String router = RoutingMetadata.routerOf(saved);
+        if (router == null || !ctx.hasResource(router, ResourceType.MODEL_ROUTER)) {
             return ResolvedModelRoute.direct(model);
         }
         ModelRouter resolved = (ModelRouter) ctx.getResource(router, ResourceType.MODEL_ROUTER);
@@ -388,7 +399,7 @@ public final class RoutedChatRound {
                 resolved.getCandidateNames(),
                 resolved.isFallbackEnabled(),
                 resolved.getEscalation().get(),
-                ResolvedModelRoute.recordedEscalations(parked));
+                RoutingMetadata.recordedEscalations(saved));
     }
 
     /** Prompt plus completion tokens of a discarded attempt, 0 when the provider reported none. */
@@ -421,47 +432,5 @@ public final class RoutedChatRound {
             metrics.getCounter("routingEscalationCount").inc();
             metrics.getCounter("routingEscalatedTokens").inc(discardedTokens);
         }
-    }
-
-    /** Parks the request's block; replaces the one parked by an earlier round. */
-    @SuppressWarnings("unchecked")
-    private static void park(MemoryObject sensoryMemory, UUID requestId, Map<String, Object> block)
-            throws Exception {
-        Map<UUID, Object> context;
-        if (sensoryMemory.isExist(ROUTING_METADATA_CONTEXT)) {
-            context = (Map<UUID, Object>) sensoryMemory.get(ROUTING_METADATA_CONTEXT).getValue();
-        } else {
-            context = new HashMap<>();
-        }
-        context.put(requestId, block);
-        sensoryMemory.set(ROUTING_METADATA_CONTEXT, context);
-    }
-
-    @SuppressWarnings("unchecked")
-    @Nullable
-    private static Map<String, Object> peek(MemoryObject sensoryMemory, UUID requestId)
-            throws Exception {
-        if (!sensoryMemory.isExist(ROUTING_METADATA_CONTEXT)) {
-            return null;
-        }
-        Map<UUID, Object> context =
-                (Map<UUID, Object>) sensoryMemory.get(ROUTING_METADATA_CONTEXT).getValue();
-        return (Map<String, Object>) context.get(requestId);
-    }
-
-    @SuppressWarnings("unchecked")
-    @Nullable
-    private static Map<String, Object> take(MemoryObject sensoryMemory, UUID requestId)
-            throws Exception {
-        if (!sensoryMemory.isExist(ROUTING_METADATA_CONTEXT)) {
-            return null;
-        }
-        Map<UUID, Object> context =
-                (Map<UUID, Object>) sensoryMemory.get(ROUTING_METADATA_CONTEXT).getValue();
-        Map<String, Object> block = (Map<String, Object>) context.remove(requestId);
-        if (block != null) {
-            sensoryMemory.set(ROUTING_METADATA_CONTEXT, context);
-        }
-        return block;
     }
 }

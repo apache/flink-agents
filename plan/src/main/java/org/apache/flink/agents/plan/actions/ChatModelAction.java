@@ -80,7 +80,7 @@ import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
  *       decision and the chat call re-execute together on recovery, which is self-consistent but
  *       re-derives the decision.
  *   <li><b>Once per reasoning loop</b> — the selected concrete model is saved in the tool-request
- *       context and reused by tool rounds with no re-routing; {@link RoutedChatRound} parks the
+ *       context and reused by tool rounds with no re-routing; {@link RoutedChatRound} keeps the
  *       routing metadata block once, keyed by the initial request, and hands it back for the loop's
  *       final response.
  *   <li><b>Fallback and escalation over retries</b> — {@link RoutedChatRound#run} tries the
@@ -89,9 +89,9 @@ import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
  *       is enabled; an answer a quality signal rejects is discarded and the request moves to the
  *       next tier.
  *   <li><b>Observably</b> — a {@link ModelRoutingEvent} records the decision (and further ones for
- *       fallback and escalation outcomes); {@link ResolvedModelRoute#buildResponseMetadata}
- *       supplies the {@code model_routing} extra args stamped on the final response; decision
- *       latency feeds {@code decision_ms} and the {@code routingDecisionLatencyMs} histogram.
+ *       fallback and escalation outcomes); {@link RoutedChatRound} supplies the {@code
+ *       model_routing} extra args stamped on the final response; decision latency feeds {@code
+ *       decision_ms} and the {@code routingDecisionLatencyMs} histogram.
  * </ol>
  *
  * <p>A request naming a plain chat model takes the pre-routing path unchanged, including the legacy
@@ -341,7 +341,7 @@ public class ChatModelAction {
         ChatModelInvoker.ChatAttemptResult result = accepted.attempt;
         if (!Objects.requireNonNull(result.response).getToolCalls().isEmpty()) {
             // The routing block is needed once, on the final response; it waits for the tool loop.
-            accepted.parkForToolRound(ctx.getSensoryMemory());
+            RoutedChatRound.saveRoutingMetadata(ctx.getSensoryMemory(), accepted);
             handleToolCalls(
                     result.response,
                     initialRequestId,
@@ -354,7 +354,8 @@ public class ChatModelAction {
                     ctx);
             return;
         }
-        Map<String, Object> routingMetadata = accepted.finish(ctx.getSensoryMemory());
+        Map<String, Object> routingMetadata =
+                RoutedChatRound.getAndClearRoutingMetadata(ctx.getSensoryMemory(), accepted);
         ChatRetryStats.Totals retries =
                 ChatRetryStats.totals(ctx.getSensoryMemory(), initialRequestId);
         clearRequestContext(ctx.getSensoryMemory(), initialRequestId);
@@ -511,8 +512,8 @@ public class ChatModelAction {
                         toolResponseMessages);
 
         // Tool rounds reuse the already-selected concrete model (no re-routing). If the initial
-        // request was routed, its metadata block waits in the routing layer's parked context and
-        // is attached when this loop produces its final response. A tiered request keeps its
+        // request was routed, its metadata block waits where the routing layer saved it and is
+        // attached when this loop produces its final response. A tiered request keeps its
         // escalation policy, so a weak round can still move it up a tier.
         chat(
                 initialRequestId,
