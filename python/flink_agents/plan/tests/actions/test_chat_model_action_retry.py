@@ -20,7 +20,7 @@
 import asyncio
 import time
 from typing import Any, Callable, Sequence
-from unittest.mock import ANY, MagicMock, call
+from unittest.mock import ANY, AsyncMock, MagicMock, call
 from uuid import uuid4
 
 import pytest
@@ -500,6 +500,44 @@ class TestChatModelActionRetry:
             "test-model",
             _LLM_METADATA,
         )
+
+    def test_chat_async_retry_wait_suspends_without_blocking(self) -> None:
+        """Async retry wait must suspend instead of sleeping on the caller."""
+        call_count = 0
+
+        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 1:
+                err_msg = "transient error"
+                raise RuntimeError(err_msg)
+            return _response_fixture(MessageRole.ASSISTANT, "success")
+
+        chat_model = MagicMock()
+        chat_model.chat = mock_chat
+        ctx, sent_events, _, _ = _create_mock_runner_context(
+            chat_model, max_retries=3, retry_wait_interval_sec=1, chat_async=True
+        )
+        ctx.suspend = AsyncMock()
+
+        start = time.monotonic()
+        asyncio.run(
+            chat(
+                uuid4(),
+                "test-model",
+                [ChatMessage.of(MessageRole.USER, "hi")],
+                {},
+                None,
+                ctx,
+            )
+        )
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 0.5
+        ctx.suspend.assert_awaited_with(1)
+        event = sent_events[0]
+        assert event.retry_count == 1
+        assert event.total_retry_wait_sec == 1
 
     def test_chat_exhausts_retries_and_returns_failure(self) -> None:
         """All retries exhausted: one correlated failure event is sent."""

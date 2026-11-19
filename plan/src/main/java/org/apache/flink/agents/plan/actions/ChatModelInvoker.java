@@ -354,7 +354,12 @@ public final class ChatModelInvoker {
                             currentWaitSec);
                     if (currentWaitSec > 0) {
                         try {
-                            Thread.sleep(currentWaitSec * 1000L);
+                            if (chatAsync) {
+                                // Yield the mailbox. Sync chat keeps the caller blocked.
+                                ctx.suspend(currentWaitSec * 1000L);
+                            } else {
+                                Thread.sleep(currentWaitSec * 1000L);
+                            }
                         } catch (InterruptedException ie) {
                             Thread.currentThread().interrupt();
                             throw ie;

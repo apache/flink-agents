@@ -387,6 +387,19 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
         }
     }
 
+    @Override
+    public void suspend(long durationMillis) throws Exception {
+        if (durationMillis <= 0) {
+            return;
+        }
+        mailboxThreadChecker.run();
+        if (continuationExecutor != null && continuationContext != null) {
+            continuationExecutor.suspend(continuationContext, durationMillis);
+            return;
+        }
+        Thread.sleep(durationMillis);
+    }
+
     /**
      * Awaits a {@link CompletableFuture} by yielding the continuation, without occupying an
      * async-pool worker. Falls back to blocking {@code get()} when continuations are unavailable.

@@ -701,7 +701,7 @@ async def _chat_with_retries(
     ) -> tuple[ChatResult | None, str | None]:
         return _invoke_finalization(chat_model, answer_text, output_schema)
 
-    def retry_after(attempt: int, error: Exception) -> bool:
+    async def retry_after(attempt: int, error: Exception) -> bool:
         """Account for a failed attempt; False once the budget is spent."""
         nonlocal actual_retry_count, total_wait_time_sec, final_error
         if attempt == num_retries:
@@ -720,7 +720,10 @@ async def _chat_with_retries(
             f"waiting {current_wait_sec} s."
         )
         if current_wait_sec > 0:
-            time.sleep(current_wait_sec)
+            if chat_async:
+                await ctx.suspend(current_wait_sec)
+            else:
+                time.sleep(current_wait_sec)
             total_wait_time_sec += current_wait_sec
         return True
 
@@ -759,7 +762,7 @@ async def _chat_with_retries(
             except (CancelledError, InterruptedError):
                 raise
             except Exception as e:
-                if retry_after(attempt, e):
+                if await retry_after(attempt, e):
                     continue
                 break
 
@@ -793,7 +796,7 @@ async def _chat_with_retries(
                 except (CancelledError, InterruptedError):
                     raise
                 except Exception as e:
-                    if retry_after(attempt, e):
+                    if await retry_after(attempt, e):
                         continue
                     break
             break
