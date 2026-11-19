@@ -39,9 +39,10 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.agents.plan.routing.ModelRoutingExecutionException;
+import org.apache.flink.agents.plan.routing.ModelRoutingExecutor;
 import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
 import org.apache.flink.agents.plan.routing.ResolvedModelRoute;
-import org.apache.flink.agents.plan.routing.RoutedChatRound;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.types.Row;
 import org.slf4j.Logger;
@@ -80,16 +81,17 @@ import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
  *       decision and the chat call re-execute together on recovery, which is self-consistent but
  *       re-derives the decision.
  *   <li><b>Once per reasoning loop</b> — the selected concrete model is saved in the tool-request
- *       context and reused by tool rounds with no re-routing; {@link RoutedChatRound} keeps the
- *       routing metadata block once, keyed by the initial request, and hands it back for the loop's
- *       final response.
- *   <li><b>Fallback and escalation over retries</b> — {@link RoutedChatRound#run} tries the
- *       selected model first (with its full retry budget, durable id {@code
+ *       context and reused by tool rounds with no re-routing; {@link ModelRoutingExecutor} keeps
+ *       the routing metadata block across the tool loop, keyed by the initial request: the next
+ *       round of a tiered request reads its router and hops from it, and the response that
+ *       completes the request carries it.
+ *   <li><b>Fallback and escalation over retries</b> — {@link ModelRoutingExecutor#execute} tries
+ *       the selected model first (with its full retry budget, durable id {@code
  *       "chat:<router>:<candidate>"}), then remaining candidates in declaration order if fallback
  *       is enabled; an answer a quality signal rejects is discarded and the request moves to the
  *       next tier.
  *   <li><b>Observably</b> — a {@link ModelRoutingEvent} records the decision (and further ones for
- *       fallback and escalation outcomes); {@link RoutedChatRound} supplies the {@code
+ *       fallback and escalation outcomes); {@link ModelRoutingExecutor} supplies the {@code
  *       model_routing} extra args stamped on the final response; decision latency feeds {@code
  *       decision_ms} and the {@code routingDecisionLatencyMs} histogram.
  * </ol>
@@ -329,19 +331,21 @@ public class ChatModelAction {
         // The routing layer owns the attempts: the strategy's pick, fallback after a failure,
         // escalation after a rejected answer, and the routing events and metrics. This action
         // processes the one answer it accepted.
-        RoutedChatRound.Accepted accepted;
+        ModelRoutingExecutor.Result routed;
         try {
-            accepted =
-                    RoutedChatRound.run(
+            routed =
+                    ModelRoutingExecutor.execute(
                             initialRequestId, route, messages, promptArgs, outputSchema, ctx);
-        } catch (RoutedChatRound.RoundFailed e) {
+        } catch (ModelRoutingExecutionException e) {
             sendFailure(initialRequestId, e.error, userContext, ctx);
             return;
         }
-        ChatModelInvoker.ChatAttemptResult result = accepted.attempt;
+        ChatModelInvoker.ChatAttemptResult result = routed.attempt;
         if (!Objects.requireNonNull(result.response).getToolCalls().isEmpty()) {
-            // The routing block is needed once, on the final response; it waits for the tool loop.
-            RoutedChatRound.saveRoutingMetadata(ctx.getSensoryMemory(), accepted);
+            // The routing block goes on the response that completes the request. Until then it
+            // is kept for the tool loop: the next round of a tiered request reads its router and
+            // hops from it.
+            ModelRoutingExecutor.saveRoutingMetadata(ctx.getSensoryMemory(), routed);
             handleToolCalls(
                     result.response,
                     initialRequestId,
@@ -355,7 +359,7 @@ public class ChatModelAction {
             return;
         }
         Map<String, Object> routingMetadata =
-                RoutedChatRound.getAndClearRoutingMetadata(ctx.getSensoryMemory(), accepted);
+                ModelRoutingExecutor.getAndClearRoutingMetadata(ctx.getSensoryMemory(), routed);
         ChatRetryStats.Totals retries =
                 ChatRetryStats.totals(ctx.getSensoryMemory(), initialRequestId);
         clearRequestContext(ctx.getSensoryMemory(), initialRequestId);
@@ -517,7 +521,8 @@ public class ChatModelAction {
         // escalation policy, so a weak round can still move it up a tier.
         chat(
                 initialRequestId,
-                RoutedChatRound.continuedRoute(sensoryMem, initialRequestId, model, ctx),
+                ModelRoutingExecutor.resolveRouteAfterToolCalls(
+                        sensoryMem, initialRequestId, model, ctx),
                 messages,
                 promptArgs,
                 outputSchema,

@@ -83,9 +83,9 @@ import java.util.UUID;
  * judges the answer the model writes once the tools have returned. Skipping a signal leaves the
  * custom signals' durable ids unchanged.
  */
-public final class EscalationGate {
+public final class EscalationEvaluator {
 
-    private static final Logger LOG = LoggerFactory.getLogger(EscalationGate.class);
+    private static final Logger LOG = LoggerFactory.getLogger(EscalationEvaluator.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
     /** Serializes tool arguments with object keys sorted, so equal arguments render alike. */
     private static final ObjectMapper CANONICAL =
@@ -104,29 +104,7 @@ public final class EscalationGate {
             "Does the ANSWER fully and correctly satisfy the REQUEST, with no missing steps,"
                     + " refusals, or placeholders? Judge the answer, not the question.";
 
-    private EscalationGate() {}
-
-    /** The decision to escalate: where to, which signal said so, and why. */
-    public static final class Outcome {
-        public final String fromTier;
-        public final String toTier;
-        public final String signal;
-        public final String reason;
-        @Nullable public final Double score;
-
-        Outcome(
-                String fromTier,
-                String toTier,
-                String signal,
-                String reason,
-                @Nullable Double score) {
-            this.fromTier = fromTier;
-            this.toTier = toTier;
-            this.signal = signal;
-            this.reason = reason;
-            this.score = score;
-        }
-    }
+    private EscalationEvaluator() {}
 
     /**
      * Decide whether the round produced by {@code candidate} should escalate.
@@ -135,7 +113,7 @@ public final class EscalationGate {
      * @throws Exception a failing signal (resource lookup, provider error after retries, a custom
      *     signal throwing) fails the request; cancellation propagates
      */
-    public static Optional<Outcome> check(
+    public static Optional<EscalationDecision> evaluate(
             Escalation policy,
             UUID requestId,
             String router,
@@ -173,7 +151,7 @@ public final class EscalationGate {
 
         QualityVerdict structural = structural(context, toolsKnown);
         if (structural.isEscalate()) {
-            return Optional.of(outcome(candidate, next, STRUCTURAL, structural));
+            return Optional.of(decision(candidate, next, STRUCTURAL, structural));
         }
         boolean toolOnly = isToolOnlyRound(response);
         int index = 0;
@@ -202,7 +180,7 @@ public final class EscalationGate {
             }
             index++;
             if (verdict.isEscalate()) {
-                return Optional.of(outcome(candidate, next, name, verdict));
+                return Optional.of(decision(candidate, next, name, verdict));
             }
         }
         return Optional.empty();
@@ -221,10 +199,10 @@ public final class EscalationGate {
 
     /**
      * The structural rejection of an answer that could not be shaped into the request's output
-     * schema. The schema is applied once {@link #check} has accepted the answer, so this check runs
-     * outside it; the caller reaches it only for a candidate that {@link #canEscalate}.
+     * schema. The schema is applied once {@link #evaluate} has accepted the answer, so this check
+     * runs outside it; the caller reaches it only for a candidate that {@link #canEscalate}.
      */
-    public static Outcome outputSchemaRejected(
+    public static EscalationDecision outputSchemaRejected(
             Escalation policy, String candidate, Exception error) {
         String next =
                 policy.nextTier(candidate)
@@ -232,7 +210,7 @@ public final class EscalationGate {
                                 () ->
                                         new IllegalStateException(
                                                 "'" + candidate + "' is the last tier"));
-        return new Outcome(
+        return new EscalationDecision(
                 candidate,
                 next,
                 STRUCTURAL,
@@ -250,8 +228,9 @@ public final class EscalationGate {
         return eol < 0 ? text : text.substring(0, eol).trim();
     }
 
-    private static Outcome outcome(String from, String to, String signal, QualityVerdict verdict) {
-        return new Outcome(from, to, signal, verdict.getReason(), verdict.getScore());
+    private static EscalationDecision decision(
+            String from, String to, String signal, QualityVerdict verdict) {
+        return new EscalationDecision(from, to, signal, verdict.getReason(), verdict.getScore());
     }
 
     // ---------------------------------------------------------------- structural checks
@@ -441,7 +420,7 @@ public final class EscalationGate {
 
     /**
      * Asks the signal's decision model whether the round's answer satisfies the request. Called for
-     * rounds that carry an answer; {@link #check} does not call it for a tool-only round.
+     * rounds that carry an answer; {@link #evaluate} does not call it for a tool-only round.
      */
     private static QualityVerdict decisionSignal(
             Escalation.Signal signal,

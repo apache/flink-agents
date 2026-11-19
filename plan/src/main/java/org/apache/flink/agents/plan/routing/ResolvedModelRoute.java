@@ -181,7 +181,7 @@ public final class ResolvedModelRoute {
     }
 
     /** Candidate order: the strategy's pick first, then declaration order if fallback is on. */
-    public List<String> attemptOrder() {
+    public List<String> getCandidateAttemptOrder() {
         List<String> order = new ArrayList<>();
         order.add(this.selectedModel);
         if (this.isRouter && this.fallbackEnabled) {

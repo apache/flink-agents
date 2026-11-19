@@ -58,8 +58,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-/** The built-in structural checks and the signal plumbing of {@link EscalationGate}. */
-class EscalationGateTest {
+/** The built-in structural checks and the signal plumbing of {@link EscalationEvaluator}. */
+class EscalationEvaluatorTest {
 
     /** A tool with a JSON schema requiring {@code q}; never called. */
     static final class LookupTool extends Tool {
@@ -151,10 +151,10 @@ class EscalationGateTest {
     private static final Escalation VERIFIED_TIERS =
             Escalation.tiers("small", "big").when(QualitySignals.decision("verifier", 0.7));
 
-    /** Runs the gate on a round answered by {@code small}, the first of two tiers. */
-    private static Optional<EscalationGate.Outcome> check(
+    /** Runs the evaluator on a round answered by {@code small}, the first of two tiers. */
+    private static Optional<EscalationDecision> evaluate(
             Escalation policy, ChatResult response, RunnerContext ctx) throws Exception {
-        return EscalationGate.check(
+        return EscalationEvaluator.evaluate(
                 policy,
                 UUID.randomUUID(),
                 "router",
@@ -188,7 +188,7 @@ class EscalationGateTest {
     @Test
     void aPlainAnswerPasses() {
         QualityVerdict verdict =
-                EscalationGate.structural(
+                EscalationEvaluator.structural(
                         context(
                                 List.of(ChatMessage.user("hi")),
                                 new ChatResult(ChatMessage.assistant("hello")),
@@ -199,7 +199,7 @@ class EscalationGateTest {
     @Test
     void emptyContentWithNoToolCallEscalates() {
         QualityVerdict verdict =
-                EscalationGate.structural(
+                EscalationEvaluator.structural(
                         context(
                                 List.of(ChatMessage.user("hi")),
                                 new ChatResult(ChatMessage.assistant("  ")),
@@ -211,7 +211,7 @@ class EscalationGateTest {
     @Test
     void aCallToAToolTheCandidateDoesNotHaveEscalates() {
         QualityVerdict verdict =
-                EscalationGate.structural(
+                EscalationEvaluator.structural(
                         context(
                                 List.of(ChatMessage.user("find it")),
                                 toolCall("search", Map.of("q", "x")),
@@ -223,7 +223,7 @@ class EscalationGateTest {
     @Test
     void argumentsThatFailTheToolSchemaEscalate() {
         QualityVerdict verdict =
-                EscalationGate.structural(
+                EscalationEvaluator.structural(
                         context(
                                 List.of(ChatMessage.user("find it")),
                                 toolCall("lookup", Map.of("query", "x")),
@@ -235,7 +235,7 @@ class EscalationGateTest {
     @Test
     void validArgumentsPassAndAnUnreadableSchemaIsNotHeldAgainstTheCandidate() {
         assertThat(
-                        EscalationGate.structural(
+                        EscalationEvaluator.structural(
                                         context(
                                                 List.of(ChatMessage.user("find it")),
                                                 toolCall("lookup", Map.of("q", "x")),
@@ -255,7 +255,7 @@ class EscalationGateTest {
                     }
                 };
         assertThat(
-                        EscalationGate.structural(
+                        EscalationEvaluator.structural(
                                         context(
                                                 List.of(ChatMessage.user("find it")),
                                                 toolCall("lookup", Map.of("anything", 1)),
@@ -273,14 +273,14 @@ class EscalationGateTest {
                         List.of(ChatMessage.user("find it")),
                         toolCall("search", Map.of("q", "x")),
                         List.of());
-        assertThat(EscalationGate.structural(unknownTool, false).isEscalate()).isFalse();
-        assertThat(EscalationGate.structural(unknownTool, true).isEscalate()).isTrue();
+        assertThat(EscalationEvaluator.structural(unknownTool, false).isEscalate()).isFalse();
+        assertThat(EscalationEvaluator.structural(unknownTool, true).isEscalate()).isTrue();
         QualityContext empty =
                 context(
                         List.of(ChatMessage.user("hi")),
                         new ChatResult(ChatMessage.assistant("")),
                         List.of());
-        assertThat(EscalationGate.structural(empty, false).isEscalate()).isTrue();
+        assertThat(EscalationEvaluator.structural(empty, false).isEscalate()).isTrue();
     }
 
     @Test
@@ -300,7 +300,7 @@ class EscalationGateTest {
                                                         .TextBlock("nothing")),
                                         false)));
         QualityVerdict repeated =
-                EscalationGate.structural(
+                EscalationEvaluator.structural(
                         context(
                                 messages,
                                 toolCall("lookup", Map.of("q", "x")),
@@ -309,7 +309,7 @@ class EscalationGateTest {
         assertThat(repeated.getReason()).contains("repeated with identical arguments");
         // Different arguments are a new attempt, not a loop.
         QualityVerdict different =
-                EscalationGate.structural(
+                EscalationEvaluator.structural(
                         context(
                                 messages,
                                 toolCall("lookup", Map.of("q", "y")),
@@ -320,7 +320,7 @@ class EscalationGateTest {
     @Test
     void theVerifierInputCarriesTheConversationAndTheAnswer() {
         String text =
-                EscalationGate.renderForVerifier(
+                EscalationEvaluator.renderForVerifier(
                         context(
                                 List.of(ChatMessage.user("write sql")),
                                 new ChatResult(ChatMessage.assistant("SELECT 1")),
@@ -335,19 +335,22 @@ class EscalationGateTest {
     void aStoredSignalOutcomeSurvivesJsonWithOrWithoutAVerdict() throws Exception {
         com.fasterxml.jackson.databind.ObjectMapper mapper =
                 new com.fasterxml.jackson.databind.ObjectMapper();
-        EscalationGate.SignalOutcome escalated =
-                new EscalationGate.SignalOutcome(QualityVerdict.escalate("too short", 0.2), null);
+        EscalationEvaluator.SignalOutcome escalated =
+                new EscalationEvaluator.SignalOutcome(
+                        QualityVerdict.escalate("too short", 0.2), null);
         String json = mapper.writeValueAsString(escalated);
-        EscalationGate.SignalOutcome back =
-                mapper.readValue(json, EscalationGate.SignalOutcome.class);
+        EscalationEvaluator.SignalOutcome back =
+                mapper.readValue(json, EscalationEvaluator.SignalOutcome.class);
         assertThat(mapper.writeValueAsString(back)).isEqualTo(json);
         assertThat(json).contains("\"too short\"").contains("0.2");
 
-        EscalationGate.SignalOutcome failed = new EscalationGate.SignalOutcome(null, "exploded");
+        EscalationEvaluator.SignalOutcome failed =
+                new EscalationEvaluator.SignalOutcome(null, "exploded");
         String failedJson = mapper.writeValueAsString(failed);
         assertThat(
                         mapper.writeValueAsString(
-                                mapper.readValue(failedJson, EscalationGate.SignalOutcome.class)))
+                                mapper.readValue(
+                                        failedJson, EscalationEvaluator.SignalOutcome.class)))
                 .isEqualTo(failedJson);
         assertThat(failedJson).contains("\"exploded\"");
     }
@@ -355,15 +358,16 @@ class EscalationGateTest {
     @Test
     void customSignalsAreInstantiatedWithTheirArgumentsOrTheNoArgConstructor() throws Exception {
         QualitySignal withArgs =
-                EscalationGate.instantiate(
+                EscalationEvaluator.instantiate(
                         QualitySignals.custom(
                                 ThresholdSignal.class.getName(), Map.of("min_chars", 5)));
         assertThat(((ThresholdSignal) withArgs).minChars).isEqualTo(5);
-        QualitySignal noArgs = EscalationGate.instantiate(QualitySignals.custom(AcceptAll.class));
+        QualitySignal noArgs =
+                EscalationEvaluator.instantiate(QualitySignals.custom(AcceptAll.class));
         assertThat(noArgs).isInstanceOf(AcceptAll.class);
         assertThatThrownBy(
                         () ->
-                                EscalationGate.instantiate(
+                                EscalationEvaluator.instantiate(
                                         QualitySignals.custom(String.class.getName(), Map.of())))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("does not implement QualitySignal");
@@ -384,11 +388,11 @@ class EscalationGateTest {
                         ChatMessage.user("please run that again"));
         // The user asked for the same call again: a new turn, not a loop.
         assertThat(
-                        EscalationGate.repeatsPreviousRound(
+                        EscalationEvaluator.repeatsPreviousRound(
                                 messages, toolCall("lookup", Map.of("q", "x")).getToolCalls()))
                 .isFalse();
         QualityVerdict verdict =
-                EscalationGate.structural(
+                EscalationEvaluator.structural(
                         context(
                                 messages,
                                 toolCall("lookup", Map.of("q", "x")),
@@ -420,14 +424,14 @@ class EscalationGateTest {
                                         "call-0", List.of(new TextBlock("nothing")), false)));
         // The tool checks are off here, so the verdict comes from the repeat check alone.
         QualityVerdict verdict =
-                EscalationGate.structural(
+                EscalationEvaluator.structural(
                         context(messages, toolCall("lookup", reordered), List.of()), false);
         assertThat(verdict.isEscalate()).isTrue();
         assertThat(verdict.getReason()).contains("repeated with identical arguments");
         Map<String, Object> changed = new LinkedHashMap<>(reordered);
         changed.put("q", "y");
         assertThat(
-                        EscalationGate.structural(
+                        EscalationEvaluator.structural(
                                         context(messages, toolCall("lookup", changed), List.of()),
                                         false)
                                 .isEscalate())
@@ -440,14 +444,17 @@ class EscalationGateTest {
         ChatResult picture =
                 new ChatResult(
                         ChatMessage.assistant(List.of(ImageBlock.fromBase64("image/png", "aGk="))));
-        assertThat(EscalationGate.structural(context(messages, picture, List.of())).isEscalate())
+        assertThat(
+                        EscalationEvaluator.structural(context(messages, picture, List.of()))
+                                .isEscalate())
                 .isFalse();
-        assertThat(EscalationGate.renderForVerifier(context(messages, picture, List.of())))
+        assertThat(EscalationEvaluator.renderForVerifier(context(messages, picture, List.of())))
                 .contains("\nANSWER:\n")
                 .contains("[image attached]");
         ChatResult thinking =
                 new ChatResult(ChatMessage.assistant(List.of(new ReasoningBlock("let me see"))));
-        QualityVerdict verdict = EscalationGate.structural(context(messages, thinking, List.of()));
+        QualityVerdict verdict =
+                EscalationEvaluator.structural(context(messages, thinking, List.of()));
         assertThat(verdict.isEscalate()).isTrue();
         assertThat(verdict.getReason()).contains("empty response");
     }
@@ -465,7 +472,7 @@ class EscalationGateTest {
                         Map.of("input", "Hello"),
                         new ChatResult(ChatMessage.assistant("Bonjour")),
                         List.of());
-        assertThat(EscalationGate.renderForVerifier(context))
+        assertThat(EscalationEvaluator.renderForVerifier(context))
                 .startsWith("REQUEST:\nRequest arguments:\ninput: Hello")
                 .contains("\nANSWER:\nBonjour");
         // System text alone is not the request either; the arguments follow it on their own line.
@@ -480,44 +487,49 @@ class EscalationGateTest {
                         Map.of("input", "Hello"),
                         new ChatResult(ChatMessage.assistant("Bonjour")),
                         List.of());
-        assertThat(EscalationGate.renderForVerifier(withSystem))
+        assertThat(EscalationEvaluator.renderForVerifier(withSystem))
                 .contains("SYSTEM: You translate.\nRequest arguments:\ninput: Hello");
     }
 
     @Test
     void aRoundMadeOnlyOfToolCallsIsToolOnlyUnlessItAlsoCarriesTextOrMedia() {
-        assertThat(EscalationGate.isToolOnlyRound(toolCall("lookup", Map.of("q", "x")))).isTrue();
+        assertThat(EscalationEvaluator.isToolOnlyRound(toolCall("lookup", Map.of("q", "x"))))
+                .isTrue();
         ChatResult reasoningAndCall =
                 new ChatResult(
                         ChatMessage.assistant(
                                 List.of(
                                         new ReasoningBlock("I should look it up"),
                                         new ToolCallBlock("call-1", "lookup", Map.of("q", "x")))));
-        assertThat(EscalationGate.isToolOnlyRound(reasoningAndCall)).isTrue();
+        assertThat(EscalationEvaluator.isToolOnlyRound(reasoningAndCall)).isTrue();
         ChatResult textAndCall =
                 new ChatResult(
                         ChatMessage.assistant(
                                 List.of(
                                         new TextBlock("Let me check."),
                                         new ToolCallBlock("call-1", "lookup", Map.of("q", "x")))));
-        assertThat(EscalationGate.isToolOnlyRound(textAndCall)).isFalse();
+        assertThat(EscalationEvaluator.isToolOnlyRound(textAndCall)).isFalse();
         ChatResult blankTextAndCall =
                 new ChatResult(
                         ChatMessage.assistant(
                                 List.of(
                                         new TextBlock("  "),
                                         new ToolCallBlock("call-1", "lookup", Map.of("q", "x")))));
-        assertThat(EscalationGate.isToolOnlyRound(blankTextAndCall)).isTrue();
+        assertThat(EscalationEvaluator.isToolOnlyRound(blankTextAndCall)).isTrue();
         ChatResult imageAndCall =
                 new ChatResult(
                         ChatMessage.assistant(
                                 List.of(
                                         ImageBlock.fromBase64("image/png", "aGk="),
                                         new ToolCallBlock("call-1", "lookup", Map.of("q", "x")))));
-        assertThat(EscalationGate.isToolOnlyRound(imageAndCall)).isFalse();
-        assertThat(EscalationGate.isToolOnlyRound(new ChatResult(ChatMessage.assistant("done"))))
+        assertThat(EscalationEvaluator.isToolOnlyRound(imageAndCall)).isFalse();
+        assertThat(
+                        EscalationEvaluator.isToolOnlyRound(
+                                new ChatResult(ChatMessage.assistant("done"))))
                 .isFalse();
-        assertThat(EscalationGate.isToolOnlyRound(new ChatResult(ChatMessage.assistant(List.of()))))
+        assertThat(
+                        EscalationEvaluator.isToolOnlyRound(
+                                new ChatResult(ChatMessage.assistant(List.of()))))
                 .isFalse();
     }
 
@@ -527,9 +539,9 @@ class EscalationGateTest {
         // valid arguments) and carries no answer to judge: the gate accepts it without touching
         // the runner context, so the verifier is neither resolved nor called.
         RunnerContext ctx = mock(RunnerContext.class);
-        Optional<EscalationGate.Outcome> outcome =
-                check(VERIFIED_TIERS, toolCall("lookup", Map.of("q", "x")), ctx);
-        assertThat(outcome).isEmpty();
+        Optional<EscalationDecision> decision =
+                evaluate(VERIFIED_TIERS, toolCall("lookup", Map.of("q", "x")), ctx);
+        assertThat(decision).isEmpty();
         verifyNoInteractions(ctx);
 
         // Reasoning beside the calls does not make the round an answer either.
@@ -539,7 +551,7 @@ class EscalationGateTest {
                                 List.of(
                                         new ReasoningBlock("I should look it up"),
                                         new ToolCallBlock("call-1", "lookup", Map.of("q", "x")))));
-        assertThat(check(VERIFIED_TIERS, reasoningAndCall, ctx)).isEmpty();
+        assertThat(evaluate(VERIFIED_TIERS, reasoningAndCall, ctx)).isEmpty();
         verifyNoInteractions(ctx);
     }
 
@@ -556,7 +568,7 @@ class EscalationGateTest {
                                 List.of(
                                         new TextBlock("Let me check."),
                                         new ToolCallBlock("call-1", "lookup", Map.of("q", "x")))));
-        assertThatThrownBy(() -> check(VERIFIED_TIERS, textAndCall, ctx))
+        assertThatThrownBy(() -> evaluate(VERIFIED_TIERS, textAndCall, ctx))
                 .isInstanceOf(ModelRoutingResolver.RoutingFailure.class)
                 .hasMessageContaining("decision model 'verifier'")
                 .hasMessageContaining("could not be resolved")
@@ -569,10 +581,10 @@ class EscalationGateTest {
         // Skipping the decision model does not skip the rest: an unknown tool is still rejected,
         // and a custom signal declared after the decision signal still runs under its own id.
         RunnerContext ctx = mock(RunnerContext.class);
-        Optional<EscalationGate.Outcome> unknown =
-                check(VERIFIED_TIERS, toolCall("search", Map.of("q", "x")), ctx);
+        Optional<EscalationDecision> unknown =
+                evaluate(VERIFIED_TIERS, toolCall("search", Map.of("q", "x")), ctx);
         assertThat(unknown).isPresent();
-        assertThat(unknown.get().signal).isEqualTo(EscalationGate.STRUCTURAL);
+        assertThat(unknown.get().signal).isEqualTo(EscalationEvaluator.STRUCTURAL);
         assertThat(unknown.get().reason).contains("'search'").contains("does not have");
         verifyNoInteractions(ctx);
 
@@ -586,7 +598,7 @@ class EscalationGateTest {
                             durableIds.add(callable.getId());
                             return callable.call();
                         });
-        assertThat(check(withCustom, toolCall("lookup", Map.of("q", "x")), ctx)).isEmpty();
+        assertThat(evaluate(withCustom, toolCall("lookup", Map.of("q", "x")), ctx)).isEmpty();
         assertThat(CountingSignal.EVALUATIONS).hasValue(1);
         // The custom signal is the second declared signal, so its durable id keeps index 1.
         assertThat(durableIds).containsExactly("escalate:router:small:1");

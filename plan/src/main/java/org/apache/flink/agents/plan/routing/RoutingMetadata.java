@@ -37,7 +37,7 @@ import java.util.UUID;
  * tool loop keeps it in sensory memory, keyed by the initial request id, instead of stamping it on
  * intermediate messages. While it waits there it is also the request's routing state: the next
  * round reads the router's name and the hops already taken from it, to keep the escalation policy
- * in force. {@link RoutedChatRound} produces and stores the block through this class; {@link
+ * in force. {@link ModelRoutingExecutor} produces and stores the block through this class; {@link
  * ResolvedModelRoute} only carries the facts it is built from.
  */
 public final class RoutingMetadata {
@@ -61,22 +61,22 @@ public final class RoutingMetadata {
 
     /**
      * The block of a round: {@code fallbackAttempted} is an actual fallback attempt (a candidate
-     * answered after another failed), {@code hops} the escalations taken (each a map with {@code
-     * from}, {@code to}, {@code signal}, {@code reason} and optional {@code score}) and {@code
-     * escalatedTokens} the tokens of the discarded attempts. {@code decision_source} records the
-     * last step that changed the model.
+     * answered after another failed), {@code escalationHistory} the escalations taken (each a map
+     * with {@code from}, {@code to}, {@code signal}, {@code reason} and optional {@code score}) and
+     * {@code escalatedTokens} the tokens of the discarded attempts. {@code decision_source} records
+     * the last step that changed the model.
      */
     public static Map<String, Object> build(
             ResolvedModelRoute route,
             String finalModel,
             List<String> triedModels,
             boolean fallbackAttempted,
-            List<Map<String, Object>> hops,
+            List<Map<String, Object>> escalationHistory,
             long escalatedTokens) {
         List<String> fallbackModelsTried = new ArrayList<>();
         List<String> escalatedTo = new ArrayList<>();
-        for (Map<String, Object> hop : hops) {
-            escalatedTo.add(String.valueOf(hop.get("to")));
+        for (Map<String, Object> record : escalationHistory) {
+            escalatedTo.add(String.valueOf(record.get("to")));
         }
         for (int i = 1; i < triedModels.size(); i++) {
             if (!escalatedTo.contains(triedModels.get(i))) {
@@ -100,8 +100,8 @@ public final class RoutingMetadata {
         routing.put("fallback_enabled", route.fallbackEnabled);
         routing.put("fallback_attempted", fallbackAttempted);
         routing.put("fallback_models_tried", fallbackModelsTried);
-        routing.put(ESCALATION_ATTEMPTED_KEY, !hops.isEmpty());
-        routing.put(ESCALATIONS_KEY, new ArrayList<>(hops));
+        routing.put(ESCALATION_ATTEMPTED_KEY, !escalationHistory.isEmpty());
+        routing.put(ESCALATIONS_KEY, new ArrayList<>(escalationHistory));
         routing.put(ESCALATED_TOKENS_KEY, escalatedTokens);
         routing.put("metadata", new LinkedHashMap<>(route.metadata));
         if (route.reason != null) {
@@ -121,7 +121,7 @@ public final class RoutingMetadata {
     public static Map<String, Object> mergeEscalations(
             Map<String, Object> saved,
             String finalModel,
-            List<Map<String, Object>> hops,
+            List<Map<String, Object>> escalationHistory,
             long escalatedTokens) {
         Map<String, Object> routing = new LinkedHashMap<>(saved);
         routing.put("final_model", finalModel);
@@ -130,13 +130,13 @@ public final class RoutingMetadata {
         if (existing instanceof List) {
             all.addAll((List<Map<String, Object>>) existing);
         }
-        all.addAll(hops);
+        all.addAll(escalationHistory);
         routing.put(ESCALATIONS_KEY, all);
         routing.put(ESCALATION_ATTEMPTED_KEY, !all.isEmpty());
         Object tokens = saved.get(ESCALATED_TOKENS_KEY);
         long total = tokens instanceof Number ? ((Number) tokens).longValue() : 0L;
         routing.put(ESCALATED_TOKENS_KEY, total + escalatedTokens);
-        if (!hops.isEmpty()) {
+        if (!escalationHistory.isEmpty()) {
             routing.put(ModelRoutingEvent.DECISION_SOURCE_KEY, ModelRoutingEvent.SOURCE_ESCALATION);
         }
         return routing;

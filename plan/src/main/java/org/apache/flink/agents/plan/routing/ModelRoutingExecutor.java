@@ -47,31 +47,31 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * One model round of a routed chat request: the attempts over the route's candidates until an
- * answer is accepted. The strategy's pick goes first. An attempt that fails after its retries falls
- * back to the next candidate the router allows; an answer a quality signal rejects is discarded,
- * before any of its tool calls runs, and the same conversation goes to the next tier, where the
- * request then stays. The routing events, the escalation metrics and the {@code model_routing}
- * block are produced here. {@code ChatModelAction} resolves the route, runs the round and processes
- * the accepted answer; it never sees the individual attempts.
+ * Executes one model round of a routed chat request: the attempts over the route's candidates until
+ * an answer is accepted. The strategy's pick goes first. An attempt that fails after its retries
+ * falls back to the next candidate the router allows; an answer a quality signal rejects is
+ * discarded, before any of its tool calls runs, and the same conversation goes to the next tier,
+ * where the request then stays. The routing events, the escalation metrics and the {@code
+ * model_routing} block are produced here. {@code ChatModelAction} resolves the route, runs the
+ * round and processes the accepted answer; it never sees the individual attempts.
  *
  * <p>The block is attached once, to the final response. {@code ChatModelAction} decides what the
  * accepted answer means and calls back: when the answer starts or continues a tool loop, {@link
  * #saveRoutingMetadata} keeps the block in sensory memory, keyed by the initial request id; when it
  * completes the request, {@link #getAndClearRoutingMetadata} hands the block back. The saved block
- * is also what a tool round is routed from: {@link #continuedRoute} reads the router and the hops
- * already taken from it, so a tiered request keeps its escalation policy and folds its new hops
- * into the block. {@link RoutingMetadata} assembles and stores the block; {@link
+ * is also what a tool round is routed from: {@link #resolveRouteAfterToolCalls} reads the router
+ * and the hops already taken from it, so a tiered request keeps its escalation policy and folds its
+ * new hops into the block. {@link RoutingMetadata} assembles and stores the block; {@link
  * ResolvedModelRoute} carries the route.
  */
-public final class RoutedChatRound {
+public final class ModelRoutingExecutor {
 
-    private static final Logger LOG = LoggerFactory.getLogger(RoutedChatRound.class);
+    private static final Logger LOG = LoggerFactory.getLogger(ModelRoutingExecutor.class);
 
-    private RoutedChatRound() {}
+    private ModelRoutingExecutor() {}
 
-    /** The accepted attempt of a round and the routing block as of that round. Plain data. */
-    public static final class Accepted {
+    /** What a round produced: the accepted attempt and the routing block as of that round. */
+    public static final class Result {
 
         /** The initial request the round belongs to; the routing block is saved under it. */
         public final UUID requestId;
@@ -86,7 +86,7 @@ public final class RoutedChatRound {
          */
         @Nullable public final Map<String, Object> routingMetadata;
 
-        Accepted(
+        Result(
                 UUID requestId,
                 ChatModelInvoker.ChatAttemptResult attempt,
                 @Nullable Map<String, Object> routingMetadata) {
@@ -96,24 +96,14 @@ public final class RoutedChatRound {
         }
     }
 
-    /** The round produced no accepted answer; {@link #error} is what the request fails with. */
-    public static final class RoundFailed extends Exception {
-        public final Exception error;
-
-        RoundFailed(Exception error) {
-            super(error.getMessage(), error);
-            this.error = error;
-        }
-    }
-
     /**
      * Runs one round over the route's candidates.
      *
-     * @throws RoundFailed when every reachable candidate failed, when a quality signal could not
-     *     judge the round, or when every tier answered and was rejected; the request's saved block
-     *     has been removed when it is thrown
+     * @throws ModelRoutingExecutionException when every reachable candidate failed, when a quality
+     *     signal could not judge the round, or when every tier answered and was rejected; the
+     *     request's saved block has been removed when it is thrown
      */
-    public static Accepted run(
+    public static Result execute(
             UUID requestId,
             ResolvedModelRoute route,
             List<ChatMessage> messages,
@@ -128,10 +118,10 @@ public final class RoutedChatRound {
         // Candidates whose answer a quality signal rejected this round: fallback skips them, since
         // they already answered the request.
         Set<String> rejected = new HashSet<>();
-        List<Map<String, Object>> hops = new ArrayList<>();
+        List<Map<String, Object>> escalationHistory = new ArrayList<>();
         long escalatedTokens = 0L;
         int escalations = route.getEscalationsSoFar();
-        Deque<String> pending = new ArrayDeque<>(route.attemptOrder());
+        Deque<String> pending = new ArrayDeque<>(route.getCandidateAttemptOrder());
         // viaFallback: the candidate about to answer was reached because the previous one failed
         // (drives the fallback event); fallbackAttempted: any failure fell through this round.
         boolean viaFallback = false;
@@ -153,7 +143,8 @@ public final class RoutedChatRound {
             // answer inside the attempt with its retries, as a direct request does.
             boolean gated =
                     policy.isPresent()
-                            && EscalationGate.canEscalate(policy.get(), candidate, escalations);
+                            && EscalationEvaluator.canEscalate(
+                                    policy.get(), candidate, escalations);
             long schemaDiscarded = 0L;
             try {
                 ChatModelInvoker.ChatAttemptResult result =
@@ -174,11 +165,11 @@ public final class RoutedChatRound {
                 // Quality gate: on a tier below the last one, an answer that fails a structural
                 // check or a declared signal is discarded before any of its tool calls runs, and
                 // the conversation so far goes to the next tier, where the request then stays.
-                Optional<EscalationGate.Outcome> escalate = Optional.empty();
+                Optional<EscalationDecision> escalate = Optional.empty();
                 if (policy.isPresent()) {
                     try {
                         escalate =
-                                EscalationGate.check(
+                                EscalationEvaluator.evaluate(
                                         policy.get(),
                                         requestId,
                                         route.getRequestedModel(),
@@ -192,7 +183,7 @@ public final class RoutedChatRound {
                         // A signal that cannot judge the round (verifier out of retries, custom
                         // signal threw) fails the logical request, like a failed routing decision.
                         RoutingMetadata.take(ctx.getSensoryMemory(), requestId);
-                        throw new RoundFailed(e);
+                        throw new ModelRoutingExecutionException(e);
                     }
                 }
                 if (escalate.isEmpty() && gated && outputSchema != null) {
@@ -218,7 +209,7 @@ public final class RoutedChatRound {
                         schemaDiscarded = discardedTokens(e.finalized);
                         escalate =
                                 Optional.of(
-                                        EscalationGate.outputSchemaRejected(
+                                        EscalationEvaluator.outputSchemaRejected(
                                                 policy.get(), candidate, e.cause));
                     } catch (Exception e) {
                         // Not the answer's fault (an unsupported schema type, a setup error): it
@@ -226,43 +217,43 @@ public final class RoutedChatRound {
                         // signal cannot judge the round.
                         CancellationUtils.rethrowIfCancellation(e);
                         RoutingMetadata.take(ctx.getSensoryMemory(), requestId);
-                        throw new RoundFailed(e);
+                        throw new ModelRoutingExecutionException(e);
                     }
                 }
                 if (escalate.isPresent()) {
-                    EscalationGate.Outcome outcome = escalate.get();
+                    EscalationDecision decision = escalate.get();
                     rejected.add(candidate);
                     escalations++;
                     long discarded = discardedTokens(result.response) + schemaDiscarded;
                     escalatedTokens += discarded;
-                    hops.add(hop(outcome, discarded));
+                    escalationHistory.add(buildEscalationRecord(decision, discarded));
                     recordEscalationMetrics(ctx, discarded);
                     Map<String, Object> eventMetadata = new LinkedHashMap<>();
-                    eventMetadata.put("signal", outcome.signal);
-                    eventMetadata.put("escalated_from", outcome.fromTier);
+                    eventMetadata.put("signal", decision.signal);
+                    eventMetadata.put("escalated_from", decision.fromTier);
                     eventMetadata.put("discarded_tokens", discarded);
                     ctx.sendEvent(
                             new ModelRoutingEvent(
                                     requestId,
                                     route.getRequestedModel(),
                                     route.getCandidates(),
-                                    outcome.toTier,
+                                    decision.toTier,
                                     ModelRoutingEvent.SOURCE_ESCALATION,
                                     route.isFallbackEnabled(),
-                                    outcome.reason,
-                                    outcome.score,
+                                    decision.reason,
+                                    decision.score,
                                     eventMetadata,
                                     null));
                     LOG.info(
                             "Chat request {} escalated from '{}' to '{}' on router '{}' ({}: {})",
                             requestId,
-                            outcome.fromTier,
-                            outcome.toTier,
+                            decision.fromTier,
+                            decision.toTier,
                             route.getRequestedModel(),
-                            outcome.signal,
-                            outcome.reason);
-                    pending.remove(outcome.toTier);
-                    pending.addFirst(outcome.toTier);
+                            decision.signal,
+                            decision.reason);
+                    pending.remove(decision.toTier);
+                    pending.addFirst(decision.toTier);
                     viaFallback = false;
                     continue;
                 }
@@ -295,7 +286,7 @@ public final class RoutedChatRound {
                                     result.model,
                                     triedModels,
                                     fallbackAttempted,
-                                    hops,
+                                    escalationHistory,
                                     escalatedTokens);
                 } else if (policy.isPresent()) {
                     Map<String, Object> saved =
@@ -303,10 +294,10 @@ public final class RoutedChatRound {
                     if (saved != null) {
                         routingMetadata =
                                 RoutingMetadata.mergeEscalations(
-                                        saved, result.model, hops, escalatedTokens);
+                                        saved, result.model, escalationHistory, escalatedTokens);
                     }
                 }
-                return new Accepted(requestId, result, routingMetadata);
+                return new Result(requestId, result, routingMetadata);
             } catch (ChatModelInvoker.ChatAttemptFailed e) {
                 ChatRetryStats.recordAttempt(
                         ctx, requestId, e.model, e.retryCount, e.totalRetryWaitMs);
@@ -340,7 +331,7 @@ public final class RoutedChatRound {
         // The reasoning loop is over; a routed loop that dies mid-way must not leak its
         // saved block before the failed logical request completes.
         RoutingMetadata.take(ctx.getSensoryMemory(), requestId);
-        throw new RoundFailed(
+        throw new ModelRoutingExecutionException(
                 lastError != null
                         ? lastError
                         : new IllegalStateException(
@@ -355,10 +346,10 @@ public final class RoutedChatRound {
      * response instead of stamping it on intermediate messages and copying it through every tool
      * round. A round without a block of its own leaves the saved one in place.
      */
-    public static void saveRoutingMetadata(MemoryObject sensoryMemory, Accepted accepted)
+    public static void saveRoutingMetadata(MemoryObject sensoryMemory, Result result)
             throws Exception {
-        if (accepted.routingMetadata != null) {
-            RoutingMetadata.save(sensoryMemory, accepted.requestId, accepted.routingMetadata);
+        if (result.routingMetadata != null) {
+            RoutingMetadata.save(sensoryMemory, result.requestId, result.routingMetadata);
         }
     }
 
@@ -368,9 +359,9 @@ public final class RoutedChatRound {
      */
     @Nullable
     public static Map<String, Object> getAndClearRoutingMetadata(
-            MemoryObject sensoryMemory, Accepted accepted) throws Exception {
-        Map<String, Object> ofThisRound = accepted.routingMetadata;
-        Map<String, Object> saved = RoutingMetadata.take(sensoryMemory, accepted.requestId);
+            MemoryObject sensoryMemory, Result result) throws Exception {
+        Map<String, Object> ofThisRound = result.routingMetadata;
+        Map<String, Object> saved = RoutingMetadata.take(sensoryMemory, result.requestId);
         return ofThisRound != null ? ofThisRound : saved;
     }
 
@@ -381,7 +372,7 @@ public final class RoutedChatRound {
      * The router's name and the hops already taken are read from the block the earlier round saved;
      * a request with no saved block continues as a direct one.
      */
-    public static ResolvedModelRoute continuedRoute(
+    public static ResolvedModelRoute resolveRouteAfterToolCalls(
             MemoryObject sensoryMemory, UUID requestId, String model, RunnerContext ctx)
             throws Exception {
         Map<String, Object> saved = RoutingMetadata.peek(sensoryMemory, requestId);
@@ -413,17 +404,19 @@ public final class RoutedChatRound {
         return prompt + completion;
     }
 
-    private static Map<String, Object> hop(EscalationGate.Outcome outcome, long discardedTokens) {
-        Map<String, Object> hop = new LinkedHashMap<>();
-        hop.put("from", outcome.fromTier);
-        hop.put("to", outcome.toTier);
-        hop.put("signal", outcome.signal);
-        hop.put("reason", outcome.reason);
-        if (outcome.score != null) {
-            hop.put("score", outcome.score);
+    /** One entry of the block's {@code escalations} list: the hop a decision caused. */
+    private static Map<String, Object> buildEscalationRecord(
+            EscalationDecision decision, long discardedTokens) {
+        Map<String, Object> record = new LinkedHashMap<>();
+        record.put("from", decision.fromTier);
+        record.put("to", decision.toTier);
+        record.put("signal", decision.signal);
+        record.put("reason", decision.reason);
+        if (decision.score != null) {
+            record.put("score", decision.score);
         }
-        hop.put("discarded_tokens", discardedTokens);
-        return hop;
+        record.put("discarded_tokens", discardedTokens);
+        return record;
     }
 
     private static void recordEscalationMetrics(RunnerContext ctx, long discardedTokens) {

@@ -44,7 +44,7 @@ import org.apache.flink.agents.plan.ChatFixtures;
 import org.apache.flink.agents.plan.actions.ChatModelActionRoutingTest.FakeChatModel;
 import org.apache.flink.agents.plan.actions.ChatModelActionRoutingTest.FakeDecisionModel;
 import org.apache.flink.agents.plan.actions.ChatModelActionRoutingTest.FakeRunnerContext;
-import org.apache.flink.agents.plan.routing.EscalationGate;
+import org.apache.flink.agents.plan.routing.EscalationEvaluator;
 import org.apache.flink.agents.plan.routing.ModelRouter;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -1123,7 +1123,7 @@ class ChatModelActionEscalationTest {
                         .register("big", new FakeChatModel(ChatFixtures.response("final")))
                         .seedDurable(
                                 "escalate:router:small:0",
-                                new EscalationGate.SignalOutcome(
+                                new EscalationEvaluator.SignalOutcome(
                                         QualityVerdict.escalate("stored verdict"), null));
         send(custom, "hello");
         assertThat(custom.chatResponse().getResponse().getText()).isEqualTo("final");

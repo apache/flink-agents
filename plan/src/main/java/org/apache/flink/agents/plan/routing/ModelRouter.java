@@ -48,8 +48,8 @@ import static org.apache.flink.agents.api.chat.model.routing.ModelRouter.STRATEG
  * The {@code MODEL_ROUTER} resource: a router declaration built with {@code ModelRouter.of(...)} in
  * the api module, decoded for the engine. It selects a concrete chat model for a request but
  * neither calls the backend nor runs the routing logic itself: {@link ModelRoutingResolver} asks
- * the strategy for the first model, and {@link EscalationGate} applies the escalation policy after
- * each model round.
+ * the strategy for the first model, and {@link EscalationEvaluator} applies the escalation policy
+ * after each model round.
  *
  * <p>The constructor only decodes the descriptor. The declaration rules are applied when the agent
  * plan is built ({@code AgentPlan#validateRoutingStrategies}), the one point every construction

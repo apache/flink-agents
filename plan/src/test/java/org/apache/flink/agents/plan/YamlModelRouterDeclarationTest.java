@@ -129,7 +129,7 @@ class YamlModelRouterDeclarationTest {
         ResolvedModelRoute matched = resolve(local, "local_router", "please write code");
         assertThat(matched.getSelectedModel()).isEqualTo("big");
         assertThat(matched.isFallbackEnabled()).isTrue();
-        assertThat(matched.attemptOrder()).containsExactly("big", "small");
+        assertThat(matched.getCandidateAttemptOrder()).containsExactly("big", "small");
         assertThat(metadata(matched))
                 .containsEntry("decision_source", ModelRoutingEvent.SOURCE_STRATEGY)
                 .containsEntry("reason", "matched rule: code");
