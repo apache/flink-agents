@@ -552,10 +552,10 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         chat_options = (
             {} if is_asr else {"tools": dashscope_tools, "result_format": "message"}
         )
+        kwargs.setdefault("request_timeout", self.request_timeout)
         response = api.call(
             model=model_name,
             messages=dashscope_messages,
-            timeout=self.request_timeout,
             api_key=req_api_key,
             **chat_options,
             **kwargs,

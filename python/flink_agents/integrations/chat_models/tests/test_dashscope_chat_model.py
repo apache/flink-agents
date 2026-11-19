@@ -28,6 +28,8 @@ from dashscope.api_entities.dashscope_response import (
     DashScopeAPIResponse,
     MultiModalConversationResponse,
 )
+from dashscope.api_entities.http_request import HttpRequest
+from dashscope.api_entities.websocket_request import WebSocketRequest
 from dashscope.client.base_api import BaseApi
 from dashscope.utils.oss_utils import OssUtils
 from pydantic import BaseModel
@@ -633,3 +635,38 @@ def test_dashscope_task_rejects_output_schema_in_chat_event(
     assert f"task {task!r} does not support output_schema" in response.error
     chat_calls["text"].assert_not_called()
     chat_calls["multimodal"].assert_not_called()
+
+
+@pytest.mark.parametrize("api_type", ["text", "multimodal"])
+@pytest.mark.parametrize("protocol", ["http", "websocket"])
+@pytest.mark.parametrize(
+    ("connection_options", "call_options", "expected"),
+    [
+        ({}, {}, 60.0),
+        ({"request_timeout": 1.25}, {}, 1.25),
+        ({"request_timeout": 1.25}, {"request_timeout": 2.5}, 2.5),
+    ],
+)
+def test_request_timeout_reaches_sdk_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    api_type: str,
+    protocol: str,
+    connection_options: dict,
+    call_options: dict,
+    expected: float,
+) -> None:
+    """Use real SDK request construction, stopping before network I/O."""
+    captured = []
+
+    def capture(request: HttpRequest | WebSocketRequest) -> None:
+        captured.append(request.timeout)
+        message = "request captured"
+        raise RuntimeError(message)
+
+    transport = HttpRequest if protocol == "http" else WebSocketRequest
+    monkeypatch.setattr(transport, "call", capture)
+    connection = DashScopeChatModelConnection(api_key="fake-key", **connection_options)
+    options = {"api_type": api_type, "api_protocol": protocol, **call_options}
+    with pytest.raises(RuntimeError, match="request captured"):
+        connection.chat([ChatMessage.user("Hello")], **options)
+    assert captured == [expected]
