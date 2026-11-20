@@ -37,7 +37,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -171,7 +170,7 @@ class EventRouterTest {
      * {@code [WM1, WM2]}.
      */
     @Test
-    void processEligibleWatermarksDrainsInArrivalOrder() throws Exception {
+    void pollEligibleWatermarkPreservesArrivalOrder() throws Exception {
         AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
         EventRouter<Long, Object> router = new EventRouter<>(plan, /* inputIsJava */ true);
         router.open(makeMetrics());
@@ -191,10 +190,9 @@ class EventRouterTest {
         queue.removeKey("k3");
         queue.removeKey("k1");
 
-        List<Watermark> emitted = new ArrayList<>();
-        router.processEligibleWatermarks(emitted::add);
-
-        assertThat(emitted).containsExactly(wm1, wm2);
+        assertThat(router.pollEligibleWatermark()).isEqualTo(wm1);
+        assertThat(router.pollEligibleWatermark()).isEqualTo(wm2);
+        assertThat(router.pollEligibleWatermark()).isNull();
     }
 
     /**
@@ -202,7 +200,7 @@ class EventRouterTest {
      * and is emitted only after the segment drains.
      */
     @Test
-    void processEligibleWatermarksBlocksWhileSegmentHasKeys() throws Exception {
+    void pollEligibleWatermarkBlocksWhileSegmentHasKeys() throws Exception {
         AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
         EventRouter<Long, Object> router = new EventRouter<>(plan, /* inputIsJava */ true);
         router.open(makeMetrics());
@@ -213,14 +211,10 @@ class EventRouterTest {
         queue.addKeyToLastSegment("k1");
         queue.addWatermark(wm1);
 
-        List<Watermark> emitted = new ArrayList<>();
-        router.processEligibleWatermarks(emitted::add);
-        // k1 is still in flight → wm1 must be held back.
-        assertThat(emitted).isEmpty();
-
+        // k1 is still in flight, so wm1 must be held back.
+        assertThat(router.pollEligibleWatermark()).isNull();
         queue.removeKey("k1");
-        router.processEligibleWatermarks(emitted::add);
-        assertThat(emitted).containsExactly(wm1);
+        assertThat(router.pollEligibleWatermark()).isEqualTo(wm1);
     }
 
     /** Java pipeline + typed OutputEvent — raw payload, no PythonActionExecutor. */

@@ -72,6 +72,7 @@ import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
 import org.apache.flink.agents.runtime.utils.IdAllocatorSource;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.annotation.Internal;
+import org.apache.flink.streaming.api.TimeDomain;
 import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.function.ThrowingRunnable;
 import org.slf4j.Logger;
@@ -522,6 +523,24 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 Math.addExact(deadline.toEpochMilli(), deadline.getNano() % 1_000_000 == 0 ? 0 : 1);
         timerOperations.add(
                 new TimerOperation(timerId, millis, false, snapshotTimerEvent(event, mode), mode));
+    }
+
+    @Override
+    public void registerEventTimeTimer(String timerId, Instant timestamp, Event event) {
+        checkTimerAccess(timerId);
+        checkTimerEvent(event, TimerMode.TRIGGER_AFTER_CURRENT_RUN);
+        Preconditions.checkNotNull(timestamp, "timestamp");
+        long millis =
+                Math.addExact(
+                        timestamp.toEpochMilli(), timestamp.getNano() % 1_000_000 == 0 ? 0 : 1);
+        timerOperations.add(
+                new TimerOperation(
+                        timerId,
+                        millis,
+                        false,
+                        TimerOperation.snapshot(event),
+                        TimerMode.TRIGGER_AFTER_CURRENT_RUN,
+                        TimeDomain.EVENT_TIME));
     }
 
     @Override

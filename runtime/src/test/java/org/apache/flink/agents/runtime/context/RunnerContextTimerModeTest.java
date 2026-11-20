@@ -141,4 +141,25 @@ class RunnerContextTimerModeTest {
                 null,
                 "job");
     }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void eventTimeRegistrationRejectsAttachments(boolean bridge) throws Exception {
+        PythonRunnerContextImpl context = newContext();
+        Event event = new Event("timeout");
+        event.setAttachment("payload", new byte[] {1});
+        String json = new ObjectMapper().writeValueAsString(event);
+        assertThatThrownBy(
+                        () -> {
+                            if (bridge) {
+                                context.registerEventTimeTimerJson("watch", 10, json);
+                            } else {
+                                context.registerEventTimeTimer(
+                                        "watch", Instant.ofEpochMilli(10), event);
+                            }
+                        })
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Timer Events that start a new run cannot carry attachments");
+        assertThat(context.getTimerOperations()).isEmpty();
+    }
 }

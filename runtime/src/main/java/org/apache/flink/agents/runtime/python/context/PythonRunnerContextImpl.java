@@ -93,6 +93,12 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
                 TimerMode.valueOf(mode));
     }
 
+    public void registerEventTimeTimerJson(String timerId, long timestampMillis, String eventJson)
+            throws IOException {
+        registerEventTimeTimer(
+                timerId, Instant.ofEpochMilli(timestampMillis), Event.fromJson(eventJson));
+    }
+
     public void reportExecutionCreatedJson(
             String executionId, String entityType, String entityName, String entityMetadataJson)
             throws Exception {

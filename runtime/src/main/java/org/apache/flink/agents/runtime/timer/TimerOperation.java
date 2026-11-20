@@ -26,6 +26,7 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataOutputSerializer;
+import org.apache.flink.streaming.api.TimeDomain;
 
 import java.util.Arrays;
 import java.util.Objects;
@@ -37,6 +38,7 @@ public class TimerOperation {
     private boolean relative;
     private byte[] eventBytes;
     private TimerMode mode;
+    private TimeDomain timeDomain;
     private byte[] ownerContextBytes;
     private Long sourceTimestamp;
     private String occurrenceId;
@@ -45,11 +47,22 @@ public class TimerOperation {
 
     public TimerOperation(
             String timerId, long time, boolean relative, byte[] eventBytes, TimerMode mode) {
+        this(timerId, time, relative, eventBytes, mode, TimeDomain.PROCESSING_TIME);
+    }
+
+    public TimerOperation(
+            String timerId,
+            long time,
+            boolean relative,
+            byte[] eventBytes,
+            TimerMode mode,
+            TimeDomain timeDomain) {
         this.timerId = timerId;
         this.time = time;
         this.relative = relative;
         this.eventBytes = eventBytes;
         this.mode = mode;
+        this.timeDomain = timeDomain;
     }
 
     public String getTimerId() {
@@ -70,6 +83,10 @@ public class TimerOperation {
 
     public TimerMode getMode() {
         return mode;
+    }
+
+    public TimeDomain getTimeDomain() {
+        return timeDomain;
     }
 
     public byte[] getOwnerContextBytes() {
@@ -93,7 +110,8 @@ public class TimerOperation {
                         relative ? Math.addExact(now, time) : time,
                         false,
                         eventBytes,
-                        mode);
+                        mode,
+                        timeDomain);
         if (eventBytes != null && mode == TimerMode.CURRENT_RUN_WAIT_FOR_TRIGGER) {
             DataOutputSerializer out = new DataOutputSerializer(256);
             contextSerializer().serialize(ownerContext, out);
@@ -107,7 +125,8 @@ public class TimerOperation {
 
     /** Binds a replayed registration to the run executing the reused Action result. */
     public TimerOperation withOwnerContext(TraceContext ownerContext) throws Exception {
-        TimerOperation copy = new TimerOperation(timerId, time, relative, eventBytes, mode);
+        TimerOperation copy =
+                new TimerOperation(timerId, time, relative, eventBytes, mode, timeDomain);
         DataOutputSerializer out = new DataOutputSerializer(256);
         contextSerializer().serialize(ownerContext, out);
         copy.ownerContextBytes = out.getCopyOfBuffer();
@@ -118,7 +137,6 @@ public class TimerOperation {
 
     /** Serializes the Event after registration has prepared its attachment references. */
     public static byte[] snapshot(Event event) {
-        Objects.requireNonNull(event, "event");
         try {
             TypeSerializer<Event> serializer = serializer();
             DataOutputSerializer out = new DataOutputSerializer(256);
@@ -131,7 +149,8 @@ public class TimerOperation {
 
     public Event restoreEvent() throws Exception {
         Event event = serializer().deserialize(new DataInputDeserializer(eventBytes));
-        event.setSourceTimestamp(sourceTimestamp);
+        event.setSourceTimestamp(
+                timeDomain == TimeDomain.EVENT_TIME ? Long.valueOf(time) : sourceTimestamp);
         event.setOccurrenceId(occurrenceId);
         return event;
     }
@@ -158,6 +177,7 @@ public class TimerOperation {
                 && relative == that.relative
                 && Objects.equals(timerId, that.timerId)
                 && mode == that.mode
+                && timeDomain == that.timeDomain
                 && Arrays.equals(ownerContextBytes, that.ownerContextBytes)
                 && Objects.equals(sourceTimestamp, that.sourceTimestamp)
                 && Objects.equals(occurrenceId, that.occurrenceId)
@@ -171,6 +191,7 @@ public class TimerOperation {
                 time,
                 relative,
                 mode,
+                timeDomain,
                 sourceTimestamp,
                 occurrenceId,
                 Arrays.hashCode(eventBytes),

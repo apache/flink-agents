@@ -743,6 +743,26 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             delta.microseconds + 999
         ) // 1000
 
+    @override
+    def register_event_time_timer(
+        self, timer_id: str, timestamp: datetime, event: Event
+    ) -> None:
+        """Register an event-time timer that starts a new run."""
+        if not isinstance(timestamp, datetime) or timestamp.utcoffset() is None:
+            msg = "Timer deadline must be a timezone-aware datetime"
+            raise ValueError(msg)
+        delta = timestamp.astimezone(timezone.utc) - datetime(
+            1970, 1, 1, tzinfo=timezone.utc
+        )
+        self._register_timer(
+            timer_id,
+            self._timer_millis(delta),
+            event,
+            TimerMode.TRIGGER_AFTER_CURRENT_RUN,
+            absolute=True,
+            event_time=True,
+        )
+
     def _register_timer(
         self,
         timer_id: str,
@@ -751,6 +771,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         mode: TimerMode,
         *,
         absolute: bool,
+        event_time: bool = False,
     ) -> None:
         self._check_timer_id(timer_id)
         if not isinstance(mode, TimerMode):
@@ -765,7 +786,11 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         if mode == TimerMode.CURRENT_RUN_WAIT_FOR_TRIGGER:
             store_event_attachments(event, self)
         event_json = event.model_dump_json()
-        if absolute:
+        if event_time:
+            self._j_runner_context.registerEventTimeTimerJson(
+                timer_id, millis, event_json
+            )
+        elif absolute:
             self._j_runner_context.registerTimerAtJson(
                 timer_id, millis, event_json, mode.name
             )
