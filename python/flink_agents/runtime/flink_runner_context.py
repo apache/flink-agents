@@ -23,7 +23,7 @@ import time
 from collections.abc import Mapping
 from concurrent.futures import CancelledError, ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from functools import partial
 from typing import Any, Callable, Dict, Literal
 
@@ -50,6 +50,7 @@ from flink_agents.api.runner_context import (
     DurableFuture,
     Outcome,
     RunnerContext,
+    TimerMode,
 )
 from flink_agents.api.subagent import SubagentResult
 from flink_agents.api.trace import ExecutionReporter
@@ -707,6 +708,108 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             The long term memory to keep.
         """
         self.__ltm = ltm
+
+    @override
+    def register_timer(
+        self, timer_id: str, delay: timedelta, event: Event, mode: TimerMode
+    ) -> None:
+        """Register a processing-time timer when the current Action completes."""
+        if not isinstance(delay, timedelta) or delay < timedelta(0):
+            msg = "Timer delay must be a non-negative timedelta"
+            raise ValueError(msg)
+        self._register_timer(
+            timer_id, self._timer_millis(delay), event, mode, absolute=False
+        )
+
+    @override
+    def register_timer_at(
+        self, timer_id: str, deadline: datetime, event: Event, mode: TimerMode
+    ) -> None:
+        """Register a timezone-aware absolute processing-time deadline."""
+        if not isinstance(deadline, datetime) or deadline.utcoffset() is None:
+            msg = "Timer deadline must be a timezone-aware datetime"
+            raise ValueError(msg)
+        delta = deadline.astimezone(timezone.utc) - datetime(
+            1970, 1, 1, tzinfo=timezone.utc
+        )
+        self._register_timer(
+            timer_id, self._timer_millis(delta), event, mode, absolute=True
+        )
+
+    @staticmethod
+    def _timer_millis(delta: timedelta) -> int:
+        # Integer arithmetic avoids float rounding of large timestamps.
+        return (delta.days * 86_400 + delta.seconds) * 1000 + (
+            delta.microseconds + 999
+        ) // 1000
+
+    @override
+    def register_event_time_timer(
+        self, timer_id: str, timestamp: datetime, event: Event
+    ) -> None:
+        """Register an event-time timer that starts a new run."""
+        if not isinstance(timestamp, datetime) or timestamp.utcoffset() is None:
+            msg = "Timer deadline must be a timezone-aware datetime"
+            raise ValueError(msg)
+        delta = timestamp.astimezone(timezone.utc) - datetime(
+            1970, 1, 1, tzinfo=timezone.utc
+        )
+        self._register_timer(
+            timer_id,
+            self._timer_millis(delta),
+            event,
+            TimerMode.TRIGGER_AFTER_CURRENT_RUN,
+            absolute=True,
+            event_time=True,
+        )
+
+    def _register_timer(
+        self,
+        timer_id: str,
+        millis: int,
+        event: Event,
+        mode: TimerMode,
+        *,
+        absolute: bool,
+        event_time: bool = False,
+    ) -> None:
+        self._check_timer_id(timer_id)
+        if not isinstance(mode, TimerMode):
+            msg = "Timer mode must be a TimerMode value"
+            raise TypeError(msg)
+        if not -(1 << 63) <= millis < (1 << 63):
+            msg = "Timer time is outside the signed 64-bit millisecond range"
+            raise ValueError(msg)
+        if mode == TimerMode.TRIGGER_AFTER_CURRENT_RUN and event.attachments:
+            msg = "Timer Events that start a new run cannot carry attachments"
+            raise ValueError(msg)
+        if mode == TimerMode.CURRENT_RUN_WAIT_FOR_TRIGGER:
+            store_event_attachments(event, self)
+        event_json = event.model_dump_json()
+        if event_time:
+            self._j_runner_context.registerEventTimeTimerJson(
+                timer_id, millis, event_json
+            )
+        elif absolute:
+            self._j_runner_context.registerTimerAtJson(
+                timer_id, millis, event_json, mode.name
+            )
+        else:
+            self._j_runner_context.registerTimerJson(
+                timer_id, millis, event_json, mode.name
+            )
+
+    @staticmethod
+    def _check_timer_id(timer_id: str) -> None:
+        if not isinstance(timer_id, str) or not timer_id.strip():
+            msg = "Timer ID must not be blank"
+            raise ValueError(msg)
+
+    @override
+    def cancel_timer(self, timer_id: str) -> None:
+        """Cancel a pending timer at Action completion."""
+        self._check_timer_id(timer_id)
+        self._j_runner_context.cancelTimer(timer_id)
 
     @override
     def send_event(self, event: Event) -> None:

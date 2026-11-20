@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.memory;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
@@ -25,6 +26,7 @@ import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.context.TimerMode;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
@@ -32,6 +34,8 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -105,6 +109,30 @@ public class MemoryRefTest {
         @Override
         public MemoryObject getSensoryMemory() {
             return null;
+        }
+
+        @Override
+        public void registerTimer(String timerId, Duration delay, Event event, TimerMode mode) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
+        }
+
+        @Override
+        public void registerTimerAt(String timerId, Instant deadline, Event event, TimerMode mode) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
+        }
+
+        @Override
+        public void registerEventTimeTimer(String timerId, Instant timestamp, Event event) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported in this test context");
+        }
+
+        @Override
+        public void cancelTimer(String timerId) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported by this test context.");
         }
 
         @Override

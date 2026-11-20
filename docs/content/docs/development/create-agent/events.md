@@ -34,6 +34,9 @@ Events carry data between Actions. Each Event has:
 One Event can trigger multiple Actions. For matching by type or payload, see
 [Trigger Conditions]({{< ref "docs/development/create-agent/actions#trigger-conditions" >}}).
 
+To trigger an Action later through an Event, see
+[Delayed Execution]({{< ref "docs/development/create-agent/actions#delayed-execution" >}}).
+
 ## Input and Output Events {#special-events}
 
 `InputEvent` and `OutputEvent` connect an Agent to the surrounding Flink pipeline:
@@ -85,6 +88,9 @@ ctx.sendEvent(new OutputEvent(text));
 ```
 {{< /tab >}}
 {{< /tabs >}}
+
+Create a new Event for each send or timer registration. Do not reuse or modify
+the Event, its attributes, or its attachment values after sending or registering it.
 
 ## Custom Event Subclasses
 

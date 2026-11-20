@@ -65,6 +65,7 @@ The framework creates an `InputEvent` for each input record. `OutputEvent` sends
 downstream; other Events can connect Actions, as shown in [Sending Events](#sending-events).
 For calls to external services, see [Async Execution](#async-execution), including how to
 write Python Actions with `async def`.
+To schedule an Action for later, see [Delayed Execution](#delayed-execution).
 
 By default, an Action uses its Python function name or Java method name: `clean_review`
 in the Python example and `cleanReview` in the Java example. Set `name` in the decorator
@@ -824,6 +825,244 @@ another nested Resource call into Java. Keep the remaining work in that connecti
 language, or return to the Action and have it send an Event to trigger a later step. See
 [Choose APIs and Languages]({{< ref "docs/development/create-agent/choose-apis-and-languages" >}})
 for dependency and payload requirements.
+
+## Delayed Execution
+
+Delayed execution lets you schedule an Action to run after a delay or when a specified
+time is reached. It is useful for approval timeouts, follow-up checks, and periodic
+job monitoring.
+
+To use it, register an Event for later delivery. When the Event becomes due, Flink Agents
+executes the Actions already bound to it. The delayed work can continue the current
+Agent Run or start a new one, without occupying an execution thread while waiting.
+
+### Processing Timer
+
+A Processing Timer schedules an Action using wall-clock time. Use a relative delay or
+an absolute deadline by calling these methods on the Action's `RunnerContext`:
+
+{{< tabs "Processing Timer Registration" >}}
+{{< tab "Python" >}}
+```python
+# Schedule after a relative delay.
+ctx.register_timer(timer_id, delay, event, mode)
+
+# Schedule at an absolute deadline.
+ctx.register_timer_at(timer_id, deadline, event, mode)
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+// Schedule after a relative delay.
+ctx.registerTimer(timerId, delay, event, mode);
+
+// Schedule at an absolute deadline.
+ctx.registerTimerAt(timerId, deadline, event, mode);
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+Java uses `Duration` for delays and `Instant` for deadlines. Python uses `timedelta`
+and timezone-aware `datetime`, respectively. Delays must be non-negative; all times
+are rounded up to milliseconds.
+
+Both methods require a `TimerMode`:
+
+| Mode | Context and input handling |
+| --- | --- |
+| `TRIGGER_AFTER_CURRENT_RUN` | Starts a new run with fresh Sensory Memory, the key's current Short-Term Memory, and no input timestamp. Later inputs with the same key can proceed after the current run finishes, without waiting for the timer. |
+| `CURRENT_RUN_WAIT_FOR_TRIGGER` | Retains the current run's context, Sensory Memory, and input timestamp. Later inputs with the same key wait until this run's Actions and timers finish. |
+
+### Event Timer
+
+An Event Timer schedules an Action based on Event Time. It becomes due when an
+upstream Watermark reaches its deadline, rather than after a fixed amount of real time.
+Configure Watermark generation upstream to use Event Timers.
+For an introduction to Event Time and Watermarks, see
+[Flink's timely stream processing documentation](https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/time/).
+
+{{< tabs "Event Timer Registration" >}}
+{{< tab "Python" >}}
+```python
+ctx.register_event_time_timer(timer_id, deadline, event)
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+ctx.registerEventTimeTimer(timerId, deadline, event);
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+Use an `Instant` in Java or a timezone-aware `datetime` in Python for the deadline,
+rounded up to milliseconds. An Event Timer always starts a new Agent Run and does not
+accept a `TimerMode` parameter.
+
+Outputs use the timer's deadline as their record timestamp and are emitted before
+the triggering Watermark. If the deadline is at or before an already forwarded
+Watermark, the outputs are late data.
+
+### Canceling a Timer
+
+Cancel a pending timer by its ID:
+
+{{< tabs "Canceling a Timer" >}}
+{{< tab "Python" >}}
+```python
+ctx.cancel_timer(timer_id)
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+ctx.cancelTimer(timerId);
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+Canceling a nonexistent timer has no effect. Cancellation cannot retract an Event
+that the timer has already delivered.
+
+### Example: Waiting for Job Adjustment Approval
+
+An Agent receives a proposed job adjustment, such as
+`{"job_id": "job1", "parallelism": 4}`, and creates a request in an approval system.
+It checks approval every 5 minutes, for up to 30 minutes. Each check first tests
+whether the deadline has passed. Approval applies the adjustment only if it still
+fits the current job state; rejection or timeout ends the checks.
+
+The approval and job-management functions are application-specific.
+`adjust_job_if_applicable` / `adjustJobIfApplicable` checks the current job state
+and applies the change only if it is still applicable.
+
+{{< tabs "Job adjustment approval" >}}
+{{< tab "Python" >}}
+```python
+from datetime import datetime, timedelta, timezone
+from flink_agents.api.runner_context import TimerMode
+
+@action(EventType.InputEvent)
+@staticmethod
+def request_approval(event: Event, ctx: RunnerContext) -> None:
+    adjustment = InputEvent.from_event(event).input
+    approval_id = create_approval(adjustment)
+    now = datetime.now(timezone.utc)
+    deadline = now + timedelta(minutes=30)
+    ctx.register_timer_at(
+        f"approval-check:{approval_id}",
+        now + timedelta(minutes=5),
+        Event(type="check_approval", attributes={
+            "approval_id": approval_id,
+            "deadline": deadline.isoformat(),
+            "job_id": adjustment["job_id"],
+            "parallelism": adjustment["parallelism"],
+        }),
+        mode=TimerMode.TRIGGER_AFTER_CURRENT_RUN,
+    )
+
+@action("check_approval")
+@staticmethod
+def check_approval(event: Event, ctx: RunnerContext) -> None:
+    deadline = datetime.fromisoformat(event.attributes["deadline"])
+    if datetime.now(timezone.utc) >= deadline:
+        ctx.send_event(OutputEvent(output="Approval timed out; job unchanged"))
+        return
+
+    approval_id = event.attributes["approval_id"]
+    status = get_approval_status(approval_id)
+    if status == "PENDING":
+        ctx.register_timer_at(
+            f"approval-check:{approval_id}",
+            min(datetime.now(timezone.utc) + timedelta(minutes=5), deadline),
+            Event(type="check_approval", attributes=dict(event.attributes)),
+            mode=TimerMode.TRIGGER_AFTER_CURRENT_RUN,
+        )
+    elif status == "APPROVED":
+        applied = adjust_job_if_applicable(
+            event.attributes["job_id"], event.attributes["parallelism"]
+        )
+        ctx.send_event(OutputEvent(output=(
+            "Job adjustment completed" if applied else "Adjustment no longer applicable; skipped"
+        )))
+    else:
+        ctx.send_event(OutputEvent(output=f"Approval {status}; job unchanged"))
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Map;
+import org.apache.flink.agents.api.context.TimerMode;
+
+@Action(EventType.InputEvent)
+public static void requestApproval(Event event, RunnerContext ctx) throws Exception {
+    Map<String, Object> adjustment =
+            (Map<String, Object>) InputEvent.fromEvent(event).getInput();
+    String approvalId = createApproval(adjustment);
+    Instant now = Instant.now();
+    Instant deadline = now.plus(Duration.ofMinutes(30));
+    ctx.registerTimerAt(
+            "approval-check:" + approvalId,
+            now.plus(Duration.ofMinutes(5)),
+            new Event("check_approval", Map.of(
+                    "approval_id", approvalId,
+                    "deadline", deadline.toString(),
+                    "job_id", adjustment.get("job_id"),
+                    "parallelism", adjustment.get("parallelism"))),
+            TimerMode.TRIGGER_AFTER_CURRENT_RUN);
+}
+
+@Action("check_approval")
+public static void checkApproval(Event event, RunnerContext ctx) throws Exception {
+    Instant deadline = Instant.parse((String) event.getAttributes().get("deadline"));
+    if (!Instant.now().isBefore(deadline)) {
+        ctx.sendEvent(new OutputEvent("Approval timed out; job unchanged"));
+        return;
+    }
+
+    String approvalId = (String) event.getAttributes().get("approval_id");
+    String status = getApprovalStatus(approvalId);
+    if ("PENDING".equals(status)) {
+        Instant nextCheck = Instant.now().plus(Duration.ofMinutes(5));
+        ctx.registerTimerAt(
+                "approval-check:" + approvalId,
+                nextCheck.isBefore(deadline) ? nextCheck : deadline,
+                new Event("check_approval", Map.copyOf(event.getAttributes())),
+                TimerMode.TRIGGER_AFTER_CURRENT_RUN);
+    } else if ("APPROVED".equals(status)) {
+        boolean applied = adjustJobIfApplicable(
+                (String) event.getAttributes().get("job_id"),
+                ((Number) event.getAttributes().get("parallelism")).intValue());
+        ctx.sendEvent(new OutputEvent(applied
+                ? "Job adjustment completed"
+                : "Adjustment no longer applicable; skipped"));
+    } else {
+        ctx.sendEvent(new OutputEvent("Approval " + status + "; job unchanged"));
+    }
+}
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+The same timer is registered again while approval is pending, with the next check
+scheduled no later than the deadline. `TRIGGER_AFTER_CURRENT_RUN` allows later
+inputs with the same key, such as new job errors or state changes, to be processed
+while approval is pending.
+
+### Usage Notes
+
+- **When changes take effect.** Registration and cancellation take effect when the
+  Action completes successfully. Relative delays start at that point.
+- **Timer IDs.** IDs are scoped to the Agent and business key and shared across both
+  timer types. Registering the same ID replaces the pending timer, but cannot
+  retract an Event already delivered.
+- **Events.** Create a new Event for each registration, use serializable attributes,
+  and do not modify it afterward. Attachments are supported only with
+  `CURRENT_RUN_WAIT_FOR_TRIGGER`. Register an Event handled by an Action, rather
+  than an `OutputEvent`.
+- **Supported contexts.** Use timers in streaming jobs. Registration and cancellation
+  are not supported inside functions submitted to `execute_async` / `executeAsync`,
+  internal sub-agents, or `ctx.chat(...)` invocations.
 
 ## Appendix
 
