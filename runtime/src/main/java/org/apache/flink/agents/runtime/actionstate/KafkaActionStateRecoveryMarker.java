@@ -35,7 +35,6 @@ public final class KafkaActionStateRecoveryMarker implements Serializable {
     private static final long serialVersionUID = 1L;
 
     public static final int CURRENT_SCHEMA_VERSION = 1;
-    public static final String UNION_STATE_NAME = "recoveryMarker";
 
     private final int schemaVersion;
     private final String topic;

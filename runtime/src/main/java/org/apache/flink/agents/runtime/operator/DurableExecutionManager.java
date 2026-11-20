@@ -28,15 +28,14 @@ import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.FlussActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
+import org.apache.flink.agents.runtime.actionstate.RecoveryMarkerState;
 import org.apache.flink.agents.runtime.context.ActionStatePersister;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.functions.RuntimeContext;
 import org.apache.flink.api.common.state.ListState;
-import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.state.KeyedStateBackend;
 import org.apache.flink.runtime.state.OperatorStateBackend;
@@ -57,7 +56,6 @@ import java.util.function.IntPredicate;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.FLUSS;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.KAFKA;
-import static org.apache.flink.agents.runtime.actionstate.KafkaActionStateRecoveryMarker.UNION_STATE_NAME;
 
 /**
  * Owns the durable-execution side of {@link ActionExecutionOperator}: the optional {@link
@@ -148,9 +146,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
     void initRecoveryMarkerState(OperatorStateBackend operatorStateBackend) throws Exception {
         if (actionStateStore != null) {
             recoveryMarkerOpState =
-                    operatorStateBackend.getUnionListState(
-                            new ListStateDescriptor<>(
-                                    UNION_STATE_NAME, TypeInformation.of(Object.class)));
+                    operatorStateBackend.getUnionListState(RecoveryMarkerState.descriptor());
         }
     }
 
@@ -215,9 +211,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
         if (actionStateStore != null) {
             List<Object> markers = new ArrayList<>();
             ListState<Object> markerState =
-                    operatorStateBackend.getUnionListState(
-                            new ListStateDescriptor<>(
-                                    UNION_STATE_NAME, TypeInformation.of(Object.class)));
+                    operatorStateBackend.getUnionListState(RecoveryMarkerState.descriptor());
             Iterable<Object> recoveryMarkers = markerState.get();
             if (recoveryMarkers != null) {
                 recoveryMarkers.forEach(markers::add);
