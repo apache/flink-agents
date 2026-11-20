@@ -233,6 +233,21 @@ class RunnerContext(ABC):
         """
 
     @abstractmethod
+    def register_event_time_timer(
+        self, timer_id: str, timestamp: datetime, event: Event
+    ) -> None:
+        """Register an absolute event-time deadline when this Action completes.
+
+        The timestamp must be timezone-aware and is rounded up to milliseconds.
+        Watermarks trigger the Event in a new run with the deadline as its source
+        timestamp. The triggering watermark waits for that run to finish.
+        Use a new Event without attachments and do not modify it afterward.
+        Timer IDs are shared with processing-time timers; the same ID replaces
+        the pending timer in either domain. Deadlines at or before an already
+        forwarded watermark produce late data.
+        """
+
+    @abstractmethod
     def cancel_timer(self, timer_id: str) -> None:
         """Cancel at completion; ignore absent IDs and already delivered Events."""
 

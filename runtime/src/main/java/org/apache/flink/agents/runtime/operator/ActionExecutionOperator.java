@@ -79,6 +79,7 @@ import org.apache.flink.runtime.state.CheckpointStreamFactory;
 import org.apache.flink.runtime.state.KeyGroupRange;
 import org.apache.flink.runtime.state.StateInitializationContext;
 import org.apache.flink.runtime.state.StateSnapshotContext;
+import org.apache.flink.streaming.api.TimeDomain;
 import org.apache.flink.streaming.api.graph.StreamConfig;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
 import org.apache.flink.streaming.api.operators.BoundedOneInput;
@@ -299,6 +300,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private transient OperatorStateManager stateManager;
 
     private transient InternalTimerService<String> timerService;
+
+    /** Watermark whose timers have fired but whose triggered runs may still be executing. */
+    private transient Watermark pendingTimerWatermark;
+
+    /** Root Event IDs of unfinished runs triggered while processing the pending watermark. */
+    private final Set<String> watermarkTimerEvents = new LinkedHashSet<>();
+
+    private transient boolean processingWatermarks;
+    private transient boolean eventTimersNeedCheck;
+    private transient boolean eventTimerCheckScheduled;
 
     private final Set<Object> recoveringTimerKeys = new LinkedHashSet<>();
 
@@ -522,7 +533,65 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private void processWatermarkInternal(Watermark mark) throws Exception {
         eventRouter.getKeySegmentQueue().addWatermark(mark);
-        eventRouter.processEligibleWatermarks(super::processWatermark);
+        processPendingWatermarks();
+    }
+
+    /** Advances event time after earlier inputs finish, then waits for the triggered runs. */
+    private void processPendingWatermarks() throws Exception {
+        if (processingWatermarks) {
+            return;
+        }
+        Object previousKey = getCurrentKey();
+        processingWatermarks = true;
+        try {
+            while (true) {
+                // Newly registered timers can already be due, even without another watermark.
+                if (eventTimersNeedCheck) {
+                    eventTimersNeedCheck = false;
+                    timeServiceManager.advanceWatermark(
+                            new Watermark(timerService.currentWatermark()));
+                }
+                if (pendingTimerWatermark != null) {
+                    if (!watermarkTimerEvents.isEmpty()) {
+                        return;
+                    }
+                    output.emitWatermark(pendingTimerWatermark);
+                    pendingTimerWatermark = null;
+                }
+                Watermark next = eventRouter.pollEligibleWatermark();
+                if (next == null) {
+                    return;
+                }
+                pendingTimerWatermark = next;
+                timeServiceManager.advanceWatermark(next);
+            }
+        } finally {
+            if (previousKey != null) {
+                setCurrentKey(previousKey);
+            }
+            processingWatermarks = false;
+        }
+    }
+
+    private void scheduleEventTimerCheck() {
+        eventTimersNeedCheck = true;
+        if (!eventTimerCheckScheduled) {
+            eventTimerCheckScheduled = true;
+            mailboxExecutor.execute(
+                    () -> {
+                        if (parallelExecutionWithoutCoroutineEnabled) {
+                            runWithParallelExecutionLock(this::checkDueEventTimers);
+                        } else {
+                            checkDueEventTimers();
+                        }
+                    },
+                    "check due event-time timers");
+        }
+    }
+
+    private void checkDueEventTimers() throws Exception {
+        eventTimerCheckScheduled = false;
+        processPendingWatermarks();
     }
 
     /**
@@ -645,7 +714,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             String id = operation.getTimerId();
             TimerOperation previous = stateManager.getTimerRegistrations().get(id);
             if (previous != null) {
-                timerService.deleteProcessingTimeTimer(id, previous.getTime());
+                if (previous.getTimeDomain() == TimeDomain.EVENT_TIME) {
+                    timerService.deleteEventTimeTimer(id, previous.getTime());
+                } else {
+                    timerService.deleteProcessingTimeTimer(id, previous.getTime());
+                }
             }
             if (operation.getEventBytes() == null) {
                 stateManager.getTimerRegistrations().remove(id);
@@ -656,7 +729,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     operation = operation.withOwnerContext(ownerContext);
                 }
                 stateManager.getTimerRegistrations().put(id, operation);
-                timerService.registerProcessingTimeTimer(id, operation.getTime());
+                registerNativeTimer(id, operation);
             }
         }
     }
@@ -665,9 +738,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     public void onProcessingTime(InternalTimer<Object, String> timer) throws Exception {
         TimerOperation registration =
                 stateManager.getTimerRegistrations().get(timer.getNamespace());
-        if (registration == null || registration.getTime() != timer.getTimestamp()) {
-            return;
-        }
         // Wait until this key's Actions finish recovery and apply their timer operations.
         // Flink has already removed this fired timer; keep its registration in keyed state
         // so the remaining timers can be re-registered after recovery.
@@ -707,9 +777,19 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     @Override
-    public void onEventTime(InternalTimer<Object, String> timer) {
-        throw new UnsupportedOperationException(
-                "Event-time timers are not supported by Flink Agents.");
+    public void onEventTime(InternalTimer<Object, String> timer) throws Exception {
+        TimerOperation registration =
+                stateManager.getTimerRegistrations().get(timer.getNamespace());
+        // As with processing time, apply recovered Action effects before delivering timer Events.
+        if (recoveringTimerKeys.contains(timer.getKey())) {
+            return;
+        }
+        Event event = registration.restoreEvent(eventSerializer);
+        if (pendingTimerWatermark != null) {
+            watermarkTimerEvents.add(event.getId().toString());
+        }
+        stateManager.getTimerRegistrations().remove(timer.getNamespace());
+        admitRunEvent(event);
     }
 
     /** Resolves one context key for an input and reuses it for the entire agent run. */
@@ -840,7 +920,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     freshRecordRound = true;
                 }
                 stateManager.addProcessingKey(key);
-                activeRuns.put(key, new ActiveRun(nextRecordIndex++));
+                activeRuns.put(key, new ActiveRun(nextRecordIndex++, event.getId().toString()));
                 stateManager.initOrIncSequenceNumber();
                 assignRootOccurrenceId(key, event);
                 if (freshRecordRound) {
@@ -986,7 +1066,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         notifyRecordFinished(key);
         int removedCount = stateManager.removeProcessingKey(key);
         inFlightInputRecords--;
-        activeRuns.remove(key);
+        ActiveRun finishedRun = activeRuns.remove(key);
+        watermarkTimerEvents.remove(finishedRun.eventId);
         checkState(
                 removedCount == 1,
                 "Current processing key count for key "
@@ -996,12 +1077,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         checkState(
                 eventRouter.getKeySegmentQueue().removeKey(key),
                 "Current key" + key + " is missing from the segmentedQueue.");
-        eventRouter.processEligibleWatermarks(super::processWatermark);
         builtInMetrics.markInputRunCompleted(inputRunId);
         Event pendingInputEvent = pollNextPendingInputEvent();
         if (pendingInputEvent != null) {
             processInputEvent(key, pendingInputEvent);
         }
+        processPendingWatermarks();
     }
 
     private void processActionTaskForKey(Object key, String contextKey, @Nullable String inputRunId)
@@ -1647,7 +1728,18 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private void reregisterCurrentKeyTimers() throws Exception {
         for (Map.Entry<String, TimerOperation> entry :
                 stateManager.getTimerRegistrations().entries()) {
-            timerService.registerProcessingTimeTimer(entry.getKey(), entry.getValue().getTime());
+            registerNativeTimer(entry.getKey(), entry.getValue());
+        }
+    }
+
+    private void registerNativeTimer(String id, TimerOperation operation) {
+        if (operation.getTimeDomain() == TimeDomain.EVENT_TIME) {
+            timerService.registerEventTimeTimer(id, operation.getTime());
+            if (operation.getTime() <= timerService.currentWatermark()) {
+                scheduleEventTimerCheck();
+            }
+        } else {
+            timerService.registerProcessingTimeTimer(id, operation.getTime());
         }
     }
 
@@ -1768,7 +1860,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 }
                 recoveringTimerKeys.add(key);
                 eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
-                activeRuns.put(key, new ActiveRun(nextRecordIndex++));
+                activeRuns.put(key, new ActiveRun(nextRecordIndex++, null));
                 // Align with the task-level replay: re-emit the record start for the resumed round
                 // so listeners observe a paired start/finished bracket as well. Emitted before
                 // either engine dispatches, so no callback for this record can precede it.
@@ -2316,14 +2408,18 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     /** An active agent run and its scheduling order for continuation-based execution. */
     private static final class ActiveRun {
+        /** Root Event identity used to track runs triggered by the pending watermark. */
+        private final String eventId;
+
         /** Processing-start order of the input that started this run. */
         private final long recordIndex;
 
         /** Next Action index used to order asynchronous work within this run. */
         private long nextTaskIndex;
 
-        private ActiveRun(long recordIndex) {
+        private ActiveRun(long recordIndex, String eventId) {
             this.recordIndex = recordIndex;
+            this.eventId = eventId;
         }
     }
 }

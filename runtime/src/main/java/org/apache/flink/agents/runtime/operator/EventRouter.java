@@ -233,21 +233,10 @@ class EventRouter<IN, OUT> {
         builtInMetrics.markEventProcessed();
     }
 
-    /**
-     * Drains all watermarks from the segmented queue that are now eligible to be emitted.
-     *
-     * <p>A watermark becomes eligible once every key in the segment ahead of it has finished
-     * processing. This method pops watermarks in order and forwards each to the supplied {@link
-     * WatermarkEmitter}.
-     *
-     * @param watermarkEmitter callback that emits a watermark downstream.
-     */
-    void processEligibleWatermarks(WatermarkEmitter watermarkEmitter) throws Exception {
-        Watermark mark = keySegmentQueue.popOldestWatermark();
-        while (mark != null) {
-            watermarkEmitter.emit(mark);
-            mark = keySegmentQueue.popOldestWatermark();
-        }
+    /** Returns the next watermark whose preceding inputs have finished, or null. */
+    @Nullable
+    Watermark pollEligibleWatermark() {
+        return keySegmentQueue.popOldestWatermark();
     }
 
     SegmentedQueue getKeySegmentQueue() {
@@ -267,10 +256,5 @@ class EventRouter<IN, OUT> {
     @VisibleForTesting
     void addEventListener(EventListener listener) {
         eventListeners.add(listener);
-    }
-
-    @FunctionalInterface
-    interface WatermarkEmitter {
-        void emit(Watermark mark) throws Exception;
     }
 }
