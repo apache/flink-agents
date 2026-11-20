@@ -762,6 +762,8 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         if mode == TimerMode.TRIGGER_AFTER_CURRENT_RUN and event.attachments:
             msg = "Timer Events that start a new run cannot carry attachments"
             raise ValueError(msg)
+        if mode == TimerMode.CURRENT_RUN_WAIT_FOR_TRIGGER:
+            store_event_attachments(event, self)
         event_json = event.model_dump_json()
         if absolute:
             self._j_runner_context.registerTimerAtJson(

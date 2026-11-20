@@ -24,5 +24,12 @@ public enum TimerMode {
      * memory. The current run can finish without waiting for the timer, and subsequent inputs with
      * the same key can then be processed. The timer does not preempt an active run.
      */
-    TRIGGER_AFTER_CURRENT_RUN
+    TRIGGER_AFTER_CURRENT_RUN,
+
+    /**
+     * Delivers the Event within the current run, retaining its context and sensory memory. The run
+     * waits for its timers and subsequent Actions before processing the next input for the same
+     * key. Waiting does not occupy an Action execution thread.
+     */
+    CURRENT_RUN_WAIT_FOR_TRIGGER
 }

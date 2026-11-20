@@ -51,9 +51,14 @@ class TimerMode(Enum):
     sensory memory. The current run can finish without waiting for the timer,
     allowing subsequent inputs with the same key to proceed. The timer does not
     preempt an active run.
+
+    CURRENT_RUN_WAIT_FOR_TRIGGER retains the current run's context, sensory memory
+    and input timestamp. The next input with the same key waits until the run's
+    timers and subsequent Actions finish. Waiting does not occupy an Action thread.
     """
 
     TRIGGER_AFTER_CURRENT_RUN = "trigger_after_current_run"
+    CURRENT_RUN_WAIT_FOR_TRIGGER = "current_run_wait_for_trigger"
 
 
 @dataclass(frozen=True)
@@ -171,6 +176,9 @@ class RunnerContext(ABC):
     def send_event(self, event: Event) -> None:
         """Send an event to the agent for processing.
 
+        Create a new Event for each send. Do not reuse or modify it, its attributes,
+        or its attachment values after sending.
+
         Parameters
         ----------
         event : Event
@@ -188,12 +196,20 @@ class RunnerContext(ABC):
         """Deliver an Event after this Action completes plus a non-negative delay.
 
         Set mode to TimerMode.TRIGGER_AFTER_CURRENT_RUN to start a new run
-        using the Actions bound to the Event type. Registration copies the Event;
+        using the Actions bound to the Event type. Registration serializes the Event;
         the delay is rounded up to milliseconds. Events in TRIGGER_AFTER_CURRENT_RUN
         mode must not carry attachments; use serializable attributes to pass data
         between runs.
+        Create a new Event for each registration. Do not reuse or modify it, its
+        attributes, or its attachment values afterward.
         Registering the same ID replaces a pending timer for this business key.
         Awaiting work does not commit a timer. Failed Actions do not register timers.
+
+        With TimerMode.CURRENT_RUN_WAIT_FOR_TRIGGER, the Event continues in the
+        original run. As with send_event, attachment values are stored in this run's
+        sensory memory and replaced with references in the supplied Event. The run
+        stays open until its timers and subsequent Actions finish, keeping the
+        next same-key input queued without occupying an Action execution thread.
 
         Raises:
             ValueError: If the Event carries attachments in
@@ -206,8 +222,10 @@ class RunnerContext(ABC):
     ) -> None:
         """Register an absolute deadline; commit when the Action completes.
 
-        Set mode to TimerMode.TRIGGER_AFTER_CURRENT_RUN. Events in this mode must
-        not carry attachments; use serializable attributes to pass data between runs.
+        The mode and attachment rules are the same as register_timer: a new run
+        cannot receive attachments, while a continuation in the current run can
+        use its sensory memory. Use a new Event for each registration, as with
+        register_timer.
 
         Raises:
             ValueError: If the Event carries attachments in

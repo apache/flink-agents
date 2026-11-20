@@ -510,7 +510,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         Preconditions.checkArgument(!delay.isNegative(), "Timer delay must be non-negative");
         long millis = Math.addExact(delay.toMillis(), delay.getNano() % 1_000_000 == 0 ? 0 : 1);
         timerOperations.add(
-                new TimerOperation(timerId, millis, true, TimerOperation.snapshot(event)));
+                new TimerOperation(timerId, millis, true, snapshotTimerEvent(event, mode), mode));
     }
 
     @Override
@@ -521,13 +521,13 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         long millis =
                 Math.addExact(deadline.toEpochMilli(), deadline.getNano() % 1_000_000 == 0 ? 0 : 1);
         timerOperations.add(
-                new TimerOperation(timerId, millis, false, TimerOperation.snapshot(event)));
+                new TimerOperation(timerId, millis, false, snapshotTimerEvent(event, mode), mode));
     }
 
     @Override
     public void cancelTimer(String timerId) {
         checkTimerAccess(timerId);
-        timerOperations.add(new TimerOperation(timerId, 0, false, null));
+        timerOperations.add(new TimerOperation(timerId, 0, false, null, null));
     }
 
     private void checkTimerAccess(String timerId) {
@@ -552,6 +552,17 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 "A timer must target an Event handled by an Action");
     }
 
+    private byte[] snapshotTimerEvent(Event event, TimerMode mode) {
+        if (mode == TimerMode.CURRENT_RUN_WAIT_FOR_TRIGGER) {
+            try {
+                EventAttachmentUtils.storeEventAttachments(event, this);
+            } catch (Exception e) {
+                throw new IllegalArgumentException("Failed to store timer Event attachments", e);
+            }
+        }
+        return TimerOperation.snapshot(event);
+    }
+
     public List<TimerOperation> getTimerOperations() {
         return timerOperations;
     }
@@ -561,8 +572,13 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     /** Resolves relative delays once, at the Action completion commit boundary. */
-    public void resolveTimerOperations(long now) {
-        timerOperations.replaceAll(operation -> operation.resolve(now));
+    public void resolveTimerOperations(
+            long now, TraceContext ownerContext, Long timestamp, String producerId)
+            throws Exception {
+        for (int i = 0; i < timerOperations.size(); i++) {
+            timerOperations.set(
+                    i, timerOperations.get(i).resolve(now, ownerContext, timestamp, producerId, i));
+        }
     }
 
     /** Enqueues a runtime event without applying user-event or sub-agent routing. */

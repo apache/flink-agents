@@ -137,9 +137,13 @@ public class BuiltInMetrics {
     }
 
     public void restoreActionTask(TraceContext traceContext, boolean executionStarted) {
-        inputRunMetrics.identifyRestoredActiveInputRun(traceContext.getInputRunId());
+        restoreInputRun(traceContext);
         restoredActionMetrics(traceContext.getEntityName())
                 .restoreActionTask(traceContext.getExecutionId(), executionStarted);
+    }
+
+    public void restoreInputRun(TraceContext traceContext) {
+        inputRunMetrics.identifyRestoredActiveInputRun(traceContext.getInputRunId());
     }
 
     public void markExecutionRecord(String actionName, TraceRecord record) {

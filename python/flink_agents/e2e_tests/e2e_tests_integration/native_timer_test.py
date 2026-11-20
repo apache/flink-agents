@@ -27,14 +27,19 @@ from pyflink.common import Configuration, Duration, WatermarkStrategy
 from pyflink.datastream import RuntimeExecutionMode, StreamExecutionEnvironment
 from pyflink.datastream.connectors.file_system import FileSource, StreamFormat
 
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
+from flink_agents.e2e_tests.e2e_tests_integration.current_run_timer_agent import (
+    CurrentRunTimerAgent,
+)
 from flink_agents.e2e_tests.e2e_tests_integration.native_timer_agent import (
     NativeTimerAgent,
 )
 
 
+@pytest.mark.parametrize("agent_type", [NativeTimerAgent, CurrentRunTimerAgent])
 def test_timers_drive_idle_keys_without_further_input(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, agent_type: type[Agent]
 ) -> None:
     python_path = f"{Path(__file__).parents[3]}:{sysconfig.get_paths()['purelib']}"
     monkeypatch.setenv("PYTHONPATH", python_path)
@@ -64,7 +69,7 @@ def test_timers_drive_idle_keys_without_further_input(
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
     output = (
         agents_env.from_datastream(inputs, key_selector=lambda value: value)
-        .apply(NativeTimerAgent())
+        .apply(agent_type())
         .to_datastream()
     )
 

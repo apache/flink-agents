@@ -18,6 +18,9 @@
 package org.apache.flink.agents.runtime.timer;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.context.TimerMode;
+import org.apache.flink.agents.api.trace.TraceContext;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
@@ -33,14 +36,20 @@ public class TimerOperation {
     private long time;
     private boolean relative;
     private byte[] eventBytes;
+    private TimerMode mode;
+    private byte[] ownerContextBytes;
+    private Long sourceTimestamp;
+    private String occurrenceId;
 
     public TimerOperation() {}
 
-    public TimerOperation(String timerId, long time, boolean relative, byte[] eventBytes) {
+    public TimerOperation(
+            String timerId, long time, boolean relative, byte[] eventBytes, TimerMode mode) {
         this.timerId = timerId;
         this.time = time;
         this.relative = relative;
         this.eventBytes = eventBytes;
+        this.mode = mode;
     }
 
     public String getTimerId() {
@@ -59,22 +68,61 @@ public class TimerOperation {
         return eventBytes;
     }
 
-    public TimerOperation resolve(long now) {
-        return relative
-                ? new TimerOperation(timerId, Math.addExact(now, time), false, eventBytes)
-                : this;
+    public TimerMode getMode() {
+        return mode;
     }
 
-    /** Copies an Event for delivery in a new run. */
+    public byte[] getOwnerContextBytes() {
+        return ownerContextBytes;
+    }
+
+    public Long getSourceTimestamp() {
+        return sourceTimestamp;
+    }
+
+    public String getOccurrenceId() {
+        return occurrenceId;
+    }
+
+    public TimerOperation resolve(
+            long now, TraceContext ownerContext, Long timestamp, String producerId, int ordinal)
+            throws Exception {
+        TimerOperation resolved =
+                new TimerOperation(
+                        timerId,
+                        relative ? Math.addExact(now, time) : time,
+                        false,
+                        eventBytes,
+                        mode);
+        if (eventBytes != null && mode == TimerMode.CURRENT_RUN_WAIT_FOR_TRIGGER) {
+            DataOutputSerializer out = new DataOutputSerializer(256);
+            contextSerializer().serialize(ownerContext, out);
+            resolved.ownerContextBytes = out.getCopyOfBuffer();
+            resolved.sourceTimestamp = timestamp;
+            resolved.occurrenceId =
+                    RuntimeIdentity.deriveEmittedEventOccurrenceId(producerId + ":timer", ordinal);
+        }
+        return resolved;
+    }
+
+    /** Binds a replayed registration to the run executing the reused Action result. */
+    public TimerOperation withOwnerContext(TraceContext ownerContext) throws Exception {
+        TimerOperation copy = new TimerOperation(timerId, time, relative, eventBytes, mode);
+        DataOutputSerializer out = new DataOutputSerializer(256);
+        contextSerializer().serialize(ownerContext, out);
+        copy.ownerContextBytes = out.getCopyOfBuffer();
+        copy.sourceTimestamp = sourceTimestamp;
+        copy.occurrenceId = occurrenceId;
+        return copy;
+    }
+
+    /** Serializes the Event after registration has prepared its attachment references. */
     public static byte[] snapshot(Event event) {
         Objects.requireNonNull(event, "event");
         try {
             TypeSerializer<Event> serializer = serializer();
-            Event copy = serializer.copy(event);
-            copy.setSourceTimestamp(null);
-            copy.setOccurrenceId(null);
             DataOutputSerializer out = new DataOutputSerializer(256);
-            serializer.serialize(copy, out);
+            serializer.serialize(event, out);
             return out.getCopyOfBuffer();
         } catch (Exception e) {
             throw new IllegalArgumentException("Cannot snapshot timer Event", e);
@@ -82,7 +130,18 @@ public class TimerOperation {
     }
 
     public Event restoreEvent() throws Exception {
-        return serializer().deserialize(new DataInputDeserializer(eventBytes));
+        Event event = serializer().deserialize(new DataInputDeserializer(eventBytes));
+        event.setSourceTimestamp(sourceTimestamp);
+        event.setOccurrenceId(occurrenceId);
+        return event;
+    }
+
+    public TraceContext restoreOwnerContext() throws Exception {
+        return contextSerializer().deserialize(new DataInputDeserializer(ownerContextBytes));
+    }
+
+    private static TypeSerializer<TraceContext> contextSerializer() {
+        return TypeInformation.of(TraceContext.class).createSerializer(new SerializerConfigImpl());
     }
 
     private static TypeSerializer<Event> serializer() {
@@ -98,11 +157,23 @@ public class TimerOperation {
         return time == that.time
                 && relative == that.relative
                 && Objects.equals(timerId, that.timerId)
+                && mode == that.mode
+                && Arrays.equals(ownerContextBytes, that.ownerContextBytes)
+                && Objects.equals(sourceTimestamp, that.sourceTimestamp)
+                && Objects.equals(occurrenceId, that.occurrenceId)
                 && Arrays.equals(eventBytes, that.eventBytes);
     }
 
     @Override
     public int hashCode() {
-        return 31 * Objects.hash(timerId, time, relative) + Arrays.hashCode(eventBytes);
+        return Objects.hash(
+                timerId,
+                time,
+                relative,
+                mode,
+                sourceTimestamp,
+                occurrenceId,
+                Arrays.hashCode(eventBytes),
+                Arrays.hashCode(ownerContextBytes));
     }
 }
