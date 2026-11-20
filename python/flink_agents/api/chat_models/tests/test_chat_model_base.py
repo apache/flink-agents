@@ -736,6 +736,38 @@ def test_chat_with_schema_and_no_tools_omits_tool_only_params(
     assert setup.setup_params == _params_with_tool_choice()
 
 
+def test_chat_without_tools_sends_the_messages_as_given() -> None:
+    """chat_without_tools() sends the messages as given: without the bound prompt,
+    the bound tools or the tool-only parameters, top level and nested, and leaves
+    the setup's parameters and tools untouched.
+    """
+    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+    setup.setup_params = _params_with_tool_choice()
+    setup.prompt = Prompt.from_messages([ChatMessage.system("You are the agent.")])
+    setup.tools = [_StubTool()]
+    messages = [
+        ChatMessage.of(MessageRole.SYSTEM, "Write the notes."),
+        ChatMessage.of(MessageRole.USER, "the rounds"),
+    ]
+
+    result = setup.chat_without_tools(messages)
+
+    assert result is not None
+    assert connection.captured_messages == messages
+    assert connection.captured_tools == []
+    assert connection.captured_output_schema is None
+    assert connection.captured_kwargs == _STRIPPED_PARAMS
+    assert setup.setup_params == _params_with_tool_choice()
+    assert len(setup.tools) == 1
+
+
+def test_chat_without_tools_needs_a_resolved_connection() -> None:
+    setup = _RecordingChatModelSetup(connection="c", model="m")
+
+    with pytest.raises(TypeError, match="has not been resolved"):
+        setup.chat_without_tools([ChatMessage.of(MessageRole.USER, "hi")])
+
+
 def test_plain_chat_keeps_tool_only_params() -> None:
     """A plain chat() on a setup without tools sends the tool-only parameters."""
     setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)

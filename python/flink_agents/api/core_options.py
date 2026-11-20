@@ -394,3 +394,65 @@ class AgentExecutionOptions:
         config_type=ShortTermMemoryTtlVisibility,
         default=ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED,
     )
+
+    # The context-management.* options declare the agent's default
+    # ContextManagementPolicy (flink_agents.api.context_management). All are unset by
+    # default: the built-in chat action then sends the whole conversation of a request.
+
+    # The most characters of one tool result that the built-in chat action sends to
+    # the model; a longer result is cut in the middle. At least 100.
+    CONTEXT_MANAGEMENT_TOOL_RESULTS_MAX_CHARS = ConfigOption(
+        key="context-management.tool-results.max-chars",
+        config_type=int,
+        default=None,
+    )
+
+    # How many of the most recent tool-call rounds keep their tool results; the
+    # results of older rounds are sent as a one line placeholder. At least 1.
+    CONTEXT_MANAGEMENT_TOOL_RESULTS_KEEP_LAST_ROUNDS = ConfigOption(
+        key="context-management.tool-results.keep-last-rounds",
+        config_type=int,
+        default=None,
+    )
+
+    # How many rounds are masked in one step, so that the messages before the masking
+    # boundary stay unchanged between two steps. At least 1; 1 when unset. Only with
+    # context-management.tool-results.keep-last-rounds.
+    CONTEXT_MANAGEMENT_TOOL_RESULTS_MASK_STEP_ROUNDS = ConfigOption(
+        key="context-management.tool-results.mask-step-rounds",
+        config_type=int,
+        default=None,
+    )
+
+    # The input budget of one model call in tokens. When the estimated input exceeds
+    # context-management.summarization.trigger-ratio of it, the older tool-call rounds
+    # of the request are replaced by a summary.
+    CONTEXT_MANAGEMENT_MAX_INPUT_TOKENS = ConfigOption(
+        key="context-management.max-input-tokens",
+        config_type=int,
+        default=None,
+    )
+
+    # The share of context-management.max-input-tokens above which older rounds are
+    # summarized. Greater than 0 and at most 1; 0.8 when unset.
+    CONTEXT_MANAGEMENT_SUMMARIZATION_TRIGGER_RATIO = ConfigOption(
+        key="context-management.summarization.trigger-ratio",
+        config_type=float,
+        default=None,
+    )
+
+    # How many of the most recent rounds a summarization leaves as they are. At least
+    # 1; 3 when unset.
+    CONTEXT_MANAGEMENT_SUMMARIZATION_KEEP_LAST_ROUNDS = ConfigOption(
+        key="context-management.summarization.keep-last-rounds",
+        config_type=int,
+        default=None,
+    )
+
+    # The chat model resource that writes summaries. When unset, the chat model that
+    # answers the request writes them.
+    CONTEXT_MANAGEMENT_SUMMARIZATION_MODEL = ConfigOption(
+        key="context-management.summarization.model",
+        config_type=str,
+        default=None,
+    )

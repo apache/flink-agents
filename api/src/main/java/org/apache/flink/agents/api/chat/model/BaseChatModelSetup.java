@@ -292,6 +292,24 @@ public abstract class BaseChatModelSetup extends Resource {
         return messages;
     }
 
+    /**
+     * Estimates the input tokens of the request {@link #chat(List, Map, Map)} would send for these
+     * messages: the bound prompt and the skill-discovery message are added as for a chat, and the
+     * bound tools are counted. The connection decides how the tokens are counted, see {@link
+     * BaseChatModelConnection#estimateInputTokens}.
+     *
+     * @throws NullPointerException if {@link #open()} has not bound the connection yet
+     */
+    public TokenEstimate estimateInputTokens(
+            List<ChatMessage> messages, Map<String, Object> promptArgs) {
+        Preconditions.checkNotNull(
+                connection,
+                "Connection is not initialized. Ensure open() is called before"
+                        + " estimateInputTokens().");
+        return connection.estimateInputTokens(
+                prepareRequestMessages(messages, promptArgs), tools, getParameters());
+    }
+
     public ChatResult chat(List<ChatMessage> messages) {
         return this.chat(messages, Collections.emptyMap(), Collections.emptyMap());
     }
@@ -343,6 +361,26 @@ public abstract class BaseChatModelSetup extends Resource {
             params = withoutToolOnlyParams(params);
         }
         return connection.chat(messages, tools, params, outputSchema);
+    }
+
+    /**
+     * Sends the messages exactly as given in a request that binds no tools: the bound prompt, the
+     * skill-discovery message and the bound tools are not added, and the parameters omit {@code
+     * tool_choice}, {@code tool_choice_option} and {@code parallel_tool_calls}, which providers
+     * reject on a request without tools.
+     *
+     * <p>Framework-facing: for a call the framework makes on behalf of a request, such as writing a
+     * summary of it, where the chat model's own prompt and tools do not apply.
+     *
+     * @param messages the messages to send
+     * @return the connection's result for this request
+     * @throws NullPointerException if {@link #open()} has not bound the connection yet
+     */
+    public ChatResult chatWithoutTools(List<ChatMessage> messages) {
+        Preconditions.checkNotNull(
+                connection,
+                "Connection is not initialized. Ensure open() is called before chat().");
+        return connection.chat(messages, List.of(), withoutToolOnlyParams(this.getParameters()));
     }
 
     private static Map<String, Object> withoutToolOnlyParams(Map<String, Object> params) {

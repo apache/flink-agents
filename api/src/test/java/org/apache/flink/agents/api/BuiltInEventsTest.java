@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.chat.contextmanagement.ContextManagementPolicy;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -27,6 +28,7 @@ import org.apache.flink.agents.api.decision.DecisionResult;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.event.ContextManagementEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
 import org.apache.flink.agents.api.event.DecisionRequestEvent;
@@ -97,6 +99,16 @@ class BuiltInEventsTest {
         attrs.put("decision_source", ModelRoutingEvent.SOURCE_DEFAULT);
         attrs.put("fallback_enabled", false);
         attrs.put("metadata", new LinkedHashMap<>());
+        return attrs;
+    }
+
+    /** Attributes for a {@link ContextManagementEvent}. */
+    private static Map<String, Object> contextManagementAttrs() {
+        Map<String, Object> attrs = new LinkedHashMap<>();
+        attrs.put("request_id", REQUEST_ID);
+        attrs.put("model", "test-model");
+        attrs.put("step", ContextManagementEvent.STEP_MASK);
+        attrs.put("details", new LinkedHashMap<>(Map.of("rounds", 2)));
         return attrs;
     }
 
@@ -250,7 +262,8 @@ class BuiltInEventsTest {
                         new ContextRetrievalRequestEvent(FIXED_ID, contextAttrs),
                         new AgentRunBeginEvent(FIXED_ID, memoryAttrs),
                         new ShortTermWriteEvent(FIXED_ID, memoryAttrs),
-                        new ModelRoutingEvent(FIXED_ID, routingAttrs()));
+                        new ModelRoutingEvent(FIXED_ID, routingAttrs()),
+                        new ContextManagementEvent(FIXED_ID, contextManagementAttrs()));
 
         for (Event original : typed) {
             Event base = roundTripToBase(original);
@@ -413,6 +426,141 @@ class BuiltInEventsTest {
                 .hasMessageContaining("Malformed built-in event of type '_chat_request_event'");
     }
 
+    // ── Context management: the request's policy and the observability event ──
+
+    @Test
+    void aChatRequestCarriesItsContextManagementPolicyAcrossTheJsonBoundary() throws Exception {
+        ContextManagementPolicy policy =
+                ContextManagementPolicy.builder()
+                        .toolResultMaxChars(2000)
+                        .toolResultKeepLastRounds(3)
+                        .maxInputTokens(8000)
+                        .build();
+        ChatRequestEvent request =
+                new ChatRequestEvent("test-model", List.of(ChatMessage.user("hello")))
+                        .withContextManagement(policy);
+        assertThat(request.getContextManagement()).isEqualTo(policy);
+
+        // On the wire the policy is its map form.
+        Event base = roundTripToBase(request);
+        assertThat(base.getAttributes().get("context_management"))
+                .isEqualTo(
+                        Map.of(
+                                "tool_result_max_chars",
+                                2000,
+                                "tool_result_keep_last_rounds",
+                                3,
+                                "max_input_tokens",
+                                8000));
+
+        Event restored = Event.fromJson(MAPPER.writeValueAsString(request));
+        assertThat(restored).isInstanceOf(ChatRequestEvent.class);
+        assertThat(((ChatRequestEvent) restored).getContextManagement()).isEqualTo(policy);
+    }
+
+    @Test
+    void aChatRequestWithoutAPolicyHasNoneAndTheAttributeIsAbsent() throws Exception {
+        ChatRequestEvent request =
+                new ChatRequestEvent("test-model", List.of(ChatMessage.user("hello")));
+
+        assertThat(request.getContextManagement()).isNull();
+        assertThat(request.getAttributes()).doesNotContainKey("context_management");
+
+        // Setting and then clearing the policy leaves the request as it was.
+        request.withContextManagement(ContextManagementPolicy.disabled());
+        assertThat(request.getContextManagement()).isEqualTo(ContextManagementPolicy.disabled());
+        request.withContextManagement(null);
+        assertThat(request.getContextManagement()).isNull();
+        assertThat(request.getAttributes()).doesNotContainKey("context_management");
+        assertThat(
+                        ((ChatRequestEvent) Event.fromJson(MAPPER.writeValueAsString(request)))
+                                .getContextManagement())
+                .isNull();
+    }
+
+    @Test
+    void aDisabledPolicyOnAChatRequestSurvivesTheJsonBoundary() throws Exception {
+        ChatRequestEvent request =
+                new ChatRequestEvent("test-model", List.of(ChatMessage.user("hello")))
+                        .withContextManagement(ContextManagementPolicy.disabled());
+
+        ChatRequestEvent restored =
+                (ChatRequestEvent) Event.fromJson(MAPPER.writeValueAsString(request));
+
+        // An empty map is a policy with nothing set, which is not the same as no policy.
+        assertThat(restored.getContextManagement()).isEqualTo(ContextManagementPolicy.disabled());
+    }
+
+    @Test
+    void aPolicySetAsItsMapFormIsReadAsAPolicy() {
+        ChatRequestEvent request =
+                new ChatRequestEvent("test-model", List.of(ChatMessage.user("hi")));
+        request.setAttr("context_management", Map.of("tool_result_keep_last_rounds", 2));
+
+        assertThat(request.getContextManagement())
+                .isEqualTo(ContextManagementPolicy.builder().toolResultKeepLastRounds(2).build());
+    }
+
+    @Test
+    void fromJsonRejectsAChatRequestWhoseContextManagementIsNotAPolicy() {
+        assertThatThrownBy(
+                        () ->
+                                Event.fromJson(
+                                        "{\"type\":\"_chat_request_event\",\"attributes\":{"
+                                                + "\"model\":\"m\",\"messages\":[],"
+                                                + "\"context_management\":\"aggressive\"}}"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Malformed built-in event of type '_chat_request_event'")
+                .hasStackTraceContaining(
+                        "must be a ContextManagementPolicy or its map form, got java.lang.String");
+        assertThatThrownBy(
+                        () ->
+                                Event.fromJson(
+                                        "{\"type\":\"_chat_request_event\",\"attributes\":{"
+                                                + "\"model\":\"m\",\"messages\":[],"
+                                                + "\"context_management\":"
+                                                + "{\"tool_result_max_chars\":5}}}"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasStackTraceContaining("tool_result_max_chars must be at least 100");
+    }
+
+    @Test
+    void aContextManagementEventKeepsItsFieldsAcrossTheJsonBoundary() throws Exception {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("keep_last_rounds", 3);
+        details.put("step_rounds", 1);
+        details.put("rounds", 1);
+        details.put(
+                "results",
+                List.of(Map.of("call_id", "call-1", "tool", "lookup", "omitted_chars", 20_000)));
+        ContextManagementEvent event =
+                new ContextManagementEvent(
+                        REQUEST_ID, "test-model", ContextManagementEvent.STEP_MASK, details);
+
+        Event restored = Event.fromJson(MAPPER.writeValueAsString(event));
+
+        assertThat(restored).isInstanceOf(ContextManagementEvent.class);
+        ContextManagementEvent typed = (ContextManagementEvent) restored;
+        assertThat(typed.getId()).isEqualTo(event.getId());
+        assertThat(typed.getRequestId()).isEqualTo(REQUEST_ID);
+        assertThat(typed.getModel()).isEqualTo("test-model");
+        assertThat(typed.getStep()).isEqualTo(ContextManagementEvent.STEP_MASK);
+        assertThat(typed.getDetails()).isEqualTo(details);
+    }
+
+    @Test
+    void aContextManagementEventCopiesTheDetailsItIsGiven() {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("rounds", 1);
+        ContextManagementEvent event =
+                new ContextManagementEvent(
+                        REQUEST_ID, "test-model", ContextManagementEvent.STEP_MASK, details);
+
+        details.put("rounds", 99);
+
+        assertThat(event.getDetails()).containsEntry("rounds", 1);
+    }
+
     // ── Every registered built-in type enforces its schema at the boundary ──
 
     /**
@@ -485,6 +633,7 @@ class BuiltInEventsTest {
                 ContextRetrievalResponseEvent.EVENT_TYPE,
                 attrs("request_id", REQUEST_ID, "query", "what is flink", "documents", List.of()));
         byType.put(ModelRoutingEvent.EVENT_TYPE, routingAttrs());
+        byType.put(ContextManagementEvent.EVENT_TYPE, contextManagementAttrs());
         byType.put(AgentRunBeginEvent.EVENT_TYPE, memoryAttrs());
         byType.put(ShortTermWriteEvent.EVENT_TYPE, memoryAttrs());
         byType.put(ShortTermReadEvent.EVENT_TYPE, memoryAttrs());
@@ -667,7 +816,12 @@ class BuiltInEventsTest {
                 Arguments.of(ModelRoutingEvent.EVENT_TYPE, "candidates", List.of(0)),
                 Arguments.of(ModelRoutingEvent.EVENT_TYPE, "reason", 0),
                 Arguments.of(ModelRoutingEvent.EVENT_TYPE, "score", "not-a-number"),
-                Arguments.of(ModelRoutingEvent.EVENT_TYPE, "decision_ms", "not-a-number"));
+                Arguments.of(ModelRoutingEvent.EVENT_TYPE, "decision_ms", "not-a-number"),
+                // ContextManagementEvent
+                Arguments.of(ContextManagementEvent.EVENT_TYPE, "request_id", "not-a-uuid"),
+                Arguments.of(ContextManagementEvent.EVENT_TYPE, "model", 0),
+                Arguments.of(ContextManagementEvent.EVENT_TYPE, "step", 0),
+                Arguments.of(ContextManagementEvent.EVENT_TYPE, "details", "not-a-map"));
     }
 
     @ParameterizedTest

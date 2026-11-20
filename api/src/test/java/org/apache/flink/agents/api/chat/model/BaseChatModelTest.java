@@ -260,6 +260,7 @@ class BaseChatModelTest {
     /** Connection that captures the messages passed to it for assertions. */
     private static class RecordingConnection extends BaseChatModelConnection {
         List<ChatMessage> capturedMessages;
+        List<Tool> capturedPlainTools;
         Map<String, Object> capturedModelParams;
 
         RecordingConnection() {
@@ -273,6 +274,7 @@ class BaseChatModelTest {
         public ChatResult chat(
                 List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
             this.capturedMessages = new ArrayList<>(messages);
+            this.capturedPlainTools = new ArrayList<>(tools);
             this.capturedModelParams = new HashMap<>(modelParams);
             return new ChatResult(ChatMessage.assistant(List.of(new TextBlock("ok"))));
         }
@@ -626,6 +628,51 @@ class BaseChatModelTest {
         setup.chat(List.of(new ChatMessage(MessageRole.USER, "hi")));
 
         assertEquals(paramsWithToolChoice(), connection.capturedModelParams);
+    }
+
+    @Test
+    @DisplayName(
+            "chatWithoutTools() sends the messages as given, without the bound prompt, the bound"
+                    + " tools or the tool-only parameters")
+    void testChatWithoutToolsSendsTheMessagesAsGiven() {
+        RecordingConnection connection = new RecordingConnection();
+        Prompt prompt =
+                Prompt.fromMessages(
+                        List.of(new ChatMessage(MessageRole.SYSTEM, "You are the agent.")));
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(connection, prompt, null, paramsWithToolChoice());
+        setup.tools.add(new SubagentTool("bound", "help", "{\"type\":\"object\"}"));
+        List<ChatMessage> messages =
+                List.of(
+                        new ChatMessage(MessageRole.SYSTEM, "Write the notes."),
+                        new ChatMessage(MessageRole.USER, "the rounds"));
+
+        ChatResult result = setup.chatWithoutTools(messages);
+
+        assertEquals("ok", result.getText());
+        assertEquals(messages, connection.capturedMessages);
+        assertEquals(List.of(), connection.capturedPlainTools);
+        // tool_choice, tool_choice_option and parallel_tool_calls are left out at both levels.
+        assertEquals(
+                Map.of("model", "setup-model", "additional_kwargs", Map.of("top_p", 0.5)),
+                connection.capturedModelParams);
+        // The setup's own parameters and tools are as they were.
+        assertEquals(paramsWithToolChoice(), setup.getParameters());
+        assertEquals(1, setup.getTools().size());
+    }
+
+    @Test
+    @DisplayName("chatWithoutTools() needs an open connection")
+    void testChatWithoutToolsNeedsAnOpenConnection() {
+        RecordingChatModelSetup setup = new RecordingChatModelSetup(null, null);
+
+        NullPointerException error =
+                assertThrows(
+                        NullPointerException.class,
+                        () ->
+                                setup.chatWithoutTools(
+                                        List.of(new ChatMessage(MessageRole.USER, "hi"))));
+        assertTrue(error.getMessage().contains("Connection is not initialized"));
     }
 
     @Test

@@ -36,6 +36,7 @@ from flink_agents.api.chat_message import (
     VideoBlock,
 )
 from flink_agents.api.chat_result import ChatResult
+from flink_agents.api.context_management import ContextManagementPolicy
 from flink_agents.api.decision_models import (
     ChoiceAnswer,
     ChoiceQuestion,
@@ -49,6 +50,7 @@ from flink_agents.api.decision_models import (
     TokenUsage,
 )
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
+from flink_agents.api.events.context_management_event import ContextManagementEvent
 from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
     ContextRetrievalResponseEvent,
@@ -390,6 +392,114 @@ def test_python_can_deserialize_chat_request_event_with_context_from_java_snapsh
     assert typed.model == "test-model"
     assert typed.messages[0].text == "hello world"
     assert typed.user_context == _SNAPSHOT_CONTEXT
+
+
+# ── ChatRequestEvent with a context management policy ───────────────────
+
+
+def _snapshot_policy() -> ContextManagementPolicy:
+    return ContextManagementPolicy(
+        tool_result_max_chars=2000,
+        tool_result_keep_last_rounds=3,
+        tool_result_mask_step_rounds=2,
+        max_input_tokens=8000,
+        summarization_trigger_ratio=0.75,
+        summarization_keep_last_rounds=2,
+        summarizer="small",
+    )
+
+
+def _build_chat_request_event_with_context_management() -> ChatRequestEvent:
+    event = ChatRequestEvent(
+        model="test-model",
+        messages=[ChatMessage.of(MessageRole.USER, "hello world")],
+        context_management=_snapshot_policy(),
+    )
+    return _force_id(event, _FIXED_EVENT_ID)
+
+
+def test_regenerate_chat_request_event_with_context_management_python_snapshot() -> (
+    None
+):
+    if not _regenerate_enabled():
+        pytest.skip("Set REGENERATE_SNAPSHOTS=1 to refresh.")
+    _write_python_snapshot(
+        "chat_request_event_with_context_management.json",
+        _build_chat_request_event_with_context_management(),
+    )
+
+
+def test_chat_request_event_with_context_management_python_snapshot_is_stable() -> (
+    None
+):
+    _assert_python_snapshot_stable(
+        "chat_request_event_with_context_management.json",
+        _build_chat_request_event_with_context_management(),
+    )
+
+
+def test_python_can_deserialize_chat_request_event_with_context_management_from_java_snapshot() -> (
+    None
+):
+    typed = ChatRequestEvent.from_event(
+        _read_java_snapshot("chat_request_event_with_context_management.json")
+    )
+    assert typed.id == _FIXED_EVENT_ID
+    assert typed.model == "test-model"
+    assert typed.messages[0].text == "hello world"
+    assert typed.context_management == _snapshot_policy()
+
+
+# ── ContextManagementEvent ──────────────────────────────────────────────
+
+
+def _snapshot_mask_details() -> dict:
+    return {
+        "keep_last_rounds": 3,
+        "step_rounds": 2,
+        "rounds": 2,
+        "results": [
+            {
+                "call_id": _FIXED_TOOL_CALL_ID,
+                "tool": "get_weather",
+                "omitted_chars": 20000,
+            }
+        ],
+    }
+
+
+def _build_context_management_event() -> ContextManagementEvent:
+    event = ContextManagementEvent(
+        request_id=_FIXED_REQUEST_ID,
+        model="test-model",
+        step=ContextManagementEvent.STEP_MASK,
+        details=_snapshot_mask_details(),
+    )
+    return _force_id(event, _FIXED_EVENT_ID)
+
+
+def test_regenerate_context_management_event_python_snapshot() -> None:
+    if not _regenerate_enabled():
+        pytest.skip("Set REGENERATE_SNAPSHOTS=1 to refresh.")
+    _write_python_snapshot(
+        "context_management_event.json", _build_context_management_event()
+    )
+
+
+def test_context_management_event_python_snapshot_is_stable() -> None:
+    _assert_python_snapshot_stable(
+        "context_management_event.json", _build_context_management_event()
+    )
+
+
+def test_python_can_deserialize_context_management_event_from_java_snapshot() -> None:
+    typed = _read_java_snapshot("context_management_event.json")
+    assert isinstance(typed, ContextManagementEvent)
+    assert typed.id == _FIXED_EVENT_ID
+    assert typed.request_id == _FIXED_REQUEST_ID
+    assert typed.model == "test-model"
+    assert typed.step == ContextManagementEvent.STEP_MASK
+    assert typed.details == _snapshot_mask_details()
 
 
 def _build_chat_response_event_with_context() -> ChatResponseEvent:

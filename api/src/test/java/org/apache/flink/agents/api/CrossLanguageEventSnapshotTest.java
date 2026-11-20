@@ -21,6 +21,7 @@ package org.apache.flink.agents.api;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.OutputSchema;
+import org.apache.flink.agents.api.chat.contextmanagement.ContextManagementPolicy;
 import org.apache.flink.agents.api.chat.messages.AudioBlock;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
@@ -36,6 +37,7 @@ import org.apache.flink.agents.api.decision.DecisionResult;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.event.ContextManagementEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
 import org.apache.flink.agents.api.event.DecisionRequestEvent;
@@ -444,6 +446,105 @@ class CrossLanguageEventSnapshotTest {
         assertEquals("test-model", typed.getModel());
         assertEquals("hello world", typed.getMessages().get(0).getText());
         assertSnapshotContext(typed.getUserContext());
+    }
+
+    // ── ChatRequestEvent with a context management policy ──────────────────
+
+    private static ContextManagementPolicy snapshotPolicy() {
+        return ContextManagementPolicy.builder()
+                .toolResultMaxChars(2000)
+                .toolResultKeepLastRounds(3)
+                .toolResultMaskStepRounds(2)
+                .maxInputTokens(8000)
+                .summarizationTriggerRatio(0.75)
+                .summarizationKeepLastRounds(2)
+                .summarizer("small")
+                .build();
+    }
+
+    private static ChatRequestEvent buildChatRequestEventWithContextManagement() {
+        ChatRequestEvent event =
+                new ChatRequestEvent(
+                                "test-model",
+                                List.of(new ChatMessage(MessageRole.USER, "hello world")))
+                        .withContextManagement(snapshotPolicy());
+        return new ChatRequestEvent(FIXED_EVENT_ID, event.getAttributes());
+    }
+
+    @Test
+    void regenerateChatRequestEventWithContextManagementJavaSnapshot() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        writeJavaSnapshot(
+                "chat_request_event_with_context_management.json",
+                buildChatRequestEventWithContextManagement());
+    }
+
+    @Test
+    void chatRequestEventWithContextManagementJavaSnapshotIsStable() throws Exception {
+        assertJavaSnapshotStable(
+                "chat_request_event_with_context_management.json",
+                buildChatRequestEventWithContextManagement());
+    }
+
+    @Test
+    void javaCanDeserializeChatRequestEventWithContextManagementFromPythonSnapshot()
+            throws Exception {
+        ChatRequestEvent typed =
+                ChatRequestEvent.fromEvent(
+                        readPythonSnapshot("chat_request_event_with_context_management.json"));
+        assertEquals(FIXED_EVENT_ID, typed.getId());
+        assertEquals("test-model", typed.getModel());
+        assertEquals("hello world", typed.getMessages().get(0).getText());
+        assertEquals(snapshotPolicy(), typed.getContextManagement());
+    }
+
+    // ── ContextManagementEvent ─────────────────────────────────────────────
+
+    private static Map<String, Object> snapshotMaskDetails() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("call_id", FIXED_TOOL_CALL_ID);
+        result.put("tool", "get_weather");
+        result.put("omitted_chars", 20000);
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("keep_last_rounds", 3);
+        details.put("step_rounds", 2);
+        details.put("rounds", 2);
+        details.put("results", List.of(result));
+        return details;
+    }
+
+    private static ContextManagementEvent buildContextManagementEvent() {
+        ContextManagementEvent event =
+                new ContextManagementEvent(
+                        FIXED_REQUEST_ID,
+                        "test-model",
+                        ContextManagementEvent.STEP_MASK,
+                        snapshotMaskDetails());
+        return new ContextManagementEvent(FIXED_EVENT_ID, event.getAttributes());
+    }
+
+    @Test
+    void regenerateContextManagementEventJavaSnapshot() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        writeJavaSnapshot("context_management_event.json", buildContextManagementEvent());
+    }
+
+    @Test
+    void contextManagementEventJavaSnapshotIsStable() throws Exception {
+        assertJavaSnapshotStable("context_management_event.json", buildContextManagementEvent());
+    }
+
+    @Test
+    void javaCanDeserializeContextManagementEventFromPythonSnapshot() throws Exception {
+        ContextManagementEvent typed =
+                assertInstanceOf(
+                        ContextManagementEvent.class,
+                        readPythonSnapshot("context_management_event.json"));
+        assertEquals(FIXED_EVENT_ID, typed.getId());
+        assertEquals(FIXED_REQUEST_ID, typed.getRequestId());
+        assertEquals("test-model", typed.getModel());
+        assertEquals(ContextManagementEvent.STEP_MASK, typed.getStep());
+        assertEquals(snapshotMaskDetails(), typed.getDetails());
     }
 
     private static ChatResponseEvent buildChatResponseEventWithContext() {
