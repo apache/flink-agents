@@ -18,17 +18,26 @@
 
 package org.apache.flink.agents.api.media;
 
+import javax.annotation.Nullable;
+
+import java.time.Duration;
+import java.util.Objects;
+
 /** The polling budget for wait elapsed before a terminal status was observed. */
 public final class MediaJobTimeoutException extends MediaJobException {
-    private final double timeout;
+    private final Duration timeout;
 
     public MediaJobTimeoutException(
-            MediaJob job, MediaJobStatus status, double timeout, String message) {
+            MediaJob job, MediaJobStatus status, Duration timeout, @Nullable String message) {
         super(job, status, null, message);
+        Objects.requireNonNull(timeout, "timeout");
+        if (timeout.isNegative()) {
+            throw new IllegalArgumentException("timeout must be non-negative");
+        }
         this.timeout = timeout;
     }
 
-    public double getTimeout() {
+    public Duration getTimeout() {
         return timeout;
     }
 }

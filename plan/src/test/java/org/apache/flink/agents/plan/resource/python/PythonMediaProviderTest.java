@@ -522,9 +522,44 @@ class PythonMediaProviderTest {
         assertThat(timeout).isInstanceOf(MediaJobTimeoutException.class);
         MediaJobTimeoutException timeoutError = (MediaJobTimeoutException) timeout;
         assertThat(timeoutError.getStatus()).isEqualTo(MediaJobStatus.RUNNING);
-        assertThat(timeoutError.getTimeout()).isEqualTo(12.5);
+        assertThat(timeoutError.getTimeout()).isEqualTo(Duration.ofMillis(12500));
         assertThat(timeoutError.getJob().getJobId()).isEqualTo("job-1");
         assertThat(CancellationUtils.isCancellation(timeout)).isFalse();
+
+        PythonResourceAdapter zeroTimeoutAdapter =
+                mockWithDefaultOutcome(
+                        Map.of(
+                                "status", "TIMEOUT",
+                                "job_status", "pending",
+                                "timeout", 0,
+                                "message", "timed out immediately",
+                                "job", JOB_JSON));
+        Throwable zeroTimeout =
+                catchThrowable(
+                        () ->
+                                asAsync(provider(zeroTimeoutAdapter).video("model"))
+                                        .wait(JOB, Duration.ZERO));
+        assertThat(zeroTimeout).isInstanceOf(MediaJobTimeoutException.class);
+        assertThat(((MediaJobTimeoutException) zeroTimeout).getTimeout()).isEqualTo(Duration.ZERO);
+
+        for (Object invalidTimeout :
+                new Object[] {
+                    null, "12.5", -1.0, Double.NaN, Double.POSITIVE_INFINITY, 1e30,
+                }) {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("status", "TIMEOUT");
+            payload.put("job_status", "running");
+            payload.put("timeout", invalidTimeout);
+            payload.put("message", "timed out");
+            payload.put("job", JOB_JSON);
+            PythonResourceAdapter badAdapter = mockWithDefaultOutcome(payload);
+            assertThatThrownBy(
+                            () ->
+                                    asAsync(provider(badAdapter).video("model"))
+                                            .wait(JOB, Duration.ofSeconds(1)))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("Invalid MediaProvider timeout from Python");
+        }
     }
 
     @Test

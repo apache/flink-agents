@@ -19,8 +19,11 @@
 package org.apache.flink.agents.api.media;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+
+import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -70,5 +73,40 @@ class MediaJobTest {
         assertThatThrownBy(() -> MAPPER.readValue(json, MediaJob.class))
                 .hasRootCauseInstanceOf(IllegalArgumentException.class)
                 .hasRootCauseMessage("Unknown media task: " + task);
+    }
+
+    @Test
+    void timeoutExceptionStoresNonNegativeDurationAndRejectsInvalidValues() {
+        MediaJob job = new MediaJob("dashscope", "model", "image_generation", "job-1", 123, null);
+
+        MediaJobTimeoutException zero =
+                new MediaJobTimeoutException(job, MediaJobStatus.PENDING, Duration.ZERO, null);
+        assertThat(zero.getTimeout()).isEqualTo(Duration.ZERO);
+        assertThat(zero.getJob()).isSameAs(job);
+        assertThat(zero.getStatus()).isEqualTo(MediaJobStatus.PENDING);
+        assertThat(zero.getCode()).isNull();
+
+        MediaJobTimeoutException positive =
+                new MediaJobTimeoutException(
+                        job, MediaJobStatus.RUNNING, Duration.ofMillis(12500), "timed out");
+        assertThat(positive.getTimeout()).isEqualTo(Duration.ofMillis(12500));
+        assertThat(positive.getMessage()).isEqualTo("timed out");
+
+        assertThatThrownBy(
+                        () ->
+                                new MediaJobTimeoutException(
+                                        job, MediaJobStatus.RUNNING, null, "timed out"))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("timeout");
+
+        assertThatThrownBy(
+                        () ->
+                                new MediaJobTimeoutException(
+                                        job,
+                                        MediaJobStatus.RUNNING,
+                                        Duration.ofMillis(-1),
+                                        "timed out"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("timeout must be non-negative");
     }
 }

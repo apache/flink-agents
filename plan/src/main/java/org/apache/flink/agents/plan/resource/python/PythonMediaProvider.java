@@ -496,12 +496,23 @@ public final class PythonMediaProvider extends BaseMediaProvider implements Pyth
         String message =
                 outcome.get("message") instanceof String ? (String) outcome.get("message") : null;
         if (timeout) {
-            Object timeoutValue = outcome.get("timeout");
-            double seconds =
-                    timeoutValue instanceof Number ? ((Number) timeoutValue).doubleValue() : 0;
-            return new MediaJobTimeoutException(job, status, seconds, message);
+            Duration timeoutDuration = timeoutFromSeconds(outcome.get("timeout"));
+            return new MediaJobTimeoutException(job, status, timeoutDuration, message);
         }
         String code = outcome.get("code") instanceof String ? (String) outcome.get("code") : null;
         return new MediaJobException(job, status, code, message);
+    }
+
+    private static Duration timeoutFromSeconds(@Nullable Object timeoutValue) {
+        if (!(timeoutValue instanceof Number)) {
+            throw new IllegalStateException("Invalid MediaProvider timeout from Python");
+        }
+        double seconds = ((Number) timeoutValue).doubleValue();
+        if (!Double.isFinite(seconds) || seconds < 0 || seconds >= Long.MAX_VALUE) {
+            throw new IllegalStateException("Invalid MediaProvider timeout from Python");
+        }
+        long wholeSeconds = (long) seconds;
+        long nanos = Math.round((seconds - wholeSeconds) * 1_000_000_000.0);
+        return Duration.ofSeconds(wholeSeconds, nanos);
     }
 }
