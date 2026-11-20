@@ -163,6 +163,12 @@ public class ToolCallActionTest {
         }
 
         @Override
+        public void registerEventTimeTimer(String timerId, Instant timestamp, Event event) {
+            throw new UnsupportedOperationException(
+                    "Timers are not supported in this test context");
+        }
+
+        @Override
         public void cancelTimer(String timerId) {
             throw new UnsupportedOperationException(
                     "Timers are not supported by this test context.");

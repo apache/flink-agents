@@ -92,6 +92,18 @@ public interface RunnerContext {
     void registerTimerAt(String timerId, Instant deadline, Event event, TimerMode mode);
 
     /**
+     * Registers an event-time timer at an absolute deadline, rounded up to milliseconds.
+     * Registration takes effect when the Action completes. Watermark advancement triggers the Event
+     * in a new run for the same key, with the deadline as its source timestamp. The watermark waits
+     * for the triggered run to finish before being forwarded downstream.
+     *
+     * <p>Use a new Event without attachments for each registration. Timer IDs are shared with
+     * processing-time timers; registering the same ID replaces the pending timer in either domain.
+     * Deadlines at or before an already forwarded watermark produce late data.
+     */
+    void registerEventTimeTimer(String timerId, Instant timestamp, Event event);
+
+    /**
      * Cancels a pending timer when this Action completes. Missing IDs are ignored. Cancellation
      * does not retract an Event that has already been delivered to the run queue.
      */

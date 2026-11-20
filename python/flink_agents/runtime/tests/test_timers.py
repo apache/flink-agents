@@ -159,3 +159,37 @@ def test_attachments_rejected_before_memory_access_or_bridge(
         register("watch", time, event, TimerMode.TRIGGER_AFTER_CURRENT_RUN)
     assert event.attachments["payload"] is attachment
     assert context._j_runner_context.mock_calls == []
+
+
+def test_event_time_timer_preserves_deadline_and_has_no_mode(context):
+    event = Event(type="watch", attributes={"id": 42})
+    context.register_event_time_timer(
+        "watch",
+        datetime(2026, 1, 1, 8, 0, 0, 1, tzinfo=timezone(timedelta(hours=8))),
+        event,
+    )
+    timer_id, millis, payload = (
+        context._j_runner_context.registerEventTimeTimerJson.call_args.args
+    )
+    assert (timer_id, millis) == ("watch", 1767225600001)
+    assert json.loads(payload)["attributes"] == {"id": 42}
+
+
+@pytest.mark.parametrize("timestamp", [datetime(2026, 1, 1), None, 10])
+def test_event_time_timer_rejects_invalid_timestamp(context, timestamp):
+    with pytest.raises(ValueError, match="timezone-aware datetime"):
+        context.register_event_time_timer("watch", timestamp, Event(type="watch"))
+    context._j_runner_context.registerEventTimeTimerJson.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "attachment", [b"payload", MemoryRef.create(MemoryType.SENSORY, "payload")]
+)
+def test_event_time_timer_rejects_attachments(context, attachment):
+    with pytest.raises(ValueError, match="cannot carry attachments"):
+        context.register_event_time_timer(
+            "watch",
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
+            Event(type="watch", attachments={"payload": attachment}),
+        )
+    context._j_runner_context.registerEventTimeTimerJson.assert_not_called()
