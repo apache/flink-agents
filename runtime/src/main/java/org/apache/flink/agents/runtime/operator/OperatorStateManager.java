@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.ShortTermMemoryTtlUpdate;
 import org.apache.flink.agents.api.agents.ShortTermMemoryTtlVisibility;
 import org.apache.flink.agents.api.configuration.DurationUtils;
+import org.apache.flink.agents.api.context.TimerMode;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
@@ -368,6 +369,15 @@ class OperatorStateManager {
 
     MapState<String, TimerOperation> getTimerRegistrations() {
         return timerRegistrations;
+    }
+
+    boolean hasCurrentRunTimers() throws Exception {
+        for (TimerOperation registration : timerRegistrations.values()) {
+            if (registration.getMode() == TimerMode.CURRENT_RUN_WAIT_FOR_TRIGGER) {
+                return true;
+            }
+        }
+        return false;
     }
 
     KeyGroupRange getCurrentSubtaskKeyGroupRange(

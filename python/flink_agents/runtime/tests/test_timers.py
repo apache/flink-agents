@@ -25,6 +25,7 @@ from flink_agents.api.memory_object import MemoryType
 from flink_agents.api.memory_reference import MemoryRef
 from flink_agents.api.runner_context import TimerMode
 from flink_agents.runtime.flink_runner_context import FlinkRunnerContext
+from flink_agents.runtime.tests.local_memory_object import LocalMemoryObject
 
 
 @pytest.fixture
@@ -59,6 +60,35 @@ def test_absolute_timer_normalizes_timezone_without_float_rounding(context):
     args = context._j_runner_context.registerTimerAtJson.call_args.args
     assert args[1] == 1767225600001
     assert args[3] == "TRIGGER_AFTER_CURRENT_RUN"
+
+
+@pytest.mark.parametrize("absolute", [False, True])
+def test_current_run_timer_stores_attachments_in_current_memory(
+    context, monkeypatch, absolute
+):
+    memory = LocalMemoryObject(MemoryType.SENSORY, {})
+    monkeypatch.setattr(
+        FlinkRunnerContext, "sensory_memory", property(lambda _: memory)
+    )
+    payload = b"\xff\x00"
+    event = Event(type="continue", attachments={"payload": payload})
+    register = context.register_timer_at if absolute else context.register_timer
+    time = (
+        datetime(2026, 1, 1, tzinfo=timezone.utc) if absolute else timedelta(seconds=1)
+    )
+    register("wait", time, event, TimerMode.CURRENT_RUN_WAIT_FOR_TRIGGER)
+    bridge = (
+        context._j_runner_context.registerTimerAtJson
+        if absolute
+        else context._j_runner_context.registerTimerJson
+    )
+    _, _, snapshot, mode = bridge.call_args.args
+    restored = Event.model_validate_json(snapshot)
+    assert mode == "CURRENT_RUN_WAIT_FOR_TRIGGER"
+    assert isinstance(restored.attachments["payload"], MemoryRef)
+    assert memory.get(restored.attachments["payload"]) == payload
+    assert isinstance(event.attachments["payload"], MemoryRef)
+    assert event.attachments["payload"] == restored.attachments["payload"]
 
 
 @pytest.mark.parametrize("timer_id", ["", " ", None, 42])
