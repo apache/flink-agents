@@ -48,6 +48,67 @@ class MCPServerTest {
 
     @Test
     @DisabledOnJre(JRE.JAVA_11)
+    void durationEntryPointsAndSerialization() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        Duration timeout = Duration.ofNanos(1_500_000);
+        MCPServer built =
+                MCPServer.builder(DEFAULT_ENDPOINT)
+                        .timeout(timeout)
+                        .initialBackoff(Duration.ofMillis(200))
+                        .maxBackoff(Duration.ofSeconds(5))
+                        .build();
+        MCPServer restored = mapper.readValue(mapper.writeValueAsString(built), MCPServer.class);
+        assertThat(restored.getTimeout()).isEqualTo(timeout);
+        assertThat(restored.getInitialBackoffMs()).isEqualTo(200);
+        assertThat(restored.getMaxBackoffMs()).isEqualTo(5000);
+        for (Object value : List.of(timeout, "1500 us", "PT0.0015S")) {
+            ResourceDescriptor descriptor =
+                    ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
+                            .addInitialArgument("endpoint", DEFAULT_ENDPOINT)
+                            .addInitialArgument("timeout", value)
+                            .build();
+            descriptor =
+                    mapper.readValue(
+                            mapper.writeValueAsString(descriptor), ResourceDescriptor.class);
+            assertThat(
+                            new MCPServer(
+                                            descriptor,
+                                            TestResourceContexts.fromGetResource(
+                                                    (name, type) -> null))
+                                    .getTimeout())
+                    .isEqualTo(timeout);
+        }
+        MCPServer numeric =
+                mapper.readValue(
+                        "{\"endpoint\":\"https://example.com/mcp\",\"timeout\":1500}",
+                        MCPServer.class);
+        assertThat(numeric.getTimeout()).isEqualTo(Duration.ofMillis(1500));
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
+    void rejectsInvalidDurations() {
+        for (Duration value : List.of(Duration.ZERO, Duration.ofSeconds(-1), Duration.ofNanos(1))) {
+            assertThatThrownBy(() -> MCPServer.builder(DEFAULT_ENDPOINT).timeout(value).build())
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        for (Duration value :
+                List.of(
+                        Duration.ofNanos(1500000),
+                        Duration.ofMillis(-1),
+                        Duration.ofSeconds(Long.MAX_VALUE))) {
+            assertThatThrownBy(
+                            () -> MCPServer.builder(DEFAULT_ENDPOINT).initialBackoff(value).build())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("initialBackoff");
+            assertThatThrownBy(() -> MCPServer.builder(DEFAULT_ENDPOINT).maxBackoff(value).build())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("maxBackoff");
+        }
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
     @DisplayName("Create MCPServer with builder")
     void testBuilderCreation() {
         MCPServer server =
@@ -59,7 +120,7 @@ class MCPServerTest {
 
         assertThat(server.getEndpoint()).isEqualTo("http://localhost:8000/mcp");
         assertThat(server.getHeaders()).containsEntry("X-Custom-Header", "value");
-        assertThat(server.getTimeoutSeconds()).isEqualTo(30);
+        assertThat(server.getTimeout()).isEqualTo(Duration.ofSeconds(30));
         assertThat(server.getAuth()).isInstanceOf(BearerTokenAuth.class);
     }
 
@@ -71,7 +132,7 @@ class MCPServerTest {
 
         assertThat(server.getEndpoint()).isEqualTo(DEFAULT_ENDPOINT);
         assertThat(server.getHeaders()).isEmpty();
-        assertThat(server.getTimeoutSeconds()).isEqualTo(30);
+        assertThat(server.getTimeout()).isEqualTo(Duration.ofSeconds(30));
         assertThat(server.getAuth()).isNull();
     }
 
@@ -82,7 +143,7 @@ class MCPServerTest {
         ResourceDescriptor descriptor =
                 ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                         .addInitialArgument("endpoint", DEFAULT_ENDPOINT)
-                        .addInitialArgument("timeout", 60)
+                        .addInitialArgument("timeout", Duration.ofSeconds(60))
                         .build();
 
         MCPServer server =
@@ -94,7 +155,7 @@ class MCPServerTest {
                                             "No dependencies expected");
                                 }));
 
-        assertThat(server.getTimeoutSeconds()).isEqualTo(60);
+        assertThat(server.getTimeout()).isEqualTo(Duration.ofSeconds(60));
     }
 
     @Test
@@ -202,7 +263,7 @@ class MCPServerTest {
 
         assertThat(deserialized.getEndpoint()).isEqualTo(original.getEndpoint());
         assertThat(deserialized.getHeaders()).isEqualTo(original.getHeaders());
-        assertThat(deserialized.getTimeoutSeconds()).isEqualTo(original.getTimeoutSeconds());
+        assertThat(deserialized.getTimeout()).isEqualTo(original.getTimeout());
         assertThat(deserialized.getAuth()).isEqualTo(original.getAuth());
     }
 

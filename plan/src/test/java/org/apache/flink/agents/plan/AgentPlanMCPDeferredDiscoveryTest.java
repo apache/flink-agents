@@ -30,6 +30,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnJre;
 import org.junit.jupiter.api.condition.JRE;
 
+import java.time.Duration;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -47,7 +49,7 @@ class AgentPlanMCPDeferredDiscoveryTest {
         public static ResourceDescriptor unreachableServer() {
             return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                     .addInitialArgument("endpoint", "http://127.0.0.1:1/mcp")
-                    .addInitialArgument("timeout", 1)
+                    .addInitialArgument("timeout", Duration.ofSeconds(1))
                     .addInitialArgument("maxRetries", 0)
                     .build();
         }

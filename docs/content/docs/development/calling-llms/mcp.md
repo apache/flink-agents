@@ -69,7 +69,7 @@ public class ReviewAnalysisAgent extends Agent {
     public static ResourceDescriptor myMcp() {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                     .addInitialArgument("endpoint", MCP_ENDPOINT)
-                    .addInitialArgument("timeout", 30)
+                    .addInitialArgument("timeout", Duration.ofSeconds(30))
                     .build();
     }
 }
@@ -83,6 +83,8 @@ public class ReviewAnalysisAgent extends Agent {
   - In Python, use `@mcp_server`.
   - In Java, use `@MCPServer`.
 - Use the builder pattern in Java to configure the MCP server with endpoint, timeout, headers, and authentication
+
+`timeout` (default `30 s`) and Python's `sse_read_timeout` (default `5 min`) accept positive values in [duration format]({{< ref "docs/operations/configuration#duration-values" >}}). Integers and unitless integer strings are interpreted as milliseconds.
 
 ### Authentication
 
@@ -115,7 +117,7 @@ public static ResourceDescriptor authenticatedMcpServer() {
     // Using Bearer Token Authentication
     return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                     .addInitialArgument("endpoint", "http://api.example.com/mcp")
-                    .addInitialArgument("timeout", 30)
+                    .addInitialArgument("timeout", Duration.ofSeconds(30))
                     .addInitialArgument("auth", new BearerTokenAuth("your-oauth-token"))
                     .build();
 
@@ -142,18 +144,18 @@ Remote calls to an MCP server (listing/calling tools and prompts) are retried wi
 | Argument           | Default | Description                                          |
 |--------------------|---------|------------------------------------------------------|
 | `maxRetries`       | 3       | Maximum number of retries for a failed remote call.  |
-| `initialBackoffMs` | 100     | Initial backoff before the first retry, in milliseconds. |
-| `maxBackoffMs`     | 10000   | Upper bound for the backoff between retries, in milliseconds. |
+| `initialBackoff` | `100 ms` | Initial retry delay in [duration format]({{< ref "docs/operations/configuration#duration-values" >}}). Integers and unitless integer strings are interpreted as milliseconds. |
+| `maxBackoff` | `10 s` | Maximum retry delay in [duration format]({{< ref "docs/operations/configuration#duration-values" >}}). Integers and unitless integer strings are interpreted as milliseconds. |
 
 ```java
 @MCPServer
 public static ResourceDescriptor myMcp() {
     return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                 .addInitialArgument("endpoint", MCP_ENDPOINT)
-                .addInitialArgument("timeout", 30)
+                .addInitialArgument("timeout", Duration.ofSeconds(30))
                 .addInitialArgument("maxRetries", 5)
-                .addInitialArgument("initialBackoffMs", 200)
-                .addInitialArgument("maxBackoffMs", 10000)
+                .addInitialArgument("initialBackoff", Duration.ofMillis(200))
+                .addInitialArgument("maxBackoff", Duration.ofSeconds(10))
                 .build();
 }
 ```
@@ -204,7 +206,7 @@ public class ReviewAnalysisAgent extends Agent {
     public static ResourceDescriptor myMcp() {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                     .addInitialArgument("endpoint", "http://127.0.0.1:8000/mcp")
-                    .addInitialArgument("timeout", 30)
+                    .addInitialArgument("timeout", Duration.ofSeconds(30))
                     .build();
     }
 

@@ -111,7 +111,13 @@ class JavaMCPStartupIntegrationTest {
         ResourceDescriptor descriptor =
                 new ResourceDescriptor(
                         "org.apache.flink.agents.integrations.mcp.MCPServer",
-                        Map.of("endpoint", endpoint, "timeout", 1, "maxRetries", 0));
+                        Map.of(
+                                "endpoint",
+                                endpoint,
+                                "timeout",
+                                Duration.ofSeconds(1),
+                                "maxRetries",
+                                0));
         return Map.of(
                 ResourceType.MCP_SERVER,
                 Map.of(

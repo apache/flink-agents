@@ -32,11 +32,13 @@ from pydantic import (
     ConfigDict,
     Field,
     field_serializer,
+    field_validator,
     model_validator,
 )
 from typing_extensions import override
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.duration import parse_duration
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.tools import ToolExecutionMetadataProvider, ToolResponse
@@ -164,12 +166,22 @@ class MCPServer(Resource, ABC):
     # HTTP connection parameters
     endpoint: str
     headers: Dict[str, Any] | None = None
-    timeout: int = 30
-    sse_read_timeout: int = 60 * 5
+    timeout: timedelta = timedelta(seconds=30)
+    sse_read_timeout: timedelta = timedelta(minutes=5)
     auth: httpx.Auth | None = None
 
     session: ClientSession = Field(default=None, exclude=True)
     connection_context: AsyncExitStack = Field(default=None, exclude=True)
+
+    @field_validator("timeout", "sse_read_timeout", mode="before")
+    @classmethod
+    def validate_timeout(cls, value: Any) -> timedelta:
+        """Parse a positive MCP timeout."""
+        duration = parse_duration(value)
+        if duration <= timedelta(0):
+            msg = "timeout must be a positive duration."
+            raise ValueError(msg)
+        return duration
 
     @field_serializer("auth")
     def __serialize_auth(self, auth: httpx.Auth | None) -> str | None:
@@ -211,15 +223,13 @@ class MCPServer(Resource, ABC):
             streamablehttp_client(
                 url=self.endpoint,
                 headers=self.headers,
-                timeout=timedelta(seconds=self.timeout),
-                sse_read_timeout=timedelta(seconds=self.sse_read_timeout),
+                timeout=self.timeout,
+                sse_read_timeout=self.sse_read_timeout,
                 auth=self.auth,
             ) as (read, write, _),
             # Bound every request by ``timeout``: without it a server that accepts
             # the connection but never answers would hang discovery at startup.
-            ClientSession(
-                read, write, read_timeout_seconds=timedelta(seconds=self.timeout)
-            ) as session,
+            ClientSession(read, write, read_timeout_seconds=self.timeout) as session,
         ):
             await session.initialize()
             yield session
@@ -246,7 +256,7 @@ class MCPServer(Resource, ABC):
             result = await session.call_tool(
                 tool_name,
                 arguments,
-                read_timeout_seconds=timedelta(seconds=self.timeout),
+                read_timeout_seconds=self.timeout,
             )
 
         content = [extract_mcp_content_item(item) for item in result.content]
