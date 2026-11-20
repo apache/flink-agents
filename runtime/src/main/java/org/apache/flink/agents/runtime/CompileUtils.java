@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
+import org.apache.flink.agents.runtime.utils.InternalKryoTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
@@ -119,7 +120,7 @@ public class CompileUtils {
     public static <IN, K> DataStream<Object> connectToAgent(
             KeyedStream<IN, K> keyedInputStream, AgentPlan agentPlan, @Nullable String uid) {
         return connectToAgent(
-                keyedInputStream, agentPlan, TypeInformation.of(Object.class), true, false, uid);
+                keyedInputStream, agentPlan, InternalKryoTypeInfo.of(Object.class), true, false, uid);
     }
 
     /**
