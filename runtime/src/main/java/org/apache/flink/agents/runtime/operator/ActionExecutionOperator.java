@@ -352,7 +352,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         .createSerializer(getExecutionConfig().getSerializerConfig());
 
         stateManager.initializeKeyedStates(getRuntimeContext(), agentPlan.getConfig());
-        stateManager.initializeOperatorStates(getOperatorStateBackend());
+        stateManager.initializeOperatorStates(
+                getOperatorStateBackend(),
+                getExecutionConfig().getSerializerConfig(),
+                this.<Object>getKeyedStateBackend().getKeySerializer());
 
         // ResourceCache constructs its own long-lived ResourceContextImpl internally; on
         // close() the cache cascades close to it and to the cached SkillManager, covering
