@@ -214,8 +214,7 @@ class KafkaActionStateCleanupToolTest {
                     context.getOperatorStateStore()
                             .getUnionListState(
                                     new ListStateDescriptor<>(
-                                            KafkaActionStateRecoveryMarker.UNION_STATE_NAME,
-                                            TypeInformation.of(Object.class)));
+                                            "recoveryMarker", TypeInformation.of(Object.class)));
         }
     }
 
