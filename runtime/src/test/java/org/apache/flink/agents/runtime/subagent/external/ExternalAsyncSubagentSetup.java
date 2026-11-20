@@ -71,7 +71,7 @@ public class ExternalAsyncSubagentSetup extends BaseAsyncSubagentSetup {
         this(
                 ResourceDescriptor.Builder.newBuilder(ExternalAsyncSubagentSetup.class.getName())
                         .addInitialArgument(FIELD_BASE_URL, baseUrl)
-                        .addInitialArgument(FIELD_STATUS_POLL_INTERVAL_MILLIS, probeIntervalMillis)
+                        .addInitialArgument(FIELD_STATUS_POLL_INTERVAL, probeIntervalMillis)
                         .build(),
                 null);
     }

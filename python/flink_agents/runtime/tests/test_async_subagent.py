@@ -18,6 +18,7 @@
 """Tests for the async sub-agent base in pub/sub mode."""
 
 from concurrent.futures import CancelledError
+from datetime import timedelta
 from typing import Any, NamedTuple
 
 import pytest
@@ -111,7 +112,7 @@ class _MockAsyncSetup(BaseAsyncSubagentSetup):
         # Runs turn terminal after a fixed number of probes rather than after
         # elapsed time, so probing without a delay keeps the counts identical
         # and the tests fast.
-        self.status_poll_interval_millis = 0
+        self.status_poll_interval = timedelta(0)
 
     def call_submit_request(self, session_id: str, call_id: str, prompt: Any) -> None:
         self._post_count += 1
@@ -185,7 +186,7 @@ class _MockAsyncSetup(BaseAsyncSubagentSetup):
 
 
 # ------------------------------------------------------------------------------------------
-# Construction: the status_poll_interval_millis YAML argument
+# Construction: the status_poll_interval YAML argument
 # ------------------------------------------------------------------------------------------
 
 
@@ -205,13 +206,13 @@ class _PlainAsyncSetup(BaseAsyncSubagentSetup):
 
 
 def test_status_poll_interval_is_set_from_the_yaml_argument() -> None:
-    setup = _PlainAsyncSetup(status_poll_interval_millis=123)
+    setup = _PlainAsyncSetup(status_poll_interval=123)
 
-    assert setup.status_poll_interval_millis == 123
+    assert setup.status_poll_interval == timedelta(milliseconds=123)
 
 
 def test_status_poll_interval_defaults_to_500() -> None:
-    assert _PlainAsyncSetup().status_poll_interval_millis == 500
+    assert _PlainAsyncSetup().status_poll_interval == timedelta(milliseconds=500)
 
 
 # ------------------------------------------------------------------------------------------
@@ -569,3 +570,18 @@ def test_lifecycle_cancelled_handles_let_the_task_finish() -> None:
     handle.cancel()
 
     setup.on_action_finishing(_FakeTask())
+
+
+@pytest.mark.parametrize(
+    "value", [timedelta(microseconds=1500), "1500 us", "PT0.0015S"]
+)
+def test_status_poll_interval_duration_roundtrip(value: Any) -> None:
+    setup = _PlainAsyncSetup(status_poll_interval=value)
+    restored = _PlainAsyncSetup.model_validate_json(setup.model_dump_json())
+    assert restored.status_poll_interval == timedelta(microseconds=1500)
+
+
+@pytest.mark.parametrize("value", ["-1 ms", "1 ns", "invalid", None])
+def test_invalid_status_poll_interval(value: Any) -> None:
+    with pytest.raises(ValueError, match="status_poll_interval"):
+        _PlainAsyncSetup(status_poll_interval=value)

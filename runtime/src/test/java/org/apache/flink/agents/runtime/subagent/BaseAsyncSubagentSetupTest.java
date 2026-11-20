@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime.subagent;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
@@ -41,6 +42,7 @@ import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
@@ -445,7 +447,7 @@ public class BaseAsyncSubagentSetupTest {
     }
 
     // ------------------------------------------------------------------------------------------
-    // The descriptor argument: status_poll_interval_millis
+    // The descriptor argument: status_poll_interval
     // ------------------------------------------------------------------------------------------
 
     /** Setup constructed like YAML-declared entries: through the descriptor constructor. */
@@ -468,8 +470,8 @@ public class BaseAsyncSubagentSetupTest {
             return SubagentResult.ok("done");
         }
 
-        private long pollIntervalMillis() {
-            return statusPollIntervalMillis;
+        private Duration pollInterval() {
+            return statusPollInterval;
         }
     }
 
@@ -482,14 +484,58 @@ public class BaseAsyncSubagentSetupTest {
                 new DescriptorAsyncSetup(
                         new ResourceDescriptor(
                                 DescriptorAsyncSetup.class.getName(),
-                                Map.of("status_poll_interval_millis", 123)),
+                                Map.of("status_poll_interval", 123)),
                         new ResourceContextImpl(
                                 (name, type) -> null,
                                 Thread.currentThread().getContextClassLoader(),
                                 () -> null,
-                                new org.apache.flink.agents.plan.AgentConfiguration()));
+                                new AgentConfiguration()));
 
-        assertThat(setup.pollIntervalMillis()).isEqualTo(123);
+        assertThat(setup.pollInterval()).isEqualTo(Duration.ofMillis(123));
+    }
+
+    @Test
+    void durationPollIntervalSurvivesSerialization() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        for (Object value : List.of(Duration.ofNanos(1_500_000), "1500 us", "PT0.0015S")) {
+            ResourceDescriptor descriptor =
+                    new ResourceDescriptor(
+                            DescriptorAsyncSetup.class.getName(),
+                            Map.of("status_poll_interval", value));
+            descriptor =
+                    mapper.readValue(
+                            mapper.writeValueAsString(descriptor), ResourceDescriptor.class);
+            DescriptorAsyncSetup setup =
+                    new DescriptorAsyncSetup(
+                            descriptor,
+                            new ResourceContextImpl(
+                                    (name, type) -> null,
+                                    Thread.currentThread().getContextClassLoader(),
+                                    () -> null,
+                                    new AgentConfiguration()));
+            assertThat(setup.pollInterval()).isEqualTo(Duration.ofNanos(1_500_000));
+        }
+    }
+
+    @Test
+    void rejectsInvalidPollInterval() {
+        for (Object value : List.of("-1 ms", "1 ns", "invalid")) {
+            ResourceDescriptor descriptor =
+                    new ResourceDescriptor(
+                            DescriptorAsyncSetup.class.getName(),
+                            Map.of("status_poll_interval", value));
+            assertThatThrownBy(
+                            () ->
+                                    new DescriptorAsyncSetup(
+                                            descriptor,
+                                            new ResourceContextImpl(
+                                                    (name, type) -> null,
+                                                    Thread.currentThread().getContextClassLoader(),
+                                                    () -> null,
+                                                    new AgentConfiguration())))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("status_poll_interval");
+        }
     }
 
     @Test
@@ -501,9 +547,9 @@ public class BaseAsyncSubagentSetupTest {
                                 (name, type) -> null,
                                 Thread.currentThread().getContextClassLoader(),
                                 () -> null,
-                                new org.apache.flink.agents.plan.AgentConfiguration()));
+                                new AgentConfiguration()));
 
-        assertThat(setup.pollIntervalMillis()).isEqualTo(500);
+        assertThat(setup.pollInterval()).isEqualTo(Duration.ofMillis(500));
     }
 
     // ------------------------------------------------------------------------------------------

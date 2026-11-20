@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.subagent.SubagentResult;
 
 import javax.annotation.Nullable;
 
+import java.time.Duration;
 import java.util.concurrent.Callable;
 
 /**
@@ -42,26 +43,27 @@ public abstract class BaseAsyncSubagentSetup extends BaseSubagentSetup {
      * interval into their descriptor write it. Sharing the constant keeps the read and write ends
      * from drifting apart.
      */
-    protected static final String FIELD_STATUS_POLL_INTERVAL_MILLIS = "status_poll_interval_millis";
+    protected static final String FIELD_STATUS_POLL_INTERVAL = "status_poll_interval";
 
     /**
      * Delay between status probes while waiting for the run to reach a terminal state. Defaults to
-     * {@code 500}. The descriptor-based constructor reads the optional {@code
-     * status_poll_interval_millis} argument over it, and subclasses may override it directly.
+     * {@code 500 ms}. The descriptor-based constructor reads the optional {@code
+     * status_poll_interval} argument over it, and subclasses may override it directly.
      */
-    protected long statusPollIntervalMillis = 500;
+    protected Duration statusPollInterval = Duration.ofMillis(500);
 
     /**
      * Descriptor-based construction, as used by YAML-declared {@code subagents:} entries: reads the
-     * optional {@code status_poll_interval_millis} argument, falling back to the default of {@code
-     * 500} when absent.
+     * optional {@code status_poll_interval} argument, falling back to the default of {@code 500 ms}
+     * when absent.
      */
     protected BaseAsyncSubagentSetup(
             ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
-        Number statusPollInterval = descriptor.getArgument(FIELD_STATUS_POLL_INTERVAL_MILLIS);
-        if (statusPollInterval != null) {
-            this.statusPollIntervalMillis = statusPollInterval.longValue();
+        this.statusPollInterval =
+                descriptor.getDurationArgument(FIELD_STATUS_POLL_INTERVAL, statusPollInterval);
+        if (statusPollInterval.isNegative()) {
+            throw new IllegalArgumentException("status_poll_interval must not be negative.");
         }
     }
 
@@ -156,7 +158,9 @@ public abstract class BaseAsyncSubagentSetup extends BaseSubagentSetup {
                             // NOT_STARTED or RUNNING: keep probing. A NOT_STARTED run after a
                             // durable POST means the remote session expired; the replay then
                             // observes the fresh state instead of the original probe path.
-                            Thread.sleep(statusPollIntervalMillis);
+                            Thread.sleep(
+                                    statusPollInterval.toMillis(),
+                                    statusPollInterval.getNano() % 1_000_000);
                     }
                 }
             }
