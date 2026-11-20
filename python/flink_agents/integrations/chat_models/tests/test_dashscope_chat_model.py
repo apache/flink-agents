@@ -57,6 +57,7 @@ from flink_agents.integrations.chat_models.dashscope_chat_model import (
 from flink_agents.plan.actions.chat_model_action import (
     process_chat_request_or_tool_response,
 )
+from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
 
@@ -616,6 +617,7 @@ def test_dashscope_task_rejects_output_schema_in_chat_event(
 ) -> None:
     setup = _open_setup(model=model, task=task)
     ctx = MagicMock()
+    ctx.config = AgentConfiguration()
     ctx.has_resource.return_value = False
     ctx.get_resource.return_value = setup
     ctx.sensory_memory.get.return_value = None

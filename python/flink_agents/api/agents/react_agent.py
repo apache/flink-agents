@@ -43,6 +43,7 @@ from flink_agents.api.events.chat_event import ChatRequestEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.prompts.prompt import Prompt
+from flink_agents.api.react_loop_budget import ReActLoopBudget
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.skills import Skills
@@ -166,6 +167,7 @@ class ReActAgent(Agent):
         prompt: Prompt | None = None,
         output_schema: type[BaseModel] | RowTypeInfo | None = None,
         skills: Sequence[str] | Skills | None = None,
+        budget: ReActLoopBudget | None = None,
     ) -> None:
         """Init method of ReActAgent.
 
@@ -265,6 +267,7 @@ class ReActAgent(Agent):
             if output_schema
             else None,
             has_user_prompt=bool(prompt),
+            **({"budget": budget} if budget is not None else {}),
         )
 
     @staticmethod
@@ -316,6 +319,7 @@ class ReActAgent(Agent):
                     role=MessageRole.USER, **str_usr_input
                 )
 
+        budget = ctx.get_action_config_value(key="budget")
         output_schema = ctx.get_action_config_value(key="output_schema")
 
         if output_schema is not None:
@@ -337,6 +341,7 @@ class ReActAgent(Agent):
                 model=_DEFAULT_CHAT_MODEL,
                 messages=usr_msgs,
                 output_schema=output_schema,
+                budget=budget,
             )
         )
 

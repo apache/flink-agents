@@ -179,6 +179,31 @@ public final class ChatModelInvoker {
             int numRetries,
             long retryWaitMillis)
             throws ChatAttemptFailed, Exception {
+        return chatWithRetries(
+                initialRequestId,
+                model,
+                durableCallId,
+                messages,
+                promptArgs,
+                outputSchema,
+                ctx,
+                numRetries,
+                retryWaitMillis,
+                false);
+    }
+
+    static ChatAttemptResult chatWithRetries(
+            UUID initialRequestId,
+            String model,
+            String durableCallId,
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            @Nullable Object outputSchema,
+            RunnerContext ctx,
+            int numRetries,
+            long retryWaitMillis,
+            boolean closing)
+            throws Exception {
         BaseChatModelSetup chatModel;
         try {
             chatModel = (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
@@ -240,8 +265,12 @@ public final class ChatModelInvoker {
                     @Override
                     public InvocationOutcome call() throws Exception {
                         try {
-                            return new InvocationOutcome(
-                                    chatModel.chat(messages, promptArgs, Map.of()), null);
+                            ChatResult response =
+                                    closing
+                                            ? chatModel.chatWithoutTools(
+                                                    messages, promptArgs, Map.of())
+                                            : chatModel.chat(messages, promptArgs, Map.of());
+                            return new InvocationOutcome(response, null);
                         } catch (Exception e) {
                             if (Thread.currentThread().isInterrupted()
                                     || CancellationUtils.isCancellation(e)) {
@@ -275,6 +304,8 @@ public final class ChatModelInvoker {
                 Thread.currentThread().interrupt();
                 throw e;
             }
+            ReActLoopBudgetUtils.updateTokenBudgetState(
+                    ctx.getSensoryMemory(), initialRequestId, outcome.response);
             try {
                 try {
                     if (outcome.error != null) {
@@ -316,7 +347,8 @@ public final class ChatModelInvoker {
                                         llmMetadata,
                                         ctx,
                                         chatAsync,
-                                        requestMetricGroup);
+                                        requestMetricGroup,
+                                        initialRequestId);
                     }
                     structuredOutput =
                             ChatModelAction.generateStructuredOutputWithReport(
@@ -389,7 +421,8 @@ public final class ChatModelInvoker {
             Map<String, Object> llmMetadata,
             RunnerContext ctx,
             boolean chatAsync,
-            @Nullable FlinkAgentsMetricGroup requestMetricGroup)
+            @Nullable FlinkAgentsMetricGroup requestMetricGroup,
+            UUID requestId)
             throws Exception {
         // A fresh user message rather than resending the response object: it carries no
         // provider-specific fields of the loop response, and a single user turn avoids provider
@@ -446,6 +479,8 @@ public final class ChatModelInvoker {
             // Persistence and recovery failures are not request failures, as for the loop call.
             throw new DurableExecutionFailure(e);
         }
+        ReActLoopBudgetUtils.updateTokenBudgetState(
+                ctx.getSensoryMemory(), requestId, outcome.response);
         ChatResult response;
         try {
             if (outcome.error != null) {

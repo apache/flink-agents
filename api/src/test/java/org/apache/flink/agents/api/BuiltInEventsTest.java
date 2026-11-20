@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -67,6 +68,98 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Unit tests for the {@link BuiltInEvents} registry and its {@code Event.fromJson} hookup. */
 class BuiltInEventsTest {
+    @Test
+    void invalidBudgetRejectedDuringEventRestoration() {
+        for (Object raw :
+                List.of(
+                        "not-a-map",
+                        42,
+                        List.of(),
+                        Map.of("max_turns", 0),
+                        Map.of("max_time_ms", 0),
+                        Map.of("max_time_ms", -1),
+                        Map.of("max_time_ms", 1.5),
+                        Map.of("max_time_ms", true),
+                        Map.of("max_time_ms", "1 ms"),
+                        Map.of("max_tokens", 1.5),
+                        Map.of("mode", "unknown"),
+                        Map.of("unknown", 1))) {
+            var event =
+                    new Event(
+                            ChatRequestEvent.EVENT_TYPE,
+                            Map.of("model", "model", "messages", List.of(), "budget", raw));
+            assertThatThrownBy(() -> ChatRequestEvent.fromEvent(event))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void budgetModeAcceptsCaseInsensitiveInputAndSerializesUppercase() throws Exception {
+        for (String mode : List.of("soft", "SOFT", "SoFt", "hard", "HARD", "HaRd")) {
+            var budget = MAPPER.readValue("{\"mode\":\"" + mode + "\"}", ReActLoopBudget.class);
+            var expected =
+                    ReActLoopBudget.BudgetMode.valueOf(mode.toUpperCase(java.util.Locale.ROOT));
+            assertThat(budget.getMode()).isEqualTo(expected);
+            String json = MAPPER.writeValueAsString(budget);
+            assertThat(MAPPER.readTree(json).path("mode").asText()).isEqualTo(expected.name());
+            assertThat(MAPPER.readValue(json, ReActLoopBudget.class).getMode()).isEqualTo(expected);
+        }
+    }
+
+    @Test
+    void budgetMillisecondsPreserveIntegerPrecision() throws Exception {
+        for (long millis : new long[] {1L, 60001L, 9007199254740993L}) {
+            var budget =
+                    MAPPER.readValue("{\"max_time_ms\":" + millis + "}", ReActLoopBudget.class);
+            assertThat(budget.getMaxTime()).isEqualTo(java.time.Duration.ofMillis(millis));
+            assertThat(
+                            MAPPER.readTree(MAPPER.writeValueAsString(budget))
+                                    .path("max_time_ms")
+                                    .longValue())
+                    .isEqualTo(millis);
+        }
+        assertThat(MAPPER.readValue("{\"max_time_ms\":null}", ReActLoopBudget.class).getMaxTime())
+                .isNull();
+    }
+
+    @Test
+    void budgetRemainsTypedAcrossEventSerialization() throws Exception {
+        for (ReActLoopBudget budget :
+                List.of(
+                        ReActLoopBudget.builder().build(),
+                        ReActLoopBudget.builder()
+                                .maxTurns(2)
+                                .maxTime(java.time.Duration.ofMillis(60001))
+                                .maxTokens(Long.MAX_VALUE)
+                                .mode(ReActLoopBudget.BudgetMode.HARD)
+                                .build())) {
+            var request =
+                    new ChatRequestEvent(
+                            "model", List.of(ChatMessage.user("hi")), null, null, null, budget);
+            assertThat(request.getAttr("budget")).isSameAs(budget);
+            assertThat(ChatRequestEvent.fromEvent(request).getBudget()).isSameAs(budget);
+            String json = MAPPER.writeValueAsString(request);
+            var wire = MAPPER.readTree(json).path("attributes").path("budget");
+            assertThat(wire.has("max_time")).isFalse();
+            if (budget.getMaxTime() != null) {
+                assertThat(wire.path("max_time_ms").isIntegralNumber()).isTrue();
+                assertThat(wire.path("max_time_ms").longValue()).isEqualTo(60001L);
+            } else {
+                assertThat(wire.has("max_time_ms")).isFalse();
+            }
+            for (ChatRequestEvent restored :
+                    List.of(
+                            MAPPER.readValue(json, ChatRequestEvent.class),
+                            ChatRequestEvent.fromEvent(Event.fromJson(json)))) {
+                assertThat(restored.getAttr("budget")).isInstanceOf(ReActLoopBudget.class);
+                assertThat(restored.getBudget().toMap()).isEqualTo(budget.toMap());
+                assertThat(restored.getBudget()).isSameAs(restored.getBudget());
+            }
+            var restored =
+                    MAPPER.readValue(MAPPER.writeValueAsString(budget), ReActLoopBudget.class);
+            assertThat(restored.toMap()).isEqualTo(budget.toMap());
+        }
+    }
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final UUID FIXED_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");

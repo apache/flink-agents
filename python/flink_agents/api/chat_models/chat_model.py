@@ -614,6 +614,16 @@ class BaseChatModelSetup(Resource):
             messages = list(messages[:index]) + injected + list(messages[index:])
         return messages
 
+    def _chat_without_tools(
+        self,
+        messages: Sequence[ChatMessage],
+        prompt_args: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        """Apply the setup prompt and call without tools or tool-only parameters."""
+        prepared = self.prepare_request_messages(messages, prompt_args)
+        return self._call_connection(prepared, [], None, kwargs, without_tools=True)
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -666,16 +676,26 @@ class BaseChatModelSetup(Resource):
         if tools is None:
             messages = self.prepare_request_messages(messages, prompt_args)
 
-        # Call chat model connection to execute chat
+        if tools is None:
+            tools = self._get_tools()
+        return self._call_connection(messages, tools, output_schema, kwargs)
+
+    def _call_connection(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: List[Tool],
+        output_schema: OutputSchema | None,
+        kwargs: Mapping[str, Any],
+        *,
+        without_tools: bool = False,
+    ) -> ChatResult:
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
         connection = self._get_connection()
-        if tools is None:
-            tools = self._get_tools()
+        if without_tools or (output_schema is not None and not tools):
+            merged_kwargs = _without_tool_only_params(merged_kwargs)
         if output_schema is None:
             return connection.chat(messages, tools=tools, **merged_kwargs)
-        if not tools:
-            merged_kwargs = _without_tool_only_params(merged_kwargs)
         return connection.chat(
             messages, tools=tools, output_schema=output_schema, **merged_kwargs
         )

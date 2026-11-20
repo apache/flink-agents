@@ -22,11 +22,13 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.ReActAgent;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
@@ -41,6 +43,7 @@ import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
@@ -59,6 +62,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import javax.annotation.Nullable;
 
 import java.lang.reflect.Field;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -122,6 +126,7 @@ public class ReActAgentSubagentTest {
     /** Serves the parent agent; replies come from a static script. */
     public static class ParentScriptedConnection extends BaseChatModelConnection {
 
+        static TokenUsage usage;
         static final Deque<ChatMessage> REPLIES = new ArrayDeque<>();
         static final List<List<ChatMessage>> CONVERSATIONS = new ArrayList<>();
 
@@ -131,6 +136,7 @@ public class ReActAgentSubagentTest {
         }
 
         static void reset() {
+            usage = null;
             REPLIES.clear();
             CONVERSATIONS.clear();
         }
@@ -140,13 +146,19 @@ public class ReActAgentSubagentTest {
                 List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
             CONVERSATIONS.add(new ArrayList<>(messages));
             return new ChatResult(
-                    REPLIES.isEmpty() ? ChatMessage.assistant("no script left") : REPLIES.poll());
+                    REPLIES.isEmpty() ? ChatMessage.assistant("no script left") : REPLIES.poll(),
+                    null,
+                    null,
+                    usage,
+                    null,
+                    Map.of());
         }
     }
 
     /** Serves the child agent; replies come from a static script. */
     public static class ChildScriptedConnection extends BaseChatModelConnection {
 
+        static TokenUsage usage;
         static final Deque<ChatMessage> REPLIES = new ArrayDeque<>();
         static final List<List<ChatMessage>> CONVERSATIONS = new ArrayList<>();
         static final List<List<String>> OFFERED_TOOLS = new ArrayList<>();
@@ -157,6 +169,7 @@ public class ReActAgentSubagentTest {
         }
 
         static void reset() {
+            usage = null;
             REPLIES.clear();
             CONVERSATIONS.clear();
             OFFERED_TOOLS.clear();
@@ -171,7 +184,12 @@ public class ReActAgentSubagentTest {
                             ? List.of()
                             : tools.stream().map(Tool::getName).collect(Collectors.toList()));
             return new ChatResult(
-                    REPLIES.isEmpty() ? ChatMessage.assistant("no script left") : REPLIES.poll());
+                    REPLIES.isEmpty() ? ChatMessage.assistant("no script left") : REPLIES.poll(),
+                    null,
+                    null,
+                    usage,
+                    null,
+                    Map.of());
         }
     }
 
@@ -246,6 +264,88 @@ public class ReActAgentSubagentTest {
         assertThat(ParentScriptedConnection.CONVERSATIONS).hasSize(2);
         assertThat(allTexts(ParentScriptedConnection.CONVERSATIONS.get(1)))
                 .anySatisfy(text -> assertThat(text).contains("reviewed: ok"));
+    }
+
+    @Test
+    void nestedLoopsKeepTheirOwnTurnsAndTokensAndChargeParentForWaiting() throws Exception {
+        var parentBudget =
+                ReActLoopBudget.builder()
+                        .maxTurns(2)
+                        .maxTime(Duration.ofMinutes(1))
+                        .maxTokens(4L)
+                        .mode(ReActLoopBudget.BudgetMode.HARD)
+                        .build();
+        var childBudget =
+                ReActLoopBudget.builder()
+                        .maxTurns(2)
+                        .maxTime(Duration.ofMinutes(2))
+                        .maxTokens(11L)
+                        .mode(ReActLoopBudget.BudgetMode.HARD)
+                        .build();
+        ParentScriptedConnection.usage = new TokenUsage(2L, 1L);
+        ChildScriptedConnection.usage = new TokenUsage(8L, 2L);
+        ParentScriptedConnection.REPLIES.add(assistantWithToolCall("delegate", delegation()));
+        ParentScriptedConnection.REPLIES.add(ChatMessage.assistant("parent done"));
+        ChildScriptedConnection.REPLIES.add(
+                assistantWithToolCall(
+                        "look up", new ToolCallBlock("lookup", "shout", Map.of("text", "hello"))));
+        ChildScriptedConnection.REPLIES.add(ChatMessage.assistant("child done"));
+
+        Agent parent =
+                delegatingParent(
+                        null,
+                        null,
+                        toolCallingReactAgent(true, childBudget),
+                        List.of(),
+                        parentBudget);
+        var store = new InMemoryActionStateStore(false);
+        assertThat(run(parent, 7L, metrics -> {}, store)).containsExactly("parent done");
+        assertThat(ParentScriptedConnection.CONVERSATIONS).hasSize(2);
+        assertThat(allTexts(ParentScriptedConnection.CONVERSATIONS.get(1)))
+                .anyMatch(text -> text.contains("child done"));
+        assertThat(ChildScriptedConnection.CONVERSATIONS).hasSize(2);
+
+        // Each loop keeps its own start time and configured duration.
+        Map<String, List<Map<?, ?>>> requests = new HashMap<>();
+        var updates =
+                store.getKeyedActionStates().values().stream()
+                        .flatMap(states -> states.values().stream())
+                        .flatMap(state -> state.getSensoryMemoryUpdates().stream())
+                        .filter(update -> update.getPath().endsWith("_LOOP_BUDGET_CONTEXT"))
+                        .collect(Collectors.toList());
+        for (var update : updates) {
+            var loops = (Map<?, ?>) update.getValue();
+            for (var entry : loops.entrySet()) {
+                assertThat(entry.getKey()).isInstanceOf(java.util.UUID.class);
+                var sample = (Map<?, ?>) entry.getValue();
+                if (sample.containsKey("started_at_ms")) {
+                    requests.computeIfAbsent(entry.getKey().toString(), id -> new ArrayList<>())
+                            .add(sample);
+                }
+            }
+        }
+        assertThat(requests).hasSize(2);
+        Map<Long, Long> starts = new HashMap<>();
+        for (var samples : requests.values()) {
+            long initial = ((Number) samples.get(0).get("max_time_ms")).longValue();
+            long start = ((Number) samples.get(0).get("started_at_ms")).longValue();
+            assertThat(samples)
+                    .allSatisfy(
+                            sample -> {
+                                assertThat(((Number) sample.get("max_time_ms")).longValue())
+                                        .isEqualTo(initial);
+                                assertThat(((Number) sample.get("started_at_ms")).longValue())
+                                        .isEqualTo(start);
+                            });
+            assertThat(samples)
+                    .extracting(sample -> ((Number) sample.get("tokens_left")).longValue())
+                    .contains(1L, 0L);
+            assertThat(samples)
+                    .extracting(sample -> ((Number) sample.get("turns_left")).intValue())
+                    .contains(2, 1, 0);
+            starts.put(initial, start);
+        }
+        assertThat(starts.get(120_000L)).isGreaterThanOrEqualTo(starts.get(60_000L));
     }
 
     @ParameterizedTest
@@ -476,6 +576,15 @@ public class ReActAgentSubagentTest {
             @Nullable Class<?> outputSchema,
             Agent child,
             List<String> tools) {
+        return delegatingParent(prompt, outputSchema, child, tools, null);
+    }
+
+    private static ReActAgent delegatingParent(
+            Prompt prompt,
+            Class<?> outputSchema,
+            Agent child,
+            List<String> tools,
+            ReActLoopBudget budget) {
         ReActAgent parent =
                 new ReActAgent(
                         ResourceDescriptor.Builder.newBuilder(ScriptedModelSetup.class.getName())
@@ -484,7 +593,9 @@ public class ReActAgentSubagentTest {
                                 .addInitialArgument("tools", tools)
                                 .build(),
                         prompt,
-                        outputSchema);
+                        outputSchema,
+                        List.of(),
+                        budget);
         registerConnections(parent);
         parent.addResource("child", ResourceType.AGENT, declaredChild(child));
         return parent;
@@ -505,6 +616,11 @@ public class ReActAgentSubagentTest {
     }
 
     private static ReActAgent toolCallingReactAgent(boolean registerTool) throws Exception {
+        return toolCallingReactAgent(registerTool, null);
+    }
+
+    private static ReActAgent toolCallingReactAgent(boolean registerTool, ReActLoopBudget budget)
+            throws Exception {
         ReActAgent child =
                 new ReActAgent(
                         ResourceDescriptor.Builder.newBuilder(ScriptedModelSetup.class.getName())
@@ -512,7 +628,9 @@ public class ReActAgentSubagentTest {
                                 .addInitialArgument("tools", List.of("shout"))
                                 .build(),
                         null,
-                        null);
+                        null,
+                        List.of(),
+                        budget);
         if (registerTool) {
             child.addResource(
                     "shout",
@@ -587,13 +705,22 @@ public class ReActAgentSubagentTest {
                 .getCount();
     }
 
-    @SuppressWarnings("unchecked")
     private static List<Object> run(
             Agent root, long input, Consumer<FlinkAgentsMetricGroupImpl> checkMetrics)
             throws Exception {
+        return run(root, input, checkMetrics, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Object> run(
+            Agent root,
+            long input,
+            Consumer<FlinkAgentsMetricGroupImpl> checkMetrics,
+            InMemoryActionStateStore store)
+            throws Exception {
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory<>(new AgentPlan(root), true),
+                        new ActionExecutionOperatorFactory<>(new AgentPlan(root), true, store),
                         (KeySelector<Long, Long>) value -> value,
                         TypeInformation.of(Long.class))) {
             harness.open();

@@ -824,3 +824,14 @@ def test_chat_without_tools_sends_the_prepared_request_and_bound_tools(
     assert connection.captured_tools[0] is bound
     assert connection.captured_output_schema is output_schema
     assert connection.captured_kwargs == {"top_p": 1}
+
+
+def test_chat_without_tools_drops_tool_only_params_without_schema() -> None:
+    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+    setup.setup_params = _params_with_tool_choice()
+    setup._chat_without_tools(
+        [ChatMessage.user("finish")], temperature=0.2, tool_choice="required"
+    )
+    assert connection.captured_tools == []
+    assert connection.captured_kwargs == {**_STRIPPED_PARAMS, "temperature": 0.2}
+    assert setup.setup_params == _params_with_tool_choice()

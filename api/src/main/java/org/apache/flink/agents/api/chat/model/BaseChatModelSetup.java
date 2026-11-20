@@ -292,6 +292,15 @@ public abstract class BaseChatModelSetup extends Resource {
         return messages;
     }
 
+    /** Applies the setup prompt and calls the model without tools or tool-only parameters. */
+    public ChatResult chatWithoutTools(
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            Map<String, Object> modelParams) {
+        return callConnection(
+                prepareRequestMessages(messages, promptArgs), List.of(), modelParams, null, true);
+    }
+
     public ChatResult chat(List<ChatMessage> messages) {
         return this.chat(messages, Collections.emptyMap(), Collections.emptyMap());
     }
@@ -329,6 +338,15 @@ public abstract class BaseChatModelSetup extends Resource {
             List<Tool> tools,
             @Nullable Map<String, Object> modelParams,
             @Nullable Object outputSchema) {
+        return callConnection(messages, tools, modelParams, outputSchema, false);
+    }
+
+    private ChatResult callConnection(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            @Nullable Map<String, Object> modelParams,
+            @Nullable Object outputSchema,
+            boolean withoutTools) {
         Preconditions.checkNotNull(
                 connection,
                 "Connection is not initialized. Ensure open() is called before chat().");
@@ -336,11 +354,11 @@ public abstract class BaseChatModelSetup extends Resource {
         if (modelParams != null) {
             params.putAll(modelParams);
         }
+        if (withoutTools || (outputSchema != null && tools.isEmpty())) {
+            params = withoutToolOnlyParams(params);
+        }
         if (outputSchema == null) {
             return connection.chat(messages, tools, params);
-        }
-        if (tools.isEmpty()) {
-            params = withoutToolOnlyParams(params);
         }
         return connection.chat(messages, tools, params, outputSchema);
     }

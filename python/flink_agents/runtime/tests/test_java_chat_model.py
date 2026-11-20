@@ -238,3 +238,19 @@ def test_java_chat_model_setup_refuses_tools_or_output_schema(
         setup.chat([ChatMessage.of(MessageRole.USER, "hi")], **call_kwargs)
     assert j_resource.mock_calls == []
     assert adapter.mock_calls == []
+
+
+def test_chat_without_tools_forwards_history_and_prompt_args_to_java() -> None:
+    setup, resource, adapter = _java_chat_model_setup()
+    history = ChatMessage.user("finish")
+    answer = ChatMessage.assistant("done")
+    resource.chatWithoutTools.return_value.toMap.return_value = {
+        "message": answer.model_dump(mode="json")
+    }
+    assert (
+        setup._chat_without_tools([history], {"k": "v"}, temperature=0.2).text == "done"
+    )
+    resource.chatWithoutTools.assert_called_once_with(
+        [adapter.fromPythonChatMessage.return_value], {"k": "v"}, {"temperature": 0.2}
+    )
+    resource.chat.assert_not_called()

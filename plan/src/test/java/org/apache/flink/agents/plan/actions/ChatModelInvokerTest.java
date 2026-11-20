@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -64,6 +65,7 @@ class ChatModelInvokerTest {
     @Test
     void testChatWithRetriesDoesNotRetryOnInterruption() throws Exception {
         RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getSensoryMemory()).thenReturn(mock(MemoryObject.class));
         BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
         ReadableConfiguration config = mock(ReadableConfiguration.class);
         when(ctx.getConfig()).thenReturn(config);
@@ -98,6 +100,7 @@ class ChatModelInvokerTest {
     @Test
     void durableInfrastructureFailureIsNotRetriedOrConverted() throws Exception {
         RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getSensoryMemory()).thenReturn(mock(MemoryObject.class));
         BaseChatModelSetup model = mock(BaseChatModelSetup.class);
         ReadableConfiguration config = mock(ReadableConfiguration.class);
         when(ctx.getConfig()).thenReturn(config);
@@ -126,6 +129,7 @@ class ChatModelInvokerTest {
     @Test
     void providerFailureReplaysFromSerializedOutcome() throws Exception {
         RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getSensoryMemory()).thenReturn(mock(MemoryObject.class));
         BaseChatModelSetup model = mock(BaseChatModelSetup.class);
         ReadableConfiguration config = mock(ReadableConfiguration.class);
         when(ctx.getConfig()).thenReturn(config);
@@ -197,6 +201,7 @@ class ChatModelInvokerTest {
     @Test
     void testChatWithRetriesRestoresInterruptFlagFromRetryBackoffSleep() throws Exception {
         RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getSensoryMemory()).thenReturn(mock(MemoryObject.class));
         BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
         ReadableConfiguration config = mock(ReadableConfiguration.class);
         when(ctx.getConfig()).thenReturn(config);
@@ -240,6 +245,7 @@ class ChatModelInvokerTest {
     @Test
     void testChatWithRetriesRetriesOnOrdinaryFailure() throws Exception {
         RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getSensoryMemory()).thenReturn(mock(MemoryObject.class));
         BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
         ReadableConfiguration config = mock(ReadableConfiguration.class);
         when(ctx.getConfig()).thenReturn(config);
@@ -270,6 +276,7 @@ class ChatModelInvokerTest {
 
     private static RunnerContext syncContext(BaseChatModelSetup model) throws Exception {
         RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getSensoryMemory()).thenReturn(mock(MemoryObject.class));
         ReadableConfiguration config = mock(ReadableConfiguration.class);
         when(ctx.getConfig()).thenReturn(config);
         when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
@@ -450,6 +457,7 @@ class ChatModelInvokerTest {
         for (int index = 0; index < failures.size(); index++) {
             Exception failure = failures.get(index);
             RunnerContext ctx = mock(RunnerContext.class);
+            when(ctx.getSensoryMemory()).thenReturn(mock(MemoryObject.class));
             BaseChatModelSetup model = mock(BaseChatModelSetup.class);
             ReadableConfiguration config = mock(ReadableConfiguration.class);
             when(ctx.getConfig()).thenReturn(config);
