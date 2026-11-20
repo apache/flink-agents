@@ -29,7 +29,7 @@ import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,9 +44,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 class NativeTimerE2ETest {
     @TempDir private Path inputDirectory;
 
-    @ParameterizedTest(name = "parallel={0}")
-    @ValueSource(booleans = {false, true})
-    void timersDriveIdleKeysWithoutFurtherInput(boolean parallel) throws Exception {
+    @ParameterizedTest(name = "parallel={0}, currentRun={1}")
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void timersDriveIdleKeysWithoutFurtherInput(boolean parallel, boolean currentRun)
+            throws Exception {
         Path inputFile = inputDirectory.resolve("input.txt");
         Files.writeString(inputFile, "1\n2\n");
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
@@ -70,7 +71,7 @@ class NativeTimerE2ETest {
         DataStream<Object> output =
                 agentsEnv
                         .fromDataStream(inputs, value -> value)
-                        .apply(new NativeTimerAgent())
+                        .apply(currentRun ? new CurrentRunTimerAgent() : new NativeTimerAgent())
                         .toDataStream();
 
         List<String> observed = new ArrayList<>();

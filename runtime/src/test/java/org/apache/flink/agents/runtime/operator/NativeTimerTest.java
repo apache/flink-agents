@@ -69,7 +69,6 @@ public class NativeTimerTest {
                     Duration.ofMillis(command == 1 ? 10 : 20),
                     timeout,
                     TimerMode.TRIGGER_AFTER_CURRENT_RUN);
-            timeout.getAttributes().put("value", 99L);
         } else if (command == 3) {
             ctx.cancelTimer("approval");
             ctx.cancelTimer("absent");

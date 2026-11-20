@@ -42,23 +42,33 @@ public interface RunnerContext {
     /**
      * Sends an event.
      *
+     * <p>Create a new Event for each send. Do not reuse or modify it, its attributes, or its
+     * attachment values after sending.
+     *
      * @param event the event to be sent
      */
     void sendEvent(Event event);
 
     /**
-     * Registers a processing-time timer for the current business key. The Event starts a new run
-     * and is handled by the Actions already bound to its type in the Agent plan.
+     * Registers a processing-time timer for the current business key. The Event is handled by the
+     * Actions already bound to its type in the Agent plan. The mode selects whether the Event
+     * starts a new run or continues within the current run.
      *
      * <p>The registration takes effect only when this Action completes successfully. The delay
      * starts at that point, including when the Action awaits asynchronous work. A pending timer
-     * with the same ID is replaced. The Event is copied at this call. Events that start a new run
-     * must not carry attachments; use serializable attributes to pass data between runs.
+     * with the same ID is replaced. The Event is serialized at this call. Create a new Event for
+     * each registration; do not reuse or modify it, its attributes, or its attachment values
+     * afterward. Events that start a new run must not carry attachments; use serializable
+     * attributes to pass data between runs. With {@link TimerMode#CURRENT_RUN_WAIT_FOR_TRIGGER},
+     * the run retains its context, sensory memory and input timestamp until its timers and
+     * subsequent Actions finish. As with {@link #sendEvent}, attachment values are stored in this
+     * run's sensory memory and replaced with references in the supplied Event. Waiting does not
+     * occupy an Action execution thread; subsequent inputs with the same key remain queued.
      *
      * @param timerId non-blank identifier scoped to this operator and business key
      * @param delay non-negative delay, rounded up to milliseconds
      * @param event event to deliver after the delay
-     * @param mode execution mode; currently {@link TimerMode#TRIGGER_AFTER_CURRENT_RUN}
+     * @param mode whether to start a new run or continue within the current run
      * @throws IllegalArgumentException if the Event carries attachments in {@link
      *     TimerMode#TRIGGER_AFTER_CURRENT_RUN} mode
      */
@@ -69,12 +79,13 @@ public interface RunnerContext {
      * {@link #registerTimer}, registration is committed when the Action completes. A past deadline
      * becomes eligible after completion and never invokes an Action inline. Events in {@link
      * TimerMode#TRIGGER_AFTER_CURRENT_RUN} mode must not carry attachments; use serializable
-     * attributes to pass data between runs.
+     * attributes to pass data between runs. Use a new Event for each registration, as with {@link
+     * #registerTimer}.
      *
      * @param timerId non-blank identifier scoped to this operator and business key
      * @param deadline absolute processing-time deadline
      * @param event event to deliver at the deadline
-     * @param mode execution mode; currently {@link TimerMode#TRIGGER_AFTER_CURRENT_RUN}
+     * @param mode whether to start a new run or continue within the current run
      * @throws IllegalArgumentException if the Event carries attachments in {@link
      *     TimerMode#TRIGGER_AFTER_CURRENT_RUN} mode
      */

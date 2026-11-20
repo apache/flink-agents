@@ -30,7 +30,6 @@ def _tick_event(key: int, step: int) -> Event:
     return Event(
         type="tick",
         attributes={"key": key, "step": step},
-        attachments={"payload": bytes([key])},
     )
 
 
@@ -55,7 +54,6 @@ class NativeTimerAgent(Agent):
             event,
             mode=TimerMode.TRIGGER_AFTER_CURRENT_RUN,
         )
-        event.attachments["payload"] = bytes([99])
         ctx.register_timer(
             "cancelled",
             timedelta(milliseconds=50),
@@ -72,7 +70,7 @@ class NativeTimerAgent(Agent):
         step = int(event.attributes["step"])
         assert ctx.sensory_memory.get("origin") is None
         assert ctx.short_term_memory.get("key") == key
-        assert event.attachments["payload"] == bytes([key])
+        assert not event.attachments
         assert step == ctx.short_term_memory.get("ticks") + 1
         ctx.short_term_memory.set("ticks", step)
         ctx.send_event(OutputEvent(output=f"{key}:tick:{step}"))

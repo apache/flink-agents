@@ -31,7 +31,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Exercises timer replacement, cancellation, payload snapshots and periodic registration. */
+/** Exercises timer replacement, cancellation, attributes and periodic registration. */
 public class NativeTimerAgent extends Agent {
     @Action(InputEvent.EVENT_TYPE)
     public static void input(Event event, RunnerContext ctx) throws Exception {
@@ -47,7 +47,6 @@ public class NativeTimerAgent extends Agent {
         Event tick = tickEvent(key, 1);
         ctx.registerTimer(
                 "watch", Duration.ofMillis(100), tick, TimerMode.TRIGGER_AFTER_CURRENT_RUN);
-        tick.setAttachment("payload", new byte[] {99});
         ctx.registerTimer(
                 "cancelled",
                 Duration.ofMillis(50),
@@ -64,7 +63,7 @@ public class NativeTimerAgent extends Agent {
         assertThat(event.hasSourceTimestamp()).isFalse();
         assertThat(ctx.getSensoryMemory().isExist("origin")).isFalse();
         assertThat(ctx.getShortTermMemory().get("key").getValue()).isEqualTo(key);
-        assertThat((byte[]) event.getAttachment("payload")).containsExactly((byte) key);
+        assertThat(event.getAttachments()).isEmpty();
         long previous = ((Number) ctx.getShortTermMemory().get("ticks").getValue()).longValue();
         assertThat((long) step).isEqualTo(previous + 1);
         ctx.getShortTermMemory().set("ticks", (long) step);
@@ -91,7 +90,6 @@ public class NativeTimerAgent extends Agent {
 
     private static Event tickEvent(long key, int step) {
         Event event = new Event("tick", Map.of("key", key, "step", step));
-        event.setAttachment("payload", new byte[] {(byte) key});
         event.setSourceTimestamp(123L);
         return event;
     }
