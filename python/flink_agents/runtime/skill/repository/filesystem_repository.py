@@ -24,6 +24,7 @@ Accepts either a directory whose immediate subdirectories each contain a
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from flink_agents.runtime.skill.repository._materialize import (
     Materialized,
@@ -33,6 +34,11 @@ from flink_agents.runtime.skill.repository.materialized_skill_repository import 
     MaterializedSkillRepository,
 )
 
+if TYPE_CHECKING:
+    from flink_agents.runtime.skill.repository._materialize import (
+        MaterializerLimits,
+    )
+
 
 class FileSystemSkillRepository(MaterializedSkillRepository):
     """Filesystem-backed :class:`SkillRepository`.
@@ -41,8 +47,10 @@ class FileSystemSkillRepository(MaterializedSkillRepository):
     ``SKILL.md``, or a ``.zip`` that extracts into such a layout.
     """
 
-    def __init__(self, base_dir: Path | str) -> None:
+    def __init__(self, base_dir: Path | str, *, limits: MaterializerLimits) -> None:
         """Open a directory or ``.zip`` of skills.
+
+        ``limits`` bounds the extraction of a ``.zip``; directories are not copied.
 
         Raises:
             ValueError: If ``base_dir`` is None, doesn't exist, or is neither
@@ -61,7 +69,7 @@ class FileSystemSkillRepository(MaterializedSkillRepository):
         if path.is_dir():
             materialization = Materialized.borrowed(path)
         elif path.is_file() and path.suffix.lower() == ".zip":
-            materialization = extract_zip_safely(path)
+            materialization = extract_zip_safely(path, limits=limits)
         else:
             msg = f"Path must be a directory or a .zip file: {path}"
             raise ValueError(msg)

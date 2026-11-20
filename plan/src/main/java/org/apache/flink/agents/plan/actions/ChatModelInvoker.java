@@ -37,6 +37,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -116,19 +117,19 @@ public final class ChatModelInvoker {
         public final ChatResult response;
         public Object structuredOutput;
         public final int retryCount;
-        public final int totalRetryWaitSec;
+        public final long totalRetryWaitMs;
 
         ChatAttemptResult(
                 String model,
                 BaseChatModelSetup chatModel,
                 ChatResult response,
                 int retryCount,
-                int totalRetryWaitSec) {
+                long totalRetryWaitMs) {
             this.model = model;
             this.chatModel = chatModel;
             this.response = response;
             this.retryCount = retryCount;
-            this.totalRetryWaitSec = totalRetryWaitSec;
+            this.totalRetryWaitMs = totalRetryWaitMs;
         }
     }
 
@@ -137,20 +138,20 @@ public final class ChatModelInvoker {
         public final BaseChatModelSetup chatModel;
         public final Exception error;
         public final int retryCount;
-        public final int totalRetryWaitSec;
+        public final long totalRetryWaitMs;
 
         ChatAttemptFailed(
                 String model,
                 BaseChatModelSetup chatModel,
                 Exception error,
                 int retryCount,
-                int totalRetryWaitSec) {
+                long totalRetryWaitMs) {
             super(error);
             this.model = model;
             this.chatModel = chatModel;
             this.error = error;
             this.retryCount = retryCount;
-            this.totalRetryWaitSec = totalRetryWaitSec;
+            this.totalRetryWaitMs = totalRetryWaitMs;
         }
     }
 
@@ -159,9 +160,12 @@ public final class ChatModelInvoker {
         return Math.max(ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES), 0);
     }
 
-    /** The request-level retry backoff. */
-    public static int configuredRetryWaitSec(RunnerContext ctx) {
-        return Math.max(ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL), 0);
+    /**
+     * The request-level retry backoff in whole milliseconds, with negative values treated as zero.
+     */
+    public static long configuredRetryWaitMillis(RunnerContext ctx) {
+        Duration interval = ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL);
+        return interval.isNegative() ? 0L : interval.toMillis();
     }
 
     public static ChatAttemptResult chatWithRetries(
@@ -173,7 +177,7 @@ public final class ChatModelInvoker {
             @Nullable Object outputSchema,
             RunnerContext ctx,
             int numRetries,
-            int retryWaitIntervalSec)
+            long retryWaitMillis)
             throws ChatAttemptFailed, Exception {
         BaseChatModelSetup chatModel;
         try {
@@ -218,7 +222,7 @@ public final class ChatModelInvoker {
         }
 
         int actualRetryCount = 0;
-        int totalWaitTimeSec = 0;
+        long totalWaitTimeMs = 0;
         ChatResult response;
 
         DurableCallable<InvocationOutcome> callable =
@@ -320,7 +324,7 @@ public final class ChatModelInvoker {
                 }
                 ChatAttemptResult result =
                         new ChatAttemptResult(
-                                model, chatModel, response, actualRetryCount, totalWaitTimeSec);
+                                model, chatModel, response, actualRetryCount, totalWaitTimeMs);
                 result.structuredOutput = structuredOutput;
                 return result;
             } catch (DurableExecutionFailure e) {
@@ -343,28 +347,26 @@ public final class ChatModelInvoker {
                 }
                 if (attempt < numRetries) {
                     actualRetryCount = attempt + 1;
-                    int currentWaitSec = retryWaitIntervalSec * (1 << (actualRetryCount - 1));
+                    long waitMillis = Math.multiplyExact(retryWaitMillis, 1L << attempt);
                     LOG.warn(
-                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {}"
-                                    + " s.",
+                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {} ms.",
                             initialRequestId,
                             e,
                             actualRetryCount,
                             numRetries,
-                            currentWaitSec);
-                    if (currentWaitSec > 0) {
+                            waitMillis);
+                    if (waitMillis > 0) {
                         try {
-                            Thread.sleep(currentWaitSec * 1000L);
+                            Thread.sleep(waitMillis);
                         } catch (InterruptedException ie) {
                             Thread.currentThread().interrupt();
                             throw ie;
                         }
-                        totalWaitTimeSec += currentWaitSec;
+                        totalWaitTimeMs += waitMillis;
                     }
                     continue;
                 }
-                throw new ChatAttemptFailed(
-                        model, chatModel, e, actualRetryCount, totalWaitTimeSec);
+                throw new ChatAttemptFailed(model, chatModel, e, actualRetryCount, totalWaitTimeMs);
             }
         }
         throw new IllegalStateException("Unreachable chat retry state.");

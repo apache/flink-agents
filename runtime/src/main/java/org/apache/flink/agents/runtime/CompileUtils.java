@@ -20,6 +20,10 @@ package org.apache.flink.agents.runtime;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.configuration.ConfigOption;
+import org.apache.flink.agents.api.configuration.DurationUtils;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -33,6 +37,8 @@ import org.apache.flink.types.Row;
 import org.apache.flink.util.StringUtils;
 
 import javax.annotation.Nullable;
+
+import java.time.Duration;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 
@@ -159,6 +165,8 @@ public class CompileUtils {
             boolean pythonKeyIsPickled,
             @Nullable String uid) {
         validateOperatorUid(uid);
+        // Java plans and Python plan JSON both reach this method before the operator exists.
+        validateExecutionOptions(agentPlan.getConfig());
         String agentName = agentPlan.getAgentName();
         String operatorName =
                 StringUtils.isNullOrWhitespaceOnly(agentName) ? DEFAULT_OPERATOR_NAME : agentName;
@@ -192,5 +200,34 @@ public class CompileUtils {
                 rowType.getArity());
         TypeInformation<?> fieldType = rowType.getTypeAt(fieldIndex);
         return fieldType instanceof PickledByteArrayTypeInfo;
+    }
+
+    private static void validateExecutionOptions(AgentConfiguration config) {
+        Duration retry = config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL);
+        if (DurationUtils.isPositive(retry)) {
+            checkedMillis(AgentExecutionOptions.RETRY_WAIT_INTERVAL, retry);
+        }
+
+        Duration ttl = config.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL);
+        if (DurationUtils.isPositive(ttl)
+                && checkedMillis(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL, ttl) == 0) {
+            throw new IllegalArgumentException(
+                    AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL.getKey()
+                            + " must be greater than 0 ms after conversion to milliseconds,"
+                            + " or zero or negative to disable TTL, got "
+                            + DurationUtils.format(ttl));
+        }
+    }
+
+    private static long checkedMillis(ConfigOption<Duration> option, Duration duration) {
+        try {
+            return duration.toMillis();
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(
+                    option.getKey()
+                            + " overflows when converted to milliseconds, got "
+                            + DurationUtils.format(duration),
+                    e);
+        }
     }
 }

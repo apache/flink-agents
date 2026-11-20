@@ -172,7 +172,11 @@ public final class YamlLoader {
         }
         List<ChatMessage> messages =
                 spec.getMessages().stream()
-                        .map(m -> new ChatMessage(m.getRole(), m.getContent()))
+                        .map(
+                                m ->
+                                        m.getBlocks() != null
+                                                ? new ChatMessage(m.getRole(), m.getBlocks())
+                                                : new ChatMessage(m.getRole(), m.getContent()))
                         .collect(Collectors.toList());
         return Prompt.fromMessages(messages);
     }
@@ -465,6 +469,9 @@ public final class YamlLoader {
                             String.format("%s %s already defined.", type, name));
                 }
                 Agent.checkNoChatModelRouterNameClash(name, type, registeredResources);
+                // addResource would catch a clash within this file only after registering
+                // the resources before it.
+                Agent.checkNoChatModelRouterNameClash(name, type, sharedResources);
             }
         }
     }

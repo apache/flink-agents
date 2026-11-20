@@ -209,7 +209,7 @@ class AzureOpenAIChatModelConnectionTest {
                                 .addInitialArgument("api_version", "2024-02-01")
                                 .addInitialArgument(
                                         "azure_endpoint", "https://example.openai.azure.com")
-                                .addInitialArgument("timeout", 0)
+                                .addInitialArgument("timeout", Duration.ZERO)
                                 .addInitialArgument("max_retries", 0)
                                 .build(),
                         NOOP);

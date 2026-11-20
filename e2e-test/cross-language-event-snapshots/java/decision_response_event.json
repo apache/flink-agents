@@ -51,7 +51,7 @@
         }
       }
     },
-    "total_retry_wait_sec" : 2,
+    "total_retry_wait_ms" : 2,
     "retry_count" : 1,
     "error" : null,
     "request_id" : "00000000-0000-0000-0000-000000000002",

@@ -38,8 +38,9 @@ introduction to the format and its use cases.
 
 Skills use **progressive disclosure**: the model first receives their names and
 descriptions, then calls `load_skill` to read the instructions for a relevant
-skill. It can request additional files and use the built-in `bash` tool to run
-permitted commands. This limits how much skill content enters the model's context.
+skill. It can request additional files and, when explicitly enabled, use the
+built-in `bash` tool to run permitted commands. This limits how much skill content
+enters the model's context.
 
 The following example defines a `math-calculator` skill, registers its source,
 and enables it on a chat model. The [complete example](#complete-example) links
@@ -164,6 +165,7 @@ def math_model() -> ResourceDescriptor:
         clazz=ResourceName.ChatModel.OLLAMA_SETUP,
         connection="ollama_server",
         model="qwen3.5:9b",
+        tools=["bash"],
         # Expose declared skills to this model by name.
         skills=["math-calculator"],
         # Whitelist the shell commands the bash tool is allowed to run.
@@ -179,6 +181,7 @@ public static ResourceDescriptor mathModel() {
     return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
             .addInitialArgument("connection", "ollamaChatModelConnection")
             .addInitialArgument("model", "qwen3.5:9b")
+            .addInitialArgument("tools", List.of("bash"))
             // Expose declared skills to this model by name.
             .addInitialArgument("skills", List.of("math-calculator"))
             // Whitelist the shell commands the bash tool is allowed to run.
@@ -193,8 +196,10 @@ public static ResourceDescriptor mathModel() {
 When skills are enabled:
 
 - The framework includes their names and descriptions in the system messages.
-- The framework adds `load_skill` and `bash` alongside any configured tools.
-  You do not need to register them yourself. The model must support tool calling.
+- The framework adds `load_skill` alongside any configured tools.
+  You do not need to register it yourself. The model must support tool calling.
+- To run commands, explicitly include `bash` in the model's `tools` list.
+  BashTool is built in and requires no registration; it is also available without Skills.
 - `allowed_commands` permits the shell commands used by the skill, here `echo`
   and `bc`. For other command and script permissions, see
   [Using Skill Files and Commands](#using-skill-files-and-commands).
@@ -296,15 +301,20 @@ base directory, and its resource paths.
 reference file shown in [Skill Format](#skill-format). The `path` is relative to
 the skill directory.
 
-The `bash` tool runs commands under the following chat model settings:
+Enable `bash` in the model's `tools` list to run commands under the following
+chat model settings.
 
 | Setting | Required | Description |
 |---------|----------|-------------|
 | `allowed_commands` | Optional | Command names the tool may run, such as `echo` and `bc`. Defaults to an empty list. |
 | `allowed_script_dirs` | Optional | Additional directories from which scripts may be executed. Defaults to an empty list; the framework also permits the directories of the skills enabled on this model. |
 
-Each command must either be on the command list or resolve to a path under a
-permitted script directory. Directly executed scripts need executable permissions;
+Bare command names must be in `allowed_commands`. Explicit paths such as
+`./run.sh` must resolve under an allowed script directory. Executable names and
+paths may contain only ASCII letters, digits, `_`, `-`, `.`, and `/`; arguments
+may still use quoting and variable expansion.
+
+Directly executed scripts need executable permissions;
 all scripts need their runtime dependencies. To run `python scripts/calculate.py`, allow
 `python` and set the tool's `cwd` argument to the skill's base directory returned
 by `load_skill`. An explicit `cwd` must be within a permitted script directory;
@@ -313,7 +323,9 @@ without it, the tool uses the task process's working directory.
 {{< hint warning >}}
 These checks are not an operating-system sandbox. Allowing an interpreter such as
 `python` permits more than running the bundled script. Grant only the commands
-and directories needed by trusted skills.
+and directories needed by trusted skills. See the
+[Security & Threat Model]({{< ref "docs/operations/security" >}}) for input and
+model trust assumptions and execution-environment responsibilities.
 {{< /hint >}}
 
 File redirects are rejected; descriptor duplication and closure such as `2>&1`

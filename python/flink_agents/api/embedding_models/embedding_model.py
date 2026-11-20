@@ -22,9 +22,42 @@ from typing import Any, Dict, Generic, Sequence, TypeVar, cast
 from pydantic import Field
 from typing_extensions import override
 
+from flink_agents.api.chat_message import (
+    DataContentBlock,
+    MediaBlock,
+    TextBlock,
+    UnsupportedContentBlockError,
+)
 from flink_agents.api.resource import Resource, ResourceType
 
+EmbeddingContent = str | DataContentBlock | Sequence[str | DataContentBlock]
 EmbeddingValue = TypeVar("EmbeddingValue", list[float], list[list[float]])
+
+
+def _text_embedding_input(
+    content: EmbeddingContent, provider: str
+) -> str | Sequence[str]:
+    """Project text blocks onto a text-only provider's existing input contract."""
+
+    def require_text(item: str | DataContentBlock) -> str:
+        if isinstance(item, TextBlock):
+            return item.text
+        if isinstance(item, MediaBlock):
+            raise UnsupportedContentBlockError.for_block(
+                provider, item, "the embedding model accepts only text"
+            )
+        if isinstance(item, str):
+            return item
+        msg = "Each embedding input must be a string or a data content block"
+        raise TypeError(msg)
+
+    if isinstance(content, str | TextBlock | MediaBlock):
+        return require_text(content)
+    if isinstance(content, Sequence) and any(
+        isinstance(item, TextBlock | MediaBlock) for item in content
+    ):
+        return [require_text(item) for item in content]
+    return cast("Sequence[str]", content)
 
 
 @dataclass(frozen=True)
@@ -44,7 +77,7 @@ class EmbeddingResult(Generic[EmbeddingValue]):
 
 
 class BaseEmbeddingModelConnection(Resource, ABC):
-    """Base abstract class for text embedding model connection.
+    """Base abstract class for an embedding model connection.
 
     Responsible for managing model service connection configurations.
     Specific implementations can add their own connection parameters like:
@@ -65,37 +98,34 @@ class BaseEmbeddingModelConnection(Resource, ABC):
 
     @abstractmethod
     def embed(
-        self, text: str | Sequence[str], **kwargs: Any
+        self, content: EmbeddingContent, **kwargs: Any
     ) -> list[float] | list[list[float]]:
-        """Generate embedding vector for a single text input.
-
-        Converts the input text into a high-dimensional vector representation
-        suitable for semantic similarity search and retrieval operations.
+        """Generate a vector per input.
 
         Args:
-            text: The text string to convert into an embedding vector.
+            content: A string or data content block, or a batch of independent inputs.
+                The selected model determines which media it accepts.
             **kwargs: Additional parameters passed to the embedding model.
 
         Returns:
-            A list of floating-point numbers representing the embedding vector.
-            The dimension of the vector depends on the specific embedding model used.
+            One vector for a single input, or a list of vectors in batch input order.
         """
 
     def embed_with_usage(
-        self, text: str | Sequence[str], **kwargs: Any
+        self, content: EmbeddingContent, **kwargs: Any
     ) -> EmbeddingResult[list[float] | list[list[float]]]:
         """Generate embeddings and return provider token usage when available."""
-        return EmbeddingResult(embeddings=self.embed(text, **kwargs))
+        return EmbeddingResult(embeddings=self.embed(content, **kwargs))
 
 
 class BaseEmbeddingModelSetup(Resource, ABC):
-    """Base abstract class for text embedding model setup.
+    """Base abstract class for an embedding model setup.
 
     Responsible for managing embedding model configurations, such as:
     - Connection to embedding model service (connection)
     - Model name (model)
 
-    Provides the basic embedding interface for generating embeddings from text inputs.
+    Provides the embedding interface with setup defaults.
     """
 
     connection: str | BaseEmbeddingModelConnection = Field(
@@ -130,29 +160,25 @@ class BaseEmbeddingModelSetup(Resource, ABC):
         return self.connection
 
     def embed(
-        self, text: str | Sequence[str], **kwargs: Any
+        self, content: EmbeddingContent, **kwargs: Any
     ) -> list[float] | list[list[float]]:
-        """Generate embedding vector for a single text query.
-
-        Converts the input text into a high-dimensional vector representation
-        suitable for semantic similarity search and retrieval operations.
+        """Generate a vector per input using this setup.
 
         Args:
-            text: The text string to convert into an embedding vector.
+            content: A string or data content block, or a batch of independent inputs.
             **kwargs: Additional parameters passed to the embedding model.
 
         Returns:
-            A list of floating-point numbers representing the embedding vector.
-            The dimension of the vector depends on the specific embedding model used.
+            One vector for a single input, or a list of vectors in batch input order.
         """
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
-        return self._get_connection().embed(text, **merged_kwargs)
+        return self._get_connection().embed(content, **merged_kwargs)
 
     def embed_with_usage(
-        self, text: str | Sequence[str], **kwargs: Any
+        self, content: EmbeddingContent, **kwargs: Any
     ) -> EmbeddingResult[list[float] | list[list[float]]]:
         """Generate embeddings and return provider token usage when available."""
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
-        return self._get_connection().embed_with_usage(text, **merged_kwargs)
+        return self._get_connection().embed_with_usage(content, **merged_kwargs)

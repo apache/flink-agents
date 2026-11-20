@@ -30,6 +30,7 @@ from flink_agents.runtime.skill.agent_skill import AgentSkill
 from flink_agents.runtime.skill.skill_manager import SkillManager
 from flink_agents.runtime.skill.skill_repository import SkillRepository
 from flink_agents.runtime.skill.skill_source_handler import SkillSourceHandler
+from flink_agents.runtime.skill.tests.utils import default_limits
 
 
 class FakeRepo(SkillRepository):
@@ -75,7 +76,7 @@ def _manager_with(monkeypatch: pytest.MonkeyPatch, *repos: FakeRepo) -> SkillMan
     config = Skills(
         sources=[SkillSourceSpec(scheme="test-close", params={}) for _ in repos]
     )
-    return SkillManager(config)
+    return SkillManager(config, limits=default_limits())
 
 
 def test_close_attempts_every_repo_and_rethrows_first_failure(monkeypatch) -> None:
@@ -169,7 +170,7 @@ def test_load_failure_is_not_replaced_by_close_failure(
     )
 
     with pytest.raises(RuntimeError, match="Failed to load skills"):
-        SkillManager(config)
+        SkillManager(config, limits=default_limits())
 
     assert failing.closed
     assert "Suppressed failure closing skill repositories" in caplog.text

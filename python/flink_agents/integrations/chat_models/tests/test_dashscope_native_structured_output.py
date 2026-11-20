@@ -329,10 +329,12 @@ def _judging_connection() -> tuple[DashScopeChatModelConnection, list[str | None
 
     class _JudgingConnection(DashScopeChatModelConnection):
         def _model_supports_native_structured_output(
-            self, effective_model: str | None
+            self, effective_model: str | None, api_type: str
         ) -> bool:
             judged.append(effective_model)
-            return super()._model_supports_native_structured_output(effective_model)
+            return super()._model_supports_native_structured_output(
+                effective_model, api_type
+            )
 
     return _JudgingConnection(api_key="fake-key"), judged
 

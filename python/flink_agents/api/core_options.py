@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import os
+from datetime import timedelta
 from enum import Enum
 
 from flink_agents.api.configuration import ConfigOption
@@ -291,10 +292,12 @@ class AgentExecutionOptions:
         default=0,
     )
 
+    # Initial retry wait, doubled for each subsequent retry. Truncated to
+    # milliseconds; non-positive values and values below 1 ms do not wait.
     RETRY_WAIT_INTERVAL = ConfigOption(
         key="retry-wait-interval",
-        config_type=int,
-        default=1,
+        config_type=timedelta,
+        default=timedelta(seconds=1),
     )
 
     NUM_ASYNC_THREADS = ConfigOption(
@@ -353,14 +356,14 @@ class AgentExecutionOptions:
         default=os.cpu_count() or 1,
     )
 
-    # Overall timeout per ctx.gather batch, in milliseconds; non-positive disables
-    # it. Applies to ordinary, durable, and built-in tool calls. Running callbacks
-    # may continue after timeout and occupy their worker until they return, so
-    # blocking operations should also set their own timeouts.
-    ASYNC_BATCH_TIMEOUT_MS = ConfigOption(
-        key="async.batch.timeout.ms",
-        config_type=int,
-        default=-1,
+    # Overall timeout for one ctx.gather batch, with microsecond precision.
+    # Non-positive values disable it. Completed results are retained; unfinished
+    # calls receive timeout failures. Running callbacks cannot be interrupted
+    # and their external effects cannot be undone.
+    ASYNC_BATCH_TIMEOUT = ConfigOption(
+        key="async.batch.timeout",
+        config_type=timedelta,
+        default=timedelta(milliseconds=-1),
     )
 
     RAG_ASYNC = ConfigOption(
@@ -369,12 +372,12 @@ class AgentExecutionOptions:
         default=True,
     )
 
-    # Set to a positive value in milliseconds to enable short-term memory TTL;
-    # 0 disables it.
-    SHORT_TERM_MEMORY_STATE_TTL_MS = ConfigOption(
-        key="short-term-memory.state-ttl.ms",
-        config_type=int,
-        default=0,
+    # Short-term memory time-to-live. Non-positive values disable expiration.
+    # Positive values must be at least 1 ms and are truncated to milliseconds.
+    SHORT_TERM_MEMORY_STATE_TTL = ConfigOption(
+        key="short-term-memory.state-ttl",
+        config_type=timedelta,
+        default=timedelta(0),
     )
 
     # Update policy for short-term memory TTL, consulted only when TTL is enabled.

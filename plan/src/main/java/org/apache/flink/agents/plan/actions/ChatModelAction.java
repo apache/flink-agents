@@ -106,7 +106,7 @@ public class ChatModelAction {
     private static final String PROMPT_ARGS = "prompt_args";
     private static final String RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT";
     private static final String TOTAL_RETRY_COUNT = "totalRetryCount";
-    private static final String TOTAL_RETRY_WAIT_SEC = "totalRetryWaitSec";
+    private static final String TOTAL_RETRY_WAIT_MS = "totalRetryWaitMs";
     private static final String FINISH_REASON = "finish_reason";
     private static final String TRUNCATED_FINISH_REASON = "length";
     private static final String CONTENT_FILTERED_FINISH_REASON = "content_filter";
@@ -194,7 +194,7 @@ public class ChatModelAction {
 
     @SuppressWarnings("unchecked")
     private static void accumulateRetryStats(
-            MemoryObject sensoryMem, UUID initialRequestId, int retryCount, int retryWaitSec)
+            MemoryObject sensoryMem, UUID initialRequestId, int retryCount, long retryWaitMs)
             throws Exception {
         Map<UUID, Map<String, Long>> retryStatsContext;
         if (sensoryMem.isExist(RETRY_STATS_CONTEXT)) {
@@ -205,8 +205,7 @@ public class ChatModelAction {
         }
         Map<String, Long> stats = retryStatsContext.getOrDefault(initialRequestId, new HashMap<>());
         stats.put(TOTAL_RETRY_COUNT, stats.getOrDefault(TOTAL_RETRY_COUNT, 0L) + retryCount);
-        stats.put(
-                TOTAL_RETRY_WAIT_SEC, stats.getOrDefault(TOTAL_RETRY_WAIT_SEC, 0L) + retryWaitSec);
+        stats.put(TOTAL_RETRY_WAIT_MS, stats.getOrDefault(TOTAL_RETRY_WAIT_MS, 0L) + retryWaitMs);
         retryStatsContext.put(initialRequestId, stats);
         sensoryMem.set(RETRY_STATS_CONTEXT, retryStatsContext);
     }
@@ -215,16 +214,16 @@ public class ChatModelAction {
     private static Map<String, Long> getRetryStats(MemoryObject sensoryMem, UUID initialRequestId)
             throws Exception {
         if (!sensoryMem.isExist(RETRY_STATS_CONTEXT)) {
-            return Map.of(TOTAL_RETRY_COUNT, 0L, TOTAL_RETRY_WAIT_SEC, 0L);
+            return Map.of(TOTAL_RETRY_COUNT, 0L, TOTAL_RETRY_WAIT_MS, 0L);
         }
         Map<UUID, Map<String, Long>> retryStatsContext =
                 (Map<UUID, Map<String, Long>>) sensoryMem.get(RETRY_STATS_CONTEXT).getValue();
         return retryStatsContext.getOrDefault(
-                initialRequestId, Map.of(TOTAL_RETRY_COUNT, 0L, TOTAL_RETRY_WAIT_SEC, 0L));
+                initialRequestId, Map.of(TOTAL_RETRY_COUNT, 0L, TOTAL_RETRY_WAIT_MS, 0L));
     }
 
     private static void recordRetryMetrics(
-            RunnerContext ctx, String modelResource, int retryCount, int totalRetryWaitSec) {
+            RunnerContext ctx, String modelResource, int retryCount, long totalRetryWaitMs) {
         if (retryCount <= 0) {
             return;
         }
@@ -233,7 +232,7 @@ public class ChatModelAction {
             FlinkAgentsMetricGroup modelResourceGroup =
                     metricGroup.getSubGroup("model_resource", modelResource);
             modelResourceGroup.getCounter("retryCount").inc(retryCount);
-            modelResourceGroup.getCounter("retryWaitSec").inc(totalRetryWaitSec);
+            modelResourceGroup.getCounter("retryWaitMs").inc(totalRetryWaitMs);
         }
     }
 
@@ -365,7 +364,7 @@ public class ChatModelAction {
             RunnerContext ctx)
             throws Exception {
         int numRetries = ChatModelInvoker.configuredRetries(ctx);
-        int retryWaitIntervalSec = ChatModelInvoker.configuredRetryWaitSec(ctx);
+        long retryWaitMillis = ChatModelInvoker.configuredRetryWaitMillis(ctx);
 
         List<String> triedModels = new ArrayList<>();
         Exception lastError = null;
@@ -382,13 +381,13 @@ public class ChatModelAction {
                                 outputSchema,
                                 ctx,
                                 numRetries,
-                                retryWaitIntervalSec);
+                                retryWaitMillis);
                 recordAttemptRetryStats(
                         ctx,
                         initialRequestId,
                         result.model,
                         result.retryCount,
-                        result.totalRetryWaitSec);
+                        result.totalRetryWaitMs);
                 if (selection.isRouter()) {
                     if (!result.model.equals(selection.getSelectedModel())) {
                         // The strategy's pick failed and another candidate answered; emit a
@@ -441,14 +440,14 @@ public class ChatModelAction {
                     Map<String, Long> retryStats =
                             getRetryStats(ctx.getSensoryMemory(), initialRequestId);
                     int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
-                    int totalRetryWaitSec = retryStats.get(TOTAL_RETRY_WAIT_SEC).intValue();
+                    long totalRetryWaitMs = retryStats.get(TOTAL_RETRY_WAIT_MS);
                     clearRequestContext(ctx.getSensoryMemory(), initialRequestId);
                     ChatResponseEvent completed =
                             ChatResponseEvent.success(
                                             initialRequestId,
                                             result.response,
                                             totalRetryCount,
-                                            totalRetryWaitSec)
+                                            totalRetryWaitMs)
                                     .withUserContext(userContext);
                     completed.setStructuredOutput(result.structuredOutput);
                     if (routingMetadata != null) completed.setRoutingMetadata(routingMetadata);
@@ -457,7 +456,7 @@ public class ChatModelAction {
                 return;
             } catch (ChatModelInvoker.ChatAttemptFailed e) {
                 recordAttemptRetryStats(
-                        ctx, initialRequestId, e.model, e.retryCount, e.totalRetryWaitSec);
+                        ctx, initialRequestId, e.model, e.retryCount, e.totalRetryWaitMs);
                 // Keep every candidate's failure: chain the previous error into the new one so
                 // exhaustion surfaces A's and B's errors as suppressed of C's, not just C's.
                 if (lastError != null && lastError != e.error) {
@@ -502,7 +501,7 @@ public class ChatModelAction {
                                 requestId,
                                 ChatModelInvoker.errorText(error),
                                 stats.get(TOTAL_RETRY_COUNT).intValue(),
-                                stats.get(TOTAL_RETRY_WAIT_SEC).intValue())
+                                stats.get(TOTAL_RETRY_WAIT_MS))
                         .withUserContext(userContext));
     }
 
@@ -530,13 +529,13 @@ public class ChatModelAction {
             UUID initialRequestId,
             String modelResource,
             int retryCount,
-            int retryWaitSec)
+            long retryWaitMs)
             throws Exception {
         if (retryCount <= 0) {
             return;
         }
-        accumulateRetryStats(ctx.getSensoryMemory(), initialRequestId, retryCount, retryWaitSec);
-        recordRetryMetrics(ctx, modelResource, retryCount, retryWaitSec);
+        accumulateRetryStats(ctx.getSensoryMemory(), initialRequestId, retryCount, retryWaitMs);
+        recordRetryMetrics(ctx, modelResource, retryCount, retryWaitMs);
     }
 
     /**

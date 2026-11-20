@@ -126,7 +126,7 @@ class OpenAIResponsesModelConnectionTest {
         ResourceDescriptor desc =
                 connectionDescriptor()
                         .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("timeout", 120)
+                        .addInitialArgument("timeout", Duration.ofSeconds(120))
                         .addInitialArgument("max_retries", 5)
                         .build();
         OpenAIResponsesModelConnection conn = new OpenAIResponsesModelConnection(desc, NOOP);
@@ -141,7 +141,7 @@ class OpenAIResponsesModelConnectionTest {
         ResourceDescriptor desc =
                 connectionDescriptor()
                         .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("timeout", -5)
+                        .addInitialArgument("timeout", Duration.ofSeconds(-5))
                         .build();
         assertThatThrownBy(() -> new OpenAIResponsesModelConnection(desc, NOOP))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -167,7 +167,7 @@ class OpenAIResponsesModelConnectionTest {
         ResourceDescriptor desc =
                 connectionDescriptor()
                         .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("timeout", -0.5)
+                        .addInitialArgument("timeout", Duration.ofMillis(-500))
                         .build();
         assertThatThrownBy(() -> new OpenAIResponsesModelConnection(desc, NOOP))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -219,7 +219,7 @@ class OpenAIResponsesModelConnectionTest {
         ResourceDescriptor desc =
                 connectionDescriptor()
                         .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("timeout", 0)
+                        .addInitialArgument("timeout", Duration.ZERO)
                         .build();
         OpenAIResponsesModelConnection conn = new OpenAIResponsesModelConnection(desc, NOOP);
         assertThat(conn.getTimeout()).isEqualTo(Duration.ZERO);
@@ -232,7 +232,7 @@ class OpenAIResponsesModelConnectionTest {
         ResourceDescriptor desc =
                 connectionDescriptor()
                         .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("timeout", 0.0001)
+                        .addInitialArgument("timeout", Duration.ofNanos(100_000))
                         .build();
         OpenAIResponsesModelConnection conn = new OpenAIResponsesModelConnection(desc, NOOP);
         assertThat(conn.getTimeout()).isEqualTo(Duration.ofMillis(1));

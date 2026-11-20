@@ -26,6 +26,7 @@ import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -484,7 +485,9 @@ public class AsyncExecutionTest {
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
         agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
         agentsEnv.getConfig().set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
-        agentsEnv.getConfig().set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS, 100L);
+        agentsEnv
+                .getConfig()
+                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(100));
 
         DataStream<Object> outputStream =
                 agentsEnv
@@ -540,7 +543,9 @@ public class AsyncExecutionTest {
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
         agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
         agentsEnv.getConfig().set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
-        agentsEnv.getConfig().set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS, 100L);
+        agentsEnv
+                .getConfig()
+                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(100));
         // One pool thread under the parallelism budget keeps the second slot queued.
         agentsEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 1);
 

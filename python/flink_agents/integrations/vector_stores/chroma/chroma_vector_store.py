@@ -242,7 +242,7 @@ class ChromaVectorStore(CollectionManageableVectorStore):
         results = self.client.get_collection(collection_name or self.collection).get(
             ids=ids,
             where=self._resolve_where(filters, kwargs),
-            limit=limit,
+            limit=None if ids is not None else limit,
             offset=kwargs.get("offset"),
             where_document=kwargs.get("where_document"),
         )

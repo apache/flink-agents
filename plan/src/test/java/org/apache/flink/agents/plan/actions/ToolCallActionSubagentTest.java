@@ -964,6 +964,12 @@ class ToolCallActionSubagentTest {
 
         @Override
         public Resource getResource(String name, ResourceType type) throws Exception {
+            if (type == ResourceType.CHAT_MODEL) {
+                java.util.Set<String> names = new java.util.HashSet<>(tools.keySet());
+                agents.keySet().forEach(k -> names.add(SubagentSetup.CALLABLE_NAME_PREFIX + k));
+                names.add(SubagentSetup.CALLABLE_NAME_PREFIX + "missing");
+                return ChatFixtures.modelWithCallables(names.toArray(new String[0]));
+            }
             Map<String, Resource> registry = type == ResourceType.AGENT ? agents : tools;
             Resource resource = registry.get(name);
             if (resource == null) {

@@ -17,6 +17,7 @@
 #################################################################################
 import asyncio
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 
 from pydantic import BaseModel, PrivateAttr
@@ -211,6 +212,10 @@ class _Context(ExecutionReporter):
         return self
 
     def get_resource(self, name: str, type: ResourceType) -> Any:
+        if type == ResourceType.CHAT_MODEL:
+            names = set(self.tools) | {CALLABLE_NAME_PREFIX + n for n in self.agents}
+            names.add(CALLABLE_NAME_PREFIX + "missing")
+            return SimpleNamespace(get_tool_names=lambda: names)
         registry = self.agents if type == ResourceType.AGENT else self.tools
         if name not in registry:
             msg = f"Resource does not exist: {name}"

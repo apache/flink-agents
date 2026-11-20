@@ -144,6 +144,14 @@ If `FLINK_CONF_DIR` is unset, no configuration file is loaded.
 Settings applied through `AgentsExecutionEnvironment.getConfig()` override values
 loaded from the configuration file.
 
+### Duration values
+
+- Java uses `java.time.Duration`; Python uses `datetime.timedelta`.
+- Text supports values with units (`30 s`), unitless milliseconds (`1000`), and ISO-8601 durations (`PT30S`).
+- Supported units are `ns`, `us`/`µs`, `ms`, `s`, `min`/`m`, `h`, and `d`, with longer forms such as `seconds` and `milliseconds`. `m` means minutes.
+- Values must be whole microseconds: `1000 ns` is `1 us`, while `1 ns` is rejected. Parsing does not truncate precision.
+- Negative durations are valid; their meaning depends on the configuration option.
+
 ## Built-in configuration options
 
 <span id="core-options"></span>
@@ -219,7 +227,7 @@ for retry metrics.
 | `decision.async` | true | boolean | Enable durable async execution for built-in Decision Model calls. `false` selects synchronous execution. |
 | `max-retries` | 0 | int | Maximum retries after the initial attempt of a built-in Chat or Decision Model call, including routing judge calls. Non-positive values disable retries. |
 | `rag.async` | true | boolean | Enable durable async execution for vector-store queries made by the built-in context retrieval Action. `false` selects synchronous execution. |
-| `retry-wait-interval` | 1 | int | Base wait in seconds between retries controlled by `max-retries`. The wait before retry N is `retry-wait-interval * 2^(N-1)`. Non-positive values retry without waiting. |
+| `retry-wait-interval` | `1 s` | duration | Initial wait between retries controlled by `max-retries`, doubled for each subsequent retry. Truncated to milliseconds. Non-positive values and values below `1 ms` retry without waiting. |
 | `tool-call.async` | true | boolean | Enable durable async execution for ordinary tools handled by the built-in Tool Call Action. With `false`, these calls run synchronously, one at a time. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}}) for batch behavior. |
 
 These async switches select how built-in calls execute. Synchronous calls still
@@ -242,11 +250,29 @@ the built-in [parallel tool-call batches]({{< ref "docs/development/calling-llms
 | Key | Default | Type | Description |
 | --- | --- | --- | --- |
 | `async.batch.parallelism` | os cpu count | int | Maximum concurrent calls in one `ctx.gather(...)` batch, including ordinary, durable, and built-in tool calls. Values of `1` or less run calls sequentially. Worker-pool capacity can further limit concurrency. |
-| `async.batch.timeout.ms` | -1 (disabled) | long (milliseconds) | Overall timeout for one `ctx.gather(...)` batch, in milliseconds. Non-positive values disable it. A timeout does not guarantee that running calls stop and cannot undo their external effects. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#timeouts-and-external-effects" >}}) for built-in tool-batch behavior. |
+| `async.batch.timeout` | `-1 ms` (disabled) | duration | Overall timeout for one `ctx.gather(...)` batch. Effective precision is 1 µs on Java and Python: the deadline uses the full duration, and a positive value is not truncated to milliseconds. A zero or negative duration disables it. A timeout does not guarantee that running calls stop and cannot undo their external effects. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#timeouts-and-external-effects" >}}) for built-in tool-batch behavior. |
 | `job-identifier` | none | String | Stable job identifier used to scope Mem0 long-term memory. Keep an explicit value unchanged across restores. If unset, the initial Flink JobID is stored in operator state and reused when restoring a checkpoint or savepoint. |
 | `max-in-flight-input-records` | 100 | int | Maximum unfinished input records per Agent operator subtask, including records queued for a busy key. Must be positive. At the limit, the operator waits for an input record to finish before admitting another, applying backpressure upstream. See [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}}). |
 | `num-async-threads` | os cpu count * 2 | int | Controls the thread capacity for asynchronous execution per Agent operator subtask. Must be positive. Increasing this value may improve throughput for concurrent external calls, at the cost of higher resource usage and load on external services. Use `max-in-flight-input-records` to limit unfinished inputs and `async.batch.parallelism` to limit concurrent calls within a batch. |
 | `parallel-execution.enabled` | true | boolean | **Experimental.** Enable the parallel engine for eligible plans with only Java Actions when continuation-based execution is unavailable. `false` selects serial execution. Ignored by the continuation engine and plans containing Python Actions. On JDK 11–20, Java `ctx.chat` and internal sub-agent calls need this engine, and an internal child with a non-Java Action fails the job when the operator opens. See [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}}) for JDK and Python Resource requirements. |
+
+### Skills
+
+Use these options to limit the download size and extracted contents of skill ZIP
+archives. ZIP archives can be loaded from URLs, local files, Java classpath resources,
+or Python packages. See [Skill Sources]({{< ref "docs/development/calling-llms/skills#skill-sources" >}})
+for supported sources and usage.
+
+Each limit applies to one archive. Loading fails if any limit is exceeded. All values
+must be positive; limits cannot be disabled. Increase the relevant limit if your
+skills require larger archives.
+
+| Key | Default | Type | Description |
+| --- | --- | --- | --- |
+| `skill.max-archive-entries` | 1000 | int | Maximum number of entries in one skill archive, including directory entries. |
+| `skill.max-uncompressed-entry-bytes` | 67108864 (64 MiB) | long | Maximum uncompressed size of a single archive entry. |
+| `skill.max-uncompressed-total-bytes` | 268435456 (256 MiB) | long | Maximum combined uncompressed size of all entries in one archive. |
+| `skill.max-download-bytes` | 67108864 (64 MiB) | long | Maximum bytes downloaded for one skill archive over HTTP(S). |
 
 ### Memory
 
@@ -276,7 +302,7 @@ for TTL behavior and setup examples.
 
 | Key | Default | Type | Description |
 | --- | --- | --- | --- |
-| `short-term-memory.state-ttl.ms` | 0 | long | Short-term memory TTL in milliseconds. A positive value enables expiration; non-positive values disable it. |
+| `short-term-memory.state-ttl` | `0 ms` | duration | Short-term memory TTL. Non-positive values disable expiration. Positive values must be at least `1 ms` and are truncated to milliseconds. |
 | `short-term-memory.state-ttl.update-type` | `ON_READ_AND_WRITE` | ShortTermMemoryTtlUpdate | When TTL is enabled, refresh expiration on creation and writes (`ON_CREATE_AND_WRITE`), or also on reads (`ON_READ_AND_WRITE`). |
 | `short-term-memory.state-ttl.visibility` | `NEVER_RETURN_EXPIRED` | ShortTermMemoryTtlVisibility | When TTL is enabled, never return expired state (`NEVER_RETURN_EXPIRED`), or allow it until cleanup (`RETURN_EXPIRED_IF_NOT_CLEANED_UP`). |
 

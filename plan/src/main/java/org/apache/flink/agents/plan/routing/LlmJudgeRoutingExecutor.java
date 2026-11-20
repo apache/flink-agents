@@ -86,7 +86,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
     public RoutingDecision route(
             RoutingStrategy strategy, RoutingContext context, RunnerContext ctx) throws Exception {
         int numRetries = ChatModelInvoker.configuredRetries(ctx);
-        int retryWaitIntervalSec = ChatModelInvoker.configuredRetryWaitSec(ctx);
+        long retryWaitMillis = ChatModelInvoker.configuredRetryWaitMillis(ctx);
         String judgeModel = judgeModel(strategy);
         List<String> candidateNames = candidateNames(context);
 
@@ -117,13 +117,13 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
                             null,
                             ctx,
                             numRetries,
-                            retryWaitIntervalSec);
+                            retryWaitMillis);
             ChatModelAction.recordAttemptRetryStats(
                     ctx,
                     context.getRequestId(),
                     judgeResult.model,
                     judgeResult.retryCount,
-                    judgeResult.totalRetryWaitSec);
+                    judgeResult.totalRetryWaitMs);
             ChatResult reply = judgeResult.response;
             // Only complete token pairs enter the durable decision metadata.
             Long promptTokens =
@@ -146,7 +146,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
                     context.getRequestId(),
                     failure.model,
                     failure.retryCount,
-                    failure.totalRetryWaitSec);
+                    failure.totalRetryWaitMs);
             // Restore a wrapped interruption without turning ordinary cancellation into a
             // thread interrupt. The failure itself always propagates to routing resolution.
             if (CancellationUtils.isInterruption(failure)) {

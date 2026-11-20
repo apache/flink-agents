@@ -44,7 +44,7 @@ public class DecisionResponseEvent extends Event {
     private static final String RESPONSE = "response";
     private static final String ERROR = "error";
     private static final String RETRY_COUNT = "retry_count";
-    private static final String TOTAL_RETRY_WAIT_SEC = "total_retry_wait_sec";
+    private static final String TOTAL_RETRY_WAIT_MS = "total_retry_wait_ms";
 
     private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
             List.of(
@@ -53,21 +53,21 @@ public class DecisionResponseEvent extends Event {
                     BuiltInAttribute.optionalUntyped(RESPONSE),
                     BuiltInAttribute.optionalUntyped(ERROR),
                     BuiltInAttribute.optional(RETRY_COUNT, Number.class),
-                    BuiltInAttribute.optional(TOTAL_RETRY_WAIT_SEC, Number.class),
+                    BuiltInAttribute.optional(TOTAL_RETRY_WAIT_MS, Number.class),
                     BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     public static DecisionResponseEvent success(
-            UUID requestId, DecisionResult response, int retryCount, int totalRetryWaitSec) {
+            UUID requestId, DecisionResult response, int retryCount, long totalRetryWaitMs) {
         return new DecisionResponseEvent(
-                requestId, SUCCESS, response, null, retryCount, totalRetryWaitSec);
+                requestId, SUCCESS, response, null, retryCount, totalRetryWaitMs);
     }
 
     public static DecisionResponseEvent failed(
-            UUID requestId, String error, int retryCount, int totalRetryWaitSec) {
+            UUID requestId, String error, int retryCount, long totalRetryWaitMs) {
         return new DecisionResponseEvent(
-                requestId, FAILED, null, error, retryCount, totalRetryWaitSec);
+                requestId, FAILED, null, error, retryCount, totalRetryWaitMs);
     }
 
     private DecisionResponseEvent(
@@ -76,7 +76,7 @@ public class DecisionResponseEvent extends Event {
             DecisionResult response,
             String error,
             int retryCount,
-            int totalRetryWaitSec) {
+            long totalRetryWaitMs) {
         super(EVENT_TYPE);
         Objects.requireNonNull(requestId, REQUEST_ID);
         validate(status, response, error);
@@ -85,7 +85,7 @@ public class DecisionResponseEvent extends Event {
         setAttr(RESPONSE, response);
         setAttr(ERROR, error);
         setAttr(RETRY_COUNT, retryCount);
-        setAttr(TOTAL_RETRY_WAIT_SEC, totalRetryWaitSec);
+        setAttr(TOTAL_RETRY_WAIT_MS, totalRetryWaitMs);
     }
 
     @JsonCreator
@@ -111,7 +111,11 @@ public class DecisionResponseEvent extends Event {
         }
         validate(attributes.get(STATUS), attributes.get(RESPONSE), attributes.get(ERROR));
         attributes.putIfAbsent(RETRY_COUNT, 0);
-        attributes.putIfAbsent(TOTAL_RETRY_WAIT_SEC, 0);
+        attributes.putIfAbsent(TOTAL_RETRY_WAIT_MS, 0L);
+        Object wait = attributes.get(TOTAL_RETRY_WAIT_MS);
+        if (wait instanceof Number && !(wait instanceof Long)) {
+            attributes.put(TOTAL_RETRY_WAIT_MS, ((Number) wait).longValue());
+        }
         return attributes;
     }
 
@@ -206,8 +210,8 @@ public class DecisionResponseEvent extends Event {
     }
 
     @JsonIgnore
-    public int getTotalRetryWaitSec() {
-        return ((Number) getAttr(TOTAL_RETRY_WAIT_SEC)).intValue();
+    public long getTotalRetryWaitMs() {
+        return ((Number) getAttr(TOTAL_RETRY_WAIT_MS)).longValue();
     }
 
     /**

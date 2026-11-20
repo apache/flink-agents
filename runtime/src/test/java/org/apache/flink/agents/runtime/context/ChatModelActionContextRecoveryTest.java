@@ -44,6 +44,7 @@ import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.memory.MemoryUpdateReplayer;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -150,7 +151,7 @@ class ChatModelActionContextRecoveryTest {
         RunnerContext ctx = mock(RunnerContext.class);
         AgentConfiguration config = new AgentConfiguration();
         config.set(AgentExecutionOptions.MAX_RETRIES, 0);
-        config.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, 0);
+        config.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, Duration.ZERO);
         config.set(AgentExecutionOptions.CHAT_ASYNC, false);
         when(ctx.getConfig()).thenReturn(config);
         when(ctx.getSensoryMemory()).thenReturn(sensory);

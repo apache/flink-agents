@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.chat.messages.ContentBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 
 import java.util.ArrayList;
@@ -33,6 +34,22 @@ import java.util.stream.Collectors;
 /** Builders for scripted model replies and tool requests in execution tests. */
 public final class ChatFixtures {
     private ChatFixtures() {}
+
+    public static BaseChatModelSetup modelWithCallables(String... names) {
+        return new BaseChatModelSetup(
+                new org.apache.flink.agents.api.resource.ResourceDescriptor("test", Map.of()),
+                null) {
+            @Override
+            public List<String> getToolNames() {
+                return List.of(names);
+            }
+
+            @Override
+            public Map<String, Object> getParameters() {
+                return Map.of();
+            }
+        };
+    }
 
     public static ToolCallBlock call(Map<String, Object> data) {
         Map<String, Object> function = (Map<String, Object>) data.get("function");

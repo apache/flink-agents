@@ -22,6 +22,9 @@ from typing import TYPE_CHECKING, Dict, List, Mapping
 from flink_agents.api.skills import Skills, SkillSourceSpec, redact_skill_url
 from flink_agents.runtime.close_utils import failure_of, first_or_logged
 from flink_agents.runtime.skill.agent_skill import AgentSkill, SkillOrigin
+from flink_agents.runtime.skill.repository._materialize import (
+    MaterializerLimits,
+)
 from flink_agents.runtime.skill.repository.classpath_repository import (
     ClasspathSkillRepository,
 )
@@ -53,8 +56,20 @@ class SkillManager:
     - Execution: Load resources/scripts only when needed
     """
 
-    def __init__(self, skills_config: Skills, java_bridge: object = None) -> None:
-        """Initialize the SkillManager from a Skills configuration."""
+    def __init__(
+        self,
+        skills_config: Skills,
+        java_bridge: object = None,
+        *,
+        limits: MaterializerLimits,
+    ) -> None:
+        """Initialize the SkillManager from a Skills configuration.
+
+        ``limits`` bounds HTTP downloads and ZIP extraction for all sources.
+        The runtime passes the limits built from the
+        agent configuration with ``limits_from_config``.
+        """
+        self._limits = limits
         self._skills: Dict[str, AgentSkill] = {}
         self._repos: Dict[str, SkillRepository] = {}
         # Reverse index: for every SkillSourceSpec that was loaded, the skill names
@@ -74,7 +89,9 @@ class SkillManager:
         """Create instance factories bound to the operator's Java bridge."""
         return {
             "local": SkillSourceHandler(
-                lambda p: FileSystemSkillRepository(_require(p, "local", "path")),
+                lambda p: FileSystemSkillRepository(
+                    _require(p, "local", "path"), limits=self._limits
+                ),
                 lambda p: p.get("path", ""),
             ),
             "url": SkillSourceHandler(
@@ -83,6 +100,7 @@ class SkillManager:
                     sha256=p.get("sha256"),
                     allow_insecure_http=p.get("allow_insecure_http", "false").lower()
                     == "true",
+                    limits=self._limits,
                 ),
                 lambda p: redact_skill_url(p.get("url", "")),
             ),
@@ -90,12 +108,15 @@ class SkillManager:
                 lambda p: PackageSkillRepository(
                     _require(p, "package", "package"),
                     _require(p, "package", "resource"),
+                    limits=self._limits,
                 ),
                 lambda p: f"{p.get('package', '')}/{p.get('resource', '')}",
             ),
             "classpath": SkillSourceHandler(
                 lambda p: ClasspathSkillRepository(
-                    _require(p, "classpath", "resource"), java_bridge
+                    _require(p, "classpath", "resource"),
+                    java_bridge,
+                    limits=self._limits,
                 ),
                 lambda p: p.get("resource", ""),
             ),
@@ -187,9 +208,7 @@ class SkillManager:
         repo = self._repos.get(skill_name)
         return None if repo is None else repo.get_skill_dir(skill_name)
 
-    def get_skill_names_for_sources(
-        self, specs: list[SkillSourceSpec]
-    ) -> list[str]:
+    def get_skill_names_for_sources(self, specs: list[SkillSourceSpec]) -> list[str]:
         """Return the skill names that were loaded from the given sources.
 
         Sources that were not loaded contribute an empty list. The order follows the

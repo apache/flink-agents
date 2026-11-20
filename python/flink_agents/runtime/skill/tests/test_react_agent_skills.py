@@ -18,8 +18,8 @@
 """Skills passed to the ReActAgent constructor, as seen by its chat model.
 
 Checking the agent's descriptor alone would not show that the opened setup
-discovers the skills, exposes ``load_skill`` and ``bash``, or grants the skill
-directories to ``bash``. These tests take the path a job takes: ``AgentPlan``
+discovers the skills and exposes ``load_skill`` without enabling ``bash``.
+These tests take the path a job takes: ``AgentPlan``
 registers the providers and ``ResourceCache`` builds and opens the setup.
 """
 
@@ -27,6 +27,8 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, cast
+
+import pytest
 
 from flink_agents.api.agents.react_agent import ReActAgent
 from flink_agents.api.chat_message import ChatMessage
@@ -39,6 +41,7 @@ from flink_agents.api.skills import BASH_TOOL, LOAD_SKILL_TOOL, Skills
 from flink_agents.api.tools.tool import Tool
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.plan.tools.bash.bash_tool import BashTool
 from flink_agents.runtime.resource_cache import ResourceCache
 
 _CHAT_MODEL = "_default_chat_model"
@@ -119,11 +122,33 @@ def test_constructor_skills_alone_are_loadable_by_the_chat_model() -> None:
         assert setup.skills == ["github"]
         assert "<name>github</name>" in setup.skill_discovery_prompt
         assert "<name>nano-banana-pro</name>" not in setup.skill_discovery_prompt
-        assert [tool.name for tool in setup.tools] == [LOAD_SKILL_TOOL, BASH_TOOL]
+        assert [tool.name for tool in setup.tools] == [LOAD_SKILL_TOOL]
         load_skill = next(tool for tool in setup.tools if tool.name == LOAD_SKILL_TOOL)
         assert load_skill.call(name="github").startswith(
             '<skill_content name="github">'
         )
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("with_skills", [False, True])
+def test_builtin_bash_requires_explicit_model_tool_configuration(
+    enabled: bool,
+    with_skills: bool,
+) -> None:
+    agent = ReActAgent(
+        chat_model=_chat_model(tools=[BASH_TOOL] if enabled else []),
+        skills=["github"] if with_skills else [],
+    )
+
+    with _opened_chat_model(agent, register_skill_source=with_skills) as setup:
+        assert (BASH_TOOL in setup.get_tool_names()) == enabled
+        assert (LOAD_SKILL_TOOL in setup.get_tool_names()) == with_skills
+        if enabled:
+            assert isinstance(setup.tools[0], BashTool)
+            result = setup.tools[0].call(
+                command="echo enabled", allowed_commands=["echo"]
+            )
+            assert result == "enabled"
 
 
 def test_descriptor_and_constructor_skills_share_the_descriptor_command_policy() -> (
@@ -150,7 +175,7 @@ def test_descriptor_and_constructor_skills_share_the_descriptor_command_policy()
 
 
 def test_empty_constructor_skills_leave_the_chat_model_without_skills() -> None:
-    # Skill sources are registered, so load_skill and bash exist in the plan; the
+    # Skill sources are registered, so load_skill exists in the plan; the
     # chat model must still not pick them up when no skill is named.
     agent = ReActAgent(chat_model=_chat_model(), skills=[])
 
@@ -171,7 +196,7 @@ def test_skills_object_constructor_resolves_sources_to_skill_names() -> None:
         assert set(setup.skills or []) == {"github", "nano-banana-pro"}
         assert "<name>github</name>" in setup.skill_discovery_prompt
         assert "<name>nano-banana-pro</name>" in setup.skill_discovery_prompt
-        assert [tool.name for tool in setup.tools] == [LOAD_SKILL_TOOL, BASH_TOOL]
+        assert [tool.name for tool in setup.tools] == [LOAD_SKILL_TOOL]
 
 
 def test_skills_object_with_explicit_skills_merges_both_at_runtime() -> None:

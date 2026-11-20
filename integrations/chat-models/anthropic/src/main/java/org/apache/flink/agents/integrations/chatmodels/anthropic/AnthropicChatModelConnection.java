@@ -20,6 +20,7 @@ package org.apache.flink.agents.integrations.chatmodels.anthropic;
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.anthropic.core.JsonValue;
+import com.anthropic.core.Timeout;
 import com.anthropic.models.messages.JsonOutputFormat;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
@@ -59,7 +60,7 @@ import java.util.stream.Collectors;
  *
  * <ul>
  *   <li><b>api_key</b> (required): Anthropic API key
- *   <li><b>timeout</b> (optional): Timeout in seconds for API requests
+ *   <li><b>timeout</b> (optional): API request timeout in duration format; zero disables timeouts
  *   <li><b>max_retries</b> (optional): Maximum number of retry attempts (default: 2)
  * </ul>
  *
@@ -71,7 +72,7 @@ import java.util.stream.Collectors;
  *   public static ResourceDesc anthropic() {
  *     return ResourceDescriptor.Builder.newBuilder(AnthropicChatModelConnection.class.getName())
  *             .addInitialArgument("api_key", System.getenv("ANTHROPIC_API_KEY"))
- *             .addInitialArgument("timeout", 120)
+ *             .addInitialArgument("timeout", Duration.ofSeconds(120))
  *             .addInitialArgument("max_retries", 3)
  *             .build();
  *   }
@@ -96,9 +97,9 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
 
         AnthropicOkHttpClient.Builder builder = AnthropicOkHttpClient.builder().apiKey(apiKey);
 
-        Integer timeoutSeconds = descriptor.getArgument("timeout");
-        if (timeoutSeconds != null && timeoutSeconds > 0) {
-            builder.timeout(Duration.ofSeconds(timeoutSeconds));
+        Timeout timeout = parseTimeout(descriptor);
+        if (timeout != null) {
+            builder.timeout(timeout);
         }
 
         Integer maxRetries = descriptor.getArgument("max_retries");
@@ -108,6 +109,29 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
 
         this.defaultModel = descriptor.getArgument("model");
         this.client = builder.build();
+    }
+
+    private static Timeout parseTimeout(ResourceDescriptor descriptor) {
+        Duration timeout = descriptor.getDurationArgument("timeout", null);
+        if (timeout == null) {
+            return null;
+        }
+        if (timeout.isNegative() || timeout.compareTo(Duration.ofMillis(Integer.MAX_VALUE)) > 0) {
+            throw new IllegalArgumentException(
+                    "timeout must be between Duration.ZERO and Duration.ofMillis(Integer.MAX_VALUE).");
+        }
+        // Avoid turning a positive sub-millisecond timeout into an unlimited timeout.
+        long millis = timeout.toMillis();
+        if (timeout.getNano() % 1_000_000 != 0) {
+            millis++;
+        }
+        Duration sdkTimeout = Duration.ofMillis(millis);
+        return Timeout.builder()
+                .connect(sdkTimeout)
+                .read(sdkTimeout)
+                .write(sdkTimeout)
+                .request(sdkTimeout)
+                .build();
     }
 
     @Override

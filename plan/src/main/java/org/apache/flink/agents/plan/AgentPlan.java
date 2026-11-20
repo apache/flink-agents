@@ -171,6 +171,7 @@ public class AgentPlan implements Serializable {
         try {
             extractActionsFromAgent(agent);
             extractResourceProvidersFromAgent(agent);
+            addBuiltInTools();
         } finally {
             if (owner) {
                 InternalSubagentCompilationHelper.end();
@@ -634,13 +635,34 @@ public class AgentPlan implements Serializable {
         addSkills(skillsObjects);
     }
 
+    private void addBuiltInTools() {
+        boolean needsBash =
+                resourceProviders.getOrDefault(ResourceType.CHAT_MODEL, Map.of()).values().stream()
+                        .map(AgentPlan::descriptorOf)
+                        .filter(Objects::nonNull)
+                        .anyMatch(
+                                descriptor -> {
+                                    List<String> tools = descriptor.getArgument("tools");
+                                    return tools != null && tools.contains(Skills.BASH_TOOL);
+                                });
+        if (!needsBash) {
+            return;
+        }
+        if (!resourceProviders.getOrDefault(TOOL, Map.of()).containsKey(Skills.BASH_TOOL)) {
+            addResourceProvider(
+                    new JavaResourceProvider(
+                            Skills.BASH_TOOL,
+                            TOOL,
+                            new ResourceDescriptor(BashTool.class.getName(), new HashMap<>())));
+        }
+    }
+
     /**
      * Mirror of Python {@code _add_skills}: register the merged Skills config under {@link
-     * Skills#SKILLS_CONFIG} plus the built-in {@code load_skill} and {@code bash} tools.
+     * Skills#SKILLS_CONFIG} plus the built-in {@code load_skill} tool.
      *
-     * <p>{@link BashTool} lives in this module so we can reference its class directly; {@code
-     * LoadSkillTool} lives in the runtime module and is referenced by FQN string to avoid a reverse
-     * dependency.
+     * <p>{@code LoadSkillTool} lives in the runtime module and is referenced by FQN string to avoid
+     * a reverse dependency.
      */
     private void addSkills(Map<String, Skills> skillsObjects) throws Exception {
         if (skillsObjects.isEmpty()) {
@@ -654,11 +676,6 @@ public class AgentPlan implements Serializable {
                         new ResourceDescriptor(
                                 "org.apache.flink.agents.runtime.skill.LoadSkillTool",
                                 new HashMap<>())));
-        addResourceProvider(
-                new JavaResourceProvider(
-                        Skills.BASH_TOOL,
-                        ResourceType.TOOL,
-                        new ResourceDescriptor(BashTool.class.getName(), new HashMap<>())));
 
         // Merge sources in insertion order: @Skills methods (sorted by name) →
         // environment resources → agent resources. Later sources win on duplicate

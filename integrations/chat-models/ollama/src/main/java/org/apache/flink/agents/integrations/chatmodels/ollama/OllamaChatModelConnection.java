@@ -53,6 +53,7 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.integrations.chatmodels.common.PojoJsonSchemaGenerator;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
@@ -69,6 +70,8 @@ import java.util.stream.Collectors;
  * conversation API.
  *
  * <p>See also {@link BaseChatModelConnection} for the common resource abstractions and lifecycle.
+ *
+ * <p>{@code requestTimeout} accepts positive integer seconds, defaulting to 60.
  *
  * <p>Example usage:
  *
@@ -92,8 +95,8 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
      * Creates a new ollama chat model connection.
      *
      * @param descriptor a resource descriptor contains the initial parameters
-     * @param getResource a function to resolve resources (e.g., tools) by name and type
-     * @throws IllegalArgumentException if endpoint is null or empty
+     * @param resourceContext the resource context
+     * @throws IllegalArgumentException if endpoint is null or empty, or requestTimeout is invalid
      */
     public OllamaChatModelConnection(
             ResourceDescriptor descriptor, ResourceContext resourceContext) {
@@ -102,17 +105,36 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         if (endpoint == null || endpoint.isEmpty()) {
             throw new IllegalArgumentException("endpoint should not be null or empty.");
         }
-        Integer requestTimeout = descriptor.getArgument("requestTimeout");
-        this.caller =
-                new OllamaChatEndpointCaller(
-                        endpoint, null, requestTimeout != null ? requestTimeout : 60);
+        long requestTimeout = parseRequestTimeout(descriptor.getArgument("requestTimeout"));
+        this.caller = new OllamaChatEndpointCaller(endpoint, null, requestTimeout);
+    }
+
+    private static long parseRequestTimeout(Object value) {
+        if (value == null) {
+            return 60L;
+        }
+        if (value instanceof Number) {
+            try {
+                long timeout = new BigDecimal(value.toString()).longValueExact();
+                if (timeout > 0) {
+                    return timeout;
+                }
+            } catch (ArithmeticException | NumberFormatException ignored) {
+                // Report invalid numeric values with the parameter name below.
+            }
+        }
+        throw new IllegalArgumentException(
+                "requestTimeout must be a positive integer no greater than "
+                        + Long.MAX_VALUE
+                        + " seconds, got: "
+                        + value);
     }
 
     /**
      * Creates a new ollama chat model connection.
      *
      * @param endpoint the endpoint of the ollama server.
-     * @param getResource a function to resolve resources (e.g., tools) by name and type
+     * @param resourceContext the resource context
      * @throws IllegalArgumentException if endpoint is null or empty
      */
     public OllamaChatModelConnection(String endpoint, ResourceContext resourceContext) {
@@ -144,19 +166,19 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
                         mapper.readValue(
                                 tool.getMetadata().getInputSchema(), new TypeReference<>() {});
 
-                final Map<String, Map<String, String>> properties =
-                        (Map<String, Map<String, String>>) schema.get("properties");
+                final Map<String, Map<String, Object>> properties =
+                        (Map<String, Map<String, Object>>) schema.get("properties");
                 // "required" is optional in JSON Schema; treat a missing list as empty (#1014).
                 final List<String> required =
                         (List<String>) schema.getOrDefault("required", Collections.emptyList());
 
                 Map<String, Tools.Property> propertiesMap = new HashMap<>();
 
-                for (Map.Entry<String, Map<String, String>> entry : properties.entrySet()) {
+                for (Map.Entry<String, Map<String, Object>> entry : properties.entrySet()) {
                     final String paramName = entry.getKey();
-                    final Map<String, String> paramSchema = entry.getValue();
-                    final String type = paramSchema.get("type");
-                    final String description = paramSchema.get("description");
+                    final Map<String, Object> paramSchema = entry.getValue();
+                    final String type = ollamaType(paramSchema.get("type"));
+                    final String description = (String) paramSchema.get("description");
 
                     propertiesMap.put(
                             paramName,
@@ -183,6 +205,22 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /**
+     * Ollama4j takes a single type name, so a type list such as {@code ["string", "null"]}, which a
+     * nullable tool parameter has, is sent as its first non-null type.
+     */
+    private static String ollamaType(Object type) {
+        if (!(type instanceof List)) {
+            return (String) type;
+        }
+        for (Object name : (List<?>) type) {
+            if (!"null".equals(name)) {
+                return (String) name;
+            }
+        }
+        return "null";
     }
 
     /**

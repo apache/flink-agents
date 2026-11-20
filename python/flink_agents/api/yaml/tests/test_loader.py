@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.chat_message import MessageRole
+from flink_agents.api.chat_message import ImageBlock, MessageRole, TextBlock
 from flink_agents.api.events.chat_event import ChatResponseEvent
 from flink_agents.api.events.event import InputEvent
 from flink_agents.api.function import JavaFunction, PythonFunction
@@ -317,6 +317,51 @@ def test_build_agents_preserves_prompt_messages_with_unset_text(
         MessageRole.USER,
     ]
     assert [message.text for message in messages] == ["Hello Alice", "How are you?"]
+
+
+def test_build_agents_loads_prompt_media_blocks(tmp_path: Path) -> None:
+    path = tmp_path / "prompt.yaml"
+    path.write_text(
+        "agents:\n"
+        "  - name: vision_agent\n"
+        "    prompts:\n"
+        "      - name: describe\n"
+        "        messages:\n"
+        "          - {role: system, content: 'You describe {kind}.'}\n"
+        "          - role: user\n"
+        "            content:\n"
+        "              - {type: text, text: 'Describe {subject}.'}\n"
+        "              - type: image\n"
+        "                media_type: image/png\n"
+        "                source: {type: base64, data: aGVsbG8=}\n"
+    )
+    agents, _, _ = build_agents(path)
+    prompt = agents["vision_agent"].resources[ResourceType.PROMPT]["describe"]
+    messages = prompt.format_messages(kind="images", subject="the cat")
+
+    assert messages[0].text == "You describe images."
+    assert list(messages[1].blocks) == [
+        TextBlock(text="Describe the cat."),
+        ImageBlock.from_base64("image/png", "aGVsbG8="),
+    ]
+
+
+def test_build_agents_rejects_media_in_system_prompt_messages(tmp_path: Path) -> None:
+    path = tmp_path / "prompt.yaml"
+    path.write_text(
+        "agents:\n"
+        "  - name: vision_agent\n"
+        "    prompts:\n"
+        "      - name: describe\n"
+        "        messages:\n"
+        "          - role: system\n"
+        "            content:\n"
+        "              - type: image\n"
+        "                media_type: image/png\n"
+        "                source: {type: url, url: 'https://example.com/a.png'}\n"
+    )
+    with pytest.raises(ValueError, match="SYSTEM messages accept only text"):
+        build_agents(path)
 
 
 def test_build_agents_handles_shared_resources_and_actions() -> None:
@@ -1080,3 +1125,87 @@ def test_rerank_models_support_agent_and_shared_resources() -> None:
             "model": "qwen3-rerank",
             "request_timeout": 12,
         }
+
+
+def test_load_yaml_chat_model_clashing_with_registered_router_registers_nothing(
+    tmp_path: Path,
+) -> None:
+    env = _registration_env()
+    router = ResourceDescriptor(
+        clazz="flink_agents.api.chat_models.routing.ModelRouter"
+    )
+    env.add_resource("router", ResourceType.MODEL_ROUTER, router)
+    candidate = tmp_path / "candidate.yaml"
+    candidate.write_text(
+        "chat_model_setups:\n"
+        "  - name: fresh\n"
+        "    clazz: ollama\n"
+        "  - name: router\n"
+        "    clazz: ollama\n"
+    )
+
+    with pytest.raises(ValueError, match="both a chat model and a model router"):
+        load_yaml(env, candidate)
+
+    assert env.resources[ResourceType.CHAT_MODEL] == {}
+    assert env.resources[ResourceType.MODEL_ROUTER] == {"router": router}
+
+
+def test_load_yaml_router_clashing_with_registered_chat_model_registers_nothing(
+    tmp_path: Path,
+) -> None:
+    env = _registration_env()
+    env.add_resource(
+        "assistant", ResourceType.CHAT_MODEL, ResourceDescriptor(clazz="some.Setup")
+    )
+    candidate = tmp_path / "candidate.yaml"
+
+    def write_candidate(router_name: str) -> None:
+        candidate.write_text(
+            "prompts:\n"
+            "  - name: fresh\n"
+            "    text: hello\n"
+            "model_routers:\n"
+            f"  - name: {router_name}\n"
+            "    clazz: router\n"
+            "    candidates: [small]\n"
+            "    strategy_type: rule_based\n"
+        )
+
+    write_candidate("assistant")
+    with pytest.raises(ValueError, match="both a chat model and a model router"):
+        load_yaml(env, candidate)
+
+    # Prompts are committed before model routers, so a clash found only at
+    # commit time would leave ``fresh`` behind and block the retry below.
+    assert env.resources[ResourceType.PROMPT] == {}
+    assert env.resources[ResourceType.MODEL_ROUTER] == {}
+
+    write_candidate("picker")
+    load_yaml(env, candidate)
+
+    assert set(env.resources[ResourceType.PROMPT]) == {"fresh"}
+    assert set(env.resources[ResourceType.MODEL_ROUTER]) == {"picker"}
+
+
+def test_load_yaml_chat_model_and_router_clashing_within_file_registers_nothing(
+    tmp_path: Path,
+) -> None:
+    env = _registration_env()
+    candidate = tmp_path / "candidate.yaml"
+    candidate.write_text(
+        "chat_model_setups:\n"
+        "  - name: same\n"
+        "    clazz: ollama\n"
+        "model_routers:\n"
+        "  - name: same\n"
+        "    clazz: router\n"
+        "    candidates: [small]\n"
+        "    strategy_type: rule_based\n"
+    )
+
+    with pytest.raises(ValueError, match="both a chat model and a model router"):
+        load_yaml(env, candidate)
+
+    assert env.resources[ResourceType.CHAT_MODEL] == {}
+    assert env.resources[ResourceType.MODEL_ROUTER] == {}

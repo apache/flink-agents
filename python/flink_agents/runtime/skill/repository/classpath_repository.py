@@ -21,18 +21,27 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from flink_agents.runtime.skill.repository._materialize import Materialized
+from flink_agents.runtime.skill.repository._materialize import (
+    Materialized,
+)
 from flink_agents.runtime.skill.repository.materialized_skill_repository import (
     MaterializedSkillRepository,
 )
+
+if TYPE_CHECKING:
+    from flink_agents.runtime.skill.repository._materialize import (
+        MaterializerLimits,
+    )
 
 
 class ClasspathSkillRepository(MaterializedSkillRepository):
     """Resolve resources through the current operator's Java bridge once at open."""
 
-    def __init__(self, resource: str, java_bridge: Any = None) -> None:
+    def __init__(
+        self, resource: str, java_bridge: Any = None, *, limits: MaterializerLimits
+    ) -> None:
         """Copy the classpath resource using the Flink user-code class loader."""
         if java_bridge is None:
             msg = (
@@ -44,7 +53,14 @@ class ClasspathSkillRepository(MaterializedSkillRepository):
             Path(tempfile.mkdtemp(prefix="flink-agents-skills-"))
         )
         try:
-            java_bridge.extractClasspathSkills(resource, str(materialization.dir))
+            java_bridge.extractClasspathSkills(
+                resource,
+                str(materialization.dir),
+                limits.max_download_bytes,
+                limits.max_extract_entry_bytes,
+                limits.max_extract_total_bytes,
+                limits.max_extract_entries,
+            )
             super().__init__(materialization)
         except BaseException:
             materialization.close()

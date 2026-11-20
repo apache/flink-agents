@@ -18,8 +18,11 @@
 package org.apache.flink.agents.runtime;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.api.configuration.DurationUtils;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorTest;
@@ -50,6 +53,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -149,6 +153,93 @@ public class CompileUtilsTest {
                         () -> CompileUtils.connectToAgent(keyedInputStream, TEST_AGENT_PLAN, uid))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must not be empty or blank");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"retry-wait-interval", "short-term-memory.state-ttl"})
+    void connectToAgentRejectsMillisecondOverflow(String key) throws Exception {
+        AgentPlan plan = planWithExecutionDurations("1 s", "1 ms");
+        plan.getConfig().getConfData().put(key, "9223372036854775807 s");
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        KeyedStream<Long, Long> keyed = env.fromData(1L).keyBy(value -> value);
+        assertThatThrownBy(() -> CompileUtils.connectToAgent(keyed, plan))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(key)
+                .hasMessageContaining("overflows when converted to milliseconds")
+                .hasCauseInstanceOf(ArithmeticException.class);
+        String json = new ObjectMapper().writeValueAsString(plan);
+        KeyedStream<Row, Row> pythonInput = pickledPythonInput();
+        assertThatThrownBy(() -> CompileUtils.connectToAgent(pythonInput, json))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(key)
+                .hasMessageContaining("overflows when converted to milliseconds");
+    }
+
+    @Test
+    void connectToAgentRejectsTtlThatTruncatesToZero() {
+        AgentPlan plan = planWithExecutionDurations("1 s", "500 us");
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        KeyedStream<Long, Long> keyed = env.fromData(1L).keyBy(value -> value);
+
+        assertThatThrownBy(() -> CompileUtils.connectToAgent(keyed, plan))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("short-term-memory.state-ttl")
+                .hasMessageContaining("500 us");
+    }
+
+    @Test
+    void connectToAgentAcceptsTruncatedRetryAndTtl() {
+        AgentPlan plan = planWithExecutionDurations("1500 us", "1500 us");
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        KeyedStream<Long, Long> keyed = env.fromData(1L).keyBy(value -> value);
+
+        assertThat(CompileUtils.connectToAgent(keyed, plan).getTransformation()).isNotNull();
+    }
+
+    @Test
+    void connectToAgentPythonJsonRejectsTtlThatTruncatesToZero() throws Exception {
+        String json =
+                new ObjectMapper().writeValueAsString(planWithExecutionDurations("500 us", "1 us"));
+        KeyedStream<Row, Row> input = pickledPythonInput();
+
+        assertThatThrownBy(() -> CompileUtils.connectToAgent(input, json))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("short-term-memory.state-ttl")
+                .hasMessageContaining("greater than 0 ms");
+    }
+
+    @Test
+    void connectToAgentPythonJsonAcceptsTruncatedTtl() throws Exception {
+        String json =
+                new ObjectMapper()
+                        .writeValueAsString(planWithExecutionDurations("500 us", "1500 us"));
+        KeyedStream<Row, Row> input = pickledPythonInput();
+
+        assertThat(CompileUtils.connectToAgent(input, json)).isNotNull();
+    }
+
+    /**
+     * A pickled key and value, with the key type declared. The shared helper leaves the key type
+     * generic, which the JSON overload rejects only after the plan parses.
+     */
+    private static KeyedStream<Row, Row> pickledPythonInput() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        TypeInformation<Row> inputType =
+                Types.ROW(
+                        PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO,
+                        PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO);
+        TypeInformation<Row> keyType =
+                Types.ROW(PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO);
+        Row input = Row.of(new byte[0], new byte[0]);
+        return env.fromData(Collections.singletonList(input), inputType)
+                .keyBy(value -> Row.of(value.getField(0)), keyType);
+    }
+
+    private static AgentPlan planWithExecutionDurations(String retry, String ttl) {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, DurationUtils.parse(retry));
+        config.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL, DurationUtils.parse(ttl));
+        return new AgentPlan(new HashMap<>(), new HashMap<>(), config);
     }
 
     @ParameterizedTest

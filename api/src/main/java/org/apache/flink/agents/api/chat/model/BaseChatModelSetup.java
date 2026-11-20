@@ -58,7 +58,7 @@ public abstract class BaseChatModelSetup extends Resource {
     protected final String connectionName;
     protected String model;
     protected Object prompt;
-    protected List<String> toolNames;
+    protected final List<String> toolNames = new ArrayList<>();
     protected final List<String> subagentNames;
     @Nullable protected List<String> skills;
     @Nullable protected String skillDiscoveryPrompt;
@@ -79,7 +79,10 @@ public abstract class BaseChatModelSetup extends Resource {
             throw new IllegalArgumentException("Chat model setup model must not be blank.");
         }
         this.prompt = descriptor.getArgument("prompt");
-        this.toolNames = descriptor.getArgument("tools");
+        List<String> configuredTools = descriptor.getArgument("tools");
+        if (configuredTools != null) {
+            this.toolNames.addAll(configuredTools);
+        }
         List<String> declaredSubagents = descriptor.getArgument("subagents");
         this.subagentNames =
                 declaredSubagents == null ? new ArrayList<>() : new ArrayList<>(declaredSubagents);
@@ -123,26 +126,14 @@ public abstract class BaseChatModelSetup extends Resource {
         if (this.skills != null) {
             this.skillDiscoveryPrompt =
                     nullIfEmpty(this.resourceContext.generateAvailableSkillsPrompt(this.skills));
-            List<String> mutable =
-                    this.toolNames == null ? new ArrayList<>() : new ArrayList<>(this.toolNames);
-            if (!mutable.contains(Skills.LOAD_SKILL_TOOL)) {
-                mutable.add(Skills.LOAD_SKILL_TOOL);
+            if (!this.toolNames.contains(Skills.LOAD_SKILL_TOOL)) {
+                this.toolNames.add(Skills.LOAD_SKILL_TOOL);
             }
-            if (!mutable.contains(Skills.BASH_TOOL)) {
-                mutable.add(Skills.BASH_TOOL);
-            }
-            this.toolNames = mutable;
         }
-        // Rebuilt from scratch: open() may run again on the same instance, and the callables must
-        // not accumulate.
-        this.tools.clear();
         Set<String> callableNames = new LinkedHashSet<>();
-        if (this.toolNames != null) {
-            for (String name : this.toolNames) {
-                Preconditions.checkState(
-                        callableNames.add(name), "Duplicate callable name: %s", name);
-                this.tools.add((Tool) this.resourceContext.getResource(name, ResourceType.TOOL));
-            }
+        for (String name : this.toolNames) {
+            Preconditions.checkState(callableNames.add(name), "Duplicate callable name: %s", name);
+            this.tools.add((Tool) this.resourceContext.getResource(name, ResourceType.TOOL));
         }
         for (String name : this.subagentNames) {
             // Tools are forbidden to carry the reserved prefix at registration, so a prefixed
@@ -173,6 +164,7 @@ public abstract class BaseChatModelSetup extends Resource {
                             + " no arguments for the model to build a call from.",
                     name);
             this.tools.add(new SubagentTool(name, setup.getDescription(), inputSchema));
+            this.toolNames.add(SubagentSetup.CALLABLE_NAME_PREFIX + name);
         }
     }
 
@@ -448,7 +440,7 @@ public abstract class BaseChatModelSetup extends Resource {
         return prompt;
     }
 
-    @VisibleForTesting
+    /** Returns the tool names exposed by this initialized setup, including sub-agent calls. */
     public List<String> getToolNames() {
         return toolNames;
     }

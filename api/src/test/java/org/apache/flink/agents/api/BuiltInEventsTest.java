@@ -213,7 +213,7 @@ class BuiltInEventsTest {
         responseAttrs.put("status", ChatResponseEvent.SUCCESS);
         responseAttrs.put("response", new ChatResult(ChatMessage.assistant("hi there")));
         responseAttrs.put("retry_count", 0);
-        responseAttrs.put("total_retry_wait_sec", 0);
+        responseAttrs.put("total_retry_wait_ms", 0);
 
         Map<String, Object> contextAttrs = new LinkedHashMap<>();
         contextAttrs.put("query", "what is flink");
@@ -624,14 +624,14 @@ class BuiltInEventsTest {
                 Arguments.of(ChatRequestEvent.EVENT_TYPE, "user_context", "not-a-map"),
                 // ChatResponseEvent
                 Arguments.of(ChatResponseEvent.EVENT_TYPE, "retry_count", "not-a-number"),
-                Arguments.of(ChatResponseEvent.EVENT_TYPE, "total_retry_wait_sec", "not-a-number"),
+                Arguments.of(ChatResponseEvent.EVENT_TYPE, "total_retry_wait_ms", "not-a-number"),
                 Arguments.of(ChatResponseEvent.EVENT_TYPE, "user_context", "not-a-map"),
                 // Decision events
                 Arguments.of(DecisionRequestEvent.EVENT_TYPE, "model", 0),
                 Arguments.of(DecisionRequestEvent.EVENT_TYPE, "user_context", "not-a-map"),
                 Arguments.of(DecisionResponseEvent.EVENT_TYPE, "retry_count", "not-a-number"),
                 Arguments.of(
-                        DecisionResponseEvent.EVENT_TYPE, "total_retry_wait_sec", "not-a-number"),
+                        DecisionResponseEvent.EVENT_TYPE, "total_retry_wait_ms", "not-a-number"),
                 Arguments.of(DecisionResponseEvent.EVENT_TYPE, "user_context", "not-a-map"),
                 // ToolRequestEvent
                 Arguments.of(ToolRequestEvent.EVENT_TYPE, "model", 0),

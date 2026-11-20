@@ -36,7 +36,7 @@ from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEve
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
-from flink_agents.api.resource import ResourceDescriptor
+from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 
 
@@ -44,7 +44,11 @@ class SlowMockChatModel(BaseChatModelSetup):
     """Mock ChatModel with slow connection."""
 
     def open(self) -> None:
-        """Do nothing."""
+        """Resolve tools without opening an external connection."""
+        self.tools = [
+            self.resource_context.get_resource(name, ResourceType.TOOL)
+            for name in self.tools
+        ]
 
     @property
     def model_kwargs(self) -> Dict[str, Any]:

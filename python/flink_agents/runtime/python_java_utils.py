@@ -30,6 +30,7 @@ from pydantic import JsonValue, TypeAdapter
 from flink_agents.api.chat_message import (
     AudioBlock,
     ChatMessage,
+    DataContentBlock,
     DocumentBlock,
     ImageBlock,
     MessageRole,
@@ -164,6 +165,16 @@ def create_resource(
     module = importlib.import_module(resource_module)
     cls = getattr(module, resource_clazz)
     return cls(**func_kwargs)
+
+
+def get_model_name(model_setup: Any) -> str:
+    """Return the model name resolved by a Python setup."""
+    return model_setup.model
+
+
+def get_tool_names(model_setup: Any) -> list[str]:
+    """Return initialized tool names as a flat list for the Java bridge."""
+    return model_setup.get_tool_names()
 
 
 def get_resource_context(j_resource_adapter: Any) -> JavaResourceContextWrapper:
@@ -351,14 +362,23 @@ def embedding_result_to_java(result: Any) -> Dict[str, Any]:
     }
 
 
-def call_embedding_with_usage(
-    embedding_model: Any, kwargs: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Call ``embed_with_usage`` and return Java-safe primitives.
+_EMBEDDING_BLOCKS_ADAPTER = TypeAdapter(list[DataContentBlock])
 
-    This avoids PyObject attribute access in the Java caller.
-    """
-    return embedding_result_to_java(embedding_model.embed_with_usage(**kwargs))
+
+def call_embedding(
+    embedding_model: Any,
+    method: str,
+    content: str | list[str] | list[dict],
+    kwargs: Dict[str, Any],
+) -> Any:
+    """Restore any data blocks and pass content positionally to the Python model."""
+    if isinstance(content, list) and content and isinstance(content[0], dict):
+        content = _EMBEDDING_BLOCKS_ADAPTER.validate_python(content)
+    if method == "embed_with_usage":
+        return embedding_result_to_java(
+            embedding_model.embed_with_usage(content, **kwargs)
+        )
+    return embedding_model.embed(content, **kwargs)
 
 
 def to_java_chat_message(chat_message: ChatMessage) -> Any:
@@ -488,13 +508,32 @@ def set_metric_group(obj: Resource, j_metric_group: Any) -> None:
     obj.set_metric_group(metric_group)
 
 
-def materialize_package_skills(package: str, resource: str, target_dir: str) -> None:
+def materialize_package_skills(
+    package: str,
+    resource: str,
+    target_dir: str,
+    max_download_bytes: int,
+    max_extract_entry_bytes: int,
+    max_extract_total_bytes: int,
+    max_extract_entries: int,
+) -> None:
     """Extract a package source into a directory owned by the Java caller."""
+    from flink_agents.runtime.skill.repository._materialize import MaterializerLimits
     from flink_agents.runtime.skill.repository.package_materializer import (
         materialize_package,
     )
 
-    materialize_package(package, resource, target_dir)
+    materialize_package(
+        package,
+        resource,
+        target_dir,
+        limits=MaterializerLimits(
+            max_download_bytes=max_download_bytes,
+            max_extract_entry_bytes=max_extract_entry_bytes,
+            max_extract_total_bytes=max_extract_total_bytes,
+            max_extract_entries=max_extract_entries,
+        ),
+    )
 
 
 _MEDIA_INPUTS = {

@@ -25,9 +25,11 @@ from pathlib import Path
 
 import pytest
 
+from flink_agents.runtime.python_java_utils import materialize_package_skills
 from flink_agents.runtime.skill.repository.package_repository import (
     PackageSkillRepository,
 )
+from flink_agents.runtime.skill.tests.utils import default_limits
 
 
 def _zip_dir(src: Path, dst_zip: Path) -> None:
@@ -67,21 +69,60 @@ def installed_pkg(tmp_path: Path) -> str:
 
 
 class TestPackageSkillRepository:
+    @pytest.mark.parametrize(
+        ("entry_bytes", "total_bytes", "entries", "message"),
+        [
+            (1, 1000000, 1000, "per-entry limit of 1 bytes"),
+            (1000000, 1, 1000, "limit of 1 bytes"),
+            (1000000, 1000000, 1, "limit of 1"),
+        ],
+    )
+    def test_java_bridge_enforces_zip_limits(
+        self,
+        installed_pkg: str,
+        tmp_path: Path,
+        entry_bytes: int,
+        total_bytes: int,
+        entries: int,
+        message: str,
+    ) -> None:
+        target = tmp_path / "java-owned"
+        with pytest.raises(ValueError, match=message):
+            materialize_package_skills(
+                installed_pkg,
+                "skills.zip",
+                str(target),
+                1,
+                entry_bytes,
+                total_bytes,
+                entries,
+            )
+        # Java owns cleanup on failure; a second invocation with enough capacity succeeds.
+        control = tmp_path / "control"
+        materialize_package_skills(
+            installed_pkg, "skills.zip", str(control), 1, 1000000, 1000000, 1000
+        )
+        assert (control / "github" / "SKILL.md").is_file()
+
     def test_load_directory_resource(self, installed_pkg: str) -> None:
-        repo = PackageSkillRepository(installed_pkg, "skills")
+        repo = PackageSkillRepository(installed_pkg, "skills", limits=default_limits())
 
         names = {s.name for s in repo.get_skills()}
         assert names == {"github", "nano-banana-pro"}
 
     def test_load_zip_resource(self, installed_pkg: str) -> None:
-        repo = PackageSkillRepository(installed_pkg, "skills.zip")
+        repo = PackageSkillRepository(
+            installed_pkg, "skills.zip", limits=default_limits()
+        )
 
         names = {s.name for s in repo.get_skills()}
         assert names == {"github", "nano-banana-pro"}
 
     def test_missing_resource(self, installed_pkg: str) -> None:
         with pytest.raises(ValueError, match="not found in package"):
-            PackageSkillRepository(installed_pkg, "no_such_resource")
+            PackageSkillRepository(
+                installed_pkg, "no_such_resource", limits=default_limits()
+            )
 
 
 def test_zip_imported_package_directory_is_owned(
@@ -99,7 +140,7 @@ def test_zip_imported_package_directory_is_owned(
         zf.writestr(f"{package}/skills/demo/example.txt", "attachment")
     monkeypatch.syspath_prepend(str(archive))
     try:
-        repo = PackageSkillRepository(package, "skills")
+        repo = PackageSkillRepository(package, "skills", limits=default_limits())
         try:
             directory = repo.get_skill_dir("demo")
             assert repo.get_resources("demo")["example.txt"] == "attachment"
@@ -121,5 +162,7 @@ def test_missing_package_does_not_leak_temp_directory(
     target.mkdir()
     monkeypatch.setattr(module.tempfile, "mkdtemp", lambda **_: str(target))
     with pytest.raises(ModuleNotFoundError, match="_issue1194_missing_package"):
-        PackageSkillRepository("_issue1194_missing_package", "skills")
+        PackageSkillRepository(
+            "_issue1194_missing_package", "skills", limits=default_limits()
+        )
     assert not target.exists()

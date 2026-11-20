@@ -44,15 +44,17 @@ public final class ClasspathSkillMaterializer {
     private ClasspathSkillMaterializer() {}
 
     /** Copy the resolved resources into a directory owned and cleaned up by the caller. */
-    public static void materializeInto(String resource, ClassLoader classLoader, Path target)
+    public static void materializeInto(
+            String resource, ClassLoader classLoader, Path target, SkillMaterializer.Limits limits)
             throws IOException {
-        try (SkillMaterializer.Materialized source = materialize(resource, classLoader)) {
+        try (SkillMaterializer.Materialized source = materialize(resource, classLoader, limits)) {
             SkillMaterializer.copyDirectory(source.getDir(), target);
         }
     }
 
     public static SkillMaterializer.Materialized materialize(
-            String resource, ClassLoader classLoader) throws IOException {
+            String resource, ClassLoader classLoader, SkillMaterializer.Limits limits)
+            throws IOException {
         List<URL> matches = findAllMatches(resource, classLoader);
         if (matches.isEmpty()) {
             throw new IllegalArgumentException("Classpath resource not found: " + resource);
@@ -77,7 +79,7 @@ public final class ClasspathSkillMaterializer {
                             + " file URL is used, the jar URLs are ignored. Matches: {}",
                     resource,
                     matches);
-            return materializeFileUrl(fileUrls.get(0), resource);
+            return materializeFileUrl(fileUrls.get(0), limits);
         }
         if (!fileUrls.isEmpty()) {
             if (fileUrls.size() > 1) {
@@ -88,7 +90,7 @@ public final class ClasspathSkillMaterializer {
                         fileUrls.size(),
                         fileUrls);
             }
-            return materializeFileUrl(fileUrls.get(0), resource);
+            return materializeFileUrl(fileUrls.get(0), limits);
         }
         // All matches are jar protocol — merge them.
         if (jarUrls.size() > 1) {
@@ -100,8 +102,8 @@ public final class ClasspathSkillMaterializer {
         return SkillMaterializer.extractClasspathFromJars(jarUrls, resource);
     }
 
-    private static SkillMaterializer.Materialized materializeFileUrl(URL url, String resource)
-            throws IOException {
+    private static SkillMaterializer.Materialized materializeFileUrl(
+            URL url, SkillMaterializer.Limits limits) throws IOException {
         Path p;
         try {
             p = LocalUrls.toLocalFile(url).toPath();
@@ -112,7 +114,7 @@ public final class ClasspathSkillMaterializer {
             return SkillMaterializer.Materialized.borrowed(p);
         }
         if (Files.isRegularFile(p) && p.toString().toLowerCase().endsWith(".zip")) {
-            return SkillMaterializer.extractZipSafely(p);
+            return SkillMaterializer.extractZipSafely(p, limits);
         }
         throw new IllegalArgumentException(
                 "Classpath resource must be a directory or a .zip: " + p);

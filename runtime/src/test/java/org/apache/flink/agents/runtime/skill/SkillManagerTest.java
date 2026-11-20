@@ -41,6 +41,7 @@ import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+import static org.apache.flink.agents.runtime.skill.SkillTestUtils.defaultLimits;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -57,14 +58,24 @@ class SkillManagerTest {
 
     @Test
     void sizeAndAllSkillNames() {
-        SkillManager manager = new SkillManager(configFromResources());
+        SkillManager manager =
+                new SkillManager(
+                        configFromResources(),
+                        Thread.currentThread().getContextClassLoader(),
+                        null,
+                        defaultLimits());
         assertEquals(2, manager.size());
         assertEquals(List.of("github", "nano-banana-pro"), manager.getAllSkillNames());
     }
 
     @Test
     void getSkillThrowsWithAvailableNames() {
-        SkillManager manager = new SkillManager(configFromResources());
+        SkillManager manager =
+                new SkillManager(
+                        configFromResources(),
+                        Thread.currentThread().getContextClassLoader(),
+                        null,
+                        defaultLimits());
         IllegalArgumentException ex =
                 assertThrows(IllegalArgumentException.class, () -> manager.getSkill("missing"));
         assertTrue(ex.getMessage().contains("github"));
@@ -73,7 +84,12 @@ class SkillManagerTest {
 
     @Test
     void generateDiscoveryPromptMatchesGoldenFile() throws IOException {
-        SkillManager manager = new SkillManager(configFromResources());
+        SkillManager manager =
+                new SkillManager(
+                        configFromResources(),
+                        Thread.currentThread().getContextClassLoader(),
+                        null,
+                        defaultLimits());
         String prompt = manager.generateDiscoveryPrompt(List.of("github", "nano-banana-pro"));
         String expected =
                 Files.readString(
@@ -84,7 +100,12 @@ class SkillManagerTest {
 
     @Test
     void getSkillDirsEmptyArgumentReturnsAllFsBacked() {
-        SkillManager manager = new SkillManager(configFromResources());
+        SkillManager manager =
+                new SkillManager(
+                        configFromResources(),
+                        Thread.currentThread().getContextClassLoader(),
+                        null,
+                        defaultLimits());
         List<String> dirs = manager.getSkillDirs(List.of());
         assertEquals(2, dirs.size());
         assertTrue(dirs.get(0).endsWith("github") || dirs.get(0).endsWith("nano-banana-pro"));
@@ -92,7 +113,12 @@ class SkillManagerTest {
 
     @Test
     void getSkillDirsReturnsNamedSkillsInOrder() {
-        SkillManager manager = new SkillManager(configFromResources());
+        SkillManager manager =
+                new SkillManager(
+                        configFromResources(),
+                        Thread.currentThread().getContextClassLoader(),
+                        null,
+                        defaultLimits());
         List<String> dirs = manager.getSkillDirs(List.of("github"));
         assertEquals(1, dirs.size());
         assertTrue(dirs.get(0).endsWith("github"));
@@ -100,7 +126,12 @@ class SkillManagerTest {
 
     @Test
     void getSkillDirsThrowsForUnknownName() {
-        SkillManager manager = new SkillManager(configFromResources());
+        SkillManager manager =
+                new SkillManager(
+                        configFromResources(),
+                        Thread.currentThread().getContextClassLoader(),
+                        null,
+                        defaultLimits());
         IllegalArgumentException ex =
                 assertThrows(
                         IllegalArgumentException.class,
@@ -154,7 +185,12 @@ class SkillManagerTest {
                     Skills.fromUrlUnsafeWithSha256(
                             "http://127.0.0.1:" + port + "/skills.zip",
                             sha256(Files.readAllBytes(zip)));
-            SkillManager manager = new SkillManager(config);
+            SkillManager manager =
+                    new SkillManager(
+                            config,
+                            Thread.currentThread().getContextClassLoader(),
+                            null,
+                            defaultLimits());
             assertEquals(
                     List.of("github", "nano-banana-pro"),
                     manager.getAllSkillNames().stream().sorted().collect(Collectors.toList()));
@@ -174,7 +210,14 @@ class SkillManagerTest {
                                                 "url",
                                                 "http://example.com/skills.zip?token=top-secret"))));
         IllegalStateException ex =
-                assertThrows(IllegalStateException.class, () -> new SkillManager(config));
+                assertThrows(
+                        IllegalStateException.class,
+                        () ->
+                                new SkillManager(
+                                        config,
+                                        Thread.currentThread().getContextClassLoader(),
+                                        null,
+                                        defaultLimits()));
         assertTrue(ex.getMessage().contains("url:http://example.com/skills.zip"));
         assertTrue(ex.getCause().getMessage().contains("disabled by default"));
         assertFalse(ex.getMessage().contains("top-secret"));
@@ -185,7 +228,14 @@ class SkillManagerTest {
     void unknownSchemeFailsLoud() {
         Skills config = new Skills(List.of(new SkillSourceSpec("future-scheme", Map.of("k", "v"))));
         IllegalStateException ex =
-                assertThrows(IllegalStateException.class, () -> new SkillManager(config));
+                assertThrows(
+                        IllegalStateException.class,
+                        () ->
+                                new SkillManager(
+                                        config,
+                                        Thread.currentThread().getContextClassLoader(),
+                                        null,
+                                        defaultLimits()));
         assertTrue(ex.getMessage().contains("future-scheme"));
         // The registered-scheme list comes from the wrapped IllegalArgumentException.
         assertTrue(ex.getCause().getMessage().contains("local"));
@@ -196,7 +246,12 @@ class SkillManagerTest {
     void classpathOnlyLoadsSkills() {
         // src/test/resources/skills is on the test classpath.
         Skills config = Skills.fromClasspath("skills");
-        SkillManager manager = new SkillManager(config);
+        SkillManager manager =
+                new SkillManager(
+                        config,
+                        Thread.currentThread().getContextClassLoader(),
+                        null,
+                        defaultLimits());
         assertEquals(
                 List.of("github", "nano-banana-pro"),
                 manager.getAllSkillNames().stream().sorted().collect(Collectors.toList()));
@@ -204,7 +259,12 @@ class SkillManagerTest {
 
     @Test
     void originIsAttachedAfterLoad() {
-        SkillManager manager = new SkillManager(configFromResources());
+        SkillManager manager =
+                new SkillManager(
+                        configFromResources(),
+                        Thread.currentThread().getContextClassLoader(),
+                        null,
+                        defaultLimits());
         String localPath = Path.of("src/test/resources/skills").toAbsolutePath().toString();
         SkillOrigin origin = manager.getSkill("github").getOrigin();
         assertNotNull(origin);
@@ -224,7 +284,12 @@ class SkillManagerTest {
                         List.of(
                                 new SkillSourceSpec("local", Map.of("path", dirA.toString())),
                                 new SkillSourceSpec("local", Map.of("path", dirB.toString()))));
-        SkillManager manager = new SkillManager(config);
+        SkillManager manager =
+                new SkillManager(
+                        config,
+                        Thread.currentThread().getContextClassLoader(),
+                        null,
+                        defaultLimits());
         // Second source wins on collision.
         AgentSkill skill = manager.getSkill("dup");
         assertEquals(dirB.toString(), skill.getOrigin().getLocation());
@@ -269,7 +334,12 @@ class SkillManagerTest {
         try {
             int port = server.getAddress().getPort();
             Skills config = Skills.fromUrlUnsafe("http://127.0.0.1:" + port + "/skills.zip");
-            SkillManager manager = new SkillManager(config);
+            SkillManager manager =
+                    new SkillManager(
+                            config,
+                            Thread.currentThread().getContextClassLoader(),
+                            null,
+                            defaultLimits());
             Path dir = manager.getSkillDir("github");
             assertNotNull(dir);
             // The URL repo materializes into a temp dir whose parent is the per-repo extract root.
@@ -293,7 +363,14 @@ class SkillManagerTest {
                         Map.of("url", "https://user:supersecret/x.zip?token=TOPSECRET"))) {
             Skills config = new Skills(List.of(new SkillSourceSpec("url", params)));
             IllegalStateException ex =
-                    assertThrows(IllegalStateException.class, () -> new SkillManager(config));
+                    assertThrows(
+                            IllegalStateException.class,
+                            () ->
+                                    new SkillManager(
+                                            config,
+                                            Thread.currentThread().getContextClassLoader(),
+                                            null,
+                                            defaultLimits()));
             String messages = ex.getMessage() + "\n" + ex.getCause().getMessage();
             assertFalse(messages.contains("password"));
             assertFalse(messages.contains("top-secret"));
@@ -326,7 +403,12 @@ class SkillManagerTest {
                                                     "true")),
                                     new SkillSourceSpec(
                                             "classpath", Map.of("resource", "skills"))));
-            SkillManager manager = new SkillManager(config);
+            SkillManager manager =
+                    new SkillManager(
+                            config,
+                            Thread.currentThread().getContextClassLoader(),
+                            null,
+                            defaultLimits());
             assertEquals(
                     List.of("github", "nano-banana-pro"),
                     manager.getAllSkillNames().stream().sorted().collect(Collectors.toList()));
@@ -445,7 +527,9 @@ class SkillManagerTest {
                                 new SkillSourceSpec("test-leak-fail", Map.of())));
 
         IllegalStateException ex =
-                assertThrows(IllegalStateException.class, () -> new SkillManager(config, handlers));
+                assertThrows(
+                        IllegalStateException.class,
+                        () -> new SkillManager(config, handlers, defaultLimits()));
         assertTrue(ex.getMessage().contains("test-leak-fail"));
         assertTrue(first.closed.get(), "Repo registered before the failure must be closed");
     }
@@ -472,7 +556,9 @@ class SkillManagerTest {
                                 new SkillSourceSpec("test-leak-fail-after-bad", Map.of())));
 
         IllegalStateException ex =
-                assertThrows(IllegalStateException.class, () -> new SkillManager(config, handlers));
+                assertThrows(
+                        IllegalStateException.class,
+                        () -> new SkillManager(config, handlers, defaultLimits()));
         assertEquals("primary-boom", ex.getCause().getMessage());
         assertEquals(1, ex.getSuppressed().length);
         assertSame(cleanupBoom, ex.getSuppressed()[0]);
@@ -501,7 +587,9 @@ class SkillManagerTest {
                                 new SkillSourceSpec("test-register-boom-fail", Map.of())));
 
         IllegalStateException ex =
-                assertThrows(IllegalStateException.class, () -> new SkillManager(config, handlers));
+                assertThrows(
+                        IllegalStateException.class,
+                        () -> new SkillManager(config, handlers, defaultLimits()));
         // Identity, not just type: IllegalStateException is also what the wrapping catch builds.
         assertSame(registrationBoom, ex);
         assertTrue(first.closed.get(), "repo opened before the failure must be closed");
@@ -528,7 +616,9 @@ class SkillManagerTest {
 
         Skills config = new Skills(List.of(new SkillSourceSpec("test-error-fail", Map.of())));
 
-        Error ex = assertThrows(Error.class, () -> new SkillManager(config, handlers));
+        Error ex =
+                assertThrows(
+                        Error.class, () -> new SkillManager(config, handlers, defaultLimits()));
         assertSame(registrationBoom, ex);
         assertTrue(repo.closed.get(), "the repo owned when registration failed must be closed");
         assertEquals(1, ex.getSuppressed().length);
@@ -558,7 +648,7 @@ class SkillManagerTest {
                                 new SkillSourceSpec("test-close-rethrow", Map.of()),
                                 new SkillSourceSpec("test-close-rethrow", Map.of())));
 
-        SkillManager manager = new SkillManager(config, handlers);
+        SkillManager manager = new SkillManager(config, handlers, defaultLimits());
         Exception thrown = assertThrows(Exception.class, manager::close);
 
         assertTrue(good1.closed.get(), "good1 must be closed");
@@ -600,7 +690,7 @@ class SkillManagerTest {
                                 new SkillSourceSpec("test-close-error", Map.of()),
                                 new SkillSourceSpec("test-close-error", Map.of())));
 
-        SkillManager manager = new SkillManager(config, handlers);
+        SkillManager manager = new SkillManager(config, handlers, defaultLimits());
         // The Error reaches the caller unwrapped rather than boxed in an Exception.
         Error thrown = assertThrows(Error.class, manager::close);
 
@@ -633,7 +723,7 @@ class SkillManagerTest {
                                 new SkillSourceSpec("test-dup-close", Map.of()),
                                 new SkillSourceSpec("test-dup-close", Map.of())));
 
-        SkillManager manager = new SkillManager(config, handlers);
+        SkillManager manager = new SkillManager(config, handlers, defaultLimits());
         manager.close();
 
         assertTrue(first.closed.get(), "displaced repo must still be closed");
@@ -651,7 +741,7 @@ class SkillManagerTest {
         SkillSourceSpec specA = new SkillSourceSpec("test-get-spec-a", Map.of());
         SkillSourceSpec specB = new SkillSourceSpec("test-get-spec-b", Map.of());
         Skills config = new Skills(List.of(specA, specB));
-        SkillManager manager = new SkillManager(config, handlers);
+        SkillManager manager = new SkillManager(config, handlers, defaultLimits());
 
         assertEquals(List.of("alpha"), manager.getSkillNamesForSources(List.of(specA)));
         assertEquals(List.of("beta"), manager.getSkillNamesForSources(List.of(specB)));
@@ -672,7 +762,7 @@ class SkillManagerTest {
         SkillSourceSpec specA = new SkillSourceSpec("test-spec-order", Map.of("order", "a"));
         SkillSourceSpec specB = new SkillSourceSpec("test-spec-order", Map.of("order", "b"));
         Skills config = new Skills(List.of(specA, specB));
-        SkillManager manager = new SkillManager(config, handlers);
+        SkillManager manager = new SkillManager(config, handlers, defaultLimits());
 
         // specB → specA: the result must follow the argument list order, not load order.
         assertEquals(
@@ -684,7 +774,12 @@ class SkillManagerTest {
         Skills config =
                 Skills.fromLocalDir(
                         Path.of("src/test/resources/skills").toAbsolutePath().toString());
-        SkillManager manager = new SkillManager(config);
+        SkillManager manager =
+                new SkillManager(
+                        config,
+                        Thread.currentThread().getContextClassLoader(),
+                        null,
+                        defaultLimits());
 
         List<String> result =
                 manager.getSkillNamesForSources(
@@ -723,7 +818,7 @@ class SkillManagerTest {
 
         SkillSourceSpec spec = new SkillSourceSpec("test-multi-skill-repo", Map.of());
         Skills config = new Skills(List.of(spec));
-        SkillManager manager = new SkillManager(config, handlers);
+        SkillManager manager = new SkillManager(config, handlers, defaultLimits());
 
         assertEquals(List.of("alpha", "beta"), manager.getSkillNamesForSources(List.of(spec)));
     }

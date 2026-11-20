@@ -56,7 +56,13 @@ class ResourceCache:
             resolved there remain owned by that cache, including their lifecycle.
         """
         self._resource_providers = resource_providers or {}
-        self._config = config
+        self._config = (
+            config
+            if config is not None
+            else parent.get_config()
+            if parent is not None
+            else AgentConfiguration()
+        )
         self._parent = parent
         self._cache: Dict[ResourceType, Dict[str, Resource]] = {}
         self._j_resource_adapter: Any = None
@@ -65,6 +71,14 @@ class ResourceCache:
     def get_java_resource_adapter(self) -> Any:
         """Return this operator's Java bridge, or None in a standalone Python runner."""
         return self._j_resource_adapter
+
+    def get_config(self) -> AgentConfiguration:
+        """Return the agent configuration supplying the skill download limits.
+
+        A scope without its own config uses its parent's, so one job uses one
+        set of ``SkillOptions`` limits.
+        """
+        return self._config
 
     def get_resource_context(self) -> ResourceContextImpl:
         """Return the long-lived ResourceContext owned by this cache."""

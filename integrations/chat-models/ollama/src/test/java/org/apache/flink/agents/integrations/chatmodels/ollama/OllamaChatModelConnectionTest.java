@@ -184,6 +184,25 @@ class OllamaChatModelConnectionTest {
     }
 
     @Test
+    @DisplayName("A nullable parameter's type list converts to its non-null type")
+    void testNullableParameterTypeList() {
+        // FunctionSchema writes @ToolParam(nullable = true) as "type": [<type>, "null"].
+        String schema =
+                "{\"type\":\"object\",\"properties\":{"
+                        + "\"city\":{\"type\":[\"string\",\"null\"],\"description\":\"City\"}},"
+                        + "\"required\":[\"city\"]}";
+
+        List<Tools.Tool> converted =
+                connection().convertToOllamaTools(List.of(new SchemaOnlyTool(schema)));
+
+        Tools.Property city =
+                converted.get(0).getToolSpec().getParameters().getProperties().get("city");
+        assertThat(city.getType()).isEqualTo("string");
+        assertThat(city.getDescription()).isEqualTo("City");
+        assertThat(city.isRequired()).isTrue();
+    }
+
+    @Test
     @DisplayName("Assistant tool calls in the history are sent back to Ollama")
     void buildRequestForwardsAssistantToolCalls() {
         Map<String, Object> call =

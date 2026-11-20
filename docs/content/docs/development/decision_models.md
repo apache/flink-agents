@@ -532,8 +532,9 @@ accessing the result. Resource lookup failures, cancellation, and failures in
 durable state or event delivery propagate to the runtime.
 
 The built-in Action uses the existing `max-retries` (default `0`) and
-`retry-wait-interval` (default `1` second) options. Each retry doubles the wait;
-the terminal event reports the retry count and total wait. `decision.async`
+`retry-wait-interval` (default `1 s`) options. Each retry doubles the wait;
+the terminal event reports the retry count and total wait in milliseconds
+(`total_retry_wait_ms`). `decision.async`
 defaults to `true`; Java calls through Python fall back to synchronous execution
 when the runtime does not support asynchronous Python calls.
 

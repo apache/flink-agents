@@ -24,13 +24,21 @@ from importlib.resources import as_file, files
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from flink_agents.runtime.skill.repository._materialize import extract_zip_into
+from flink_agents.runtime.skill.repository._materialize import (
+    extract_zip_into,
+)
 
 if TYPE_CHECKING:
     from importlib.resources.abc import Traversable
 
+    from flink_agents.runtime.skill.repository._materialize import (
+        MaterializerLimits,
+    )
 
-def materialize_package(package: str, resource: str, target_dir: str) -> None:
+
+def materialize_package(
+    package: str, resource: str, target_dir: str, *, limits: MaterializerLimits
+) -> None:
     """Copy a package resource into the caller's directory; ownership stays with caller.
 
     Traverse directory resources directly so zipped packages also work on
@@ -45,7 +53,7 @@ def materialize_package(package: str, resource: str, target_dir: str) -> None:
         _copy_directory(source, target)
     elif source.is_file() and source.name.lower().endswith(".zip"):
         with as_file(source) as path:
-            extract_zip_into(path, target)
+            extract_zip_into(path, target, limits=limits)
     else:
         msg = f"Python package skill resource {package}/{resource} must exist and be a directory or .zip"
         raise ValueError(msg)

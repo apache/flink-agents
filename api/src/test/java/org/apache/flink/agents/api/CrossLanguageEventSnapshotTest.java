@@ -330,7 +330,7 @@ class CrossLanguageEventSnapshotTest {
                 "response",
                 new ChatResult(ChatMessage.assistant(List.of(new TextBlock("hi there")))));
         attrs.put("retry_count", 0);
-        attrs.put("total_retry_wait_sec", 0);
+        attrs.put("total_retry_wait_ms", 0);
         return new ChatResponseEvent(FIXED_EVENT_ID, attrs);
     }
 

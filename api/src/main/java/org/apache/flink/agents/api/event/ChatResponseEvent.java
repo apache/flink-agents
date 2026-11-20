@@ -43,7 +43,7 @@ public class ChatResponseEvent extends Event {
     private static final String RESPONSE = "response";
     private static final String ERROR = "error";
     private static final String RETRY_COUNT = "retry_count";
-    private static final String TOTAL_RETRY_WAIT_SEC = "total_retry_wait_sec";
+    private static final String TOTAL_RETRY_WAIT_MS = "total_retry_wait_ms";
     private static final String STRUCTURED_OUTPUT = "structured_output";
     private static final String MODEL_ROUTING = "model_routing";
 
@@ -54,7 +54,7 @@ public class ChatResponseEvent extends Event {
                     BuiltInAttribute.optionalUntyped(RESPONSE),
                     BuiltInAttribute.optionalUntyped(ERROR),
                     BuiltInAttribute.optional(RETRY_COUNT, Number.class),
-                    BuiltInAttribute.optional(TOTAL_RETRY_WAIT_SEC, Number.class),
+                    BuiltInAttribute.optional(TOTAL_RETRY_WAIT_MS, Number.class),
                     BuiltInAttribute.optionalUntyped(STRUCTURED_OUTPUT),
                     BuiltInAttribute.optional(MODEL_ROUTING, Map.class),
                     BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
@@ -66,14 +66,14 @@ public class ChatResponseEvent extends Event {
     }
 
     public static ChatResponseEvent success(
-            UUID requestId, ChatResult response, int retryCount, int totalRetryWaitSec) {
+            UUID requestId, ChatResult response, int retryCount, long totalRetryWaitMs) {
         return new ChatResponseEvent(
-                requestId, SUCCESS, response, null, retryCount, totalRetryWaitSec);
+                requestId, SUCCESS, response, null, retryCount, totalRetryWaitMs);
     }
 
     public static ChatResponseEvent failed(
-            UUID requestId, String error, int retryCount, int totalRetryWaitSec) {
-        return new ChatResponseEvent(requestId, FAILED, null, error, retryCount, totalRetryWaitSec);
+            UUID requestId, String error, int retryCount, long totalRetryWaitMs) {
+        return new ChatResponseEvent(requestId, FAILED, null, error, retryCount, totalRetryWaitMs);
     }
 
     private ChatResponseEvent(
@@ -82,7 +82,7 @@ public class ChatResponseEvent extends Event {
             ChatResult response,
             String error,
             int retryCount,
-            int totalRetryWaitSec) {
+            long totalRetryWaitMs) {
         super(EVENT_TYPE);
         Objects.requireNonNull(requestId, REQUEST_ID);
         validate(status, response, error);
@@ -91,7 +91,7 @@ public class ChatResponseEvent extends Event {
         setAttr(RESPONSE, response);
         setAttr(ERROR, error);
         setAttr(RETRY_COUNT, retryCount);
-        setAttr(TOTAL_RETRY_WAIT_SEC, totalRetryWaitSec);
+        setAttr(TOTAL_RETRY_WAIT_MS, totalRetryWaitMs);
     }
 
     @JsonCreator
@@ -116,6 +116,10 @@ public class ChatResponseEvent extends Event {
             throw new IllegalArgumentException("request_id must be a UUID");
         }
         validate(attributes.get(STATUS), attributes.get(RESPONSE), attributes.get(ERROR));
+        Object wait = attributes.get(TOTAL_RETRY_WAIT_MS);
+        if (wait instanceof Number && !(wait instanceof Long)) {
+            attributes.put(TOTAL_RETRY_WAIT_MS, ((Number) wait).longValue());
+        }
         return attributes;
     }
 
@@ -242,7 +246,7 @@ public class ChatResponseEvent extends Event {
     }
 
     @JsonIgnore
-    public int getTotalRetryWaitSec() {
-        return ((Number) getAttr(TOTAL_RETRY_WAIT_SEC)).intValue();
+    public long getTotalRetryWaitMs() {
+        return ((Number) getAttr(TOTAL_RETRY_WAIT_MS)).longValue();
     }
 }

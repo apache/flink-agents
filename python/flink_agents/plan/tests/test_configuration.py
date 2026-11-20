@@ -16,13 +16,17 @@
 # limitations under the License.
 #################################################################################
 
+from datetime import timedelta
+
 import pytest
 
 from flink_agents.api.configuration import ConfigOption
 from flink_agents.api.core_options import (
     AgentConfigOptions,
+    AgentExecutionOptions,
     LoggerType,
 )
+from flink_agents.api.duration import is_positive
 from flink_agents.api.trace_log import TraceLogLevel, TraceLogScope, TraceLogTarget
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
@@ -346,6 +350,84 @@ def test_trace_log_typed_constructor_input_is_json_native() -> None:
     assert restored.get_conf_data()[option.get_key()] == [
         {"scope": {"entityType": "tool", "entityName": "search"}}
     ]
+
+
+def test_duration_options_round_trip_through_plan_json() -> None:
+    config = AgentConfiguration()
+    assert config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL) == timedelta(seconds=1)
+    assert config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT) == timedelta(
+        milliseconds=-1
+    )
+    assert config.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL) == timedelta(0)
+    assert is_positive(config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)) is False
+
+    config.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, timedelta(seconds=30))
+    config.set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, "5 min")
+    config.set(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL, "0 ms")
+    assert config.get_conf_data()["retry-wait-interval"] == "30 s"
+    assert config.get_conf_data()["async.batch.timeout"] == "5 min"
+    assert config.get_conf_data()["short-term-memory.state-ttl"] == "0 ms"
+    assert config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT) == timedelta(minutes=5)
+
+    plan = AgentPlan(actions={}, config=config)
+    restored = AgentPlan.model_validate_json(plan.model_dump_json())
+    assert restored.config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT) == timedelta(
+        minutes=5
+    )
+    assert restored.config.get_conf_data() == config.get_conf_data()
+
+
+def test_duration_strings_keep_disable_sentinels_and_reject_floating_point_values() -> None:
+    disabled = AgentConfiguration(
+        {
+            "async.batch.timeout": "-1 ms",
+            "short-term-memory.state-ttl": "0 s",
+            "retry-wait-interval": "0 s",
+        }
+    )
+    assert is_positive(disabled.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)) is False
+    assert (
+        is_positive(disabled.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL))
+        is False
+    )
+    assert disabled.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL) == timedelta(0)
+    enabled = AgentConfiguration({"async.batch.timeout": "100 ms"})
+    assert enabled.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT) == timedelta(
+        milliseconds=100
+    )
+
+    with pytest.raises(ValueError, match="retry-wait-interval") as error:
+        AgentConfiguration({"retry-wait-interval": 1.5}).get(
+            AgentExecutionOptions.RETRY_WAIT_INTERVAL
+        )
+    assert "an integer" in str(error.value)
+
+
+def test_duration_options_keep_microseconds_on_read_and_write() -> None:
+    timeout = AgentConfiguration({"async.batch.timeout": "1500 us"})
+    assert timeout.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT) == timedelta(
+        microseconds=1500
+    )
+    retry = AgentConfiguration({"retry-wait-interval": "1500 us"})
+    assert retry.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL) == timedelta(
+        microseconds=1500
+    )
+    assert AgentConfiguration({"retry-wait-interval": "1500 ms"}).get(
+        AgentExecutionOptions.RETRY_WAIT_INTERVAL
+    ) == timedelta(milliseconds=1500)
+    ttl = AgentConfiguration({"short-term-memory.state-ttl": "1500 us"})
+    assert ttl.get(AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL) == timedelta(
+        microseconds=1500
+    )
+    assert AgentConfiguration({"short-term-memory.state-ttl": "500 us"}).get(
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL
+    ) == timedelta(microseconds=500)
+    assert AgentConfiguration({"short-term-memory.state-ttl": "1000 us"}).get(
+        AgentExecutionOptions.SHORT_TERM_MEMORY_STATE_TTL
+    ) == timedelta(milliseconds=1)
+    stored = AgentConfiguration()
+    stored.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, "1500 us")
+    assert stored.get_conf_data()["retry-wait-interval"] == "1500 us"
 
 
 def test_trace_log_target_error_identifies_list_entry() -> None:

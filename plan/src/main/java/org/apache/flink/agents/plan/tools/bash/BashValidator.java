@@ -234,10 +234,21 @@ public final class BashValidator {
             return Optional.of("Command without an executable is not allowed.");
         }
         String executable = nodeText(nameNode, command);
+        // Validate the literal spelling before either authorization check. Shell
+        // expansion or quote removal must not change the executable being checked.
+        if (!executable.matches("[A-Za-z0-9_./-]+")) {
+            return Optional.of(
+                    "Executable '"
+                            + executable
+                            + "' is not allowed. Use a literal name or path "
+                            + "containing only ASCII letters, digits, '_', '-', '.', and '/'.");
+        }
         if (allowedCommands.contains(executable)) {
             return Optional.empty();
         }
-        if (isUnderAllowedDirs(executable, allowedScriptDirs, cwd)) {
+        // Bash looks up bare names via PATH, not relative to cwd. Only explicit
+        // paths can be authorized by an allowed script directory.
+        if (executable.contains("/") && isUnderAllowedDirs(executable, allowedScriptDirs, cwd)) {
             return Optional.empty();
         }
         Set<String> sortedCommands = new HashSet<>(allowedCommands);

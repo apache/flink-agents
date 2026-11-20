@@ -36,7 +36,6 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.math.RoundingMode;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.time.Duration;
@@ -58,8 +57,8 @@ import java.util.TreeSet;
  * <ul>
  *   <li>{@code api_key} (required): OpenAI API key.
  *   <li>{@code base_url}: API base URL, default {@code https://api.openai.com/v1}.
- *   <li>{@code request_timeout}: per-attempt request timeout in seconds, default {@code 30}; {@code
- *       0} disables the timeout, as in the other OpenAI connections.
+ *   <li>{@code request_timeout}: per-attempt request timeout (default: 30 seconds); zero disables
+ *       timeouts. See {@link ResourceDescriptor#getDurationArgument(String, Duration)} for inputs.
  *   <li>{@code max_retries}: SDK retry count for failed requests, default {@code 3}.
  *   <li>{@code organization}, {@code project}: optional OpenAI organization and project IDs.
  * </ul>
@@ -79,8 +78,6 @@ public class OpenAIEmbeddingModelConnection extends BaseEmbeddingModelConnection
     static final String DEFAULT_BASE_URL = "https://api.openai.com/v1";
     static final int DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
     static final int DEFAULT_MAX_RETRIES = 3;
-    /** The Java SDK stores timeouts as int milliseconds. */
-    static final BigDecimal MAX_REQUEST_TIMEOUT_SECONDS = new BigDecimal("2147483.647");
 
     static final String MODEL = "model";
     static final String ENCODING_FORMAT = "encoding_format";
@@ -145,7 +142,7 @@ public class OpenAIEmbeddingModelConnection extends BaseEmbeddingModelConnection
             return new ClientConfig(
                     apiKey,
                     baseUrl == null || baseUrl.isBlank() ? DEFAULT_BASE_URL : baseUrl,
-                    parseRequestTimeout(descriptor.getArgument("request_timeout")),
+                    parseRequestTimeout(descriptor),
                     parseMaxRetries(descriptor.getArgument("max_retries")),
                     blankToNull(
                             requireString(descriptor.getArgument("organization"), "organization")),
@@ -180,29 +177,22 @@ public class OpenAIEmbeddingModelConnection extends BaseEmbeddingModelConnection
         return value == null || value.isBlank() ? null : value;
     }
 
-    /** Parses {@code request_timeout} seconds with the same rules as the OpenAI chat connection. */
-    static Duration parseRequestTimeout(Object raw) {
-        if (raw == null) {
-            return Duration.ofSeconds(DEFAULT_REQUEST_TIMEOUT_SECONDS);
-        }
-        BigDecimal seconds = toBigDecimal(raw, "request_timeout");
-        if (seconds.signum() < 0) {
-            throw new IllegalArgumentException("request_timeout must be >= 0, got: " + raw);
-        }
-        if (seconds.compareTo(MAX_REQUEST_TIMEOUT_SECONDS) > 0) {
+    /** Resolves the request timeout and rounds positive values up to SDK milliseconds. */
+    static Duration parseRequestTimeout(ResourceDescriptor descriptor) {
+        Duration duration =
+                descriptor.getDurationArgument(
+                        "request_timeout", Duration.ofSeconds(DEFAULT_REQUEST_TIMEOUT_SECONDS));
+        if (duration.isNegative() || duration.compareTo(Duration.ofMillis(Integer.MAX_VALUE)) > 0) {
             throw new IllegalArgumentException(
-                    "request_timeout exceeds the SDK maximum of "
-                            + MAX_REQUEST_TIMEOUT_SECONDS.toPlainString()
-                            + " seconds, got: "
-                            + raw);
+                    "request_timeout must be between Duration.ZERO and "
+                            + "Duration.ofMillis(Integer.MAX_VALUE), got: "
+                            + duration);
         }
-        // Millisecond precision; positive values round up so a valid timeout never becomes zero,
-        // which would disable it. Exactly 0 disables the timeout, like the chat connection.
-        BigInteger millis =
-                seconds.multiply(BigDecimal.valueOf(1_000L))
-                        .setScale(0, RoundingMode.CEILING)
-                        .toBigIntegerExact();
-        return Duration.ofMillis(millis.longValueExact());
+        long millis = duration.toMillis();
+        if (duration.getNano() % 1_000_000 != 0) {
+            millis++;
+        }
+        return Duration.ofMillis(millis);
     }
 
     static int parseMaxRetries(Object raw) {

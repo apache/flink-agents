@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.actions;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
@@ -56,9 +57,11 @@ import javax.annotation.Nullable;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
 
@@ -115,6 +118,10 @@ public class ToolCallAction {
             Map<String, ToolResponse> responses)
             throws Exception {
         List<ToolCallExecution> executions = new ArrayList<>();
+        BaseChatModelSetup model =
+                (BaseChatModelSetup)
+                        ctx.getResource(toolRequest.getModel(), ResourceType.CHAT_MODEL);
+        Set<String> allowedToolNames = new HashSet<>(model.getToolNames());
         for (ToolCallBlock toolCall : toolRequest.getToolCalls()) {
             String id = toolCall.getCallId();
             String name = toolCall.getName();
@@ -130,18 +137,29 @@ public class ToolCallAction {
             // the AGENT resource throws when the name is absent and would otherwise have
             // to be attempted for every plain tool call.
             boolean delegated = name.startsWith(SubagentSetup.CALLABLE_NAME_PREFIX);
-            try {
-                if (delegated) {
-                    agent =
-                            resolveSubagent(
-                                    name.substring(SubagentSetup.CALLABLE_NAME_PREFIX.length()),
-                                    ctx);
-                } else {
-                    tool = (Tool) ctx.getResource(name, ResourceType.TOOL);
+            boolean enabled = allowedToolNames.contains(name);
+            if (!enabled) {
+                preparationError =
+                        new IllegalArgumentException(
+                                "Tool '"
+                                        + name
+                                        + "' is not enabled for model '"
+                                        + toolRequest.getModel()
+                                        + "'.");
+            } else {
+                try {
+                    if (delegated) {
+                        agent =
+                                resolveSubagent(
+                                        name.substring(SubagentSetup.CALLABLE_NAME_PREFIX.length()),
+                                        ctx);
+                    } else {
+                        tool = (Tool) ctx.getResource(name, ResourceType.TOOL);
+                    }
+                } catch (Exception e) {
+                    rethrowFrameworkFaultOrCancellation(e);
+                    preparationError = e;
                 }
-            } catch (Exception e) {
-                rethrowFrameworkFaultOrCancellation(e);
-                preparationError = e;
             }
 
             // Injection is a tool-only contract, so a sub-agent call carries the model arguments
@@ -186,7 +204,9 @@ public class ToolCallAction {
                 recordInlineResponse(
                         id,
                         ToolResponse.error(
-                                prepFailureMessage(name, delegated, unresolved, failure)),
+                                enabled
+                                        ? prepFailureMessage(name, delegated, unresolved, failure)
+                                        : diagnosticError),
                         diagnosticError,
                         success,
                         error,

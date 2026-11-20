@@ -37,6 +37,7 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.env.RemoteExecutionEnvironment;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
+import org.apache.flink.agents.runtime.utils.ToolCallTestModel;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -381,6 +382,8 @@ public class InternalSubagentCallTest {
     @Timeout(60)
     void modelToolCallExecutesInternalDescriptorAfterPlanTransfer() throws Exception {
         Agent root = new Agent();
+        root.addResource(
+                "model", ResourceType.CHAT_MODEL, ToolCallTestModel.withTools("_subagent_child"));
         root.addResource(
                 "child",
                 ResourceType.AGENT,

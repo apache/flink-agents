@@ -88,6 +88,7 @@ import org.apache.flink.agents.runtime.tracelog.FileTraceLogger;
 import org.apache.flink.agents.runtime.tracelog.Slf4jTraceLogger;
 import org.apache.flink.agents.runtime.tracelog.TraceLogWriter;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
+import org.apache.flink.agents.runtime.utils.ToolCallTestModel;
 import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.base.LongSerializer;
@@ -5110,7 +5111,7 @@ public class ActionExecutionOperatorTest {
             toolCall.put("function", function);
             context.sendEvent(
                     new ToolRequestEvent(
-                            "unused-model",
+                            "tool-model",
                             List.of(
                                     new org.apache.flink.agents.api.chat.messages.ToolCallBlock(
                                             "call-1", "linkageErrorTool", Map.of()))));
@@ -5168,6 +5169,14 @@ public class ActionExecutionOperatorTest {
                 Map<ResourceType, Map<String, ResourceProvider>> resourceProviders =
                         new HashMap<>();
                 resourceProviders.put(ResourceType.TOOL, tools);
+                resourceProviders.put(
+                        ResourceType.CHAT_MODEL,
+                        Map.of(
+                                "tool-model",
+                                new JavaResourceProvider(
+                                        "tool-model",
+                                        ResourceType.CHAT_MODEL,
+                                        ToolCallTestModel.withTools("linkageErrorTool"))));
 
                 return new AgentPlan(actions, resourceProviders);
             } catch (Exception e) {

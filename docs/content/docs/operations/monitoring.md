@@ -35,7 +35,7 @@ A typical investigation starts from a metric that looks wrong, such as a rising 
 
 ## Metrics
 
-Flink Agents registers its metrics with the job's Flink metric system. For the metric types used below (Counter, Meter, Histogram and Gauge), see [Metric types](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/metrics/#metric-types). Latency metrics are in milliseconds, as their `Ms` suffix shows; `retryWaitSec` is in seconds.
+Flink Agents registers its metrics with the job's Flink metric system. For the metric types used below (Counter, Meter, Histogram and Gauge), see [Metric types](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/metrics/#metric-types). Latency metrics and `retryWaitMs` are in milliseconds, as their `Ms` suffix shows.
 
 ### Accessing metrics
 
@@ -101,7 +101,7 @@ These metrics describe LLM, Tool, Skill, MCP Server and sub-agent calls that the
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.numOfLlmCallsFailed | Model invocations that failed. [1] [6] | Counter |
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.llmCallLatencyMs | Time for one model invocation, excluding structured-output parsing and retry waits. [1] | Histogram |
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryCount | Additional invocations made by framework retries (`max-retries > 0`); recorded only when a retry occurs. See [retry-wait-interval]({{< ref "docs/operations/configuration#model-calls-tools-and-retries" >}}). | Counter |
-| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryWaitSec | Backoff time accumulated by framework retries; recorded only when a retry occurs. | Counter |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryWaitMs | Backoff time accumulated by framework retries, in whole milliseconds of each sleep. A `100 ms` sleep contributes `100`, and those contributions add across requests. Recorded only when a retry occurs. | Counter |
 | **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsSucceeded | Successful calls to the Tool. [2] [6] | Counter |
 | **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsFailed | Failed calls to the Tool. [2] [6] | Counter |
 | **Tool** | action.\<action_name\>.tool.\<tool_name\>.toolCallLatencyMs | Time spent in one Tool call, excluding waits for other calls in the same parallel batch. [5] | Histogram |

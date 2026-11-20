@@ -169,8 +169,8 @@ class PythonSerializableResourceProvider(SerializableResourceProvider):
         if self.resource is None:
             module = importlib.import_module(self.module)
             clazz = getattr(module, self.clazz)
-            self.serialized["resource_context"] = resource_context
             self.resource = clazz.model_validate(self.serialized)
+        self.resource.resource_context = resource_context
         return self.resource
 
 

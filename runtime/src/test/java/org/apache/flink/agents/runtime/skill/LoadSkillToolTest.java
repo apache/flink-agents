@@ -33,11 +33,21 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LoadSkillToolTest {
+
+    private static ResourceContextImpl contextWithResources(
+            BiFunction<String, ResourceType, Resource> getResource) {
+        return new ResourceContextImpl(
+                getResource,
+                Thread.currentThread().getContextClassLoader(),
+                () -> null,
+                new org.apache.flink.agents.plan.AgentConfiguration());
+    }
 
     private static ResourceContextImpl contextWithSkills() {
         Skills skills =
@@ -45,7 +55,7 @@ class LoadSkillToolTest {
                         Path.of("src/test/resources/skills").toAbsolutePath().toString());
         Map<String, Resource> store = new HashMap<>();
         store.put(Skills.SKILLS_CONFIG, skills);
-        return new ResourceContextImpl(
+        return contextWithResources(
                 (name, type) -> {
                     if (type == ResourceType.SKILLS) {
                         return store.get(name);
@@ -71,7 +81,7 @@ class LoadSkillToolTest {
     @Test
     void initializationFailuresReturnErrorResponsesOnRepeatedCalls() throws Exception {
         try (ResourceContextImpl ctx =
-                new ResourceContextImpl((name, type) -> Skills.fromPackage("missing", "skills"))) {
+                contextWithResources((name, type) -> Skills.fromPackage("missing", "skills"))) {
             LoadSkillTool tool = tool(ctx);
             for (int attempt = 0; attempt < 2; attempt++) {
                 ToolResponse response = tool.call(args("demo", null));
@@ -86,7 +96,7 @@ class LoadSkillToolTest {
     @Test
     void initializationErrorResponseRedactsUrlCredentials() throws Exception {
         try (ResourceContextImpl ctx =
-                new ResourceContextImpl(
+                contextWithResources(
                         (name, type) ->
                                 new Skills(
                                         List.of(
@@ -202,7 +212,7 @@ class LoadSkillToolTest {
     @Test
     void noSkillsRegisteredReturnsFriendlyMessage() {
         // Empty resource context — no _skills_config registered.
-        ResourceContextImpl ctx = new ResourceContextImpl((name, type) -> null);
+        ResourceContextImpl ctx = contextWithResources((name, type) -> null);
         LoadSkillTool t = tool(ctx);
         ToolResponse resp = t.call(args("anything", null));
         assertTrue(resp.isError());

@@ -45,7 +45,7 @@ public abstract class Resource {
     public abstract ResourceType getResourceType();
 
     /**
-     * Get the {@link ResourceContext} bound to this resource at construction time.
+     * Get the {@link ResourceContext} bound to this resource.
      *
      * @return the bound resource context, or {@code null} if not bound
      */

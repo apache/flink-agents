@@ -18,6 +18,9 @@
 
 package org.apache.flink.agents.api.embedding.model;
 
+import org.apache.flink.agents.api.chat.messages.DataContentBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -25,6 +28,8 @@ import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * Abstraction of embedding model connection.
@@ -88,5 +93,24 @@ public abstract class BaseEmbeddingModelConnection extends Resource {
     public EmbeddingResult<List<float[]>> embedWithUsage(
             List<String> texts, Map<String, Object> parameters) {
         return new EmbeddingResult<>(embed(texts, parameters), null);
+    }
+
+    /**
+     * Generate one vector per supported data content block in input order, with token usage when
+     * available.
+     */
+    public EmbeddingResult<List<float[]>> embedBlocksWithUsage(
+            List<? extends DataContentBlock> blocks, Map<String, Object> parameters) {
+        List<String> texts = blocks.stream().map(this::requireText).collect(Collectors.toList());
+        return embedWithUsage(texts, parameters);
+    }
+
+    private String requireText(DataContentBlock block) {
+        Objects.requireNonNull(block, "embedding block");
+        if (block instanceof TextBlock) {
+            return ((TextBlock) block).getText();
+        }
+        throw UnsupportedContentBlockException.forBlock(
+                getClass().getSimpleName(), block, "the embedding model accepts only text");
     }
 }

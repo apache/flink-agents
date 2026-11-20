@@ -18,16 +18,29 @@
 
 package org.apache.flink.agents.api.embedding.model;
 
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /** Test cases for embedding results returned by model setups. */
 class BaseEmbeddingModelSetupEmbeddingResultTest {
@@ -110,5 +123,65 @@ class BaseEmbeddingModelSetupEmbeddingResultTest {
                 };
 
         assertArrayEquals(new float[] {0.1f, 0.2f}, setup.embed("hello"));
+    }
+
+    @Test
+    void testTextOnlyModelEmbedsTextBlocksInOrderWithUsage() throws Exception {
+        BaseEmbeddingModelConnection connection =
+                mock(BaseEmbeddingModelConnection.class, CALLS_REAL_METHODS);
+        EmbeddingResult<List<float[]>> providerResult =
+                new EmbeddingResult<>(
+                        List.of(new float[] {5.0f}, new float[] {4.0f}),
+                        new EmbeddingTokenUsage(7L, 9L));
+        doReturn(providerResult)
+                .when(connection)
+                .embedWithUsage(List.of("first", "next"), Map.of("dimension", 1));
+
+        EmbeddingResult<List<float[]>> result =
+                openTextSetup(connection)
+                        .embedBlocksWithUsage(
+                                List.of(new TextBlock("first"), new TextBlock("next")),
+                                Map.of("dimension", 1));
+
+        assertEquals(2, result.getEmbeddings().size());
+        assertArrayEquals(new float[] {5.0f}, result.getEmbeddings().get(0));
+        assertArrayEquals(new float[] {4.0f}, result.getEmbeddings().get(1));
+        assertEquals(9L, result.getTokenUsage().getTotalTokens());
+    }
+
+    @Test
+    void testTextOnlyModelRejectsMediaBeforeEmbeddingBatch() throws Exception {
+        BaseEmbeddingModelConnection connection =
+                mock(BaseEmbeddingModelConnection.class, CALLS_REAL_METHODS);
+        BaseEmbeddingModelSetup setup = openTextSetup(connection);
+
+        assertThrows(
+                UnsupportedContentBlockException.class,
+                () ->
+                        setup.embedBlocksWithUsage(
+                                List.of(
+                                        new TextBlock("caption"),
+                                        ImageBlock.fromBase64("image/png", "aGk="))));
+        verify(connection, never()).embedWithUsage(anyList(), anyMap());
+    }
+
+    private static BaseEmbeddingModelSetup openTextSetup(BaseEmbeddingModelConnection connection)
+            throws Exception {
+        ResourceContext context = mock(ResourceContext.class);
+        when(context.getResource("text_connection", ResourceType.EMBEDDING_MODEL_CONNECTION))
+                .thenReturn(connection);
+        BaseEmbeddingModelSetup setup =
+                new BaseEmbeddingModelSetup(
+                        new ResourceDescriptor(
+                                "test",
+                                Map.of("connection", "text_connection", "model", "text-model")),
+                        context) {
+                    @Override
+                    public Map<String, Object> getParameters() {
+                        return Map.of("dimension", 2);
+                    }
+                };
+        setup.open();
+        return setup;
     }
 }

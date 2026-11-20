@@ -34,6 +34,7 @@ import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -64,7 +65,7 @@ public class EmbeddingIntegrationAgent extends Agent {
             return ResourceDescriptor.Builder.newBuilder(
                             ResourceName.EmbeddingModel.OPENAI_CONNECTION)
                     .addInitialArgument("api_key", System.getenv().get("OPENAI_API_KEY"))
-                    .addInitialArgument("request_timeout", 60)
+                    .addInitialArgument("request_timeout", Duration.ofSeconds(60))
                     .build();
         } else {
             throw new RuntimeException(String.format("Unknown model provider %s", provider));

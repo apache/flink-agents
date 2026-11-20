@@ -50,6 +50,13 @@ class _JavaResourceAdapter:
         return self.result
 
 
+def test_callable_names_come_from_initialized_java_setup() -> None:
+    java_setup = Mock()
+    java_setup.getToolNames.return_value = ["search", "load_skill", "_subagent_review"]
+    wrapper = JavaChatModelSetup(java_setup, Mock(), tools=["stale"])
+    assert wrapper.get_tool_names() == ["search", "load_skill", "_subagent_review"]
+
+
 def test_to_java_chat_message_extracts_java_safe_fields() -> None:
     adapter = _JavaResourceAdapter()
     message = ChatMessage.assistant(

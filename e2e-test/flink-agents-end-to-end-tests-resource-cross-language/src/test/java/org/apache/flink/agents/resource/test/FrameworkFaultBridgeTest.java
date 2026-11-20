@@ -23,10 +23,13 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.function.PythonFunction;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
@@ -75,6 +78,21 @@ public class FrameworkFaultBridgeTest {
     private PythonInterpreterManager manager;
     private PythonInterpreter interpreter;
     private Path projectRoot;
+
+    /** Supplies model scope for directly emitted tool requests without a provider connection. */
+    public static class ToolRequestModel extends BaseChatModelSetup {
+        public ToolRequestModel(ResourceDescriptor descriptor, ResourceContext context) {
+            super(descriptor, context);
+        }
+
+        @Override
+        public void open() {}
+
+        @Override
+        public Map<String, Object> getParameters() {
+            return Map.of();
+        }
+    }
 
     @BeforeEach
     void open() {
@@ -128,6 +146,12 @@ public class FrameworkFaultBridgeTest {
                                 PythonFunction.of(FIXTURES, "child_action"),
                                 null);
         Agent parent = new Agent();
+        parent.addResource(
+                "model",
+                ResourceType.CHAT_MODEL,
+                ResourceDescriptor.Builder.newBuilder(ToolRequestModel.class.getName())
+                        .addInitialArgument("tools", List.of("_subagent_child"))
+                        .build());
         parent.addResource("child", ResourceType.AGENT, child);
         parent.addAction(
                 new String[] {InputEvent.EVENT_TYPE},

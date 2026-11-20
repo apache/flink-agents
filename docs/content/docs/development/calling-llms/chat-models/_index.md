@@ -89,8 +89,9 @@ for provider-specific settings and defaults.
 | `allowed_script_dirs` | Optional | Additional directories whose scripts the built-in `bash` tool may execute. Defaults to an empty list; the chat flow also includes the selected skills' directories. |
 | `structured_output_strategy` | Optional | How to apply a request's output schema: `AUTO` (default), `NATIVE`, or `PROMPT`. See [Structured Output]({{< ref "docs/development/calling-llms/structured-output#choose-a-strategy" >}}). |
 
-Enabling skills also adds their descriptions and the built-in `load_skill` and
-`bash` tools. Configure command permissions as described in the Skills chapter.
+Enabling skills also adds their descriptions and the built-in `load_skill` tool.
+To use the built-in `bash` tool, include `bash` in `tools`; no registration is needed.
+Configure command permissions as described in the Skills chapter.
 The selected model must support tool calling to use tools, skills, or sub-agents.
 
 ## Custom Providers

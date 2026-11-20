@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-from typing import Any, Dict, Sequence
+from typing import Any, Dict
 
 from ollama import Client
 from pydantic import Field
@@ -23,6 +23,8 @@ from pydantic import Field
 from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelConnection,
     BaseEmbeddingModelSetup,
+    EmbeddingContent,
+    _text_embedding_input,
 )
 
 DEFAULT_REQUEST_TIMEOUT = 30.0
@@ -78,9 +80,10 @@ class OllamaEmbeddingModelConnection(BaseEmbeddingModelConnection):
         return self.__client
 
     def embed(
-        self, text: str | Sequence[str], **kwargs: Any
+        self, content: EmbeddingContent, **kwargs: Any
     ) -> list[float] | list[list[float]]:
-        """Generate embedding vector for a single text query."""
+        """Generate vectors for one text input or an ordered batch."""
+        text = _text_embedding_input(content, "Ollama")
         # Extract specific parameters
         model = kwargs.pop("model")
         keep_alive = kwargs.pop("keep_alive", None)

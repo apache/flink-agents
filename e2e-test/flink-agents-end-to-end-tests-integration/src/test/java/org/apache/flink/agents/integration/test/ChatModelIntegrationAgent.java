@@ -39,6 +39,7 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 
@@ -100,7 +101,7 @@ public class ChatModelIntegrationAgent extends Agent {
             return ResourceDescriptor.Builder.newBuilder(
                             ResourceName.ChatModel.ANTHROPIC_CONNECTION)
                     .addInitialArgument("api_key", apiKey)
-                    .addInitialArgument("timeout", 240)
+                    .addInitialArgument("timeout", Duration.ofSeconds(240))
                     .build();
         } else {
             throw new RuntimeException(String.format("Unknown model provider %s", provider));

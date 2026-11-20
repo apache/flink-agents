@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from flink_agents.runtime.skill.repository._materialize import (
     Materialized,
@@ -37,6 +38,11 @@ from flink_agents.runtime.skill.repository.package_materializer import (
     materialize_package,
 )
 
+if TYPE_CHECKING:
+    from flink_agents.runtime.skill.repository._materialize import (
+        MaterializerLimits,
+    )
+
 
 class PackageSkillRepository(MaterializedSkillRepository):
     """Skill repository backed by a resource inside an installed Python package.
@@ -47,12 +53,15 @@ class PackageSkillRepository(MaterializedSkillRepository):
     the resulting owned directory without retaining package resource handles.
     """
 
-    def __init__(self, package: str, resource: str) -> None:
+    def __init__(
+        self, package: str, resource: str, *, limits: MaterializerLimits
+    ) -> None:
         """Open ``resource`` inside ``package``.
 
         Args:
             package: Dotted package name.
             resource: Path inside the package; directory or ``.zip``.
+            limits: Limits to enforce when extracting a ZIP resource.
 
         Raises:
             ValueError: If the resource is missing, or is neither a directory
@@ -64,7 +73,9 @@ class PackageSkillRepository(MaterializedSkillRepository):
             Path(tempfile.mkdtemp(prefix="flink-agents-skills-"))
         )
         try:
-            materialize_package(package, resource, str(materialization.dir))
+            materialize_package(
+                package, resource, str(materialization.dir), limits=limits
+            )
             super().__init__(materialization)
         except BaseException:
             materialization.close()

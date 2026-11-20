@@ -24,6 +24,7 @@ using ``get_gateway()`` here is intentional and separate from runtime import
 safety.
 """
 
+from datetime import timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -31,8 +32,6 @@ from typing import Any
 from py4j.java_collections import JavaList, JavaMap
 from py4j.java_gateway import JavaObject
 from py4j.protocol import Py4JJavaError
-from pyflink.java_gateway import get_gateway
-from pyflink.util.java_utils import add_jars_to_context_class_loader
 
 from flink_agents.api.configuration import ConfigOption
 from flink_agents.api.core_options import (
@@ -42,6 +41,7 @@ from flink_agents.api.core_options import (
     TraceLogLevel,
     TraceLogScope,
 )
+from flink_agents.api.skills import SkillOptions
 from flink_agents.api.trace_log import TraceLogTarget, _serialize_targets
 
 _JAVA_PRIMITIVE_TYPE_TO_PYTHON: dict[str, type] = {
@@ -51,6 +51,7 @@ _JAVA_PRIMITIVE_TYPE_TO_PYTHON: dict[str, type] = {
     "java.lang.Boolean": bool,
     "java.lang.Float": float,
     "java.lang.Double": float,
+    "java.time.Duration": timedelta,
     "java.util.List": list,
 }
 
@@ -113,20 +114,28 @@ def _normalize_java_collection(value: Any) -> Any:
 def normalize_java_default(
     java_default: Any, java_type_name: str, python_config_type: type
 ) -> Any:
-    """Convert a Java default value into a Python-comparable form."""
+    """Convert a Java default value into a Python-comparable form.
+
+    The caller has already checked that the Java and Python option types match.
+    A Python ``Enum`` subclass is converted from ``java_default.name()``.
+    """
     if java_default is None:
         return None
 
     if python_config_type is list:
         return [_normalize_java_collection(item) for item in java_default]
 
-    if hasattr(java_default, "name") and callable(java_default.name):
-        enum_name = java_default.name()
-        if isinstance(python_config_type, type) and issubclass(
-            python_config_type, Enum
-        ):
-            return python_config_type[enum_name]
-        return enum_name
+    # A negative Duration is a negative second count plus a non-negative
+    # nano-of-second; ``-1 ms`` is -1s + 999_000_000ns. timedelta normalizes
+    # that pair to the same value Python stores.
+    if java_type_name == "java.time.Duration":
+        return timedelta(
+            seconds=int(java_default.getSeconds()),
+            microseconds=int(java_default.getNano()) // 1000,
+        )
+
+    if isinstance(python_config_type, type) and issubclass(python_config_type, Enum):
+        return python_config_type[java_default.name()]
 
     if python_config_type is int and isinstance(java_default, int | float):
         return int(java_default)
@@ -314,6 +323,10 @@ def assert_trace_log_target_validation_matches_java(jvm: Any) -> None:
 
 
 def main() -> None:
+    # Deferred so unit tests can import the comparer without a PyFlink gateway.
+    from pyflink.java_gateway import get_gateway
+    from pyflink.util.java_utils import add_jars_to_context_class_loader
+
     current_dir = Path(__file__).parent
 
     jars = Path(current_dir).glob("../../../../../api/target/flink-agents-api-*.jar")
@@ -331,6 +344,9 @@ def main() -> None:
     java_memory_event_options = class_loader.loadClass(
         "org.apache.flink.agents.api.configuration.MemoryEventOptions"
     )
+    java_skill_options = class_loader.loadClass(
+        "org.apache.flink.agents.api.skills.SkillOptions"
+    )
 
     assert_options_class_matches_java(
         AgentConfigOptions, java_agent_config_options, jvm
@@ -341,6 +357,7 @@ def main() -> None:
     assert_options_class_matches_java(
         MemoryEventOptions, java_memory_event_options, jvm
     )
+    assert_options_class_matches_java(SkillOptions, java_skill_options, jvm)
     assert_trace_log_target_factories_match_java(jvm)
     assert_trace_log_target_validation_matches_java(jvm)
     for python_enum in (TraceLogLevel, TraceLogScope):

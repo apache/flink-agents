@@ -17,6 +17,8 @@
  */
 package org.apache.flink.agents.plan.resource.python;
 
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -36,7 +38,6 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -101,7 +102,12 @@ public class PythonEmbeddingModelSetupTest {
 
         List<Double> pythonResult = Arrays.asList(0.1, 0.2, 0.3, 0.4);
 
-        when(mockAdapter.callMethod(eq(mockEmbeddingModelSetup), eq("embed"), any(Map.class)))
+        when(mockAdapter.invoke(
+                        eq("python_java_utils.call_embedding"),
+                        eq(mockEmbeddingModelSetup),
+                        eq("embed"),
+                        any(),
+                        any(Map.class)))
                 .thenReturn(pythonResult);
 
         float[] result = pythonEmbeddingModelSetup.embed(text, parameters);
@@ -114,17 +120,12 @@ public class PythonEmbeddingModelSetupTest {
         assertThat(result[3]).isEqualTo(0.4f, org.assertj.core.data.Offset.offset(0.0001f));
 
         verify(mockAdapter)
-                .callMethod(
-                        eq(mockEmbeddingModelSetup),
-                        eq("embed"),
-                        argThat(
-                                kwargs -> {
-                                    assertThat(kwargs).containsKey("text");
-                                    assertThat(kwargs).containsKey("temperature");
-                                    assertThat(kwargs.get("text")).isEqualTo(text);
-                                    assertThat(kwargs.get("temperature")).isEqualTo(0.5);
-                                    return true;
-                                }));
+                .invoke(
+                        "python_java_utils.call_embedding",
+                        mockEmbeddingModelSetup,
+                        "embed",
+                        text,
+                        parameters);
     }
 
     @Test
@@ -134,7 +135,12 @@ public class PythonEmbeddingModelSetupTest {
 
         List<Double> pythonResult = Arrays.asList(1.0, 2.0);
 
-        when(mockAdapter.callMethod(eq(mockEmbeddingModelSetup), eq("embed"), any(Map.class)))
+        when(mockAdapter.invoke(
+                        eq("python_java_utils.call_embedding"),
+                        eq(mockEmbeddingModelSetup),
+                        eq("embed"),
+                        any(),
+                        any(Map.class)))
                 .thenReturn(pythonResult);
 
         float[] result = pythonEmbeddingModelSetup.embed(text, parameters);
@@ -148,8 +154,10 @@ public class PythonEmbeddingModelSetupTest {
         String text = "test text";
         Map<String, Object> parameters = Map.of("model", "test-model");
         when(mockAdapter.invoke(
-                        eq("python_java_utils.call_embedding_with_usage"),
+                        eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModelSetup),
+                        eq("embed_with_usage"),
+                        eq(text),
                         any(Map.class)))
                 .thenReturn(
                         Map.of(
@@ -167,15 +175,56 @@ public class PythonEmbeddingModelSetupTest {
         assertThat(result.getTokenUsage().getTotalTokens()).isEqualTo(9L);
         verify(mockAdapter)
                 .invoke(
-                        eq("python_java_utils.call_embedding_with_usage"),
+                        "python_java_utils.call_embedding",
+                        mockEmbeddingModelSetup,
+                        "embed_with_usage",
+                        text,
+                        parameters);
+    }
+
+    @Test
+    void testPythonSetupReturnsOrderedBlockEmbeddingsAndUsage() {
+        when(mockAdapter.invoke("python_java_utils.get_model_name", mockEmbeddingModelSetup))
+                .thenReturn("default-multimodal-model");
+        pythonEmbeddingModelSetup.open();
+        Map<String, Object> parameters = Map.of("dimension", 2);
+        when(mockAdapter.invoke(
+                        eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModelSetup),
-                        argThat(
-                                kwargs -> {
-                                    Map<String, Object> values = (Map<String, Object>) kwargs;
-                                    assertThat(values).containsEntry("text", text);
-                                    assertThat(values).containsEntry("model", "test-model");
-                                    return true;
-                                }));
+                        eq("embed_with_usage"),
+                        any(),
+                        eq(parameters)))
+                .thenAnswer(
+                        invocation -> {
+                            List<?> blocks = invocation.getArgument(3);
+                            assertThat(blocks).hasSize(2);
+                            Map<?, ?> text = (Map<?, ?>) blocks.get(0);
+                            assertThat(text.get("type")).isEqualTo("text");
+                            assertThat(text.get("text")).isEqualTo("caption");
+                            Map<?, ?> image = (Map<?, ?>) blocks.get(1);
+                            assertThat(image.get("type")).isEqualTo("image");
+                            assertThat(image.get("media_type")).isEqualTo("image/png");
+                            assertThat(image.get("source"))
+                                    .isEqualTo(Map.of("type", "base64", "data", "aGk="));
+                            return Map.of(
+                                    "embeddings",
+                                    List.of(List.of(0.1, 0.2), List.of(0.3, 0.4)),
+                                    "token_usage",
+                                    Map.of("prompt_tokens", 7, "total_tokens", 9));
+                        });
+
+        EmbeddingResult<List<float[]>> result =
+                pythonEmbeddingModelSetup.embedBlocksWithUsage(
+                        List.of(
+                                new TextBlock("caption"),
+                                ImageBlock.fromBase64("image/png", "aGk=")),
+                        parameters);
+
+        assertThat(pythonEmbeddingModelSetup.getModel()).isEqualTo("default-multimodal-model");
+        assertThat(result.getEmbeddings()).hasSize(2);
+        assertThat(result.getEmbeddings().get(0)).containsExactly(0.1f, 0.2f);
+        assertThat(result.getEmbeddings().get(1)).containsExactly(0.3f, 0.4f);
+        assertThat(result.getTokenUsage().getTotalTokens()).isEqualTo(9L);
     }
 
     @Test
@@ -197,7 +246,12 @@ public class PythonEmbeddingModelSetupTest {
         String text = "test text";
         Map<String, Object> parameters = new HashMap<>();
 
-        when(mockAdapter.callMethod(eq(mockEmbeddingModelSetup), eq("embed"), any(Map.class)))
+        when(mockAdapter.invoke(
+                        eq("python_java_utils.call_embedding"),
+                        eq(mockEmbeddingModelSetup),
+                        eq("embed"),
+                        any(),
+                        any(Map.class)))
                 .thenReturn("invalid result");
 
         assertThatThrownBy(() -> pythonEmbeddingModelSetup.embed(text, parameters))
@@ -217,7 +271,12 @@ public class PythonEmbeddingModelSetupTest {
         pythonResult.add(Arrays.asList(0.3, 0.4));
         pythonResult.add(Arrays.asList(0.5, 0.6));
 
-        when(mockAdapter.callMethod(eq(mockEmbeddingModelSetup), eq("embed"), any(Map.class)))
+        when(mockAdapter.invoke(
+                        eq("python_java_utils.call_embedding"),
+                        eq(mockEmbeddingModelSetup),
+                        eq("embed"),
+                        any(),
+                        any(Map.class)))
                 .thenReturn(pythonResult);
 
         List<float[]> result = pythonEmbeddingModelSetup.embed(texts, parameters);
@@ -230,17 +289,12 @@ public class PythonEmbeddingModelSetupTest {
         assertThat(result.get(2)[0]).isEqualTo(0.5f, org.assertj.core.data.Offset.offset(0.0001f));
 
         verify(mockAdapter)
-                .callMethod(
-                        eq(mockEmbeddingModelSetup),
-                        eq("embed"),
-                        argThat(
-                                kwargs -> {
-                                    assertThat(kwargs).containsKey("text");
-                                    assertThat(kwargs).containsKey("batch_size");
-                                    assertThat(kwargs.get("text")).isEqualTo(texts);
-                                    assertThat(kwargs.get("batch_size")).isEqualTo(3);
-                                    return true;
-                                }));
+                .invoke(
+                        "python_java_utils.call_embedding",
+                        mockEmbeddingModelSetup,
+                        "embed",
+                        texts,
+                        parameters);
     }
 
     @Test
@@ -262,7 +316,12 @@ public class PythonEmbeddingModelSetupTest {
         List<String> texts = Arrays.asList("text1", "text2");
         Map<String, Object> parameters = new HashMap<>();
 
-        when(mockAdapter.callMethod(eq(mockEmbeddingModelSetup), eq("embed"), any(Map.class)))
+        when(mockAdapter.invoke(
+                        eq("python_java_utils.call_embedding"),
+                        eq(mockEmbeddingModelSetup),
+                        eq("embed"),
+                        any(),
+                        any(Map.class)))
                 .thenReturn("invalid result");
 
         assertThatThrownBy(() -> pythonEmbeddingModelSetup.embed(texts, parameters))
@@ -280,7 +339,12 @@ public class PythonEmbeddingModelSetupTest {
         pythonResult.add(Arrays.asList(0.1, 0.2));
         pythonResult.add("invalid element");
 
-        when(mockAdapter.callMethod(eq(mockEmbeddingModelSetup), eq("embed"), any(Map.class)))
+        when(mockAdapter.invoke(
+                        eq("python_java_utils.call_embedding"),
+                        eq(mockEmbeddingModelSetup),
+                        eq("embed"),
+                        any(),
+                        any(Map.class)))
                 .thenReturn(pythonResult);
 
         assertThatThrownBy(() -> pythonEmbeddingModelSetup.embed(texts, parameters))

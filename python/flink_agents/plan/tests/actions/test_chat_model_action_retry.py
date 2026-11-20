@@ -19,6 +19,7 @@
 
 import asyncio
 import time
+from datetime import timedelta
 from typing import Any, Callable, Sequence
 from unittest.mock import ANY, MagicMock, call
 from uuid import uuid4
@@ -55,6 +56,7 @@ from flink_agents.plan.actions.chat_model_action import (
 )
 
 _LLM_METADATA = {LLMExecutionMetadataKeys.MODEL: "configured-model"}
+
 
 # ============================================================================
 # Mock infrastructure
@@ -150,6 +152,7 @@ def _create_mock_runner_context(
     retry_wait_interval_sec: int = 1,
     *,
     chat_async: bool = False,
+    retry_wait: timedelta | None = None,
 ) -> tuple[MagicMock, list, _MockMetricGroup, _MockMemoryObject]:
     """Create a mock RunnerContext with configurable retry settings.
 
@@ -168,7 +171,11 @@ def _create_mock_runner_context(
     config = MagicMock()
     option_values = {
         id(AgentExecutionOptions.MAX_RETRIES): max_retries,
-        id(AgentExecutionOptions.RETRY_WAIT_INTERVAL): retry_wait_interval_sec,
+        id(AgentExecutionOptions.RETRY_WAIT_INTERVAL): (
+            retry_wait
+            if retry_wait is not None
+            else timedelta(seconds=retry_wait_interval_sec)
+        ),
         id(AgentExecutionOptions.CHAT_ASYNC): chat_async,
     }
     config.get = MagicMock(
@@ -285,7 +292,7 @@ class TestChatModelActionRetry:
         assert events[0].error == "ValueError: unknown model"
 
     def test_chat_succeeds_without_retry(self) -> None:
-        """No retry needed: retry_count=0, total_retry_wait_sec=0, no metrics."""
+        """No retry needed: retry_count=0, total_retry_wait_ms=0, no metrics."""
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
             return_value=_response_fixture(MessageRole.ASSISTANT, "hello")
@@ -309,7 +316,7 @@ class TestChatModelActionRetry:
         event = sent_events[0]
         assert isinstance(event, ChatResponseEvent)
         assert event.retry_count == 0
-        assert event.total_retry_wait_sec == 0
+        assert event.total_retry_wait_ms == 0
 
         # No retry metrics should be recorded
         assert len(metric_group._sub_groups) == 0
@@ -477,8 +484,8 @@ class TestChatModelActionRetry:
         event = sent_events[0]
         assert isinstance(event, ChatResponseEvent)
         assert event.retry_count == 1
-        # 1s config. Exponential: 1s (2^0) = 1s total
-        assert event.total_retry_wait_sec == 1
+        # 1s interval, one retry: 1000 ms, not a truncated second count.
+        assert event.total_retry_wait_ms == 1000
         assert elapsed >= 1.0
 
         # Retry health belongs to the ChatModel resource.
@@ -486,7 +493,58 @@ class TestChatModelActionRetry:
             "model_resource", "test-model"
         )
         assert model_resource_group.get_counter("retryCount").get_count() == 1
-        assert model_resource_group.get_counter("retryWaitSec").get_count() == 1
+        assert model_resource_group.get_counter("retryWaitMs").get_count() == 1000
+
+    @pytest.mark.parametrize(
+        ("micros", "millis"),
+        [(100000, 100), (1500, 1), (500, 0), (-1500, 0), (0, 0)],
+    )
+    def test_chat_retry_wait_matches_recorded_milliseconds(
+        self, monkeypatch, micros, millis
+    ) -> None:
+        sleep = MagicMock()
+        monkeypatch.setattr(
+            "flink_agents.plan.actions.chat_model_action.time.sleep", sleep
+        )
+        call_count = 0
+
+        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                err_msg = "transient error"
+                raise RuntimeError(err_msg)
+            return _response_fixture(MessageRole.ASSISTANT, "success")
+
+        chat_model = MagicMock()
+        chat_model.chat = mock_chat
+        ctx, sent_events, metric_group, _ = _create_mock_runner_context(
+            chat_model, max_retries=1, retry_wait=timedelta(microseconds=micros)
+        )
+        asyncio.run(
+            chat(
+                uuid4(),
+                "test-model",
+                [ChatMessage.of(MessageRole.USER, "hi")],
+                {},
+                None,
+                ctx,
+            )
+        )
+
+        event = sent_events[0]
+        assert isinstance(event, ChatResponseEvent)
+        assert event.retry_count == 1
+        assert event.total_retry_wait_ms == millis
+        if millis:
+            sleep.assert_called_once_with(millis / 1000)
+        else:
+            sleep.assert_not_called()
+        model_resource_group = metric_group.get_sub_group(
+            "model_resource", "test-model"
+        )
+        assert model_resource_group.get_counter("retryCount").get_count() == 1
+        assert model_resource_group.get_counter("retryWaitMs").get_count() == millis
         _assert_report_identities(ctx)
         assert ctx.report_execution_started.call_count == 2
         ctx.report_execution_failed.assert_called_once()
@@ -538,7 +596,7 @@ class TestChatModelActionRetry:
             "model_resource", "test-model"
         )
         assert model_resource_group.get_counter("retryCount").get_count() == 2
-        assert model_resource_group.get_counter("retryWaitSec").get_count() == 0
+        assert model_resource_group.get_counter("retryWaitMs").get_count() == 0
 
     @pytest.mark.parametrize("asynchronous", [False, True])
     def test_structured_output_parse_error_retries_without_failing_llm(
@@ -835,13 +893,13 @@ class TestChatResponseEventRetryFields:
     """Tests for ChatResponseEvent retry fields."""
 
     def test_default_retry_fields(self) -> None:
-        """Default construction has retry_count=0, total_retry_wait_sec=0."""
+        """Default construction has retry_count=0, total_retry_wait_ms=0."""
         event = ChatResponseEvent.success(
             request_id=uuid4(),
             response=_response_fixture(MessageRole.ASSISTANT, "test"),
         )
         assert event.retry_count == 0
-        assert event.total_retry_wait_sec == 0
+        assert event.total_retry_wait_ms == 0
 
     def test_with_retry_fields(self) -> None:
         """Full construction carries retry info."""
@@ -849,10 +907,10 @@ class TestChatResponseEventRetryFields:
             request_id=uuid4(),
             response=_response_fixture(MessageRole.ASSISTANT, "test"),
             retry_count=5,
-            total_retry_wait_sec=31,
+            total_retry_wait_ms=31,
         )
         assert event.retry_count == 5
-        assert event.total_retry_wait_sec == 31
+        assert event.total_retry_wait_ms == 31
 
 
 class TestRetryWaitIntervalConfig:
@@ -860,7 +918,10 @@ class TestRetryWaitIntervalConfig:
 
     def test_default_value(self) -> None:
         """Default value is 1 second."""
-        assert AgentExecutionOptions.RETRY_WAIT_INTERVAL.get_default_value() == 1
+        assert (
+            AgentExecutionOptions.RETRY_WAIT_INTERVAL.get_default_value()
+            == timedelta(seconds=1)
+        )
 
 
 class TestProcessToolResponsePromptArgsForwarding:
@@ -1387,10 +1448,17 @@ def test_candidate_attempt_exhausts_retries_without_emitting_failure(chat_async)
     )
     request_id = uuid4()
     with pytest.raises(_ChatAttemptFailed) as caught:
-        asyncio.run(_chat_with_retries(
-            request_id, "candidate", [ChatMessage.user("hello")], None, None,
-            ctx, durable_id="chat:router:candidate",
-        ))
+        asyncio.run(
+            _chat_with_retries(
+                request_id,
+                "candidate",
+                [ChatMessage.user("hello")],
+                None,
+                None,
+                ctx,
+                durable_id="chat:router:candidate",
+            )
+        )
     assert str(caught.value.error) == "RuntimeError: candidate unavailable"
     assert caught.value.__cause__ is caught.value.error
     assert events == []
@@ -1400,19 +1468,31 @@ def test_candidate_attempt_exhausts_retries_without_emitting_failure(chat_async)
         "chat:router:candidate"
     ] * 3
     assert memory.get("_RETRY_STATS_CONTEXT")[str(request_id)]["total_retry_count"] == 2
-    assert metrics.get_sub_group("model_resource", "candidate").get_counter("retryCount").get_count() == 2
+    assert (
+        metrics.get_sub_group("model_resource", "candidate")
+        .get_counter("retryCount")
+        .get_count()
+        == 2
+    )
 
 
 def test_candidate_native_finalization_uses_attempt_identity():
     model = _native_chat_model()
     ctx, events, _, _ = _native_context(model)
-    result = asyncio.run(_chat_with_retries(
-        uuid4(), "candidate", [ChatMessage.user("hello")], None,
-        OutputSchema(output_schema=_StructuredResult), ctx,
-        durable_id="chat:router:candidate",
-    ))
+    result = asyncio.run(
+        _chat_with_retries(
+            uuid4(),
+            "candidate",
+            [ChatMessage.user("hello")],
+            None,
+            OutputSchema(output_schema=_StructuredResult),
+            ctx,
+            durable_id="chat:router:candidate",
+        )
+    )
     assert result.structured_output is not None
     assert events == []
     assert [c.kwargs["durable_id"] for c in ctx.durable_execute.call_args_list] == [
-        "chat:router:candidate", "chat:router:candidate:final"
+        "chat:router:candidate",
+        "chat:router:candidate:final",
     ]

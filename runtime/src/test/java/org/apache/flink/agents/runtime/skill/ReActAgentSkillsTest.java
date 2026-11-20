@@ -30,8 +30,11 @@ import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.tools.bash.BashTool;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -44,8 +47,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Skills passed to the {@link ReActAgent} constructor must reach its chat model along the path a
  * job takes: {@link AgentPlan} registers the providers and {@link ResourceCache} builds and opens
  * the setup. Checking the agent's descriptor alone would not show that the setup discovers the
- * skills, exposes {@code load_skill} and {@code bash}, or grants the skill directories to {@code
- * bash}.
+ * skills and exposes {@code load_skill} without enabling {@code bash}.
  */
 class ReActAgentSkillsTest {
 
@@ -92,7 +94,7 @@ class ReActAgentSkillsTest {
                     .doesNotContain("<name>nano-banana-pro</name>");
             assertThat(setup.getTools())
                     .extracting(Tool::getName)
-                    .containsExactly(Skills.LOAD_SKILL_TOOL, Skills.BASH_TOOL);
+                    .containsExactly(Skills.LOAD_SKILL_TOOL);
             Object loaded =
                     toolNamed(setup, Skills.LOAD_SKILL_TOOL)
                             .call(new ToolParameters(Map.of("name", "github")))
@@ -131,7 +133,7 @@ class ReActAgentSkillsTest {
 
     @Test
     void emptyConstructorSkillsLeaveTheChatModelWithoutSkills() throws Exception {
-        // Skill sources are registered, so load_skill and bash exist in the plan; the chat model
+        // Skill sources are registered, so load_skill exists in the plan; the chat model
         // must still not pick them up when no skill is named.
         ReActAgent agent = new ReActAgent(chatModel().build(), null, null, List.of());
 
@@ -141,6 +143,40 @@ class ReActAgentSkillsTest {
             assertThat(setup.getSkills()).isNull();
             assertThat(setup.getSkillDiscoveryPrompt()).isNull();
             assertThat(setup.getTools()).isEmpty();
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void builtinBashRequiresExplicitModelToolConfiguration(boolean enabled, boolean withSkills)
+            throws Exception {
+        ResourceDescriptor descriptor =
+                chatModel()
+                        .addInitialArgument(
+                                "tools", enabled ? List.of(Skills.BASH_TOOL) : List.of())
+                        .build();
+        ReActAgent agent =
+                new ReActAgent(descriptor, null, null, withSkills ? List.of("github") : List.of());
+
+        try (ResourceCache cache =
+                withSkills ? cacheFor(agent) : cacheForSkillsObjectAgent(agent)) {
+            BaseChatModelSetup setup = openChatModel(cache);
+            assertThat(setup.getToolNames().contains(Skills.BASH_TOOL)).isEqualTo(enabled);
+            assertThat(setup.getToolNames().contains(Skills.LOAD_SKILL_TOOL)).isEqualTo(withSkills);
+            if (enabled) {
+                assertThat(toolNamed(setup, Skills.BASH_TOOL)).isInstanceOf(BashTool.class);
+                assertThat(
+                                toolNamed(setup, Skills.BASH_TOOL)
+                                        .call(
+                                                new ToolParameters(
+                                                        Map.of(
+                                                                "command",
+                                                                "echo enabled",
+                                                                "allowed_commands",
+                                                                List.of("echo"))))
+                                        .getText())
+                        .isEqualTo("enabled");
+            }
         }
     }
 
@@ -182,7 +218,7 @@ class ReActAgentSkillsTest {
                     .contains("<name>github</name>", "<name>nano-banana-pro</name>");
             assertThat(setup.getTools())
                     .extracting(Tool::getName)
-                    .containsExactly(Skills.LOAD_SKILL_TOOL, Skills.BASH_TOOL);
+                    .containsExactly(Skills.LOAD_SKILL_TOOL);
         }
     }
 

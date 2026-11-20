@@ -168,6 +168,7 @@ public class SkillsIntegrationTest {
                                 ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP)
                         .addInitialArgument("connection", "openai")
                         .addInitialArgument("model", SkillsIntegrationAgent.MODEL)
+                        .addInitialArgument("tools", List.of("bash"))
                         .addInitialArgument("allowed_commands", List.of("echo", "bc"))
                         .build();
 

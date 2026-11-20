@@ -178,6 +178,10 @@ class JavaChatModelSetup(BaseChatModelSetup):
         self.skills = list(resolved) if resolved else None
 
     @override
+    def get_tool_names(self) -> list[str]:
+        return list(self._j_resource.getToolNames())
+
+    @override
     def chat(
         self,
         messages: Sequence[ChatMessage],

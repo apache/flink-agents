@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api.embedding.model;
 
+import org.apache.flink.agents.api.chat.messages.DataContentBlock;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -28,6 +29,7 @@ import org.apache.flink.util.Preconditions;
 import javax.annotation.Nullable;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -147,5 +149,19 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
         params.putAll(parameters);
         BaseEmbeddingModelConnection currentConnection = getConnection();
         return currentConnection.embedWithUsage(texts, params);
+    }
+
+    /** Generate one vector per block in input order, with token usage when available. */
+    public EmbeddingResult<List<float[]>> embedBlocksWithUsage(
+            List<? extends DataContentBlock> blocks) {
+        return embedBlocksWithUsage(blocks, Collections.emptyMap());
+    }
+
+    /** Generate embeddings for the blocks using the supplied parameter overrides. */
+    public EmbeddingResult<List<float[]>> embedBlocksWithUsage(
+            List<? extends DataContentBlock> blocks, Map<String, Object> parameters) {
+        Map<String, Object> merged = new HashMap<>(getParameters());
+        merged.putAll(parameters);
+        return getConnection().embedBlocksWithUsage(blocks, merged);
     }
 }

@@ -28,8 +28,10 @@ from typing_extensions import override
 from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelConnection,
     BaseEmbeddingModelSetup,
+    EmbeddingContent,
     EmbeddingResult,
     EmbeddingTokenUsage,
+    _text_embedding_input,
 )
 
 DEFAULT_REQUEST_TIMEOUT = 30.0
@@ -312,13 +314,13 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
         return self.__client
 
     def embed(
-        self, text: str | Sequence[str], **kwargs: Any
+        self, content: EmbeddingContent, **kwargs: Any
     ) -> list[float] | list[list[float]]:
-        """Generate embedding vector for a single text query."""
-        return self.embed_with_usage(text, **kwargs).embeddings
+        """Generate vectors for one text input or an ordered batch."""
+        return self.embed_with_usage(content, **kwargs).embeddings
 
     def embed_with_usage(
-        self, text: str | Sequence[str], **kwargs: Any
+        self, content: EmbeddingContent, **kwargs: Any
     ) -> EmbeddingResult[list[float] | list[list[float]]]:
         """Generate embeddings and return OpenAI token usage when available.
 
@@ -329,6 +331,7 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
         keyword arguments are ignored, as in the Java connection. Vectors are
         returned in input order and ``base64`` responses are decoded.
         """
+        text = _text_embedding_input(content, "OpenAI")
         # Extract OpenAI specific parameters
         model = _check_model(kwargs.pop("model", None))
         encoding_format = _check_encoding_format(kwargs.pop("encoding_format", None))

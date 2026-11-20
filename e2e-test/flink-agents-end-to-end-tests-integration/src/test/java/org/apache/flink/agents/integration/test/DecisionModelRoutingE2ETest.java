@@ -28,6 +28,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -68,7 +69,9 @@ public class DecisionModelRoutingE2ETest {
                 runJob(
                         agentsEnv -> {
                             agentsEnv.getConfig().set(AgentExecutionOptions.MAX_RETRIES, 1);
-                            agentsEnv.getConfig().set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, 0);
+                            agentsEnv
+                                    .getConfig()
+                                    .set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, Duration.ZERO);
                         },
                         "hello there",
                         "Write SQL to list active users",

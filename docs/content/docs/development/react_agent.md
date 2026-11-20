@@ -371,7 +371,7 @@ ReActAgent myReActAgent =
 
 Skills passed to the constructor are combined with those configured on the chat model descriptor, with duplicate names included only once. Referenced skills must be declared on the agent or its execution environment.
 
-Configure `allowed_commands` on the chat model descriptor to control which commands the built-in `bash` tool may execute.
+To use the built-in `bash` tool, include `bash` in the chat model descriptor's `tools` list; no registration is needed. Configure `allowed_commands` to control which commands it may execute.
 
 **Skill sources.** Alternatively, pass a `Skills` object directly to the constructor. The constructor registers the sources on the agent, so no separate registration on the execution environment is required:
 

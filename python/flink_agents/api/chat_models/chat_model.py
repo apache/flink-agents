@@ -34,7 +34,7 @@ from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
-from flink_agents.api.skills import BASH_TOOL, LOAD_SKILL_TOOL, SkillSourceSpec
+from flink_agents.api.skills import LOAD_SKILL_TOOL, SkillSourceSpec
 from flink_agents.api.subagent import CALLABLE_NAME_PREFIX, SubagentSetup
 from flink_agents.api.tools.tool import Tool
 
@@ -529,11 +529,9 @@ class BaseChatModelSetup(Resource):
         declared_names = [
             entry if isinstance(entry, str) else entry.name for entry in declared
         ]
-        if self.skills is not None:
-            for skill_tool in (LOAD_SKILL_TOOL, BASH_TOOL):
-                if skill_tool not in declared_names:
-                    declared.append(skill_tool)
-                    declared_names.append(skill_tool)
+        if self.skills is not None and LOAD_SKILL_TOOL not in declared_names:
+            declared.append(LOAD_SKILL_TOOL)
+            declared_names.append(LOAD_SKILL_TOOL)
 
         callables: List[Tool] = []
         callable_names: set[str] = set()
@@ -716,11 +714,12 @@ class BaseChatModelSetup(Resource):
         Raises:
             TypeError: If the schema is not ``None`` and ``open()`` has not resolved
                 the connection.
-            ValueError: If the strategy is ``NATIVE`` and the connection cannot apply
-                this schema to such a request.
+            ValueError: If the setup rejects structured output, or the strategy is
+                ``NATIVE`` and the connection cannot apply this schema.
         """
         if output_schema is None:
             return False
+        self._validate_structured_output_request()
         connection = self._resolved_connection
         if connection is None:
             msg = (
@@ -746,6 +745,9 @@ class BaseChatModelSetup(Resource):
             )
             raise ValueError(msg)
         return self.structured_output_strategy.resolves_to_native(support)
+
+    def _validate_structured_output_request(self) -> None:
+        """Reject requests with an output schema if the setup cannot serve them."""
 
     def _record_token_metrics(
         self,
@@ -796,3 +798,7 @@ class BaseChatModelSetup(Resource):
                 err_msg = f"Expect Tool, but is {tool.__class__.__name__}"
                 raise TypeError(err_msg)
         return self.tools
+
+    def get_tool_names(self) -> list[str]:
+        """Return tool names exposed by this opened setup, including sub-agent calls."""
+        return [tool.name for tool in self._get_tools()]

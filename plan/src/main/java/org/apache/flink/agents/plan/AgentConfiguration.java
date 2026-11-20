@@ -20,9 +20,11 @@ package org.apache.flink.agents.plan;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.apache.flink.agents.api.configuration.Configuration;
+import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.api.logger.TraceLogTarget;
 import org.apache.flink.configuration.ConfigurationUtils;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,7 +44,10 @@ public class AgentConfiguration implements Configuration {
      * retained as option values; YAML key expansion belongs to the configuration loader.
      */
     public AgentConfiguration(Map<String, Object> confData) {
-        this.confData = new HashMap<>(confData);
+        this.confData = new HashMap<>();
+        for (Map.Entry<String, Object> entry : confData.entrySet()) {
+            this.confData.put(entry.getKey(), normalizeDurationValue(entry.getValue()));
+        }
         String targetsKey = AgentConfigOptions.TRACE_LOG_TARGETS.getKey();
         if (this.confData.containsKey(targetsKey)) {
             this.confData.put(targetsKey, traceLogTargetConfig(this.confData.get(targetsKey)));
@@ -90,6 +95,16 @@ public class AgentConfiguration implements Configuration {
             return;
         }
         if (value == null && option.getDefaultValue() != null) {
+            return;
+        }
+        if (Duration.class.equals(option.getType())) {
+            final Duration parsed;
+            try {
+                parsed = DurationUtils.parse(value);
+            } catch (IllegalArgumentException e) {
+                throw invalidDuration(option.getKey(), e);
+            }
+            confData.put(option.getKey(), DurationUtils.format(parsed));
             return;
         }
         confData.put(option.getKey(), value);
@@ -155,7 +170,17 @@ public class AgentConfiguration implements Configuration {
 
         Class<T> targetType = option.getType();
 
-        if (targetType.isAssignableFrom(rawValue.getClass())) {
+        // Strings and Duration objects share parse(), including microsecond alignment.
+        // Retry-wait and short-term memory TTL rules are applied at job submission.
+        if (Duration.class.equals(targetType)) {
+            final Duration parsed;
+            try {
+                parsed = DurationUtils.parse(rawValue);
+            } catch (IllegalArgumentException e) {
+                throw invalidDuration(option.getKey(), e);
+            }
+            return targetType.cast(parsed);
+        } else if (targetType.isAssignableFrom(rawValue.getClass())) {
             return targetType.cast(rawValue);
         } else if (String.class.equals(targetType)) {
             return targetType.cast(rawValue.toString());
@@ -178,6 +203,19 @@ public class AgentConfiguration implements Configuration {
                             + " to "
                             + targetType.getName());
         }
+    }
+
+    private static Object normalizeDurationValue(Object value) {
+        if (value instanceof Duration) {
+            return DurationUtils.format(DurationUtils.parse(value));
+        }
+        return value;
+    }
+
+    private static IllegalArgumentException invalidDuration(
+            String key, IllegalArgumentException cause) {
+        return new IllegalArgumentException(
+                "Invalid duration for '" + key + "': " + cause.getMessage(), cause);
     }
 
     private static List<Map<String, Object>> traceLogTargetConfig(Object value) {

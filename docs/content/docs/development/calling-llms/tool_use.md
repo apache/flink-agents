@@ -40,6 +40,9 @@ for registration methods and scopes. The examples below show declarations on an
 Agent and registration on the execution environment for sharing across Agents.
 In either case, reference the registered tool name in the chat model setup's `tools` list.
 
+A model cannot call tools or sub-agents that are not enabled in its configuration,
+even if they are registered in the Agent.
+
 The following snippets show the tool declaration and registration parts of a job.
 They assume an Ollama connection has been registered using the
 [Programmatic API]({{< ref "docs/development/create-agent/resources#programmatic-api" >}}),
@@ -424,8 +427,10 @@ on another's result, request it in a later step instead of the same batch.
 
 ### Timeouts and external effects
 
-`async.batch.timeout.ms` sets an overall timeout for a parallel batch of ordinary
-tool calls. Its default is `-1`; non-positive values disable it. When it expires,
+`async.batch.timeout` sets an overall timeout for a parallel batch of ordinary
+tool calls. Its default is `-1 ms`; a zero or negative duration disables it.
+Effective precision is 1 µs on Java and Python: the deadline uses the full
+duration and is not truncated to milliseconds. When it expires,
 completed calls keep their results and unfinished calls are reported to the model
 as failed tool calls.
 

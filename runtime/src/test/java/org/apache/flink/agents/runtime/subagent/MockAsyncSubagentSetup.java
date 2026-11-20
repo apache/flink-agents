@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.subagent.SubagentResult;
 
 import javax.annotation.Nullable;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -91,7 +92,7 @@ public class MockAsyncSubagentSetup extends BaseAsyncSubagentSetup {
                         // Runs turn terminal after a fixed number of probes rather than after
                         // elapsed time, so probing without a delay keeps the counts identical and
                         // the tests fast.
-                        .addInitialArgument(FIELD_STATUS_POLL_INTERVAL_MILLIS, 0L)
+                        .addInitialArgument(FIELD_STATUS_POLL_INTERVAL, Duration.ZERO)
                         .build(),
                 null);
     }

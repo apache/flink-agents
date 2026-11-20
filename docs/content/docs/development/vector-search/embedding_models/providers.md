@@ -69,6 +69,31 @@ class MyAgent(Agent):
         )
 ```
 
+#### Multimodal Embeddings
+
+Set `api_type="multimodal"` and omit `text_type`. Choose a compatible
+multimodal model, or omit `model` to use `qwen3-vl-embedding`.
+
+| Input | Supported forms |
+|---|---|
+| Text | A string or `TextBlock` |
+| Image | `ImageBlock` with an HTTP(S) URL or inline Base64 data |
+| Video | `VideoBlock` with an HTTP(S) URL |
+
+Provide URLs that DashScope can access. Use `ImageBlock.from_bytes(media_type, data)`
+to encode a local image, or `ImageBlock.from_base64(media_type, data)` if you
+already have Base64 data. The
+[multimodal API reference](https://help.aliyun.com/en/model-studio/multimodal-embedding-api-reference)
+lists model-specific format, size, and batch limits.
+
+A batch can mix text, images, and videos. It returns one independent vector per
+input, in input order. The integration does not combine inputs into a single
+fused vector; leave `enable_fusion` unset or set it to `False`.
+
+Use `embed` or `embed_with_usage` in Python. In Java, pass a list of blocks to
+`embedBlocksWithUsage`. See [Inputs and Results]({{< ref "docs/development/vector-search/embedding_models#inputs-and-results" >}})
+for accepted inputs and return values.
+
 #### DashScopeEmbeddingModelConnection Parameters
 
 | Parameter | Type | Default | Description |
@@ -81,16 +106,19 @@ class MyAgent(Agent):
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | str | Required | Registered connection Resource name |
-| `model` | str | `"text-embedding-v4"` | Embedding model name |
-| `text_type` | str | None | Input type: `"query"` or `"document"` |
+| `api_type` | str | `"text"` | SDK interface: `text` uses `TextEmbedding`; `multimodal` uses `MultiModalEmbedding` |
+| `model` | str | `"text-embedding-v4"` for text, `"qwen3-vl-embedding"` for multimodal | Embedding model name |
+| `text_type` | str | None | `"query"` or `"document"` for the text API |
 | `dimension` | int | None | Output vector dimensions (model-dependent) |
 | `additional_kwargs` | dict | `{}` | Additional DashScope API parameters |
 
 #### Available Models
 
-Visit the [Alibaba Cloud Model Studio embedding models documentation](https://help.aliyun.com/zh/dashscope/developer-reference/text-embedding-api-details) for the complete and up-to-date list of available embedding models.
+See the [text embedding API](https://help.aliyun.com/en/model-studio/text-embedding-synchronous-api)
+and [multimodal embedding API](https://help.aliyun.com/en/model-studio/multimodal-embedding-api-reference)
+for available models and limits.
 
-Some popular options include:
+Text models include:
 - **text-embedding-v4** (default, recommended)
 - **text-embedding-v3**
 - **text-embedding-v2**
@@ -373,7 +401,7 @@ public class MyAgent extends Agent {
     public static ResourceDescriptor openaiConnection() {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.OPENAI_CONNECTION)
                 .addInitialArgument("api_key", System.getenv("OPENAI_API_KEY"))
-                .addInitialArgument("request_timeout", 30)
+                .addInitialArgument("request_timeout", Duration.ofSeconds(30))
                 .addInitialArgument("max_retries", 3)
                 .build();
     }
@@ -417,7 +445,7 @@ public class MyAgent extends Agent {
 |-----------|------|---------|-------------|
 | `api_key` | String | Required | OpenAI API key for authentication |
 | `base_url` | String | `"https://api.openai.com/v1"` | OpenAI API base URL |
-| `request_timeout` | Number | `30` | HTTP request timeout in seconds; `0` disables the timeout |
+| `request_timeout` | Duration / String / Number | `Duration.ofSeconds(30)` | HTTP request timeout in [duration format]({{< ref "docs/operations/configuration#duration-values" >}}); `0` disables the timeout. Integers and unitless integer strings are interpreted as milliseconds. |
 | `max_retries` | Number | `3` | Maximum number of retry attempts, a non-negative integer |
 | `organization` | String | None | Optional organization ID |
 | `project` | String | None | Optional project ID |

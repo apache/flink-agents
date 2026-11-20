@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 
+import static org.apache.flink.agents.runtime.skill.SkillTestUtils.defaultLimits;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
@@ -30,7 +31,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SkillSourceHandlerTest {
     private final SkillManager manager =
-            new SkillManager(new org.apache.flink.agents.api.skills.Skills(java.util.List.of()));
+            new SkillManager(
+                    new org.apache.flink.agents.api.skills.Skills(java.util.List.of()),
+                    Thread.currentThread().getContextClassLoader(),
+                    null,
+                    defaultLimits());
 
     @Test
     void builtinSchemesAreRegistered() {
@@ -85,7 +90,10 @@ class SkillSourceHandlerTest {
     void handlersAreOwnedByEachManager() {
         SkillManager other =
                 new SkillManager(
-                        new org.apache.flink.agents.api.skills.Skills(java.util.List.of()));
+                        new org.apache.flink.agents.api.skills.Skills(java.util.List.of()),
+                        Thread.currentThread().getContextClassLoader(),
+                        null,
+                        defaultLimits());
         assertNotSame(manager.getHandler("package"), other.getHandler("package"));
     }
 }

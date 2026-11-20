@@ -21,6 +21,7 @@ package org.apache.flink.agents.runtime.skill;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.runtime.python.utils.JavaResourceAdapter;
 import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
+import org.apache.flink.agents.runtime.skill.repository.SkillMaterializer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -32,13 +33,53 @@ import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
+import static org.apache.flink.agents.runtime.skill.SkillTestUtils.defaultLimits;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class CrossLanguageSkillSourceTest {
     @TempDir Path temp;
+
+    @Test
+    void classpathBridgeEnforcesEachZipLimit() throws Exception {
+        Path zip = temp.resolve("skills.zip");
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(zip))) {
+            for (String name : new String[] {"a.txt", "b.txt"}) {
+                out.putNextEntry(new ZipEntry(name));
+                out.write(new byte[10]);
+                out.closeEntry();
+            }
+        }
+        try (URLClassLoader loader = new URLClassLoader(new URL[] {temp.toUri().toURL()}, null)) {
+            JavaResourceAdapter adapter = new JavaResourceAdapter(null, loader);
+            Path target = Files.createDirectory(temp.resolve("out"));
+            assertThatThrownBy(
+                            () ->
+                                    adapter.extractClasspathSkills(
+                                            "skills.zip", target.toString(), 1, 9, 20, 2))
+                    .hasMessageContaining("per-entry limit of 9");
+            assertThatThrownBy(
+                            () ->
+                                    adapter.extractClasspathSkills(
+                                            "skills.zip", target.toString(), 1, 10, 19, 2))
+                    .hasMessageContaining("limit of 19");
+            assertThatThrownBy(
+                            () ->
+                                    adapter.extractClasspathSkills(
+                                            "skills.zip", target.toString(), 1, 10, 20, 1))
+                    .hasMessageContaining("limit of 1");
+            try (java.util.stream.Stream<Path> files = Files.list(target)) {
+                assertThat(files.count()).isZero();
+            }
+            adapter.extractClasspathSkills("skills.zip", target.toString(), 1, 10, 20, 2);
+            assertThat(Files.size(target.resolve("a.txt"))).isEqualTo(10);
+            assertThat(Files.size(target.resolve("b.txt"))).isEqualTo(10);
+        }
+    }
 
     @Test
     void classpathBridgeUsesUserLoaderAndCopiesAllResources() throws Exception {
@@ -49,15 +90,18 @@ class CrossLanguageSkillSourceTest {
                 URLClassLoader child = new URLClassLoader(new URL[0], a)) {
             Path outA = Files.createDirectory(temp.resolve("out-a"));
             Path outB = Files.createDirectory(temp.resolve("out-b"));
-            new JavaResourceAdapter(null, child).extractClasspathSkills("skills", outA.toString());
-            new JavaResourceAdapter(null, b).extractClasspathSkills("skills", outB.toString());
+            new JavaResourceAdapter(null, child)
+                    .extractClasspathSkills("skills", outA.toString(), 11, 22, 33, 44);
+            new JavaResourceAdapter(null, b)
+                    .extractClasspathSkills("skills", outB.toString(), 11, 22, 33, 44);
             assertThat(Files.readString(outA.resolve("demo/example.txt"))).isEqualTo("job-a");
             assertThat(Files.readString(outB.resolve("demo/example.txt"))).isEqualTo("job-b");
             assertThat(outA.resolve("demo/SKILL.md")).exists();
             assertThatThrownBy(
                             () ->
                                     new JavaResourceAdapter(null, a)
-                                            .extractClasspathSkills("missing", outA.toString()))
+                                            .extractClasspathSkills(
+                                                    "missing", outA.toString(), 11, 22, 33, 44))
                     .hasMessageContaining("Classpath resource not found: missing");
         }
     }
@@ -74,12 +118,14 @@ class CrossLanguageSkillSourceTest {
                         new SkillManager(
                                 Skills.fromPackage("pkg", "skills"),
                                 getClass().getClassLoader(),
-                                first);
+                                first,
+                                new SkillMaterializer.Limits(11, 22, 33, 44));
                 SkillManager b =
                         new SkillManager(
                                 Skills.fromPackage("pkg", "skills"),
                                 getClass().getClassLoader(),
-                                second)) {
+                                second,
+                                new SkillMaterializer.Limits(11, 22, 33, 44))) {
             assertThat(a.loadSkillResource("demo", "example.txt")).isEqualTo("attachment-a");
             assertThat(b.loadSkillResource("demo", "example.txt")).isEqualTo("attachment-b");
             assertThat(a.getSkill("demo").getOrigin().getScheme()).isEqualTo("package");
@@ -122,7 +168,11 @@ class CrossLanguageSkillSourceTest {
                         eq("python_java_utils.materialize_package_skills"),
                         eq("pkg"),
                         eq("skills"),
-                        anyString());
+                        anyString(),
+                        eq(11L),
+                        eq(22L),
+                        eq(33L),
+                        eq(44));
     }
 
     @Test
@@ -141,17 +191,28 @@ class CrossLanguageSkillSourceTest {
                         eq("python_java_utils.materialize_package_skills"),
                         eq("missing"),
                         eq("skills"),
-                        anyString());
+                        anyString(),
+                        anyLong(),
+                        anyLong(),
+                        anyLong(),
+                        anyInt());
         assertThatThrownBy(
                         () ->
                                 new SkillManager(
                                         Skills.fromPackage("missing", "skills"),
                                         getClass().getClassLoader(),
-                                        interpreter))
+                                        interpreter,
+                                        defaultLimits()))
                 .hasMessageContaining("missing/skills")
                 .hasRootCauseMessage("missing package");
         assertThat(directory.get()).doesNotExist();
-        assertThatThrownBy(() -> new SkillManager(Skills.fromPackage("missing", "skills")))
+        assertThatThrownBy(
+                        () ->
+                                new SkillManager(
+                                        Skills.fromPackage("missing", "skills"),
+                                        Thread.currentThread().getContextClassLoader(),
+                                        null,
+                                        defaultLimits()))
                 .hasRootCauseMessage(
                         "Python package skill source 'missing/skills' requires an initialized Python runtime bridge.");
     }

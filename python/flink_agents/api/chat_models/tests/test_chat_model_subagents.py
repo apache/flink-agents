@@ -182,6 +182,7 @@ def test_declared_subagents_reach_the_model_as_callables_after_the_tools() -> No
     setup, connection = _build(store, subagents=["reviewer"], tools=["lookup"])
 
     setup.open()
+    assert setup.get_tool_names() == ["lookup", "_subagent_reviewer"]
     setup.chat([])
 
     assert [tool.metadata.name for tool in connection.captured_tools] == [
@@ -368,6 +369,7 @@ def test_only_the_skill_listing_is_injected_when_subagents_are_declared() -> Non
     }
     setup, connection = _build(store, subagents=["reviewer"], skills=["github"])
     setup.open()
+    assert setup.get_tool_names() == ["load_skill", "_subagent_reviewer"]
 
     setup.chat([ChatMessage.of(role=MessageRole.USER, content="review it")])
 
