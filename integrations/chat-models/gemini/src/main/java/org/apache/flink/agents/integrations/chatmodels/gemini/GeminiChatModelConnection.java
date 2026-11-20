@@ -38,6 +38,7 @@ import org.apache.flink.agents.integrations.chatmodels.common.PojoJsonSchemaGene
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -70,7 +71,7 @@ import java.util.stream.Collectors;
  *       http://127.0.0.1:15721}. When set, requests are routed there instead of the default Google
  *       endpoint.
  *   <li><b>model</b> (optional): Default model name, used when no model is supplied per request.
- *   <li><b>timeout</b> (optional): Timeout in seconds for API requests.
+ *   <li><b>timeout</b> (optional): Request timeout in integer milliseconds; 0 disables it.
  *   <li><b>vertex_ai</b> (optional): When true, use the Vertex AI backend together with {@code
  *       project} and {@code location}. The Vertex path wires the SDK builder flags and is
  *       smoke-tested at construction, but a full end-to-end run against Vertex is a follow-up.
@@ -152,15 +153,12 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
         if (baseUrl != null && !baseUrl.isBlank()) {
             httpOptions = HttpOptions.builder().baseUrl(baseUrl);
         }
-        Integer timeoutSeconds = descriptor.getArgument("timeout");
-        if (timeoutSeconds != null && timeoutSeconds > 0) {
+        Integer timeoutMillis = parseTimeout(descriptor.getArgument("timeout"));
+        if (timeoutMillis != null) {
             if (httpOptions == null) {
                 httpOptions = HttpOptions.builder();
             }
-            // HttpOptions timeout is expressed in milliseconds. Compute in long to avoid int
-            // overflow for large second values, then clamp to Integer.MAX_VALUE.
-            long timeoutMs = (long) timeoutSeconds * 1000L;
-            httpOptions.timeout((int) Math.min(timeoutMs, Integer.MAX_VALUE));
+            httpOptions.timeout(timeoutMillis);
         }
         if (httpOptions != null) {
             builder.httpOptions(httpOptions.build());
@@ -180,6 +178,27 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
 
         this.defaultModel = descriptor.getArgument("model");
         this.client = builder.build();
+    }
+
+    private static Integer parseTimeout(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number) {
+            try {
+                int timeout = new BigDecimal(value.toString()).intValueExact();
+                if (timeout >= 0) {
+                    return timeout;
+                }
+            } catch (ArithmeticException | NumberFormatException ignored) {
+                // Report invalid numeric values with the parameter name below.
+            }
+        }
+        throw new IllegalArgumentException(
+                "timeout must be an integer between 0 and "
+                        + Integer.MAX_VALUE
+                        + " milliseconds, got: "
+                        + value);
     }
 
     @Override

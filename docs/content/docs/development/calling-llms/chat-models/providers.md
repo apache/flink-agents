@@ -731,7 +731,7 @@ The Gemini integration currently has a Java implementation only. To use Gemini f
 | `api_key` | String | Required unless `base_url` is set or `vertex_ai` is `true` | Gemini Developer API key |
 | `base_url` | String | None | Custom endpoint, such as a proxy that injects credentials |
 | `model` | String | None | Default model name, used when no model is supplied per setup |
-| `timeout` | int | None | API request timeout in seconds |
+| `timeout` | int | None | API request timeout in milliseconds; `0` disables it. |
 | `vertex_ai` | boolean | `false` | Use the experimental Vertex AI backend; not yet verified end to end |
 | `project` | String | None | Vertex AI project id |
 | `location` | String | None | Vertex AI location |
@@ -837,7 +837,7 @@ Ollama server **0.9.0** or higher is required.
 | Parameter        | Type   | Default                    | Description |
 |------------------|--------|----------------------------|-------------|
 | `endpoint`       | String | Required | Ollama server URL |
-| `requestTimeout` | int    | `60`     | HTTP request timeout in seconds |
+| `requestTimeout` | long | `60` | HTTP request timeout in seconds; must be positive. |
 
 {{< /tab >}}
 
