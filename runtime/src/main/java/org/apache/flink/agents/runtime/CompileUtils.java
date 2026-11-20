@@ -120,7 +120,12 @@ public class CompileUtils {
     public static <IN, K> DataStream<Object> connectToAgent(
             KeyedStream<IN, K> keyedInputStream, AgentPlan agentPlan, @Nullable String uid) {
         return connectToAgent(
-                keyedInputStream, agentPlan, InternalKryoTypeInfo.of(Object.class), true, false, uid);
+                keyedInputStream,
+                agentPlan,
+                InternalKryoTypeInfo.of(Object.class),
+                true,
+                false,
+                uid);
     }
 
     /**

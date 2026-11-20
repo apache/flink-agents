@@ -16,7 +16,6 @@
  * limitations under the License.
  */
 
-
 package org.apache.flink.agents.runtime.utils;
 
 import org.apache.flink.api.common.serialization.SerializerConfig;
@@ -26,8 +25,8 @@ import org.apache.flink.api.java.typeutils.GenericTypeInfo;
 import org.apache.flink.api.java.typeutils.runtime.kryo.KryoSerializer;
 
 /**
- * Type information for runtime-internal types that the agent operator serializes with Kryo, such
- * as {@code Event}, {@code ActionTask} and the memory items kept in state.
+ * Type information for runtime-internal types that the agent operator serializes with Kryo, such as
+ * {@code Event}, {@code ActionTask} and the memory items kept in state.
  *
  * <p>{@link TypeInformation#of(Class)} resolves these types to {@link GenericTypeInfo}, whose
  * serializer creation fails when the job sets {@code pipeline.generic-types} to {@code false}. That

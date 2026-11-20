@@ -16,7 +16,6 @@
  * limitations under the License.
  */
 
-
 package org.apache.flink.agents.runtime;
 
 import org.apache.flink.agents.api.Event;

@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.agents.runtime.utils.InternalKryoTypeInfo;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapState;
@@ -33,7 +34,6 @@ import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.state.StateTtlConfig;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.agents.runtime.utils.InternalKryoTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.runtime.state.KeyGroupRange;
 import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
@@ -139,7 +139,8 @@ class OperatorStateManager {
         pendingInputEventsKState =
                 runtimeContext.getListState(
                         new ListStateDescriptor<>(
-                                PENDING_INPUT_EVENT_STATE_NAME, InternalKryoTypeInfo.of(Event.class)));
+                                PENDING_INPUT_EVENT_STATE_NAME,
+                                InternalKryoTypeInfo.of(Event.class)));
     }
 
     /**
@@ -389,7 +390,8 @@ class OperatorStateManager {
                         VoidNamespace.INSTANCE,
                         VoidNamespaceSerializer.INSTANCE,
                         new ListStateDescriptor<>(
-                                PENDING_INPUT_EVENT_STATE_NAME, InternalKryoTypeInfo.of(Event.class)),
+                                PENDING_INPUT_EVENT_STATE_NAME,
+                                InternalKryoTypeInfo.of(Event.class)),
                         function);
     }
 
