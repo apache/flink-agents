@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -81,7 +82,7 @@ class VLLMChatModelConnectionTest {
                 connectionDescriptor()
                         .addInitialArgument("api_key", "secret-key")
                         .addInitialArgument("api_base_url", "http://vllm-host:8000/v1")
-                        .addInitialArgument("timeout", 30)
+                        .addInitialArgument("timeout", Duration.ofSeconds(30))
                         .addInitialArgument("max_retries", 1)
                         .build();
         assertThatCode(() -> new VLLMChatModelConnection(desc, NOOP)).doesNotThrowAnyException();

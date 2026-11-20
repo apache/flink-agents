@@ -20,7 +20,14 @@ package org.apache.flink.agents.api.resource;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.JsonSerializer;
+import com.fasterxml.jackson.databind.SerializerProvider;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import org.apache.flink.agents.api.configuration.DurationUtils;
 
+import java.io.IOException;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -38,6 +45,7 @@ public class ResourceDescriptor {
     private final String module;
 
     @JsonProperty(FIELD_INITIAL_ARGUMENTS)
+    @JsonSerialize(contentUsing = InitialArgumentSerializer.class)
     private final Map<String, Object> initialArguments;
 
     /**
@@ -115,6 +123,30 @@ public class ResourceDescriptor {
         return value != null ? value : defaultValue;
     }
 
+    /**
+     * Reads a duration with microsecond precision. Integers and unitless integer strings mean
+     * milliseconds; unit strings and ISO-8601 are also accepted. Resources validate their own
+     * range.
+     *
+     * @param name argument name
+     * @param defaultValue value returned for a missing or null argument, possibly null
+     * @return the parsed duration or default, without modifying the descriptor
+     * @throws IllegalArgumentException if the value has an invalid format, range, or precision; the
+     *     message includes the argument name
+     */
+    public Duration getDurationArgument(String name, Duration defaultValue) {
+        Object value = getArgument(name);
+        if (value == null) {
+            return defaultValue;
+        }
+        try {
+            return DurationUtils.parse(value);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(
+                    "Invalid duration for resource argument '" + name + "': " + e.getMessage(), e);
+        }
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -134,6 +166,19 @@ public class ResourceDescriptor {
     @Override
     public int hashCode() {
         return Objects.hash(clazz, module, initialArguments);
+    }
+
+    /** Serializes top-level Duration arguments as ISO-8601 strings. */
+    static final class InitialArgumentSerializer extends JsonSerializer<Object> {
+        @Override
+        public void serialize(Object value, JsonGenerator generator, SerializerProvider provider)
+                throws IOException {
+            if (value instanceof Duration) {
+                generator.writeString(value.toString());
+            } else {
+                provider.defaultSerializeValue(value, generator);
+            }
+        }
     }
 
     public static class Builder {

@@ -57,7 +57,8 @@ import java.util.Set;
  *   <li><b>api_key</b> (required): OpenAI API key
  *   <li><b>api_base_url</b> (optional): Base URL for OpenAI API (defaults to
  *       https://api.openai.com/v1)
- *   <li><b>timeout</b> (optional): Timeout in seconds for API requests
+ *   <li><b>timeout</b> (optional): API request timeout (default: 60 seconds); zero disables
+ *       timeouts. See {@link ResourceDescriptor#getDurationArgument(String, Duration)} for inputs.
  *   <li><b>max_retries</b> (optional): Maximum number of retry attempts (default: 2)
  *   <li><b>default_headers</b> (optional): Map of default headers to include in all requests
  *   <li><b>model</b> (optional): Default model to use if not specified in setup
@@ -72,7 +73,7 @@ import java.util.Set;
  *     return ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
  *             .addInitialArgument("api_key", System.getenv("OPENAI_API_KEY"))
  *             .addInitialArgument("api_base_url", "https://api.openai.com/v1")
- *             .addInitialArgument("timeout", 120)
+ *             .addInitialArgument("timeout", Duration.ofSeconds(120))
  *             .addInitialArgument("max_retries", 3)
  *             .addInitialArgument("default_headers", Map.of("X-Custom-Header", "value"))
  *             .build();

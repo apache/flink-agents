@@ -119,7 +119,7 @@ class OpenAIEmbeddingModelTest {
                                 OpenAIEmbeddingModelConnection.class.getName())
                         .addInitialArgument("api_key", "test-key")
                         .addInitialArgument("base_url", "https://example.invalid/v1")
-                        .addInitialArgument("request_timeout", 12.5)
+                        .addInitialArgument("request_timeout", Duration.ofMillis(12500))
                         .addInitialArgument("max_retries", 0)
                         .addInitialArgument("organization", "org-1")
                         .addInitialArgument("project", "proj-1")
@@ -162,22 +162,28 @@ class OpenAIEmbeddingModelTest {
     @Test
     @DisplayName(
             "request_timeout and max_retries follow the OpenAI chat connection's parsing rules")
-    void testNumericOptionParsing() {
-        assertThat(OpenAIEmbeddingModelConnection.parseRequestTimeout(null))
-                .isEqualTo(Duration.ofSeconds(30));
-        assertThat(OpenAIEmbeddingModelConnection.parseRequestTimeout(1.5))
-                .isEqualTo(Duration.ofMillis(1500));
+    void testTimeoutAndRetryOptionParsing() {
+        assertThat(readTimeout(null)).isEqualTo(Duration.ofSeconds(30));
+        assertThat(readTimeout(Duration.ofMillis(1500))).isEqualTo(Duration.ofMillis(1500));
         // sub-millisecond values round up instead of collapsing to "disabled"
-        assertThat(OpenAIEmbeddingModelConnection.parseRequestTimeout(0.0001))
-                .isEqualTo(Duration.ofMillis(1));
-        assertThat(OpenAIEmbeddingModelConnection.parseRequestTimeout(0)).isEqualTo(Duration.ZERO);
-        assertThatThrownBy(() -> OpenAIEmbeddingModelConnection.parseRequestTimeout(-1))
+        assertThat(readTimeout(Duration.ofNanos(100_000))).isEqualTo(Duration.ofMillis(1));
+        assertThat(readTimeout(Duration.ZERO)).isEqualTo(Duration.ZERO);
+        assertThat(readTimeout(Duration.ofMillis(Integer.MAX_VALUE)))
+                .isEqualTo(Duration.ofMillis(Integer.MAX_VALUE));
+        assertThatThrownBy(() -> readTimeout(Duration.ofNanos(-1)))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> OpenAIEmbeddingModelConnection.parseRequestTimeout(2147483.648))
+        assertThatThrownBy(() -> readTimeout(Duration.ofMillis(Integer.MAX_VALUE).plusNanos(1_000)))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> OpenAIEmbeddingModelConnection.parseRequestTimeout("30"))
+        assertThatThrownBy(() -> readTimeout(Duration.ofSeconds(-1)))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> OpenAIEmbeddingModelConnection.parseRequestTimeout(Double.NaN))
+        assertThatThrownBy(() -> readTimeout(Duration.ofMillis(2147483648L)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(readTimeout("30")).isEqualTo(Duration.ofMillis(30));
+        assertThat(readTimeout(30)).isEqualTo(Duration.ofMillis(30));
+        assertThatThrownBy(() -> readTimeout("1500001 ns"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("finer than 1 us");
+        assertThatThrownBy(() -> readTimeout(Double.NaN))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(OpenAIEmbeddingModelConnection.parseMaxRetries(null)).isEqualTo(3);
         assertThat(OpenAIEmbeddingModelConnection.parseMaxRetries(7L)).isEqualTo(7);
@@ -186,6 +192,14 @@ class OpenAIEmbeddingModelTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> OpenAIEmbeddingModelConnection.parseMaxRetries(-1))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    private static Duration readTimeout(Object value) {
+        return OpenAIEmbeddingModelConnection.parseRequestTimeout(
+                ResourceDescriptor.Builder.newBuilder(
+                                OpenAIEmbeddingModelConnection.class.getName())
+                        .addInitialArgument("request_timeout", value)
+                        .build());
     }
 
     @Test

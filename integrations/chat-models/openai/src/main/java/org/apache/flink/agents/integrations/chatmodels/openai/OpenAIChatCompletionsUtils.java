@@ -55,7 +55,6 @@ import org.apache.flink.agents.integrations.chatmodels.common.PojoJsonSchemaGene
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.math.RoundingMode;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -77,9 +76,6 @@ import java.util.stream.Collectors;
  */
 final class OpenAIChatCompletionsUtils {
 
-    private static final BigDecimal MAX_TIMEOUT_SECONDS =
-            BigDecimal.valueOf(Integer.MAX_VALUE).movePointLeft(3);
-
     /** Default timeout in seconds for OpenAI API requests (aligned with Python SDK). */
     static final int DEFAULT_TIMEOUT_SECONDS = 60;
 
@@ -92,39 +88,27 @@ final class OpenAIChatCompletionsUtils {
     private OpenAIChatCompletionsUtils() {}
 
     /**
-     * Resolve and validate the {@code timeout} argument (in seconds). The raw value is validated
-     * before any numeric conversion so that e.g. {@code -0.5} cannot truncate to {@code 0} and
-     * bypass the non-negative check. Fractional values are rounded up to the SDK's millisecond
-     * precision so that a positive value can never become an unlimited timeout.
+     * Resolve a resource duration timeout argument and normalize it to the SDK's millisecond
+     * precision. Zero disables timeouts; positive durations are rounded up to avoid becoming zero.
      */
     static Duration parseTimeout(ResourceDescriptor descriptor) {
-        Number raw = descriptor.getArgument("timeout");
-        if (raw == null) {
-            return Duration.ofSeconds(DEFAULT_TIMEOUT_SECONDS);
-        }
-        BigDecimal seconds = toBigDecimal(raw, "timeout");
-        if (seconds.signum() < 0) {
-            throw new IllegalArgumentException("timeout must be >= 0, got: " + raw);
-        }
-        if (seconds.compareTo(MAX_TIMEOUT_SECONDS) > 0) {
+        Object raw = descriptor.getArgument("timeout");
+        Duration duration =
+                descriptor.getDurationArgument(
+                        "timeout", Duration.ofSeconds(DEFAULT_TIMEOUT_SECONDS));
+        if (duration.isNegative() || duration.compareTo(Duration.ofMillis(Integer.MAX_VALUE)) > 0) {
             throw new IllegalArgumentException(
-                    "timeout exceeds the SDK maximum of "
-                            + MAX_TIMEOUT_SECONDS.toPlainString()
-                            + " seconds, got: "
+                    "timeout must be between Duration.ZERO and "
+                            + "Duration.ofMillis(Integer.MAX_VALUE), got: "
                             + raw);
         }
-        try {
-            // The SDK's OkHttp transport accepts millisecond precision. Round positive values up
-            // so a valid nonzero timeout cannot become Duration.ZERO, which disables timeouts.
-            BigInteger milliseconds =
-                    seconds.multiply(BigDecimal.valueOf(1_000L))
-                            .setScale(0, RoundingMode.CEILING)
-                            .toBigIntegerExact();
-            return Duration.ofMillis(milliseconds.longValueExact());
-        } catch (ArithmeticException e) {
-            throw new IllegalArgumentException(
-                    "timeout is outside the supported range, got: " + raw, e);
+        // Preserve the transport's millisecond precision without turning a positive timeout
+        // into zero (which disables timeouts). The range check makes this conversion safe.
+        long millis = duration.toMillis();
+        if (duration.getNano() % 1_000_000 != 0) {
+            millis++;
         }
+        return Duration.ofMillis(millis);
     }
 
     /**
