@@ -417,10 +417,13 @@ When the model requests tools, the framework executes them, adds their results t
 
 The built-in `chat_model_action` and `tool_call_action` coordinate this cycle. For this flow, you do not need to send or handle `ToolRequestEvent` and `ToolResponseEvent` yourself. For details on tool execution and results, see [Built-in Events and Actions in Tool Use]({{< ref "docs/development/calling-llms/tool_use#built-in-events-and-actions" >}}).
 
+Every model call of this cycle is sent the whole conversation, including the earlier tool results. To bound that input on long tool loops, see [Context Management]({{< ref "docs/development/calling-llms/context_management" >}}).
+
 ## Next Steps
 
 - Use [Prompts]({{< ref "docs/development/calling-llms/prompts" >}}) to reuse message templates across requests.
 - Add [Tool Use]({{< ref "docs/development/calling-llms/tool_use" >}}) or [Skills]({{< ref "docs/development/calling-llms/skills" >}}) when the model needs to perform operations beyond generating an answer.
 - Use [Structured Output]({{< ref "docs/development/calling-llms/structured-output" >}}) to get a typed object instead of free text.
 - Use [Model Routing]({{< ref "docs/development/calling-llms/model_routing" >}}) to choose among registered models for each request.
+- Use [Context Management]({{< ref "docs/development/calling-llms/context_management" >}}) to bound the model input of long tool loops.
 - Consult [Built-in Chat Model Providers]({{< ref "docs/development/calling-llms/chat-models/providers" >}}) for provider-specific configuration and media support.

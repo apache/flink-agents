@@ -34,6 +34,7 @@ from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.configuration import ReadableConfiguration
+from flink_agents.api.context_management import ContextManagementPolicy
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.duration import format_duration, positive_seconds
 from flink_agents.api.events.chat_event import ChatRequestEvent
@@ -1724,11 +1725,18 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         *,
         prompt_args: dict[str, Any] | None = None,
         output_schema: OutputSchema | None = None,
+        context_management: ContextManagementPolicy | None = None,
     ) -> DurableFuture[ChatResult]:
         """Create a lazy chat call driven by the operator's event scheduler."""
         return _ChatFuture(
             self._j_runner_context,
-            ChatRequestEvent(model, messages, prompt_args, output_schema),
+            ChatRequestEvent(
+                model,
+                messages,
+                prompt_args,
+                output_schema,
+                context_management=context_management,
+            ),
         )
 
     @override

@@ -96,6 +96,29 @@ public abstract class BaseChatModelConnection extends Resource {
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams);
 
     /**
+     * Estimates the input tokens of a request with these messages and tools before it is sent, for
+     * callers that keep the model input within a budget.
+     *
+     * <p>The default counts characters with {@link ApproximateTokenEstimator} and reports the
+     * result as approximate. A connection whose provider can count the tokens of a request
+     * overrides this method and returns {@link TokenEstimate#exact}.
+     *
+     * <p>The built-in chat action calls this method before every model call of a request that has
+     * an input budget, outside durable execution. An override therefore has to be fast and has to
+     * return the same count for the same request: after a recovery the action makes its decisions
+     * again from the estimate, and a different count can make it call a model again instead of
+     * reusing the recorded answer.
+     *
+     * @param messages the messages as they would be sent
+     * @param tools the tools as they would be bound to the request
+     * @param modelParams the parameters the request would carry
+     */
+    public TokenEstimate estimateInputTokens(
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+        return ApproximateTokenEstimator.estimate(messages, tools);
+    }
+
+    /**
      * Process a chat request that carries an output schema, and return a chat response.
      *
      * <p>{@code outputSchema} is framework-level execution metadata, kept off {@code modelParams}

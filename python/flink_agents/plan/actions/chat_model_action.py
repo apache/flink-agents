@@ -34,6 +34,7 @@ from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
 from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, ToolCallBlock
 from flink_agents.api.chat_result import ChatResult
+from flink_agents.api.context_management import ContextManagementPolicy
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
 )
@@ -52,6 +53,7 @@ from flink_agents.api.trace import (
 )
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.utils import support_async
+from flink_agents.plan.context_management import manager as context_manager
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.resource.java.java_chat_model import JavaChatModelSetup
 from flink_agents.plan.routing.resolved_route import ResolvedModelRoute
@@ -219,7 +221,12 @@ def _send_failure(
 
 
 def _clear_request_context(memory: MemoryObject, request_id: UUID) -> None:
-    for key in (_TOOL_CALL_CONTEXT, _RETRY_STATS_CONTEXT, _ROUTING_METADATA_CONTEXT):
+    for key in (
+        _TOOL_CALL_CONTEXT,
+        _RETRY_STATS_CONTEXT,
+        _ROUTING_METADATA_CONTEXT,
+        context_manager.STATE_KEY,
+    ):
         context = dict(memory.get(key) or {})
         if context.pop(str(request_id), None) is not None:
             memory.set(key, context)
@@ -823,12 +830,17 @@ async def chat(
     ctx: RunnerContext,
     *,
     user_context: dict[str, Any] | None = None,
+    context_management: ContextManagementPolicy | None = None,
 ) -> None:
     """Chat with llm.
 
     If there is no tool call generated, we return the chat response event directly,
     otherwise, we generate tool request event according to the tool calls in chat model
     response, and save the request and response messages in tool call context.
+
+    ``context_management`` is the policy the request carries. It replaces the agent's
+    default policy for every model call of the request; without it the request uses
+    the default policy.
 
     When ``output_schema`` is set and the chat model reports that it travels through
     the provider's native structured output, the final answer is followed by one more
@@ -843,6 +855,9 @@ async def chat(
             initial_request_id, _InvocationFailure(str(failure)), ctx, user_context
         )
         return
+    context_manager.set_request_policy(
+        ctx.sensory_memory, initial_request_id, context_management
+    )
     await _chat_resolved(
         initial_request_id,
         selection,
@@ -851,6 +866,7 @@ async def chat(
         output_schema,
         ctx,
         user_context=user_context,
+        first_call=True,
     )
 
 
@@ -863,8 +879,25 @@ async def _chat_resolved(
     ctx: RunnerContext,
     *,
     user_context: dict[str, Any] | None = None,
+    first_call: bool,
 ) -> None:
-    """Execute an initial selection or an already concrete tool follow-up."""
+    """Execute an initial selection or an already concrete tool follow-up.
+
+    ``messages`` is the request's stored conversation. What the model is sent is
+    derived from it by the request's context management policy; the stored
+    conversation itself is kept complete. ``first_call`` tells whether this is the
+    request's first model call, as opposed to a call that follows a tool round.
+    """
+    # Every candidate is sent the same messages: the context management policy is
+    # applied once per model round, for the selected model.
+    prepared = await context_manager.prepare(
+        initial_request_id,
+        selection.selected_model,
+        messages,
+        prompt_args,
+        ctx,
+        first_call=first_call,
+    )
     tried = []
     failures = []
     for candidate in selection.attempt_order():
@@ -873,7 +906,7 @@ async def _chat_resolved(
             attempt = await _chat_with_retries(
                 initial_request_id,
                 candidate,
-                messages,
+                prepared.messages,
                 prompt_args,
                 output_schema,
                 ctx,
@@ -926,6 +959,12 @@ async def _chat_resolved(
     if (
         len(response.tool_calls) > 0
     ):  # generate tool request event according tool calls in response
+        # The estimate was made for the selected model; the usage of another
+        # candidate that answered in its place says nothing about it.
+        if model == selection.selected_model:
+            context_manager.record_usage(
+                ctx.sensory_memory, initial_request_id, prepared, response.usage
+            )
         _handle_tool_calls(
             response,
             initial_request_id,
@@ -968,6 +1007,7 @@ async def _process_chat_request(event: ChatRequestEvent, ctx: RunnerContext) -> 
         output_schema=event.output_schema,
         ctx=ctx,
         user_context=event.user_context,
+        context_management=event.context_management,
     )
 
 
@@ -1001,6 +1041,7 @@ async def _process_tool_response(event: ToolResponseEvent, ctx: RunnerContext) -
         output_schema=tool_request_event_context["output_schema"],
         ctx=ctx,
         user_context=tool_request_event_context.get(_USER_CONTEXT),
+        first_call=False,
     )
 
 

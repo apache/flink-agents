@@ -30,6 +30,10 @@ from flink_agents.api.chat_message import (
     find_first_system_message,
 )
 from flink_agents.api.chat_models.subagent_tool import SubagentTool
+from flink_agents.api.chat_models.token_estimate import (
+    TokenEstimate,
+    approximate_token_estimate,
+)
 from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.prompts.prompt import Prompt
@@ -378,6 +382,33 @@ class BaseChatModelConnection(Resource, ABC):
             Model response message
         """
 
+    def estimate_input_tokens(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: List[Tool] | None = None,
+        **kwargs: Any,
+    ) -> TokenEstimate:
+        """Estimate the input tokens of a request before it is sent.
+
+        For callers that keep the model input within a budget. The default counts
+        characters with ``approximate_token_estimate`` and reports the result as
+        approximate. A connection whose provider can count the tokens of a request
+        overrides this method and returns ``TokenEstimate.exact``.
+
+        The built-in chat action calls this method before every model call of a
+        request that has an input budget, outside durable execution. An override
+        therefore has to be fast and has to return the same count for the same
+        request: after a recovery the action makes its decisions again from the
+        estimate, and a different count can make it call a model again instead of
+        reusing the recorded answer.
+
+        Args:
+            messages: The messages as they would be sent.
+            tools: The tools as they would be bound to the request.
+            **kwargs: The parameters the request would carry.
+        """
+        return approximate_token_estimate(messages, tools or [])
+
 
 # Providers reject these parameters on a request that defines no tools.
 _TOOL_ONLY_PARAMS = frozenset(
@@ -614,6 +645,26 @@ class BaseChatModelSetup(Resource):
             messages = list(messages[:index]) + injected + list(messages[index:])
         return messages
 
+    def estimate_input_tokens(
+        self,
+        messages: Sequence[ChatMessage],
+        prompt_args: Mapping[str, Any] | None = None,
+    ) -> TokenEstimate:
+        """Estimate the input tokens of the request ``chat`` would prepare.
+
+        The bound prompt and the skill-discovery message are added as for a chat,
+        and the bound tools are counted. The connection decides how the tokens are
+        counted, see ``BaseChatModelConnection.estimate_input_tokens``.
+
+        Raises:
+            TypeError: If ``open()`` has not resolved the connection yet.
+        """
+        return self._get_connection().estimate_input_tokens(
+            self.prepare_request_messages(messages, prompt_args),
+            tools=self._get_tools(),
+            **self.model_kwargs,
+        )
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -678,6 +729,30 @@ class BaseChatModelSetup(Resource):
             merged_kwargs = _without_tool_only_params(merged_kwargs)
         return connection.chat(
             messages, tools=tools, output_schema=output_schema, **merged_kwargs
+        )
+
+    def chat_without_tools(self, messages: Sequence[ChatMessage]) -> ChatResult:
+        """Send the messages exactly as given in a request that binds no tools.
+
+        The bound prompt, the skill-discovery message and the bound tools are not
+        added, and the parameters omit ``tool_choice``, ``tool_choice_option`` and
+        ``parallel_tool_calls``, which providers reject on a request without tools.
+
+        Framework-facing: for a call the framework makes on behalf of a request, such
+        as writing a summary of it, where the chat model's own prompt and tools do
+        not apply.
+
+        Args:
+            messages: The messages to send.
+
+        Returns:
+            The connection's result for this request.
+
+        Raises:
+            TypeError: If ``open()`` has not resolved the connection yet.
+        """
+        return self._get_connection().chat(
+            messages, tools=[], **_without_tool_only_params(self.model_kwargs)
         )
 
     def will_apply_native_structured_output(

@@ -47,6 +47,8 @@ public final class EventType {
             org.apache.flink.agents.api.event.ContextRetrievalResponseEvent.EVENT_TYPE;
     public static final String ModelRoutingEvent =
             org.apache.flink.agents.api.event.ModelRoutingEvent.EVENT_TYPE;
+    public static final String ContextManagementEvent =
+            org.apache.flink.agents.api.event.ContextManagementEvent.EVENT_TYPE;
 
     public static final String ShortTermWriteEvent =
             org.apache.flink.agents.api.event.ShortTermWriteEvent.EVENT_TYPE;
@@ -79,6 +81,7 @@ public final class EventType {
                     Map.entry("ContextRetrievalRequestEvent", ContextRetrievalRequestEvent),
                     Map.entry("ContextRetrievalResponseEvent", ContextRetrievalResponseEvent),
                     Map.entry("ModelRoutingEvent", ModelRoutingEvent),
+                    Map.entry("ContextManagementEvent", ContextManagementEvent),
                     Map.entry("ShortTermWriteEvent", ShortTermWriteEvent),
                     Map.entry("ShortTermReadEvent", ShortTermReadEvent),
                     Map.entry("SensoryWriteEvent", SensoryWriteEvent),

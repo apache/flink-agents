@@ -21,6 +21,7 @@ package org.apache.flink.agents.api;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.event.ContextManagementEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
 import org.apache.flink.agents.api.event.DecisionRequestEvent;
@@ -64,6 +65,7 @@ class EventTypeTest {
                                 "ContextRetrievalResponseEvent",
                                 ContextRetrievalResponseEvent.EVENT_TYPE),
                         Map.entry("ModelRoutingEvent", ModelRoutingEvent.EVENT_TYPE),
+                        Map.entry("ContextManagementEvent", ContextManagementEvent.EVENT_TYPE),
                         Map.entry("ShortTermWriteEvent", ShortTermWriteEvent.EVENT_TYPE),
                         Map.entry("ShortTermReadEvent", ShortTermReadEvent.EVENT_TYPE),
                         Map.entry("SensoryWriteEvent", SensoryWriteEvent.EVENT_TYPE),

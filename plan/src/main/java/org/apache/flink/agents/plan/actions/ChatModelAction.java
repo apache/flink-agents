@@ -38,6 +38,7 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.agents.plan.contextmanagement.ContextManager;
 import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
 import org.apache.flink.agents.plan.routing.ResolvedModelRoute;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
@@ -351,9 +352,17 @@ public class ChatModelAction {
                 promptArgs,
                 outputSchema,
                 null,
+                true,
                 ctx);
     }
 
+    /**
+     * @param messages the request's stored conversation. What the model is sent is derived from it
+     *     by the request's context management policy; the stored conversation itself is kept
+     *     complete.
+     * @param firstCall whether this is the request's first model call, as opposed to a call that
+     *     follows a tool round
+     */
     private static void chat(
             UUID initialRequestId,
             ResolvedModelRoute selection,
@@ -361,10 +370,22 @@ public class ChatModelAction {
             Map<String, Object> promptArgs,
             @Nullable Object outputSchema,
             @Nullable Map<String, Object> userContext,
+            boolean firstCall,
             RunnerContext ctx)
             throws Exception {
         int numRetries = ChatModelInvoker.configuredRetries(ctx);
         long retryWaitMillis = ChatModelInvoker.configuredRetryWaitMillis(ctx);
+
+        // Every candidate is sent the same messages: the context management policy is applied
+        // once per model round, for the selected model.
+        ContextManager.Prepared prepared =
+                ContextManager.prepare(
+                        initialRequestId,
+                        selection.getSelectedModel(),
+                        messages,
+                        promptArgs,
+                        firstCall,
+                        ctx);
 
         List<String> triedModels = new ArrayList<>();
         Exception lastError = null;
@@ -376,7 +397,7 @@ public class ChatModelAction {
                                 initialRequestId,
                                 candidate,
                                 selection.durableChatCallId(candidate),
-                                messages,
+                                prepared.messages,
                                 promptArgs,
                                 outputSchema,
                                 ctx,
@@ -421,6 +442,15 @@ public class ChatModelAction {
                     if (routingMetadata != null) {
                         saveRoutingMetadata(
                                 ctx.getSensoryMemory(), initialRequestId, routingMetadata);
+                    }
+                    // The estimate was made for the selected model; the usage of another
+                    // candidate that answered in its place says nothing about it.
+                    if (candidate.equals(selection.getSelectedModel())) {
+                        ContextManager.recordUsage(
+                                ctx.getSensoryMemory(),
+                                initialRequestId,
+                                prepared,
+                                result.response.getUsage());
                     }
                     handleToolCalls(
                             result.response,
@@ -469,7 +499,7 @@ public class ChatModelAction {
                         initialRequestId,
                         e.model,
                         e.error.toString(),
-                        messages);
+                        prepared.messages);
             }
         }
 
@@ -507,7 +537,8 @@ public class ChatModelAction {
 
     @SuppressWarnings("unchecked")
     private static void clearRequestContext(MemoryObject memory, UUID requestId) throws Exception {
-        for (String key : List.of(TOOL_CALL_CONTEXT, RETRY_STATS_CONTEXT)) {
+        for (String key :
+                List.of(TOOL_CALL_CONTEXT, RETRY_STATS_CONTEXT, ContextManager.STATE_KEY)) {
             if (memory.isExist(key)) {
                 Map<UUID, Object> context =
                         new HashMap<>((Map<UUID, Object>) memory.get(key).getValue());
@@ -579,7 +610,7 @@ public class ChatModelAction {
      * the content as cut off by the token budget or withheld by content filtering raises {@link
      * IllegalStateException}; any other reason, and an absent one, are accepted.
      */
-    static void rejectIncompleteResponse(ChatResult response) {
+    public static void rejectIncompleteResponse(ChatResult response) {
         String finishReason = response.getFinishReason();
         if (TRUNCATED_FINISH_REASON.equals(finishReason)) {
             throw new IllegalStateException(
@@ -638,6 +669,8 @@ public class ChatModelAction {
             sendFailure(event.getId(), e, event.getUserContext(), ctx);
             return;
         }
+        ContextManager.setRequestPolicy(
+                ctx.getSensoryMemory(), event.getId(), event.getContextManagement());
         chat(
                 event.getId(),
                 selection,
@@ -645,6 +678,7 @@ public class ChatModelAction {
                 event.getPromptArgs(),
                 event.getOutputSchema(),
                 event.getUserContext(),
+                true,
                 ctx);
     }
 
@@ -690,6 +724,7 @@ public class ChatModelAction {
                 promptArgs,
                 outputSchema,
                 userContext,
+                false,
                 ctx);
     }
 

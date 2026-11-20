@@ -28,6 +28,7 @@ from flink_agents.api.chat_message import (
     ReasoningBlock,
     ToolCallBlock,
 )
+from flink_agents.api.chat_models.token_estimate import TokenEstimate
 from flink_agents.plan.resource.java.conversions import from_java_chat_message
 from flink_agents.plan.resource.java.java_chat_model import (
     JavaChatModelSetup,
@@ -55,6 +56,22 @@ def test_callable_names_come_from_initialized_java_setup() -> None:
     java_setup.getToolNames.return_value = ["search", "load_skill", "_subagent_review"]
     wrapper = JavaChatModelSetup(java_setup, Mock(), tools=["stale"])
     assert wrapper.get_tool_names() == ["search", "load_skill", "_subagent_review"]
+
+
+def test_input_tokens_are_approximated_from_the_messages_alone() -> None:
+    java_setup = Mock()
+    wrapper = JavaChatModelSetup(java_setup, Mock(), tools=["search"])
+    java_setup.reset_mock()
+
+    estimate = wrapper.estimate_input_tokens(
+        [ChatMessage.user("a" * 400)], {"topic": "accounts"}
+    )
+
+    # One message of 400 ASCII characters: 4 tokens for the message and 100 for its
+    # text. The prompt and the tools the Java setup binds are not counted, and the
+    # Java side is not asked.
+    assert estimate == TokenEstimate.approximate(104)
+    assert java_setup.mock_calls == []
 
 
 def test_to_java_chat_message_extracts_java_safe_fields() -> None:
@@ -236,5 +253,19 @@ def test_java_chat_model_setup_refuses_tools_or_output_schema(
 
     with pytest.raises(NotImplementedError, match="Java chat model setup"):
         setup.chat([ChatMessage.of(MessageRole.USER, "hi")], **call_kwargs)
+    assert j_resource.mock_calls == []
+    assert adapter.mock_calls == []
+
+
+def test_java_chat_model_setup_refuses_chat_without_tools() -> None:
+    """The bridge reaches only the Java setup's chat, which adds its bound prompt
+    and tools, so messages cannot be sent as they are.
+    """
+    setup, j_resource, adapter = _java_chat_model_setup()
+
+    with pytest.raises(
+        NotImplementedError, match="cannot be sent messages as they are"
+    ):
+        setup.chat_without_tools([ChatMessage.of(MessageRole.USER, "hi")])
     assert j_resource.mock_calls == []
     assert adapter.mock_calls == []

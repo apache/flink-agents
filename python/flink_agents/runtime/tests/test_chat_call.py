@@ -21,6 +21,7 @@ import pytest
 
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_result import ChatResult, TokenUsage
+from flink_agents.api.context_management import ContextManagementPolicy
 from flink_agents.api.events.chat_event import ChatResponseError, ChatResponseEvent
 from flink_agents.api.events.event import Event
 from flink_agents.api.runner_context import DurableFuture
@@ -84,6 +85,23 @@ def test_lazy_snapshot_yield_and_repeated_await():
     assert bridge.starts == 1
     assert bridge.polls == polls
     assert future._is_done()
+
+
+def test_chat_call_carries_its_context_management_policy():
+    ctx, bridge = context()
+    policy = ContextManagementPolicy(
+        tool_result_keep_last_rounds=2, max_input_tokens=4000, summarizer="small"
+    )
+    future = ctx.chat(
+        "model", [ChatMessage.user("hello")], context_management=policy
+    )
+    next(future.__await__())
+    assert bridge.request.context_management == policy
+
+    ctx, bridge = context()
+    next(ctx.chat("model", [ChatMessage.user("hello")]).__await__())
+    assert bridge.request.context_management is None
+    assert "context_management" not in bridge.request.attributes
 
 
 def test_failed_response_raises_on_each_await_without_restarting():

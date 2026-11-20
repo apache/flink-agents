@@ -19,6 +19,8 @@ package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.model.TokenEstimate;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -239,6 +241,30 @@ public class PythonChatModelSetupTest {
         // setup's bound prompt and tools.
         assertThatThrownBy(() -> pythonChatModelSetup.chat(messages, List.of(), Map.of(), null))
                 .isInstanceOf(UnsupportedOperationException.class);
+        verifyNoInteractions(mockAdapter);
+    }
+
+    @Test
+    void testChatWithoutToolsIsRefused() {
+        List<ChatMessage> messages = Collections.singletonList(mock(ChatMessage.class));
+
+        // The bridge reaches only the Python setup's chat, which adds its bound prompt and tools.
+        assertThatThrownBy(() -> pythonChatModelSetup.chatWithoutTools(messages))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessageContaining("cannot be sent messages as they are");
+        verifyNoInteractions(mockAdapter);
+    }
+
+    @Test
+    void theInputEstimateIsTheApproximationOfTheGivenMessages() {
+        // The Python setup's bound prompt and tools are not visible to the wrapper, and no
+        // connection is bound on the Java side: the estimate covers the messages and is marked
+        // approximate, without a call into Python.
+        TokenEstimate estimate =
+                pythonChatModelSetup.estimateInputTokens(
+                        List.of(new ChatMessage(MessageRole.USER, "hello")), Map.of());
+
+        assertThat(estimate).isEqualTo(TokenEstimate.approximate(6));
         verifyNoInteractions(mockAdapter);
     }
 
