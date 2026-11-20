@@ -22,8 +22,10 @@ from typing import TYPE_CHECKING, cast
 from pydantic import BaseModel
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.chat_message import UrlSource
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.media.media_model import AsyncJobModel
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
 
@@ -43,18 +45,34 @@ class ImageGenerationAgent(Agent):
 
     @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: Event, ctx: RunnerContext) -> None:
-        """Generate an image and emit its result with the input id."""
+    async def process_input(event: Event, ctx: RunnerContext) -> None:
+        """Submit an async image job, persist its handle, and wait for the result."""
         request = ImagePrompt.model_validate(InputEvent.from_event(event).input)
         dashscope = cast(
             "BaseMediaProvider",
             ctx.get_resource("dashscope", ResourceType.MEDIA_PROVIDER),
         )
-        result = dashscope.image("qwen-image-3.0").generate(
-            request.prompt, model_parameters={"size": "512*512"}, timeout=180
+        image_model = dashscope.image(
+            "qwen-image-3.0", model_parameters={"size": "512*512"}
         )
+        if isinstance(image_model, AsyncJobModel):
+            job = await ctx.durable_execute_async(image_model.submit, request.prompt)
+            result = await ctx.durable_execute_async(image_model.wait, job, timeout=180)
+        else:
+            result = await ctx.durable_execute_async(
+                image_model.generate, request.prompt, timeout=180
+            )
+        urls = [
+            block.source.url
+            for block in result.content
+            if isinstance(block.source, UrlSource)
+        ]
         ctx.send_event(
             OutputEvent(
-                output={"id": request.id, "result": result.model_dump(mode="json")}
+                output={
+                    "id": request.id,
+                    "urls": urls,
+                    "request_id": result.request_id,
+                }
             )
         )

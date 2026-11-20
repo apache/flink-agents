@@ -408,8 +408,9 @@ Python environment, set `DASHSCOPE_API_KEY`, and run
 DASHSCOPE_API_KEY=... python -m flink_agents.examples.media.image_generation_example
 ```
 
-The job registers `DashScopeMediaProvider`, sends a prompt to `qwen-image-3.0`,
-and prints the resulting `MediaResult` including the generated image URL.
+The job registers `DashScopeMediaProvider`, submits an async image job to
+`qwen-image-3.0` through `durable_execute_async`, waits for completion, and
+prints the generated image URLs and request ID.
 
 ## Provider lifecycle
 

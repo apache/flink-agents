@@ -58,25 +58,29 @@ class SearchRankingAgent(Agent):
     """Return the best result for a question.
 
     The job registers ``ranker``. Each result may be text, an image, or a
-    video. The output names the chosen result by its position and block type.
+    video. The output names the chosen result by its position, block type, and
+    relevance score.
     """
 
     @action(InputEvent.EVENT_TYPE)
     @staticmethod
-    def process_input(event: Event, ctx: RunnerContext) -> None:
+    async def process_input(event: Event, ctx: RunnerContext) -> None:
         """Rank the shared result list and emit the top hit."""
         question = SearchQuestion.model_validate(InputEvent.from_event(event).input)
         model = cast(
             "BaseRerankModel",
             ctx.get_resource("ranker", ResourceType.RERANK_MODEL),
         )
-        result = model.rerank(
+        result = await ctx.durable_execute_async(
+            model.rerank,
             TextBlock(text=question.text),
             _RESULTS,
             top_n=1,
             return_documents=True,
             model_parameters={"fps": 0.1},
         )
+        if not result.results:
+            return
         hit = result.results[0]
         ctx.send_event(
             OutputEvent(
@@ -84,6 +88,7 @@ class SearchRankingAgent(Agent):
                     "id": question.id,
                     "index": hit.index,
                     "kind": type(hit.document).__name__,
+                    "score": hit.relevance_score,
                 }
             )
         )

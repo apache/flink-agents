@@ -22,12 +22,9 @@ Set ``DASHSCOPE_API_KEY``, then run:
     python -m flink_agents.examples.rerank_models.search_ranking_example
 
 Each question is ranked against the same three results. The job prints the
-top result's position and block type.
+top result's position, block type, and relevance score.
 """
 
-import sys
-
-from pyflink.common import Configuration
 from pyflink.datastream import StreamExecutionEnvironment
 
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
@@ -40,9 +37,7 @@ from flink_agents.examples.rerank_models.agents.search_ranking_agent import (
 
 def main() -> None:
     """Register the rerank model and rank two questions."""
-    config = Configuration()
-    config.set_string("python.executable", sys.executable)
-    env = StreamExecutionEnvironment.get_execution_environment(config)
+    env = StreamExecutionEnvironment.get_execution_environment()
     env.set_parallelism(1)
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
     agents_env.add_resource(

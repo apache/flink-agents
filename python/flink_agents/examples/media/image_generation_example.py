@@ -21,13 +21,11 @@ Set ``DASHSCOPE_API_KEY``, then run:
 
     python -m flink_agents.examples.media.image_generation_example
 
-``generate()`` submits the image task and waits for its result. The job prints
-that result, including the image URL.
+The agent submits an async image task via ``durable_execute_async`` so the job
+handle can be reused on recovery, then waits for completion and prints the
+generated image URLs.
 """
 
-import sys
-
-from pyflink.common import Configuration
 from pyflink.datastream import StreamExecutionEnvironment
 
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
@@ -40,9 +38,7 @@ from flink_agents.examples.media.agents.image_generation_agent import (
 
 def main() -> None:
     """Register DashScope and generate an image from a prompt."""
-    config = Configuration()
-    config.set_string("python.executable", sys.executable)
-    env = StreamExecutionEnvironment.get_execution_environment(config)
+    env = StreamExecutionEnvironment.get_execution_environment()
     env.set_parallelism(1)
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
     agents_env.add_resource(

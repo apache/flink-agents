@@ -205,7 +205,8 @@ DASHSCOPE_API_KEY=... python -m flink_agents.examples.rerank_models.search_ranki
 ```
 
 The job registers `qwen3-vl-rerank`, ranks two questions against a text, image,
-and video candidate, and prints the top hit's index and content block type.
+and video candidate, and prints the top hit's index, content block type, and
+relevance score.
 
 ## Lifecycle
 
