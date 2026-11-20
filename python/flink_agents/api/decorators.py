@@ -296,8 +296,8 @@ def vector_store(func: Callable) -> Callable:
     return func
 
 
-def media_model(func: Callable) -> Callable:
-    """Decorator for marking a function declaring a media model.
+def media_provider(func: Callable) -> Callable:
+    """Decorator for marking a function declaring a media provider.
 
     Parameters
     ----------
@@ -307,9 +307,9 @@ def media_model(func: Callable) -> Callable:
     Returns:
     -------
     Callable
-        Decorator function that marks the target function declare a media model.
+        Decorator function that marks the target function declare a media provider.
     """
-    func._is_media_model = True
+    func._is_media_provider = True
     return func
 
 

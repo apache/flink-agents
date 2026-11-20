@@ -69,7 +69,7 @@ _DESCRIPTOR_TYPES: Dict[str, ResourceType] = {
     "embedding_model_connections": ResourceType.EMBEDDING_MODEL_CONNECTION,
     "embedding_model_setups": ResourceType.EMBEDDING_MODEL,
     "vector_stores": ResourceType.VECTOR_STORE,
-    "media_models": ResourceType.MEDIA_MODEL,
+    "media_providers": ResourceType.MEDIA_PROVIDER,
     "rerank_models": ResourceType.RERANK_MODEL,
     "mcp_servers": ResourceType.MCP_SERVER,
     "model_routers": ResourceType.MODEL_ROUTER,

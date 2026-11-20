@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import os
+from contextlib import closing
 
 import pytest
 
@@ -46,11 +47,13 @@ _api_key_available = "DASHSCOPE_API_KEY" in os.environ
 @pytest.mark.parametrize("model_name", ["qwen3-rerank", "qwen3.7-text-rerank"])
 def test_text_rerank_orders_the_relevant_document_first(model_name: str) -> None:
     """The passage that answers the query ranks first."""
-    result = DashScopeRerankModel(model=model_name).rerank(
-        TextBlock(text="What is a text reranking model?"),
-        _DOCUMENTS,
-        top_n=2,
-    )
+    with closing(DashScopeRerankModel(model=model_name)) as model:
+        model.open()
+        result = model.rerank(
+            TextBlock(text="What is a text reranking model?"),
+            _DOCUMENTS,
+            top_n=2,
+        )
 
     assert result.results
     assert result.results[0].index == 0
@@ -61,17 +64,19 @@ def test_text_rerank_orders_the_relevant_document_first(model_name: str) -> None
 @pytest.mark.skipif(not _api_key_available, reason="DashScope API key is not set")
 def test_multimodal_rerank_accepts_text_image_and_video() -> None:
     """A text query can rank text, an image, and a video together."""
-    result = DashScopeRerankModel(model="qwen3-vl-rerank").rerank(
-        TextBlock(text="What is a text reranking model?"),
-        [
-            _DOCUMENTS[0],
-            ImageBlock.from_url("image/jpeg", _IMAGE),
-            VideoBlock.from_url("video/mp4", _VIDEO),
-        ],
-        top_n=1,
-        return_documents=True,
-        fps=0.1,
-    )
+    with closing(DashScopeRerankModel(model="qwen3-vl-rerank")) as model:
+        model.open()
+        result = model.rerank(
+            TextBlock(text="What is a text reranking model?"),
+            [
+                _DOCUMENTS[0],
+                ImageBlock.from_url("image/jpeg", _IMAGE),
+                VideoBlock.from_url("video/mp4", _VIDEO),
+            ],
+            top_n=1,
+            return_documents=True,
+            model_parameters={"fps": 0.1},
+        )
 
     assert len(result.results) == 1
     assert all(hit.document is not None for hit in result.results)

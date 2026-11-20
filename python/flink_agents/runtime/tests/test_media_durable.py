@@ -15,23 +15,25 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #################################################################################
-from typing import Any, Sequence
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import Mock
 
 import cloudpickle
+import httpx
 import pytest
-from pydantic import Field
 
-from flink_agents.api.chat_message import DataContentBlock, TextBlock
-from flink_agents.api.media_models.media_model import (
-    BaseMediaModel,
+from flink_agents.api.chat_message import VideoBlock
+from flink_agents.api.media.media_model import (
     MediaJob,
-    MediaJobState,
-    MediaJobStatus,
     MediaResult,
-    MediaTask,
 )
+from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
+from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.plan.resource_provider import PythonResourceProvider
 from flink_agents.runtime.durable_exception import is_java_interruption
 from flink_agents.runtime.flink_runner_context import FlinkRunnerContext
+from flink_agents.runtime.resource_cache import ResourceCache
 from flink_agents.runtime.tests.test_durable_exception import (
     _INTERRUPTED,
     _java_error,
@@ -44,59 +46,53 @@ from flink_agents.runtime.tests.test_flink_runner_context_reconcilable import (
 )
 
 
-class _Calls:
-    """Counters and the jobs observed by one scripted model."""
+class _Service:
+    """External job state survives client and resource recreation."""
 
     def __init__(self) -> None:
         self.submits = 0
-        self.jobs: list[MediaJob] = []
-        self.pending_returned = False
-        self.interrupted = False
+        self.queries: list[str] = []
+        self.clients: list[Mock] = []
 
+    def create_client(self, **kwargs: Any) -> Mock:
+        client = Mock()
+        client.videos.jobs.create.side_effect = self.submit
+        client.transport.request.side_effect = self.query
+        self.clients.append(client)
+        return client
 
-class _RecoverableMediaModel(BaseMediaModel):
-    """Submits one job, then reports pending, an interruption, and success."""
+    def submit(self, **kwargs: Any) -> SimpleNamespace:
+        self.submits += 1
+        return SimpleNamespace(task_id="job-1")
 
-    calls: _Calls = Field(default_factory=_Calls)
-
-    def generate(
-        self,
-        content: Sequence[DataContentBlock],
-        *,
-        timeout: float | None = None,
-        **kwargs: Any,
-    ) -> MediaResult:
-        raise NotImplementedError
-
-    def supports_async_task(self) -> bool:
-        return True
-
-    def submit(self, content: Sequence[DataContentBlock], **kwargs: Any) -> MediaJob:
-        self.calls.submits += 1
-        return MediaJob(
-            provider=self._provider_name(),
-            model=self.model,
-            task=self.task,
-            job_id="job-1",
-            submitted_at_ms=1,
-        )
-
-    def fetch(self, job: MediaJob) -> MediaJobState:
-        self.calls.jobs.append(job)
-        if not self.calls.pending_returned:
-            self.calls.pending_returned = True
-            return MediaJobState(job=job, status=MediaJobStatus.PENDING)
-        if not self.calls.interrupted:
-            self.calls.interrupted = True
+    def query(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        assert method == "GET"
+        self.queries.append(path)
+        if len(self.queries) == 1:
+            output = {"task_status": "PENDING"}
+        elif len(self.queries) == 2:
             raise _java_error(_INTERRUPTED)
-        return MediaJobState(
-            job=job,
-            status=MediaJobStatus.SUCCEEDED,
-            result=MediaResult(content=[TextBlock(text="done")]),
-        )
+        else:
+            output = {
+                "task_status": "SUCCEEDED",
+                "video_url": "https://example.test/out.mp4",
+            }
+        return httpx.Response(200, json={"output": output})
 
-    def cancel(self, job: MediaJob) -> None:
-        raise NotImplementedError
+
+def _resource_cache() -> ResourceCache:
+    descriptor = ResourceDescriptor(
+        clazz=ResourceName.MediaProvider.DASHSCOPE,
+        api_key="sk-test",
+        workspace="ws-test",
+    )
+    resource_provider = PythonResourceProvider.get(
+        "media", descriptor, ResourceType.MEDIA_PROVIDER
+    )
+    return ResourceCache(
+        {ResourceType.MEDIA_PROVIDER: {"media": resource_provider}},
+        AgentConfiguration(),
+    )
 
 
 class _Clock:
@@ -120,20 +116,24 @@ def _execute(ctx: FlinkRunnerContext, asynchronous: bool, func: Any, *args: Any)
 def test_interrupted_wait_replays_the_submitted_job(
     asynchronous: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A stored submit is replayed after wait is interrupted on the same job."""
+    """A recreated provider resumes the persisted job after an interrupted wait."""
     monkeypatch.setattr(
-        "flink_agents.api.media_models.media_model.time",
+        "flink_agents.api.media.media_model.time",
         _Clock(),
     )
-    model = _RecoverableMediaModel(
-        model="wan2.7-i2v",
-        task=MediaTask.VIDEO_GENERATION,
+    service = _Service()
+    monkeypatch.setattr(
+        "flink_agents.integrations.media_providers.dashscope_media_provider.create_client",
+        service.create_client,
     )
+    cache = _resource_cache()
+    provider = cache.get_resource("media", ResourceType.MEDIA_PROVIDER)
+    model = provider.video("wan2.7-i2v")
 
     def submit_job() -> MediaJob:
-        return model.submit([TextBlock(text="a cat")])
+        return model.submit("a cat")
 
-    def wait_job(job: MediaJob) -> MediaResult:
+    def wait_job(job: MediaJob) -> MediaResult[VideoBlock]:
         return model.wait(job)
 
     store = _FakeJavaRunnerContext()
@@ -144,10 +144,11 @@ def test_interrupted_wait_replays_the_submitted_job(
             _execute(ctx, asynchronous, wait_job, job)
     finally:
         _close_runner_context(ctx)
+        cache.close()
 
     assert is_java_interruption(raised.value)
-    assert model.calls.submits == 1
-    assert [seen.job_id for seen in model.calls.jobs] == ["job-1", "job-1"]
+    assert service.submits == 1
+    assert service.queries == ["/tasks/job-1", "/tasks/job-1"]
     assert [slot.status for slot in store.call_results] == ["SUCCEEDED"]
     assert store.call_results[0].exception_payload is None
     stored_job = cloudpickle.loads(store.call_results[0].result_payload)
@@ -155,18 +156,30 @@ def test_interrupted_wait_replays_the_submitted_job(
     assert store.current_call_index == 1
 
     store.current_call_index = 0
+    cache = _resource_cache()
+    recovered_provider = cache.get_resource("media", ResourceType.MEDIA_PROVIDER)
+    recovered_model = recovered_provider.video("wan2.7-i2v")
+    assert recovered_provider is not provider
+    assert recovered_model is not model
+    model = recovered_model
     ctx = _create_runner_context(store)
     try:
         recovered = _execute(ctx, asynchronous, submit_job)
         result = _execute(ctx, asynchronous, wait_job, recovered)
     finally:
         _close_runner_context(ctx)
+        cache.close()
 
-    assert model.calls.submits == 1
+    assert service.submits == 1
     assert recovered == job
     assert recovered is not job
-    assert model.calls.jobs[2] is recovered
-    assert result == MediaResult(content=[TextBlock(text="done")])
+    assert service.queries == ["/tasks/job-1"] * 3
+    assert len(service.clients) == 2
+    for client in service.clients:
+        client.close.assert_called_once_with()
+    assert result == MediaResult[VideoBlock](
+        content=[VideoBlock.from_url("video/mp4", "https://example.test/out.mp4")]
+    )
     assert [slot.status for slot in store.call_results] == ["SUCCEEDED", "SUCCEEDED"]
     stored_result = cloudpickle.loads(store.call_results[1].result_payload)
     assert stored_result == result

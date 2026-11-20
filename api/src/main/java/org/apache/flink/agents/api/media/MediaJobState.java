@@ -26,10 +26,10 @@ import javax.annotation.Nullable;
 import java.util.Objects;
 
 /** One observation of a media job, returned by fetch. */
-public final class MediaJobState {
+public final class MediaJobState<R extends MediaResult<?>> {
     private final MediaJob job;
     private final MediaJobStatus status;
-    @Nullable private final MediaResult result;
+    @Nullable private final R result;
     @Nullable private final String errorCode;
     @Nullable private final String errorMessage;
 
@@ -37,7 +37,7 @@ public final class MediaJobState {
     public MediaJobState(
             @JsonProperty(value = "job", required = true) MediaJob job,
             @JsonProperty(value = "status", required = true) MediaJobStatus status,
-            @JsonProperty("result") @Nullable MediaResult result,
+            @JsonProperty("result") @Nullable R result,
             @JsonProperty("error_code") @Nullable String errorCode,
             @JsonProperty("error_message") @Nullable String errorMessage) {
         this.job = Objects.requireNonNull(job, "job");
@@ -56,7 +56,7 @@ public final class MediaJobState {
     }
 
     @Nullable
-    public MediaResult getResult() {
+    public R getResult() {
         return result;
     }
 

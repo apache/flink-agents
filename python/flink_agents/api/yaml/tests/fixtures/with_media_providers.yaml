@@ -1,0 +1,13 @@
+media_providers:
+  - name: shared_media
+    clazz: dashscope
+    type: python
+    request_timeout: 12
+
+agents:
+  - name: media_agent
+    media_providers:
+      - name: own_media
+        clazz: dashscope
+        type: python
+        request_timeout: 12

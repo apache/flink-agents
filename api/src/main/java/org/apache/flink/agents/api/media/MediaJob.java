@@ -38,13 +38,13 @@ public final class MediaJob {
     public MediaJob(
             @JsonProperty(value = "provider", required = true) String provider,
             @JsonProperty(value = "model", required = true) String model,
-            @JsonProperty(value = "task", required = true) MediaTask task,
+            @JsonProperty(value = "task", required = true) String task,
             @JsonProperty(value = "job_id", required = true) String jobId,
             @JsonProperty(value = "submitted_at_ms", required = true) long submittedAtMs,
             @JsonProperty("expires_at_ms") @Nullable Long expiresAtMs) {
         this.provider = Objects.requireNonNull(provider, "provider");
         this.model = Objects.requireNonNull(model, "model");
-        this.task = Objects.requireNonNull(task, "task");
+        this.task = MediaTask.fromValue(Objects.requireNonNull(task, "task"));
         this.jobId = Objects.requireNonNull(jobId, "jobId");
         this.submittedAtMs = submittedAtMs;
         this.expiresAtMs = expiresAtMs;
@@ -58,8 +58,9 @@ public final class MediaJob {
         return model;
     }
 
-    public MediaTask getTask() {
-        return task;
+    /** Return the task identifier recorded when the job was submitted. */
+    public String getTask() {
+        return task.getValue();
     }
 
     @JsonProperty("job_id")

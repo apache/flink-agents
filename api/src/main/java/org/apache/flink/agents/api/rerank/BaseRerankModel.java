@@ -26,15 +26,11 @@ import org.apache.flink.agents.api.resource.ResourceType;
 
 import javax.annotation.Nullable;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
-/**
- * A model that ranks documents against one query.
- *
- * <p>The call is synchronous. The Java type is the caller-facing contract. A provider may be
- * implemented in Python and reached through the cross-language bridge.
- */
+/** A model that synchronously ranks documents against one query. */
 public abstract class BaseRerankModel extends Resource {
     protected BaseRerankModel(ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
@@ -45,24 +41,34 @@ public abstract class BaseRerankModel extends Resource {
         return ResourceType.RERANK_MODEL;
     }
 
+    /** Rank documents using the configured model parameters and request timeout. */
+    public RerankResult rerank(DataContentBlock query, List<DataContentBlock> documents) {
+        return rerank(query, documents, Map.of());
+    }
+
+    /** Rank documents with per-call model parameters and the configured request timeout. */
+    public RerankResult rerank(
+            DataContentBlock query,
+            List<DataContentBlock> documents,
+            Map<String, Object> modelParameters) {
+        return rerank(query, documents, modelParameters, null);
+    }
+
     /**
      * Rank documents against the query.
      *
-     * <p>Unspecified ranking options use the resource configuration. If an option is also absent
-     * from that configuration, the provider default applies.
+     * <p>Call model parameters override matching resource configuration. If an option is absent
+     * from both, the provider default applies.
      *
-     * @param topN maximum hits, or null to leave this option unspecified
-     * @param returnDocuments whether hits include the original document, or null to leave this
-     *     option unspecified
-     * @param instruct ranking instruction, or null to leave this option unspecified
-     * @param timeout seconds for this request, or null for the provider timeout
+     * @param query query to rank the documents against
+     * @param documents candidates in request order, which determines the index in each hit
+     * @param modelParameters model parameters for this call, such as {@code top_n}, {@code
+     *     return_documents}, and {@code instruct}
+     * @param timeout HTTP timeout for this request, or null to use the configured request timeout
      */
     public abstract RerankResult rerank(
             DataContentBlock query,
             List<DataContentBlock> documents,
-            @Nullable Integer topN,
-            @Nullable Boolean returnDocuments,
-            @Nullable String instruct,
-            @Nullable Double timeout,
-            Map<String, Object> parameters);
+            Map<String, Object> modelParameters,
+            @Nullable Duration timeout);
 }

@@ -29,7 +29,7 @@ import org.apache.flink.agents.api.annotation.DecisionModelSetup;
 import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
 import org.apache.flink.agents.api.annotation.EmbeddingModelSetup;
 import org.apache.flink.agents.api.annotation.MCPServer;
-import org.apache.flink.agents.api.annotation.MediaModel;
+import org.apache.flink.agents.api.annotation.MediaProvider;
 import org.apache.flink.agents.api.annotation.Prompt;
 import org.apache.flink.agents.api.annotation.RerankModel;
 import org.apache.flink.agents.api.annotation.Tool;
@@ -505,8 +505,8 @@ public class AgentPlan implements Serializable {
                 extractResource(ResourceType.EMBEDDING_MODEL_CONNECTION, method);
             } else if (method.isAnnotationPresent(VectorStore.class)) {
                 extractResource(ResourceType.VECTOR_STORE, method);
-            } else if (method.isAnnotationPresent(MediaModel.class)) {
-                extractResource(ResourceType.MEDIA_MODEL, method);
+            } else if (method.isAnnotationPresent(MediaProvider.class)) {
+                extractResource(ResourceType.MEDIA_PROVIDER, method);
             } else if (method.isAnnotationPresent(RerankModel.class)) {
                 extractResource(ResourceType.RERANK_MODEL, method);
             } else if (method.isAnnotationPresent(

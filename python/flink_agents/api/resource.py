@@ -32,7 +32,7 @@ class ResourceType(Enum):
     """Type enum of resource.
 
     Currently, support chat_model, decision_model, tool, embedding_model,
-    vector_store, media_model, rerank_model, prompt, mcp_server, skills,
+    vector_store, media_provider, rerank_model, prompt, mcp_server, skills,
     model_router, agent.
     """
 
@@ -44,7 +44,7 @@ class ResourceType(Enum):
     EMBEDDING_MODEL = "embedding_model"
     EMBEDDING_MODEL_CONNECTION = "embedding_model_connection"
     VECTOR_STORE = "vector_store"
-    MEDIA_MODEL = "media_model"
+    MEDIA_PROVIDER = "media_provider"
     RERANK_MODEL = "rerank_model"
     PROMPT = "prompt"
     MCP_SERVER = "mcp_server"
@@ -450,11 +450,11 @@ class ResourceName:
 
             MODEL_ROUTER = "org.apache.flink.agents.api.chat.model.routing.ModelRouter"
 
-    class MediaModel:
-        """MediaModel resource names."""
+    class MediaProvider:
+        """MediaProvider resource names."""
 
         # DashScope
-        DASHSCOPE = "flink_agents.integrations.media_models.dashscope_media_model.DashScopeMediaModel"
+        DASHSCOPE = "flink_agents.integrations.media_providers.dashscope_media_provider.DashScopeMediaProvider"
 
     class RerankModel:
         """RerankModel resource names."""

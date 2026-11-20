@@ -28,10 +28,11 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /** Output of a finished generation, transcription, or synthesis. */
-public final class MediaResult {
-    private final List<DataContentBlock> content;
+public final class MediaResult<T extends DataContentBlock> {
+    private final List<T> content;
     @Nullable private final Long expiresAtMs;
     private final Map<String, Object> usage;
     @Nullable private final String requestId;
@@ -39,12 +40,12 @@ public final class MediaResult {
 
     @JsonCreator
     public MediaResult(
-            @JsonProperty(value = "content", required = true) List<DataContentBlock> content,
+            @JsonProperty(value = "content", required = true) List<T> content,
             @JsonProperty("expires_at_ms") @Nullable Long expiresAtMs,
             @JsonProperty("usage") @Nullable Map<String, Object> usage,
             @JsonProperty("request_id") @Nullable String requestId,
             @JsonProperty("metadata") @Nullable Map<String, Object> metadata) {
-        this.content = content == null ? List.of() : List.copyOf(content);
+        this.content = List.copyOf(Objects.requireNonNull(content, "content"));
         this.expiresAtMs = expiresAtMs;
         this.usage = usage == null ? Map.of() : Map.copyOf(usage);
         this.requestId = requestId;
@@ -54,7 +55,7 @@ public final class MediaResult {
                         : Collections.unmodifiableMap(new LinkedHashMap<>(metadata));
     }
 
-    public List<DataContentBlock> getContent() {
+    public List<T> getContent() {
         return content;
     }
 

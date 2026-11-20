@@ -18,11 +18,8 @@
 
 package org.apache.flink.agents.api.media;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonValue;
-
-/** The capability one media model instance serves. */
-public enum MediaTask {
+/** Validated task identifiers stored in media jobs. */
+enum MediaTask {
     IMAGE_GENERATION("image_generation"),
     VIDEO_GENERATION("video_generation"),
     TRANSCRIPTION("transcription"),
@@ -34,14 +31,12 @@ public enum MediaTask {
         this.value = value;
     }
 
-    @JsonValue
-    public String getValue() {
+    String getValue() {
         return value;
     }
 
     /** Return the task for its wire value. */
-    @JsonCreator
-    public static MediaTask fromValue(String value) {
+    static MediaTask fromValue(String value) {
         for (MediaTask task : values()) {
             if (task.value.equals(value)) {
                 return task;

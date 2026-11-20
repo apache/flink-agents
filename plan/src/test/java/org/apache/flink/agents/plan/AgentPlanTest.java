@@ -25,7 +25,7 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.MCPServer;
-import org.apache.flink.agents.api.annotation.MediaModel;
+import org.apache.flink.agents.api.annotation.MediaProvider;
 import org.apache.flink.agents.api.annotation.RerankModel;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -630,10 +630,10 @@ public class AgentPlanTest {
 
     /** Test agent declaring Python media and rerank resources. */
     public static class TestAgentWithMediaAndRerank extends Agent {
-        @MediaModel
-        public static ResourceDescriptor videoModel() {
+        @MediaProvider
+        public static ResourceDescriptor mediaProvider() {
             return PythonResourceDescriptor.Builder.newBuilder(
-                            ResourceName.MediaModel.Python.DASHSCOPE)
+                            ResourceName.MediaProvider.Python.DASHSCOPE)
                     .build();
         }
 
@@ -650,10 +650,10 @@ public class AgentPlanTest {
         AgentPlan plan = new AgentPlan(new TestAgentWithMediaAndRerank());
 
         ResourceProvider media =
-                plan.getResourceProviders().get(ResourceType.MEDIA_MODEL).get("videoModel");
+                plan.getResourceProviders().get(ResourceType.MEDIA_PROVIDER).get("mediaProvider");
         assertThat(media).isInstanceOf(PythonResourceProvider.class);
         assertThat(((PythonResourceProvider) media).getDescriptor().getClazz())
-                .isEqualTo("DashScopeMediaModel");
+                .isEqualTo("DashScopeMediaProvider");
 
         ResourceProvider rerank =
                 plan.getResourceProviders().get(ResourceType.RERANK_MODEL).get("ranker");

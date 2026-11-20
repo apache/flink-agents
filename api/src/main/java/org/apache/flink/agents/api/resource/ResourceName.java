@@ -277,17 +277,17 @@ public final class ResourceName {
         private ModelRouter() {}
     }
 
-    // ==================== MediaModel ====================
-    public static final class MediaModel {
-        /** Python implementations of MediaModel. */
+    // ==================== MediaProvider ====================
+    public static final class MediaProvider {
+        /** Python implementations of MediaProvider. */
         public static final class Python {
             public static final String DASHSCOPE =
-                    "flink_agents.integrations.media_models.dashscope_media_model.DashScopeMediaModel";
+                    "flink_agents.integrations.media_providers.dashscope_media_provider.DashScopeMediaProvider";
 
             private Python() {}
         }
 
-        private MediaModel() {}
+        private MediaProvider() {}
     }
 
     // ==================== RerankModel ====================

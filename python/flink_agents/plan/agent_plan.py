@@ -361,7 +361,7 @@ def _get_resource_providers(
             or hasattr(value, "_is_embedding_model_setup")
             or hasattr(value, "_is_embedding_model_connection")
             or hasattr(value, "_is_vector_store")
-            or hasattr(value, "_is_media_model")
+            or hasattr(value, "_is_media_provider")
             or hasattr(value, "_is_rerank_model")
         ):
             if isinstance(value, staticmethod):
@@ -379,7 +379,7 @@ def _get_resource_providers(
                         "_is_embedding_model_setup": ResourceType.EMBEDDING_MODEL,
                         "_is_embedding_model_connection": ResourceType.EMBEDDING_MODEL_CONNECTION,
                         "_is_vector_store": ResourceType.VECTOR_STORE,
-                        "_is_media_model": ResourceType.MEDIA_MODEL,
+                        "_is_media_provider": ResourceType.MEDIA_PROVIDER,
                         "_is_rerank_model": ResourceType.RERANK_MODEL,
                     }.items()
                     if hasattr(value, marker)
@@ -494,7 +494,7 @@ def _get_resource_providers(
         ResourceType.EMBEDDING_MODEL,
         ResourceType.EMBEDDING_MODEL_CONNECTION,
         ResourceType.VECTOR_STORE,
-        ResourceType.MEDIA_MODEL,
+        ResourceType.MEDIA_PROVIDER,
         ResourceType.RERANK_MODEL,
     ]:
         for name, descriptor in agent.resources[resource_type].items():

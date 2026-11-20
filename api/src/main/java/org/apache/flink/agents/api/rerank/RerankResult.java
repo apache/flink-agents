@@ -25,6 +25,7 @@ import javax.annotation.Nullable;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /** Ranked documents from one synchronous rerank call. */
 public final class RerankResult {
@@ -32,12 +33,13 @@ public final class RerankResult {
     private final Map<String, Object> usage;
     @Nullable private final String requestId;
 
+    /** Create a result. Use an empty list when no documents are returned. */
     @JsonCreator
     public RerankResult(
             @JsonProperty(value = "results", required = true) List<RerankHit> results,
             @JsonProperty("usage") @Nullable Map<String, Object> usage,
             @JsonProperty("request_id") @Nullable String requestId) {
-        this.results = results == null ? List.of() : List.copyOf(results);
+        this.results = List.copyOf(Objects.requireNonNull(results, "results"));
         this.usage = usage == null ? Map.of() : Map.copyOf(usage);
         this.requestId = requestId;
     }

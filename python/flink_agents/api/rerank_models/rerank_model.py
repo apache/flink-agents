@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import override
@@ -73,6 +73,8 @@ class BaseRerankModel(Resource, ABC):
     durable execution.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     model: str = Field(description="Name of the model to call.")
 
     @classmethod
@@ -89,23 +91,25 @@ class BaseRerankModel(Resource, ABC):
         *,
         top_n: int | None = None,
         return_documents: bool | None = None,
-        instruct: str | None = None,
+        model_parameters: Mapping[str, Any] | None = None,
         timeout: float | None = None,
-        **kwargs: Any,
     ) -> RerankResult:
         """Rank ``documents`` against ``query``.
+
+        Explicit call arguments override same-named entries in call-level
+        ``model_parameters``, which in turn override configured defaults.
 
         Args:
             query: Text or, when the model accepts it, one image.
             documents: Candidates in request order. ``results[].index`` refers
                 to this order.
-            top_n: Maximum number of hits to return. None uses the resource
-                configuration, or the provider default when not configured.
+            top_n: Maximum number of hits to return. None falls back to
+                ``model_parameters["top_n"]``, configured defaults, or the
+                provider default.
             return_documents: Whether hits include the original document.
-                None uses the resource configuration, or the provider default
-                when not configured.
-            instruct: Ranking instruction. None uses the resource configuration,
-                or the provider default when not configured.
+                None falls back to ``model_parameters["return_documents"]``,
+                configured defaults, or the provider default.
+            model_parameters: Provider model parameters overriding configured
+                defaults (for example ``instruct`` or ``fps``).
             timeout: Seconds for this request. None uses the provider timeout.
-            **kwargs: Provider parameters overriding the configured defaults.
         """

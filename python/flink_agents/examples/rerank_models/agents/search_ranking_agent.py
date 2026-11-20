@@ -75,7 +75,7 @@ class SearchRankingAgent(Agent):
             _RESULTS,
             top_n=1,
             return_documents=True,
-            fps=0.1,
+            model_parameters={"fps": 0.1},
         )
         hit = result.results[0]
         ctx.send_event(

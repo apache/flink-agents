@@ -17,7 +17,12 @@
 #################################################################################
 from types import SimpleNamespace
 
-from flink_agents.integrations.dashscope_utils import usage_counters
+import pytest
+
+from flink_agents.integrations.dashscope_utils import (
+    usage_counters,
+    validate_request_timeout,
+)
 
 
 def test_usage_counters_keep_scalar_fields_and_drop_bools() -> None:
@@ -35,3 +40,28 @@ def test_usage_counters_keep_scalar_fields_and_drop_bools() -> None:
         "ratio": "16:9",
     }
     assert usage_counters(None) == {}
+
+
+def test_validate_request_timeout_accepts_none_and_positive_numbers() -> None:
+    assert validate_request_timeout(None) is None
+    assert validate_request_timeout(12) == 12
+    assert validate_request_timeout(0.5) == 0.5
+
+
+@pytest.mark.parametrize(
+    ("timeout", "error_type"),
+    [
+        (0, ValueError),
+        (-1.5, ValueError),
+        (float("nan"), ValueError),
+        (float("inf"), ValueError),
+        (True, TypeError),
+        (False, TypeError),
+        ("10", TypeError),
+    ],
+)
+def test_validate_request_timeout_rejects_invalid_values(
+    timeout: object, error_type: type[Exception]
+) -> None:
+    with pytest.raises(error_type, match="positive finite number"):
+        validate_request_timeout(timeout)  # type: ignore[arg-type]

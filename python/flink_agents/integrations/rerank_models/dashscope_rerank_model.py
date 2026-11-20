@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import os
+from copy import deepcopy
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlparse
 
@@ -41,6 +42,7 @@ from flink_agents.integrations.dashscope_utils import (
     create_client,
     media_source_url,
     usage_counters,
+    validate_request_timeout,
 )
 
 DEFAULT_REQUEST_TIMEOUT = 60.0
@@ -56,14 +58,18 @@ class DashScopeRerankModel(BaseRerankModel):
     any query or document is an image or video, text is sent as ``{"text":
     ...}`` so the document list has one shape.
 
+    When using this model directly, call ``open()`` before reranking and
+    ``close()`` when finished. Flink Agents manages this lifecycle for
+    registered models.
+
     The client is built from these fields. ``~/.dashscope/config.toml`` is not
     read. An unset ``workspace`` or ``base_url`` still follows the SDK rules.
     Automatic retries are disabled.
 
     Attributes:
     ----------
-    api_key : str
-        DashScope API key. Falls back to ``DASHSCOPE_API_KEY``.
+    api_key : str | None
+        DashScope API key. Falls back to ``DASHSCOPE_API_KEY`` when ``open()`` runs.
     workspace : str | None
         Bailian workspace id. With ``region``, it selects the workspace
         gateway.
@@ -73,13 +79,15 @@ class DashScopeRerankModel(BaseRerankModel):
         Replaces the SDK-derived address when set.
     request_timeout : float
         Timeout in seconds for one HTTP request. Defaults to 60.
-    parameters : dict
+    model_parameters : dict
         Bailian ``parameters`` object. Call arguments override same-named keys.
         ``fps`` stays in this object. ``top_n``, ``return_documents``, and
         ``instruct`` are removed from it and sent as those call options.
     """
 
-    api_key: str = Field(repr=False, description="DashScope API key.")
+    api_key: str | None = Field(
+        default=None, repr=False, description="DashScope API key."
+    )
     workspace: str | None = Field(
         default=None,
         description="Bailian workspace id used in the gateway host.",
@@ -95,49 +103,48 @@ class DashScopeRerankModel(BaseRerankModel):
     request_timeout: float = Field(
         default=DEFAULT_REQUEST_TIMEOUT,
         gt=0,
+        allow_inf_nan=False,
         description="Timeout in seconds for one HTTP request.",
     )
-    parameters: dict[str, Any] = Field(
+    model_parameters: dict[str, Any] = Field(
         default_factory=dict,
-        description="Bailian parameters overridden by call-time values.",
+        description="Bailian model parameters overridden by call-time model_parameters.",
     )
 
     _sdk_client: dashscope.Client | None = PrivateAttr(default=None)
+    _closed: bool = PrivateAttr(default=False)
 
-    def __init__(
-        self,
-        model: str,
-        api_key: str | None = None,
-        workspace: str | None = None,
-        region: str | None = None,
-        base_url: str | None = None,
-        request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
-        parameters: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Resolve the API key, then store the remaining configuration."""
-        resolved_api_key = api_key or os.environ.get("DASHSCOPE_API_KEY")
-        if not resolved_api_key:
-            msg = (
-                "DashScope API key is not provided. "
-                "Please pass it as an argument or set the "
-                "'DASHSCOPE_API_KEY' environment variable."
+    def model_post_init(self, context: Any, /) -> None:
+        """Snapshot configured model parameters so caller mutations do not leak."""
+        self.model_parameters = deepcopy(self.model_parameters)
+
+    @override
+    def open(self) -> None:
+        """Create the client before the model accepts requests."""
+        if self._closed:
+            msg = "The DashScope rerank model is closed."
+            raise RuntimeError(msg)
+        if self._sdk_client is None:
+            api_key = self.api_key or os.environ.get("DASHSCOPE_API_KEY")
+            if not api_key:
+                msg = (
+                    "DashScope API key is not provided. "
+                    "Please pass it as an argument or set the "
+                    "'DASHSCOPE_API_KEY' environment variable."
+                )
+                raise ValueError(msg)
+            self._sdk_client = create_client(
+                api_key=api_key,
+                base_url=self.base_url,
+                workspace=self.workspace,
+                region=self.region,
+                timeout=self.request_timeout,
             )
-            raise ValueError(msg)
-        super().__init__(
-            model=model,
-            api_key=resolved_api_key,
-            workspace=workspace,
-            region=region or DEFAULT_REGION,
-            base_url=base_url,
-            request_timeout=request_timeout,
-            parameters=dict(parameters or {}),
-            **kwargs,
-        )
 
     @override
     def close(self) -> None:
-        """Close the SDK client if it was created."""
+        """End the model's lifetime and close its client, if opened."""
+        self._closed = True
         client = self._sdk_client
         self._sdk_client = None
         if client is not None:
@@ -151,26 +158,27 @@ class DashScopeRerankModel(BaseRerankModel):
         *,
         top_n: int | None = None,
         return_documents: bool | None = None,
-        instruct: str | None = None,
+        model_parameters: Mapping[str, Any] | None = None,
         timeout: float | None = None,
-        **kwargs: Any,
     ) -> RerankResult:
-        """Rank documents with one DashScope text-rerank request."""
+        """Rank documents with one DashScope rerank request."""
+        client = self._client()
+        timeout = validate_request_timeout(timeout)
         if not documents:
             msg = "Rerank requires at least one document."
             raise ValueError(msg)
-        parameters = {**self.parameters, **kwargs}
+        parameters = {**self.model_parameters, **(model_parameters or {})}
         top_n = _explicit_or_configured("top_n", top_n, parameters)
         return_documents = _explicit_or_configured(
             "return_documents", return_documents, parameters
         )
-        instruct = _explicit_or_configured("instruct", instruct, parameters)
+        instruct = parameters.pop("instruct", None)
         encoded_query = _query_value(query)
         encoded_documents = [_document_value(document) for document in documents]
         encoded_query, encoded_documents = _uniform_multimodal_values(
             encoded_query, encoded_documents
         )
-        created = self._client().rerank.create(
+        created = client.rerank.create(
             model=self.model,
             query=encoded_query,
             documents=encoded_documents,
@@ -187,15 +195,15 @@ class DashScopeRerankModel(BaseRerankModel):
         )
 
     def _client(self) -> dashscope.Client:
-        """Return the SDK client for this resource, creating it once."""
+        """Return the client of an open model."""
+        if self._closed:
+            msg = "The DashScope rerank model is closed."
+            raise RuntimeError(msg)
         if self._sdk_client is None:
-            self._sdk_client = create_client(
-                api_key=self.api_key,
-                base_url=self.base_url,
-                workspace=self.workspace,
-                region=self.region,
-                timeout=self.request_timeout,
+            msg = (
+                "The DashScope rerank model is not open. Call open() before reranking."
             )
+            raise RuntimeError(msg)
         return self._sdk_client
 
 

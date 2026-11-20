@@ -101,6 +101,54 @@ class YamlLoaderBuildAgentsTest {
     }
 
     @Test
+    void mediaProvidersSupportAgentAndSharedPythonResources() {
+        LoadedFile out = YamlLoader.buildAgents(FIXTURES.resolve("with_media_providers.yaml"));
+        Object own =
+                out.getAgents()
+                        .get("media_agent")
+                        .getResources()
+                        .get(ResourceType.MEDIA_PROVIDER)
+                        .get("own_media");
+        Object shared =
+                out.getSharedResources().get(ResourceType.MEDIA_PROVIDER).get("shared_media");
+
+        for (Object resource : new Object[] {own, shared}) {
+            assertThat(resource).isInstanceOf(PythonResourceDescriptor.class);
+            ResourceDescriptor descriptor = (ResourceDescriptor) resource;
+            assertThat(descriptor.getModule())
+                    .isEqualTo(
+                            "flink_agents.integrations.media_providers.dashscope_media_provider");
+            assertThat(descriptor.getClazz()).isEqualTo("DashScopeMediaProvider");
+            assertThat(descriptor.getInitialArguments())
+                    .containsExactlyEntriesOf(Map.of("request_timeout", 12));
+        }
+    }
+
+    @Test
+    void rerankModelsSupportAgentAndSharedPythonResources() {
+        LoadedFile out = YamlLoader.buildAgents(FIXTURES.resolve("with_rerank_models.yaml"));
+        Object own =
+                out.getAgents()
+                        .get("rerank_agent")
+                        .getResources()
+                        .get(ResourceType.RERANK_MODEL)
+                        .get("own_ranker");
+        Object shared =
+                out.getSharedResources().get(ResourceType.RERANK_MODEL).get("shared_ranker");
+
+        for (Object resource : new Object[] {own, shared}) {
+            assertThat(resource).isInstanceOf(PythonResourceDescriptor.class);
+            ResourceDescriptor descriptor = (ResourceDescriptor) resource;
+            assertThat(descriptor.getModule())
+                    .isEqualTo("flink_agents.integrations.rerank_models.dashscope_rerank_model");
+            assertThat(descriptor.getClazz()).isEqualTo("DashScopeRerankModel");
+            assertThat(descriptor.getInitialArguments())
+                    .containsExactlyInAnyOrderEntriesOf(
+                            Map.of("model", "qwen3-rerank", "request_timeout", 12));
+        }
+    }
+
+    @Test
     void decisionModelsSupportAgentAndSharedPythonResources() {
         LoadedFile out = YamlLoader.buildAgents(FIXTURES.resolve("with_decision_models.yaml"));
         Agent agent = out.getAgents().get("decision_agent");

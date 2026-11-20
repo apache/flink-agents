@@ -27,13 +27,22 @@ from typing import TYPE_CHECKING, Any, Dict, cast
 import cloudpickle
 from pydantic import JsonValue, TypeAdapter
 
-from flink_agents.api.chat_message import ChatMessage, DataContentBlock, MessageRole
+from flink_agents.api.chat_message import (
+    AudioBlock,
+    ChatMessage,
+    DocumentBlock,
+    ImageBlock,
+    MessageRole,
+    VideoBlock,
+)
 from flink_agents.api.decision_models import DecisionRequest
 from flink_agents.api.events.event import Event, InputEvent
-from flink_agents.api.media_models.media_model import (
+from flink_agents.api.media.media_model import (
+    AsyncJobModel,
     MediaJob,
     MediaJobError,
     MediaJobTimeoutError,
+    _MediaTask,
 )
 from flink_agents.api.memory.long_term_memory import MemorySet, MemorySetItem
 from flink_agents.api.rerank_models.rerank_model import RerankDocument, RerankQuery
@@ -488,13 +497,14 @@ def materialize_package_skills(package: str, resource: str, target_dir: str) -> 
     materialize_package(package, resource, target_dir)
 
 
-_CONTENT = TypeAdapter(list[DataContentBlock])
+_MEDIA_INPUTS = {
+    _MediaTask.SPEECH_SYNTHESIS: TypeAdapter(str),
+    _MediaTask.TRANSCRIPTION: TypeAdapter(AudioBlock | VideoBlock),
+}
+_IMAGE_INPUTS = TypeAdapter(list[ImageBlock])
+_VIDEO_INPUTS = TypeAdapter(list[ImageBlock | AudioBlock | VideoBlock | DocumentBlock])
 _QUERY = TypeAdapter(RerankQuery)
 _DOCUMENTS = TypeAdapter(list[RerankDocument])
-
-
-def _parameters(parameters: Mapping[str, Any] | None) -> dict[str, Any]:
-    return dict(parameters or {})
 
 
 def _media_failure(error: MediaJobError) -> dict[str, Any]:
@@ -538,74 +548,142 @@ def _media_outcome(
         return _media_failure(error)
 
 
+_MEDIA_FACTORIES = {
+    _MediaTask.SPEECH_SYNTHESIS: "speech",
+    _MediaTask.TRANSCRIPTION: "transcription",
+    _MediaTask.IMAGE_GENERATION: "image",
+    _MediaTask.VIDEO_GENERATION: "video",
+}
+_MEDIA_OPTIONS = TypeAdapter(dict[str, Any])
+
+
+def _media_binding(provider: Any, task: str, model: str, options_json: str) -> Any:
+    """Rebind immutable configuration while retaining the provider's shared client."""
+    factory = getattr(provider, _MEDIA_FACTORIES[_MediaTask(task)])
+    return factory(model, **_MEDIA_OPTIONS.validate_json(options_json))
+
+
+def validate_media_binding(
+    provider: Any, task: str, model: str, options_json: str
+) -> bool:
+    """Validate a Java capability binding and report whether it supports async jobs."""
+    bound = _media_binding(provider, task, model, options_json)
+    return isinstance(bound, AsyncJobModel)
+
+
+def _media_input(task: _MediaTask, input_json: str) -> tuple[Any, dict[str, Any]]:
+    if task in _MEDIA_INPUTS:
+        return _MEDIA_INPUTS[task].validate_json(input_json), {}
+    content = json.loads(input_json)
+    prompt = content.get("prompt")
+    if prompt is None:
+        prompt = ""
+    if task is _MediaTask.IMAGE_GENERATION:
+        media = {"images": _IMAGE_INPUTS.validate_python(content.get("images") or [])}
+    else:
+        media = {"media": _VIDEO_INPUTS.validate_python(content.get("media") or [])}
+    return prompt, media
+
+
+def _model_parameters(model_parameters_json: str | None) -> dict[str, Any] | None:
+    if model_parameters_json is None:
+        return None
+    return _MEDIA_OPTIONS.validate_json(model_parameters_json)
+
+
 def call_media_generate(
-    resource: Any,
-    content_json: str,
+    provider: Any,
+    task: str,
+    model: str,
+    options_json: str,
+    input_json: str,
     timeout: float | None,
-    parameters: Mapping[str, Any] | None = None,
+    model_parameters_json: str | None = None,
 ) -> dict[str, Any]:
     """Generate media and return a tagged JSON result for the Java bridge."""
-    content = _CONTENT.validate_json(content_json)
+    capability = _MediaTask(task)
+    content, media = _media_input(capability, input_json)
+    bound = _media_binding(provider, task, model, options_json)
+    params = _model_parameters(model_parameters_json)
+    if capability is _MediaTask.SPEECH_SYNTHESIS:
+        return _media_outcome(
+            bound.synthesize, content, model_parameters=params, timeout=timeout
+        )
+    method = (
+        bound.transcribe if capability is _MediaTask.TRANSCRIPTION else bound.generate
+    )
     return _media_outcome(
-        resource.generate, content, timeout=timeout, **_parameters(parameters)
+        method, content, **media, model_parameters=params, timeout=timeout
     )
 
 
-def media_supports_async_task(resource: Any) -> bool:
-    """Return whether the Python media model can submit a task."""
-    return bool(resource.supports_async_task())
-
-
 def call_media_submit(
-    resource: Any,
-    content_json: str,
-    parameters: Mapping[str, Any] | None = None,
+    provider: Any,
+    task: str,
+    model: str,
+    options_json: str,
+    input_json: str,
+    model_parameters_json: str | None = None,
 ) -> dict[str, Any]:
     """Submit a media task and return a tagged JSON job for the Java bridge."""
-    content = _CONTENT.validate_json(content_json)
-    return _media_outcome(resource.submit, content, **_parameters(parameters))
+    capability = _MediaTask(task)
+    content, media = _media_input(capability, input_json)
+    bound = _media_binding(provider, task, model, options_json)
+    params = _model_parameters(model_parameters_json)
+    return _media_outcome(bound.submit, content, **media, model_parameters=params)
 
 
-def call_media_fetch(resource: Any, job_json: str) -> dict[str, Any]:
+def call_media_fetch(
+    provider: Any, task: str, model: str, options_json: str, job_json: str
+) -> dict[str, Any]:
     """Fetch a media job and return a tagged JSON state for the Java bridge."""
     job = MediaJob.model_validate_json(job_json)
-    return _media_outcome(resource.fetch, job)
+    bound = _media_binding(provider, task, model, options_json)
+    return _media_outcome(bound.fetch, job)
 
 
 def call_media_wait(
-    resource: Any, job_json: str, timeout: float | None
+    provider: Any,
+    task: str,
+    model: str,
+    options_json: str,
+    job_json: str,
+    timeout: float | None,
+    poll_interval: float | None = None,
 ) -> dict[str, Any]:
     """Wait for a media job and return a tagged JSON result for the Java bridge."""
     job = MediaJob.model_validate_json(job_json)
-    return _media_outcome(resource.wait, job, timeout=timeout)
+    bound = _media_binding(provider, task, model, options_json)
+    wait_kwargs: dict[str, Any] = {"timeout": timeout}
+    if poll_interval is not None:
+        wait_kwargs["poll_interval"] = poll_interval
+    return _media_outcome(bound.wait, job, **wait_kwargs)
 
 
-def call_media_cancel(resource: Any, job_json: str) -> dict[str, Any]:
+def call_media_cancel(
+    provider: Any, task: str, model: str, options_json: str, job_json: str
+) -> dict[str, Any]:
     """Cancel a media job and return a tagged outcome for the Java bridge."""
     job = MediaJob.model_validate_json(job_json)
-    return _media_outcome(resource.cancel, job)
+    bound = _media_binding(provider, task, model, options_json)
+    return _media_outcome(bound.cancel, job)
 
 
 def call_rerank_model(
     resource: Any,
     query_json: str,
     documents_json: str,
-    top_n: int | None,
-    return_documents: bool | None,
-    instruct: str | None,
+    model_parameters_json: str | None,
     timeout: float | None,
-    parameters: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Rerank documents and return a tagged JSON result for the Java bridge."""
     query = _QUERY.validate_json(query_json)
     documents = _DOCUMENTS.validate_json(documents_json)
+    params = _model_parameters(model_parameters_json)
     return _resource_outcome(
         resource.rerank,
         query,
         documents,
-        top_n=top_n,
-        return_documents=return_documents,
-        instruct=instruct,
+        model_parameters=params,
         timeout=timeout,
-        **_parameters(parameters),
     )

@@ -215,8 +215,8 @@ def test_resolve_clazz_covers_vector_store_java_and_python() -> None:
 
 
 def test_resolve_clazz_covers_media_and_rerank_dashscope() -> None:
-    assert resolve_clazz("dashscope", ResourceType.MEDIA_MODEL).endswith(
-        "dashscope_media_model.DashScopeMediaModel"
+    assert resolve_clazz("dashscope", ResourceType.MEDIA_PROVIDER).endswith(
+        "dashscope_media_provider.DashScopeMediaProvider"
     )
     assert resolve_clazz("dashscope", ResourceType.RERANK_MODEL).endswith(
         "dashscope_rerank_model.DashScopeRerankModel"

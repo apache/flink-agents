@@ -17,6 +17,7 @@
 #################################################################################
 """Shared DashScope utility functions."""
 
+import math
 import os
 from typing import Any
 
@@ -54,6 +55,19 @@ def create_client(
         max_retries=0,
         config_path=os.devnull,
     )
+
+
+def validate_request_timeout(timeout: float | None) -> float | None:
+    """Validate an optional per-call HTTP timeout in seconds."""
+    if timeout is None:
+        return None
+    if isinstance(timeout, bool) or not isinstance(timeout, int | float):
+        msg = "The request timeout must be a positive finite number."
+        raise TypeError(msg)
+    if not math.isfinite(timeout) or timeout <= 0:
+        msg = "The request timeout must be a positive finite number."
+        raise ValueError(msg)
+    return timeout
 
 
 def usage_counters(usage: Any) -> dict[str, int | float | str]:

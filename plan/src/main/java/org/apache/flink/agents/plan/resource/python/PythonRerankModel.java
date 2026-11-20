@@ -30,8 +30,10 @@ import pemja.core.object.PyObject;
 
 import javax.annotation.Nullable;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CancellationException;
 
 /** Java access to a Python rerank model. */
@@ -41,7 +43,7 @@ public final class PythonRerankModel extends BaseRerankModel implements PythonRe
 
     private final PythonResourceAdapter adapter;
     private final PyObject resource;
-    private boolean closed;
+    private volatile boolean closed;
 
     public PythonRerankModel(
             PythonResourceAdapter adapter,
@@ -55,6 +57,7 @@ public final class PythonRerankModel extends BaseRerankModel implements PythonRe
 
     @Override
     public void open() {
+        checkNotClosed();
         adapter.callMethod(resource, "open", Map.of());
     }
 
@@ -62,31 +65,34 @@ public final class PythonRerankModel extends BaseRerankModel implements PythonRe
     public RerankResult rerank(
             DataContentBlock query,
             List<DataContentBlock> documents,
-            @Nullable Integer topN,
-            @Nullable Boolean returnDocuments,
-            @Nullable String instruct,
-            @Nullable Double timeout,
-            Map<String, Object> parameters) {
+            Map<String, Object> modelParameters,
+            @Nullable Duration timeout) {
+        checkNotClosed();
+        Objects.requireNonNull(query, "query");
+        Objects.requireNonNull(documents, "documents");
+        PythonMediaProvider.validatePositiveDuration(timeout, "timeout");
         final String queryJson;
         final String documentsJson;
+        final String modelParametersJson;
         try {
             queryJson = MAPPER.writeValueAsString(query);
             documentsJson = MAPPER.writeValueAsString(documents);
+            modelParametersJson =
+                    MAPPER.writeValueAsString(modelParameters == null ? Map.of() : modelParameters);
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException(
                     "Rerank request must contain JSON-compatible values", e);
         }
+        Double timeoutSeconds =
+                timeout == null ? null : timeout.getSeconds() + timeout.getNano() / 1_000_000_000.0;
         Object value =
                 adapter.invoke(
                         RERANK,
                         resource,
                         queryJson,
                         documentsJson,
-                        topN,
-                        returnDocuments,
-                        instruct,
-                        timeout,
-                        parameters);
+                        modelParametersJson,
+                        timeoutSeconds);
         if (!(value instanceof Map)) {
             throw new IllegalStateException("Invalid RerankModel invocation outcome from Python");
         }
@@ -142,6 +148,12 @@ public final class PythonRerankModel extends BaseRerankModel implements PythonRe
         closed = true;
         try (resource) {
             adapter.callMethod(resource, "close", Map.of());
+        }
+    }
+
+    private void checkNotClosed() {
+        if (closed) {
+            throw new IllegalStateException("Rerank model is closed");
         }
     }
 }
