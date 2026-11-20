@@ -84,6 +84,13 @@ options default to `true` and apply to the whole job; changing them can affect o
 keyed operators and timer behavior. They do not enable streaming checkpoints in
 `BATCH` mode.
 
+### Serialization requirements
+
+Flink Agents uses Kryo to serialize internal events, action tasks, and memory
+state. Keep [`pipeline.generic-types`](https://nightlies.apache.org/flink/flink-docs-stable/docs/deployment/config/#pipeline-generic-types)
+enabled (`true`, the default). This setting belongs in the Flink job configuration,
+outside the agent configuration section.
+
 ### Submit to Flink Cluster
 
 Submit the Java Flink or PyFlink job to the cluster. If the Agent is defined in YAML,

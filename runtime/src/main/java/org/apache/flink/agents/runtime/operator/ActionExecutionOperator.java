@@ -65,10 +65,10 @@ import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.trace.TraceTaskLifecycleListener;
 import org.apache.flink.agents.runtime.tracelog.TraceLogWriter;
 import org.apache.flink.agents.runtime.utils.EventUtil;
-import org.apache.flink.agents.runtime.utils.InternalKryoTypeInfo;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.checkpoint.CheckpointOptions;
 import org.apache.flink.runtime.state.CheckpointStreamFactory;
@@ -348,7 +348,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 getKeyedStateBackend() instanceof BatchExecutionKeyedStateBackend;
 
         eventSerializer =
-                InternalKryoTypeInfo.of(Event.class)
+                TypeInformation.of(Event.class)
                         .createSerializer(getExecutionConfig().getSerializerConfig());
 
         stateManager.initializeKeyedStates(getRuntimeContext(), agentPlan.getConfig());

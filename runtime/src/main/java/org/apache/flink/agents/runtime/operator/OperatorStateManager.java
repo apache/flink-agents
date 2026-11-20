@@ -26,7 +26,6 @@ import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
-import org.apache.flink.agents.runtime.utils.InternalKryoTypeInfo;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapState;
@@ -113,7 +112,7 @@ class OperatorStateManager {
                 new MapStateDescriptor<>(
                         "sensoryMemory",
                         TypeInformation.of(String.class),
-                        InternalKryoTypeInfo.of(MemoryObjectImpl.MemoryItem.class));
+                        TypeInformation.of(MemoryObjectImpl.MemoryItem.class));
         sensoryMemState = runtimeContext.getMapState(sensoryMemStateDescriptor);
 
         // init shortTermMemState
@@ -121,7 +120,7 @@ class OperatorStateManager {
                 new MapStateDescriptor<>(
                         "shortTermMemory",
                         TypeInformation.of(String.class),
-                        InternalKryoTypeInfo.of(MemoryObjectImpl.MemoryItem.class));
+                        TypeInformation.of(MemoryObjectImpl.MemoryItem.class));
         maybeEnableShortTermMemoryTTL(shortTermMemStateDescriptor, agentConfiguration);
         shortTermMemState = runtimeContext.getMapState(shortTermMemStateDescriptor);
 
@@ -134,13 +133,12 @@ class OperatorStateManager {
         actionTasksKState =
                 runtimeContext.getListState(
                         new ListStateDescriptor<>(
-                                ACTION_TASK_STATE_NAME, InternalKryoTypeInfo.of(ActionTask.class)));
+                                ACTION_TASK_STATE_NAME, TypeInformation.of(ActionTask.class)));
         inFlightActionTasksKState = runtimeContext.getMapState(inFlightActionTasksDescriptor());
         pendingInputEventsKState =
                 runtimeContext.getListState(
                         new ListStateDescriptor<>(
-                                PENDING_INPUT_EVENT_STATE_NAME,
-                                InternalKryoTypeInfo.of(Event.class)));
+                                PENDING_INPUT_EVENT_STATE_NAME, TypeInformation.of(Event.class)));
     }
 
     /**
@@ -218,7 +216,7 @@ class OperatorStateManager {
         currentProcessingKeysOpState =
                 operatorStateBackend.getUnionListState(
                         new ListStateDescriptor<>(
-                                "currentProcessingKeys", InternalKryoTypeInfo.of(Object.class)));
+                                "currentProcessingKeys", TypeInformation.of(Object.class)));
     }
 
     /**
@@ -285,7 +283,7 @@ class OperatorStateManager {
         return new MapStateDescriptor<>(
                 IN_FLIGHT_ACTION_TASK_STATE_NAME,
                 TypeInformation.of(Long.class),
-                InternalKryoTypeInfo.of(ActionTask.class));
+                TypeInformation.of(ActionTask.class));
     }
 
     /**
@@ -390,8 +388,7 @@ class OperatorStateManager {
                         VoidNamespace.INSTANCE,
                         VoidNamespaceSerializer.INSTANCE,
                         new ListStateDescriptor<>(
-                                PENDING_INPUT_EVENT_STATE_NAME,
-                                InternalKryoTypeInfo.of(Event.class)),
+                                PENDING_INPUT_EVENT_STATE_NAME, TypeInformation.of(Event.class)),
                         function);
     }
 
@@ -406,7 +403,7 @@ class OperatorStateManager {
                         VoidNamespace.INSTANCE,
                         VoidNamespaceSerializer.INSTANCE,
                         new ListStateDescriptor<>(
-                                ACTION_TASK_STATE_NAME, InternalKryoTypeInfo.of(ActionTask.class)),
+                                ACTION_TASK_STATE_NAME, TypeInformation.of(ActionTask.class)),
                         function);
     }
 }
