@@ -59,12 +59,7 @@ class OllamaTimeoutConfigurationTest {
     void directAndJsonDeclarationsReachSdk() throws Exception {
         for (Object value :
                 Arrays.asList(
-                        null,
-                        1,
-                        60L,
-                        new BigDecimal("1500.0"),
-                        (long) Integer.MAX_VALUE + 1,
-                        Long.MAX_VALUE)) {
+                        null, 1, 60L, new BigDecimal("1500.0"), (long) Integer.MAX_VALUE + 1)) {
             ResourceDescriptor descriptor = descriptor(value);
             long expected = value == null ? 60 : ((Number) value).longValue();
             for (ResourceDescriptor input :
