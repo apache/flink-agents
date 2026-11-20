@@ -24,12 +24,14 @@ import com.google.genai.types.Candidate;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
+import com.google.genai.types.FunctionResponsePart;
 import com.google.genai.types.GenerateContentResponse;
 import com.google.genai.types.Part;
 import com.google.genai.types.Tool;
 import org.apache.flink.agents.api.chat.messages.Base64Source;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ContentBlock;
+import org.apache.flink.agents.api.chat.messages.DataContentBlock;
 import org.apache.flink.agents.api.chat.messages.MediaBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
@@ -48,7 +50,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.stream.Collectors;
+import java.util.function.BiFunction;
 
 /** Converts Flink Agents messages and tool definitions to and from Gemini SDK types. */
 final class GeminiChatUtils {
@@ -165,37 +167,37 @@ final class GeminiChatUtils {
     }
 
     /**
-     * Converts a message to a Gemini turn. Only user messages can carry media: image, audio, video
-     * and document blocks become inline data (Base64) or file data (URL) parts with the block's
-     * media type. Media in an assistant message or a tool result throws {@link
-     * UnsupportedContentBlockException}.
+     * Converts a message to a Gemini turn. Only user messages and tool results can carry media:
+     * image, audio, video and document blocks become inline data (Base64) or file data (URL) with
+     * the block's media type. A tool result's media become the parts of its function response, in
+     * block order, and its text stays in the response's {@code result}. Media in an assistant
+     * message throws {@link UnsupportedContentBlockException}.
      */
     // Package-visible for unit testing of the message conversion.
     static Content convertToContent(ChatMessage message, Map<String, String> toolCallIdToName) {
         if (message.getRole() == MessageRole.TOOL) {
             ToolResultBlock result = (ToolResultBlock) message.getBlocks().get(0);
-            String text =
-                    result.getBlocks().stream()
-                            .map(
-                                    block -> {
-                                        if (block instanceof MediaBlock) {
-                                            throw mediaOutsideUserMessage(message, block);
-                                        }
-                                        if (!(block instanceof TextBlock)) {
-                                            throw new IllegalArgumentException(
-                                                    "Gemini cannot send tool result block "
-                                                            + block.getType());
-                                        }
-                                        return ((TextBlock) block).getText();
-                                    })
-                            .collect(Collectors.joining());
+            List<FunctionResponsePart> media = new ArrayList<>();
+            for (DataContentBlock block : result.getBlocks()) {
+                if (block instanceof MediaBlock) {
+                    media.add(
+                            convertMedia(
+                                    (MediaBlock) block,
+                                    FunctionResponsePart::fromUri,
+                                    FunctionResponsePart::fromBytes));
+                } else if (!(block instanceof TextBlock)) {
+                    throw new IllegalArgumentException(
+                            "Gemini cannot send tool result block " + block.getType());
+                }
+            }
             return Content.builder()
                     .role("user")
                     .parts(
                             List.of(
                                     Part.fromFunctionResponse(
                                             resolveToolFunctionName(message, toolCallIdToName),
-                                            Map.of("result", text))))
+                                            Map.of("result", result.getText()),
+                                            media.toArray(new FunctionResponsePart[0]))))
                     .build();
         }
         List<Part> parts = new ArrayList<>();
@@ -214,9 +216,14 @@ final class GeminiChatUtils {
                 }
             } else if (block instanceof MediaBlock) {
                 if (message.getRole() != MessageRole.USER) {
-                    throw mediaOutsideUserMessage(message, block);
+                    throw UnsupportedContentBlockException.forBlock(
+                            "Gemini",
+                            block,
+                            "only user messages and tool results can carry media, not "
+                                    + message.getRole().getValue()
+                                    + " messages");
                 }
-                parts.add(convertMediaToPart((MediaBlock) block));
+                parts.add(convertMedia((MediaBlock) block, Part::fromUri, Part::fromBytes));
             } else {
                 throw new IllegalArgumentException("Gemini cannot send block " + block.getType());
             }
@@ -230,23 +237,22 @@ final class GeminiChatUtils {
                 .build();
     }
 
-    private static Part convertMediaToPart(MediaBlock block) {
+    /**
+     * Converts a media block the same way in a user message and in a tool result, which take
+     * different SDK types: a URL becomes file data, and Base64 data is decoded into inline data.
+     * Both carry the block's media type. Malformed Base64 data throws {@link
+     * IllegalArgumentException}.
+     */
+    private static <T> T convertMedia(
+            MediaBlock block,
+            BiFunction<String, String, T> fromUri,
+            BiFunction<byte[], String, T> fromBytes) {
         if (block.getSource() instanceof UrlSource) {
-            return Part.fromUri(((UrlSource) block.getSource()).getUrl(), block.getMediaType());
+            return fromUri.apply(((UrlSource) block.getSource()).getUrl(), block.getMediaType());
         }
-        return Part.fromBytes(
+        return fromBytes.apply(
                 Base64.getDecoder().decode(((Base64Source) block.getSource()).getData()),
                 block.getMediaType());
-    }
-
-    private static UnsupportedContentBlockException mediaOutsideUserMessage(
-            ChatMessage message, ContentBlock block) {
-        return UnsupportedContentBlockException.forBlock(
-                "Gemini",
-                block,
-                "only user messages can carry media, not "
-                        + message.getRole().getValue()
-                        + " messages");
     }
 
     private static String resolveToolFunctionName(ChatMessage message, Map<String, String> names) {
