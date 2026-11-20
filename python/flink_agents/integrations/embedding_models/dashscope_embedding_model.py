@@ -168,12 +168,6 @@ class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
 
     def embed(
         self, content: EmbeddingContent, **kwargs: Any
-    ) -> list[float] | list[list[float]]:
-        """Generate vectors for one input or an ordered batch."""
-        return self.embed_with_usage(content, **kwargs).embeddings
-
-    def embed_with_usage(
-        self, content: EmbeddingContent, **kwargs: Any
     ) -> EmbeddingResult[list[float] | list[list[float]]]:
         """Generate embeddings and return DashScope token usage when available."""
         api_type = kwargs.pop("api_type", "text")

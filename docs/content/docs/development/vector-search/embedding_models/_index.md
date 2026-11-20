@@ -149,7 +149,7 @@ class MyAgent(Agent):
         # Use the embedding model to generate embeddings
         input_event = InputEvent.from_event(event)
         user_query = str(input_event.input)
-        embedding = embedding_model.embed(user_query)
+        embedding = embedding_model.embed(user_query).embeddings
 
         # Handle the embedding
         # Process the embedding vector as needed for your use case
@@ -187,7 +187,7 @@ public class MyAgent extends Agent {
 
         // Use the embedding model to generate embeddings
         String input = (String) inputEvent.getInput();
-        float[] embedding = embeddingModel.embed(input);
+        float[] embedding = embeddingModel.embed(input).getEmbeddings();
 
         // Handle the embedding
         // Process the embedding vector as needed for your use case
@@ -204,18 +204,26 @@ Supported inputs depend on the provider and model. See
 [Chat Messages]({{< ref "docs/development/calling-llms/chat#message-content-blocks" >}})
 for block types and media sources.
 
+Every call returns an `EmbeddingResult` containing the vectors and optional token
+usage. Read `.embeddings` in Python or `.getEmbeddings()` in Java to access the
+vectors.
+
 | Operation | Python | Java |
 |---|---|---|
-| Embed a string | `embed("text")` returns one vector | `embed("text")` returns one `float[]` |
-| Embed a batch of strings | `embed(["first", "second"])` returns a list of vectors | `embed(List.of("first", "second"))` returns a `List<float[]>` |
-| Embed one block | `embed(block)` returns one vector | `embedBlocksWithUsage(List.of(block))` returns an `EmbeddingResult` containing a list with one vector |
-| Embed a batch containing media | `embed([text, image, video])` returns a list of vectors | `embedBlocksWithUsage(List.of(textBlock, image, video))` returns an `EmbeddingResult` containing a list of vectors |
+| Embed a string | `embed("text")`: result contains one vector | `embed("text")`: result contains one `float[]` |
+| Embed a batch of strings | `embed(["first", "second"])`: result contains a list of vectors | `embed(List.of(new TextBlock("first"), new TextBlock("second")))`: result contains a `List<float[]>` |
+| Embed one block | `embed(block)`: result contains one vector | `embed(block)`: result contains one `float[]` |
+| Embed a batch containing media | `embed([text, image, video])`: result contains a list of vectors | `embed(List.of(textBlock, image, video))`: result contains a `List<float[]>` |
 
 A batch returns one vector per input, in input order.
 
-Use `embed_with_usage` (Python), `embedWithUsage` for strings (Java), or
-`embedBlocksWithUsage` for blocks (Java) to also read token usage when the provider
-reports it.
+Read `.token_usage` in Python or `.getTokenUsage()` in Java for usage reported by
+the provider. It is `None` / `null` when unavailable; batch usage applies to the
+whole batch.
+
+For example, `result = embedding_model.embed("hello")` provides both
+`result.embeddings` and `result.token_usage`. A one-item batch still contains a
+list of vectors; it does not become a single vector.
 
 ## Using Cross-Language Providers
 
@@ -242,13 +250,15 @@ Handles the connection to embedding services and provides the core embedding fun
 class MyEmbeddingConnection(BaseEmbeddingModelConnection):
     def embed(
         self, content: EmbeddingContent, **kwargs: Any
-    ) -> list[float] | list[list[float]]:
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
         # Validate the input types supported by your provider.
-        # Return one vector for a single input, or one per batch item in order.
+        # Return EmbeddingResult with one vector for a single input, or one per
+        # batch item in order. Include token_usage when the provider reports it.
         ...
 ```
 
-Import `EmbeddingContent` from `flink_agents.api.embedding_models.embedding_model`.
+Import `EmbeddingContent` and `EmbeddingResult` from
+`flink_agents.api.embedding_models.embedding_model`.
 An input can be a string, a data content block, or a sequence containing either
 or both.
 
@@ -259,31 +269,22 @@ or both.
 public class MyEmbeddingConnection extends BaseEmbeddingModelConnection {
 
     @Override
-    public float[] embed(String text, Map<String, Object> parameters) {
-        // Core method: convert text to embedding vector
-        // - text: Input text to embed
-        // - parameters: Additional parameters
-        // - Returns: Float array representing the embedding
-        float[] embedding = ...;
-        return embedding;
-    }
-
-    @Override
-    public List<float[]> embed(List<String> texts, Map<String, Object> parameters) {
-        // Core method: convert texts to embedding vectors
-        // - text: Input texts to embed
-        // - parameters: Additional parameters
-        // - Returns: List of float array representing the embeddings
+    public EmbeddingResult<List<float[]>> embed(
+            List<? extends DataContentBlock> blocks, Map<String, Object> parameters) {
+        // Text-only providers validate the entire batch before calling the service.
+        List<String> texts = EmbeddingModelUtils.requireTextInputs(blocks, "MyProvider");
         List<float[]> embeddings = ...;
-        return embeddings;
+        return new EmbeddingResult<>(embeddings, null);
     }
 }
 ```
 
-To add media support, override
-`embedBlocksWithUsage(List<? extends DataContentBlock>, Map<String, Object>)` in
-the connection. Return one vector per block in input order. The base
-implementation delegates text blocks to the text batch method.
+Implement the batch `embed` method and return one vector per input, in input
+order, with optional token usage. Single-input calls are supported by the base class.
+
+For a text-only provider, `EmbeddingModelUtils.requireTextInputs` extracts text and
+rejects media before any service call. A multimodal provider converts its supported
+block types directly and rejects unsupported ones.
 {{< /tab >}}
 
 {{< /tabs >}}

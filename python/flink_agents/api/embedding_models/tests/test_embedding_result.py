@@ -15,68 +15,48 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #################################################################################
-from typing import Any, Dict, Sequence
+from typing import Any, Dict
 from unittest.mock import MagicMock
 
+import pytest
+
+from flink_agents.api.chat_message import (
+    ImageBlock,
+    TextBlock,
+    UnsupportedContentBlockError,
+)
 from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelConnection,
     BaseEmbeddingModelSetup,
+    EmbeddingContent,
     EmbeddingResult,
     EmbeddingTokenUsage,
+    _text_embedding_input,
 )
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 
 
 class FakeEmbeddingModelConnection(BaseEmbeddingModelConnection):
-    def embed(
-        self, text: str | Sequence[str], **kwargs: Any
-    ) -> list[float] | list[list[float]]:
-        if isinstance(text, str):
-            return [0.1, 0.2]
-        return [[0.1, 0.2] for _ in text]
+    usage: EmbeddingTokenUsage | None = None
 
-    def embed_with_usage(
-        self, text: str | Sequence[str], **kwargs: Any
+    def embed(
+        self, content: EmbeddingContent, **kwargs: Any
     ) -> EmbeddingResult[list[float] | list[list[float]]]:
-        return EmbeddingResult(
-            embeddings=self.embed(text, **kwargs),
-            token_usage=EmbeddingTokenUsage(prompt_tokens=7, total_tokens=9),
-        )
-
-
-class FakeEmbeddingModelConnectionWithoutUsage(BaseEmbeddingModelConnection):
-    def embed(
-        self, text: str | Sequence[str], **kwargs: Any
-    ) -> list[float] | list[list[float]]:
-        if isinstance(text, str):
-            return [0.1, 0.2]
-        return [[0.1, 0.2] for _ in text]
-
-
-class DispatchAwareEmbeddingModelConnection(BaseEmbeddingModelConnection):
-    def embed(
-        self, text: str | Sequence[str], **kwargs: Any
-    ) -> list[float] | list[list[float]]:
-        if isinstance(text, str):
-            return [0.1, 0.2]
-        return [[0.1, 0.2] for _ in text]
-
-    def embed_with_usage(
-        self, text: str | Sequence[str], **kwargs: Any
-    ) -> EmbeddingResult[list[float] | list[list[float]]]:
-        return EmbeddingResult(
-            embeddings=[0.3, 0.4]
+        text = _text_embedding_input(content, "test")
+        assert kwargs == {"model": "mock-model", "dimension": 2}
+        vectors = (
+            [float(len(text))]
             if isinstance(text, str)
-            else [[0.3, 0.4] for _ in text],
-            token_usage=EmbeddingTokenUsage(prompt_tokens=7, total_tokens=9),
+            else [[float(len(t))] for t in text]
         )
+        return EmbeddingResult(vectors, self.usage)
 
 
 class FakeEmbeddingModelSetup(BaseEmbeddingModelSetup):
     @property
     def model_kwargs(self) -> Dict[str, Any]:
-        return {}
+        return {"model": self.model, "dimension": 1}
 
 
 def _make_setup(connection: BaseEmbeddingModelConnection) -> FakeEmbeddingModelSetup:
@@ -97,31 +77,28 @@ def _make_setup(connection: BaseEmbeddingModelConnection) -> FakeEmbeddingModelS
     return setup
 
 
-def test_embedding_result_returns_provider_usage() -> None:
+@pytest.mark.parametrize("usage", [None, EmbeddingTokenUsage(7, 9)])
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("hello", [5.0]),
+        (TextBlock(text="hello"), [5.0]),
+        (["hello", TextBlock(text="next")], [[5.0], [4.0]]),
+        ([], []),
+    ],
+)
+def test_setup_preserves_shape_usage_and_parameter_overrides(
+    content, expected, usage
+) -> None:
+    connection = FakeEmbeddingModelConnection(name="connection", usage=usage)
+    setup = _make_setup(connection)
+    result = setup.embed(content, dimension=2)
+    assert result.embeddings == expected
+    assert result.token_usage == usage
+    assert setup.model_kwargs == {"model": "mock-model", "dimension": 1}
+
+
+def test_text_only_connection_rejects_media() -> None:
     setup = _make_setup(FakeEmbeddingModelConnection(name="connection"))
-
-    result = setup.embed_with_usage("hello")
-
-    assert result.embeddings == [0.1, 0.2]
-    assert result.token_usage == EmbeddingTokenUsage(prompt_tokens=7, total_tokens=9)
-
-
-def test_embedding_result_defaults_to_no_usage() -> None:
-    setup = _make_setup(FakeEmbeddingModelConnectionWithoutUsage(name="connection"))
-
-    result = setup.embed_with_usage("hello")
-
-    assert result.embeddings == [0.1, 0.2]
-    assert result.token_usage is None
-
-
-def test_embed_preserves_existing_embedding_only_api() -> None:
-    setup = _make_setup(FakeEmbeddingModelConnection(name="connection"))
-
-    assert setup.embed("hello") == [0.1, 0.2]
-
-
-def test_embed_preserves_connection_embed_dispatch() -> None:
-    setup = _make_setup(DispatchAwareEmbeddingModelConnection(name="connection"))
-
-    assert setup.embed("hello") == [0.1, 0.2]
+    with pytest.raises(UnsupportedContentBlockError):
+        setup.embed(ImageBlock.from_base64("image/png", "aGk="), dimension=2)

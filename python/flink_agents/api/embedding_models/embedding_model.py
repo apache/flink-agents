@@ -99,7 +99,7 @@ class BaseEmbeddingModelConnection(Resource, ABC):
     @abstractmethod
     def embed(
         self, content: EmbeddingContent, **kwargs: Any
-    ) -> list[float] | list[list[float]]:
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
         """Generate a vector per input.
 
         Args:
@@ -108,14 +108,9 @@ class BaseEmbeddingModelConnection(Resource, ABC):
             **kwargs: Additional parameters passed to the embedding model.
 
         Returns:
-            One vector for a single input, or a list of vectors in batch input order.
+            A result containing one vector for a single input, or a list of vectors
+            in batch input order, and optional provider token usage.
         """
-
-    def embed_with_usage(
-        self, content: EmbeddingContent, **kwargs: Any
-    ) -> EmbeddingResult[list[float] | list[list[float]]]:
-        """Generate embeddings and return provider token usage when available."""
-        return EmbeddingResult(embeddings=self.embed(content, **kwargs))
 
 
 class BaseEmbeddingModelSetup(Resource, ABC):
@@ -161,7 +156,7 @@ class BaseEmbeddingModelSetup(Resource, ABC):
 
     def embed(
         self, content: EmbeddingContent, **kwargs: Any
-    ) -> list[float] | list[list[float]]:
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
         """Generate a vector per input using this setup.
 
         Args:
@@ -169,16 +164,9 @@ class BaseEmbeddingModelSetup(Resource, ABC):
             **kwargs: Additional parameters passed to the embedding model.
 
         Returns:
-            One vector for a single input, or a list of vectors in batch input order.
+            A result containing one vector for a single input, or a list of vectors
+            in batch input order, and optional provider token usage.
         """
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
         return self._get_connection().embed(content, **merged_kwargs)
-
-    def embed_with_usage(
-        self, content: EmbeddingContent, **kwargs: Any
-    ) -> EmbeddingResult[list[float] | list[list[float]]]:
-        """Generate embeddings and return provider token usage when available."""
-        merged_kwargs = self.model_kwargs.copy()
-        merged_kwargs.update(kwargs)
-        return self._get_connection().embed_with_usage(content, **merged_kwargs)

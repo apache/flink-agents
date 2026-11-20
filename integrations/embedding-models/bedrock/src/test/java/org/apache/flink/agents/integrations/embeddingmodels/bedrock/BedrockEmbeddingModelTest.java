@@ -19,6 +19,9 @@
 package org.apache.flink.agents.integrations.embeddingmodels.bedrock;
 
 import org.apache.flink.agents.api.RetryExecutor;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
@@ -135,7 +138,9 @@ class BedrockEmbeddingModelTest {
 
         try {
             EmbeddingResult<List<float[]>> result =
-                    conn.embedWithUsage(List.of("first", "second"), Map.of("model", "mock-model"));
+                    conn.embed(
+                            List.of(new TextBlock("first"), new TextBlock("second")),
+                            Map.of("model", "mock-model"));
 
             assertThat(result.getEmbeddings()).hasSize(2);
             assertThat(result.getEmbeddings().get(0)).containsExactly(0.1f, 0.2f);
@@ -144,6 +149,31 @@ class BedrockEmbeddingModelTest {
             assertThat(result.getTokenUsage().getPromptTokens()).isEqualTo(10L);
             assertThat(result.getTokenUsage().getTotalTokens()).isEqualTo(10L);
             verify(client, times(2)).invokeModel(any(InvokeModelRequest.class));
+        } finally {
+            conn.close();
+        }
+    }
+
+    @Test
+    void testRejectsEntireBatchBeforeStartingRequests() throws Exception {
+        BedrockRuntimeClient client = mock(BedrockRuntimeClient.class);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        BedrockEmbeddingModelConnection conn =
+                new BedrockEmbeddingModelConnection(
+                        connDescriptor(null),
+                        NOOP,
+                        client,
+                        pool,
+                        RetryExecutor.builder().maxRetries(0).build(),
+                        "mock-model");
+        try {
+            ImageBlock image = ImageBlock.fromBase64("image/png", "aGk=");
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    UnsupportedContentBlockException.class, () -> conn.embed(image, Map.of()));
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    UnsupportedContentBlockException.class,
+                    () -> conn.embed(List.of(new TextBlock("first"), image), Map.of()));
+            org.mockito.Mockito.verifyNoInteractions(client);
         } finally {
             conn.close();
         }

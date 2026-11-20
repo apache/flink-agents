@@ -22,8 +22,10 @@ import io.github.ollama4j.Ollama;
 import io.github.ollama4j.exceptions.OllamaException;
 import io.github.ollama4j.models.embed.OllamaEmbedRequest;
 import io.github.ollama4j.models.embed.OllamaEmbedResult;
+import org.apache.flink.agents.api.chat.messages.DataContentBlock;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
 import org.apache.flink.agents.api.embedding.model.EmbeddingModelUtils;
+import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 
@@ -51,37 +53,10 @@ public class OllamaEmbeddingModelConnection extends BaseEmbeddingModelConnection
     }
 
     @Override
-    public float[] embed(String text, Map<String, Object> parameters) {
-        String model = (String) parameters.getOrDefault("model", defaultModel);
-
-        try {
-            // Pull the model if needed
-            ollamaAPI.pullModel(model);
-
-            // Create embedding request with the input text
-            OllamaEmbedRequest requestModel =
-                    new OllamaEmbedRequest(model, Collections.singletonList(text));
-
-            // Get embeddings from Ollama
-            OllamaEmbedResult response = ollamaAPI.embed(requestModel);
-
-            // Extract the first (and only) embedding from the response
-            List<List<Double>> embeddings = response.getEmbeddings();
-            if (embeddings == null || embeddings.isEmpty()) {
-                throw new RuntimeException("No embeddings returned from Ollama for text: " + text);
-            }
-
-            List<Double> embedding = embeddings.get(0);
-
-            return EmbeddingModelUtils.toFloatArray(embedding);
-
-        } catch (OllamaException e) {
-            throw new RuntimeException("Error generating embeddings for text: " + text, e);
-        }
-    }
-
-    @Override
-    public List<float[]> embed(List<String> texts, Map<String, Object> parameters) {
+    public EmbeddingResult<List<float[]>> embed(
+            List<? extends DataContentBlock> blocks, Map<String, Object> parameters) {
+        List<String> texts =
+                EmbeddingModelUtils.requireTextInputs(blocks, "OllamaEmbeddingModelConnection");
         String model = (String) parameters.getOrDefault("model", defaultModel);
 
         try {
@@ -107,7 +82,7 @@ public class OllamaEmbeddingModelConnection extends BaseEmbeddingModelConnection
                 results.add(result);
             }
 
-            return results;
+            return new EmbeddingResult<>(results, null);
 
         } catch (OllamaException e) {
             throw new RuntimeException("Error generating embeddings for texts", e);

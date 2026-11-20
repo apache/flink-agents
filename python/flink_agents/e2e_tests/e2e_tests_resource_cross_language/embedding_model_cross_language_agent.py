@@ -76,7 +76,7 @@ class EmbeddingModelCrossLanguageAgent(Agent):
             )
 
             # Test single text embedding
-            embedding_result = embeddingModel.embed_with_usage(input_text)
+            embedding_result = embeddingModel.embed(input_text)
             embedding = embedding_result.embeddings
             print(f"[TEST] Generated embedding with dimension: {len(embedding)}")
 
@@ -98,7 +98,7 @@ class EmbeddingModelCrossLanguageAgent(Agent):
             )
 
             # Test batch embedding
-            embeddings_result = embeddingModel.embed_with_usage([input_text])
+            embeddings_result = embeddingModel.embed([input_text])
             embeddings = embeddings_result.embeddings
             print(f"[TEST] Generated batch embeddings: count={len(embeddings)}")
 

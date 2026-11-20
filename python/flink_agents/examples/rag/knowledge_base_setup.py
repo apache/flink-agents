@@ -73,7 +73,7 @@ def populate_knowledge_base() -> None:
     # Generate real embeddings using Ollama
     embeddings = []
     for _i, doc in enumerate(documents):
-        embedding = embedding_connection.embed(doc, model=OLLAMA_EMBEDDING_MODEL)
+        embedding = embedding_connection.embed(doc, model=OLLAMA_EMBEDDING_MODEL).embeddings
         embeddings.append(embedding)
 
     # Prepare data for ChromaDB

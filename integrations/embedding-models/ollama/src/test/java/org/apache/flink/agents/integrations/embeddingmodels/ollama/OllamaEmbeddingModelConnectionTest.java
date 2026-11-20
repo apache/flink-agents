@@ -19,6 +19,9 @@
 package org.apache.flink.agents.integrations.embeddingmodels.ollama;
 
 import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -27,6 +30,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -83,5 +87,16 @@ class OllamaEmbeddingModelConnectionTest {
         DummySetup setup = new DummySetup(buildDescriptor(), dummyResource);
         setup.open();
         assertNotNull(setup.getConnection());
+    }
+
+    @Test
+    void testRejectsMediaBeforePullingModel() {
+        OllamaEmbeddingModelConnection conn =
+                new OllamaEmbeddingModelConnection(buildDescriptor(), dummyResource);
+        ImageBlock image = ImageBlock.fromBase64("image/png", "aGk=");
+        assertThrows(UnsupportedContentBlockException.class, () -> conn.embed(image, Map.of()));
+        assertThrows(
+                UnsupportedContentBlockException.class,
+                () -> conn.embed(List.of(new TextBlock("first"), image), Map.of()));
     }
 }

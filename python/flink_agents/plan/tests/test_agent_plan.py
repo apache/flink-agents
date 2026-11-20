@@ -40,6 +40,7 @@ from flink_agents.api.decorators import (
 from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelConnection,
     BaseEmbeddingModelSetup,
+    EmbeddingResult,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
@@ -299,11 +300,13 @@ class MockChatModelImpl(BaseChatModelSetup):
 class MockEmbeddingModelConnection(BaseEmbeddingModelConnection):
     api_key: str
 
-    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float]:
+    def embed(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
         """Testing Implementation."""
         if isinstance(text, str):
-            return [0.1234, -0.5678, 0.9012, -0.3456, 0.7890]
-        return [[0.1234, -0.5678, 0.9012, -0.3456, 0.7890]]
+            return EmbeddingResult([0.1234, -0.5678, 0.9012, -0.3456, 0.7890])
+        return EmbeddingResult([[0.1234, -0.5678, 0.9012, -0.3456, 0.7890]])
 
 
 class MockEmbeddingModelSetup(BaseEmbeddingModelSetup):

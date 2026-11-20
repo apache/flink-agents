@@ -346,23 +346,21 @@ def embedding_result_to_java(result: Any) -> Dict[str, Any]:
     }
 
 
+_EMBEDDING_BLOCK_ADAPTER = TypeAdapter(DataContentBlock)
 _EMBEDDING_BLOCKS_ADAPTER = TypeAdapter(list[DataContentBlock])
 
 
 def call_embedding(
     embedding_model: Any,
-    method: str,
-    content: str | list[str] | list[dict],
+    content: str | dict | list[str] | list[dict],
     kwargs: Dict[str, Any],
 ) -> Any:
     """Restore any data blocks and pass content positionally to the Python model."""
-    if isinstance(content, list) and content and isinstance(content[0], dict):
+    if isinstance(content, dict):
+        content = _EMBEDDING_BLOCK_ADAPTER.validate_python(content)
+    elif isinstance(content, list) and content and isinstance(content[0], dict):
         content = _EMBEDDING_BLOCKS_ADAPTER.validate_python(content)
-    if method == "embed_with_usage":
-        return embedding_result_to_java(
-            embedding_model.embed_with_usage(content, **kwargs)
-        )
-    return embedding_model.embed(content, **kwargs)
+    return embedding_result_to_java(embedding_model.embed(content, **kwargs))
 
 
 def to_java_chat_message(chat_message: ChatMessage) -> Any:

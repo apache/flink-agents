@@ -18,6 +18,7 @@
 package org.apache.flink.agents.integrations.vectorstores.pgvector;
 
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
+import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -646,7 +647,12 @@ public class PgVectorVectorStoreTest {
             assertThatThrownBy(
                             () ->
                                     store.update(
-                                            List.of(new Document("x", Map.of(), "")),
+                                            List.of(
+                                                    new Document(
+                                                            "x",
+                                                            Map.of(),
+                                                            "",
+                                                            new float[] {1, 0, 0, 0, 0})),
                                             collection,
                                             Collections.emptyMap()))
                     .isInstanceOf(IllegalArgumentException.class)
@@ -1249,11 +1255,14 @@ public class PgVectorVectorStoreTest {
     private static Resource getResource(String name, ResourceType type) {
         BaseEmbeddingModelSetup embeddingModel = Mockito.mock(BaseEmbeddingModelSetup.class);
         Mockito.when(embeddingModel.embed("pgvector is a PostgreSQL extension"))
-                .thenReturn(new float[] {1.0f, 0.0f, 0.0f, 0.0f, 0.0f});
+                .thenReturn(
+                        new EmbeddingResult<>(new float[] {1.0f, 0.0f, 0.0f, 0.0f, 0.0f}, null));
         Mockito.when(embeddingModel.embed("pgvector stores dense vectors"))
-                .thenReturn(new float[] {0.0f, 1.0f, 0.0f, 0.0f, 0.0f});
+                .thenReturn(
+                        new EmbeddingResult<>(new float[] {0.0f, 1.0f, 0.0f, 0.0f, 0.0f}, null));
         Mockito.when(embeddingModel.embed("Apache Flink Agents is an AI framework"))
-                .thenReturn(new float[] {0.0f, 1.0f, 0.0f, 0.0f, 0.0f});
+                .thenReturn(
+                        new EmbeddingResult<>(new float[] {0.0f, 1.0f, 0.0f, 0.0f, 0.0f}, null));
         return embeddingModel;
     }
 }

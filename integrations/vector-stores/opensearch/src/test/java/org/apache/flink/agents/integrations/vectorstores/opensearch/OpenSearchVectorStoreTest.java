@@ -18,7 +18,9 @@
 
 package org.apache.flink.agents.integrations.vectorstores.opensearch;
 
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
+import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -126,20 +128,23 @@ public class OpenSearchVectorStoreTest {
     private static Resource getResource(String name, ResourceType type) {
         BaseEmbeddingModelSetup emb = Mockito.mock(BaseEmbeddingModelSetup.class);
         Mockito.when(emb.embed("OpenSearch is a search engine"))
-                .thenReturn(new float[] {0.2f, 0.3f, 0.4f, 0.5f, 0.6f});
+                .thenReturn(
+                        new EmbeddingResult<>(new float[] {0.2f, 0.3f, 0.4f, 0.5f, 0.6f}, null));
         Mockito.when(emb.embed("Flink Agents is an AI framework"))
-                .thenReturn(new float[] {0.1f, 0.2f, 0.3f, 0.4f, 0.5f});
+                .thenReturn(
+                        new EmbeddingResult<>(new float[] {0.1f, 0.2f, 0.3f, 0.4f, 0.5f}, null));
         Mockito.when(emb.embed("search engine"))
-                .thenReturn(new float[] {0.2f, 0.3f, 0.4f, 0.5f, 0.6f});
+                .thenReturn(
+                        new EmbeddingResult<>(new float[] {0.2f, 0.3f, 0.4f, 0.5f, 0.6f}, null));
         Mockito.when(emb.embed(Mockito.anyList()))
                 .thenAnswer(
                         inv -> {
-                            List<String> texts = inv.getArgument(0);
+                            List<TextBlock> texts = inv.getArgument(0);
                             List<float[]> result = new ArrayList<>();
-                            for (String t : texts) {
-                                result.add(emb.embed(t));
+                            for (TextBlock t : texts) {
+                                result.add(emb.embed(t.getText()).getEmbeddings());
                             }
-                            return result;
+                            return new EmbeddingResult<>(result, null);
                         });
         return emb;
     }

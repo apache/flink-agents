@@ -24,6 +24,7 @@ from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelConnection,
     BaseEmbeddingModelSetup,
     EmbeddingContent,
+    EmbeddingResult,
     _text_embedding_input,
 )
 
@@ -81,7 +82,7 @@ class OllamaEmbeddingModelConnection(BaseEmbeddingModelConnection):
 
     def embed(
         self, content: EmbeddingContent, **kwargs: Any
-    ) -> list[float] | list[list[float]]:
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
         """Generate vectors for one text input or an ordered batch."""
         text = _text_embedding_input(content, "Ollama")
         # Extract specific parameters
@@ -99,7 +100,7 @@ class OllamaEmbeddingModelConnection(BaseEmbeddingModelConnection):
         )
 
         embeddings = [list(embedding) for embedding in response.embeddings]
-        return embeddings[0] if isinstance(text, str) else embeddings
+        return EmbeddingResult(embeddings[0] if isinstance(text, str) else embeddings)
 
 
 class OllamaEmbeddingModelSetup(BaseEmbeddingModelSetup):
