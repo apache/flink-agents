@@ -18,7 +18,9 @@
 
 package org.apache.flink.agents.integrations.chatmodels.anthropic;
 
+import com.anthropic.core.ClientOptions;
 import com.anthropic.core.ObjectMappers;
+import com.anthropic.core.Timeout;
 import com.anthropic.models.messages.ContentBlockParam;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
@@ -55,6 +57,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullSource;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -90,6 +93,87 @@ class AnthropicChatModelConnectionTest {
     private static final String CONTINUATION = "\"ok\": true}";
 
     private static final String COMPLETED = "{" + CONTINUATION;
+
+    @Test
+    void testDurationTimeout() throws Exception {
+        for (Object value : List.of(Duration.ofMillis(1500), "1500 ms", "PT1.5S", 1500)) {
+            ResourceDescriptor descriptor =
+                    ResourceDescriptor.Builder.newBuilder(
+                                    AnthropicChatModelConnection.class.getName())
+                            .addInitialArgument("api_key", "test-key")
+                            .addInitialArgument("timeout", value)
+                            .build();
+            descriptor =
+                    MAPPER.readValue(
+                            MAPPER.writeValueAsString(descriptor), ResourceDescriptor.class);
+            AnthropicChatModelConnection connection =
+                    new AnthropicChatModelConnection(descriptor, NOOP);
+            try {
+                assertThat(connection)
+                        .extracting("client")
+                        .extracting("clientOptions")
+                        .satisfies(
+                                options ->
+                                        assertThat(((ClientOptions) options).timeout().request())
+                                                .isEqualTo(Duration.ofMillis(1500)));
+            } finally {
+                connection.close();
+            }
+        }
+    }
+
+    @Test
+    void testTimeoutBoundaries() {
+        for (Map.Entry<Duration, Duration> entry :
+                Map.of(
+                                Duration.ZERO,
+                                Duration.ZERO,
+                                Duration.ofNanos(1000),
+                                Duration.ofMillis(1),
+                                Duration.ofMillis(Integer.MAX_VALUE),
+                                Duration.ofMillis(Integer.MAX_VALUE))
+                        .entrySet()) {
+            ResourceDescriptor descriptor =
+                    ResourceDescriptor.Builder.newBuilder(
+                                    AnthropicChatModelConnection.class.getName())
+                            .addInitialArgument("api_key", "test-key")
+                            .addInitialArgument("timeout", entry.getKey())
+                            .build();
+            AnthropicChatModelConnection connection =
+                    new AnthropicChatModelConnection(descriptor, NOOP);
+            try {
+                assertThat(connection)
+                        .extracting("client")
+                        .extracting("clientOptions")
+                        .satisfies(
+                                options -> {
+                                    Timeout timeout = ((ClientOptions) options).timeout();
+                                    assertThat(timeout.connect()).isEqualTo(entry.getValue());
+                                    assertThat(timeout.read()).isEqualTo(entry.getValue());
+                                    assertThat(timeout.write()).isEqualTo(entry.getValue());
+                                    assertThat(timeout.request()).isEqualTo(entry.getValue());
+                                });
+            } finally {
+                connection.close();
+            }
+        }
+    }
+
+    @Test
+    void testInvalidTimeout() {
+        for (Object value :
+                List.of("-1 ms", "1 ns", Duration.ofMillis((long) Integer.MAX_VALUE + 1))) {
+            ResourceDescriptor descriptor =
+                    ResourceDescriptor.Builder.newBuilder(
+                                    AnthropicChatModelConnection.class.getName())
+                            .addInitialArgument("api_key", "test-key")
+                            .addInitialArgument("timeout", value)
+                            .build();
+            assertThatThrownBy(() -> new AnthropicChatModelConnection(descriptor, NOOP))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("timeout");
+        }
+    }
 
     private static ResourceDescriptor descriptor(String model) {
         return ResourceDescriptor.Builder.newBuilder(AnthropicChatModelConnection.class.getName())

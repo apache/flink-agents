@@ -411,7 +411,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
     max_retries : int
         The number of times to retry the API call upon failure.
     timeout : float
-        The number of seconds to wait for an API call before it times out.
+        API request timeout in seconds; zero disables timeouts.
     reuse_client : bool
         Whether to reuse the Anthropic client between requests.
     """
@@ -425,7 +425,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
     )
     timeout: float = Field(
         default=60.0,
-        description="The number of seconds to wait for an API call before it times out.",
+        description="API request timeout in seconds; zero disables timeouts.",
         ge=0,
     )
 
@@ -451,7 +451,9 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         """Get or create the Anthropic client instance."""
         if self._client is None:
             self._client = Anthropic(
-                api_key=self.api_key, max_retries=self.max_retries, timeout=self.timeout
+                api_key=self.api_key,
+                max_retries=self.max_retries,
+                timeout=None if self.timeout == 0 else self.timeout,
             )
         return self._client
 

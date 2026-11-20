@@ -418,7 +418,7 @@ Anthropic provides cloud-based chat models featuring the Claude family, known fo
 |-----------|------|---------|-------------|
 | `api_key` | str | Required | Anthropic API key for authentication |
 | `max_retries` | int | `3` | Maximum number of API retry attempts |
-| `timeout` | float | `60.0` | API request timeout in seconds |
+| `timeout` | float | `60.0` | API request timeout in seconds; `0` disables timeouts |
 
 {{< /tab >}}
 
@@ -427,7 +427,7 @@ Anthropic provides cloud-based chat models featuring the Claude family, known fo
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `api_key` | String | Required | Anthropic API key for authentication |
-| `timeout` | int | None | Timeout in seconds for API requests |
+| `timeout` | Duration / String / Number | None | API request timeout in [duration format]({{< ref "docs/operations/configuration#duration-values" >}}); `0` disables timeouts. Integers and unitless integer strings are interpreted as milliseconds. |
 | `max_retries` | int | `2` | Maximum number of API retry attempts |
 | `model` | String | None | Default model to use if not specified in setup |
 
@@ -505,7 +505,7 @@ public class MyAgent extends Agent {
     public static ResourceDescriptor anthropicConnection() {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.ANTHROPIC_CONNECTION)
                 .addInitialArgument("api_key", "<your-api-key>")
-                .addInitialArgument("timeout", 120)
+                .addInitialArgument("timeout", Duration.ofSeconds(120))
                 .addInitialArgument("max_retries", 3)
                 .build();
     }
@@ -1383,7 +1383,7 @@ IBM watsonx.ai provides cloud-based chat models, including the IBM Granite serie
 | `space_id` | String | `$WATSONX_SPACE_ID` | Deployment space id, as an alternative to `project_id` |
 | `api_version` | String | `"2025-04-23"` | watsonx.ai REST API version date |
 | `iam_url` | String | `"https://iam.cloud.ibm.com"` | IAM endpoint used to exchange the API key for a token |
-| `request_timeout` | double | `120.0` | HTTP request timeout in seconds |
+| `request_timeout` | Duration / String / Number | `Duration.ofSeconds(120)` | HTTP request timeout in [duration format]({{< ref "docs/operations/configuration#duration-values" >}}); must be positive. Integers and unitless integer strings are interpreted as milliseconds. |
 | `max_retries` | int | `3` | Maximum retries for transport failures and HTTP 408, 429, 500, 502, 503, and 504 responses |
 
 {{< /tab >}}

@@ -156,14 +156,12 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         this.apiVersion = apiVersion != null ? apiVersion : DEFAULT_API_VERSION;
         String iamUrl = normalize(descriptor.getArgument("iam_url"));
         this.iamUrl = trimTrailingSlash(iamUrl != null ? iamUrl : DEFAULT_IAM_URL);
-        Number requestTimeout = descriptor.getArgument("request_timeout");
-        double requestTimeoutSeconds =
-                requestTimeout != null ? requestTimeout.doubleValue() : DEFAULT_REQUEST_TIMEOUT_SEC;
-        if (!Double.isFinite(requestTimeoutSeconds) || requestTimeoutSeconds <= 0) {
-            throw new IllegalArgumentException("request_timeout must be a positive finite number.");
-        }
         this.requestTimeout =
-                Duration.ofMillis(Math.max(1L, Math.round(requestTimeoutSeconds * 1000.0)));
+                descriptor.getDurationArgument(
+                        "request_timeout", Duration.ofSeconds(DEFAULT_REQUEST_TIMEOUT_SEC));
+        if (requestTimeout.isZero() || requestTimeout.isNegative()) {
+            throw new IllegalArgumentException("request_timeout must be a positive duration.");
+        }
         Number maxRetries = descriptor.getArgument("max_retries");
         this.maxRetries =
                 maxRetries != null
@@ -203,7 +201,7 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                             + " exactly one of 'project_id' or 'space_id'.");
         }
 
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();
+        this.httpClient = HttpClient.newBuilder().connectTimeout(requestTimeout).build();
     }
 
     static int requireInteger(Number value, String argumentName, int minimum) {
@@ -848,7 +846,7 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
             final HttpRequest request =
                     HttpRequest.newBuilder()
                             .uri(URI.create(iamUrl + "/identity/token"))
-                            .timeout(Duration.ofSeconds(30))
+                            .timeout(requestTimeout)
                             .header("Content-Type", "application/x-www-form-urlencoded")
                             .header("Accept", "application/json")
                             .POST(HttpRequest.BodyPublishers.ofString(form))
