@@ -445,7 +445,7 @@ public class MyAgent extends Agent {
 |-----------|------|---------|-------------|
 | `api_key` | String | Required | OpenAI API key for authentication |
 | `base_url` | String | `"https://api.openai.com/v1"` | OpenAI API base URL |
-| `request_timeout` | Duration / String / Number | `Duration.ofSeconds(30)` | HTTP request timeout in [duration format]({{< ref "docs/operations/configuration#duration-values" >}}); `0` disables the timeout |
+| `request_timeout` | Duration / String / Number | `Duration.ofSeconds(30)` | HTTP request timeout in [duration format]({{< ref "docs/operations/configuration#duration-values" >}}); `0` disables the timeout. Integers and unitless integer strings are interpreted as milliseconds. |
 | `max_retries` | Number | `3` | Maximum number of retry attempts, a non-negative integer |
 | `organization` | String | None | Optional organization ID |
 | `project` | String | None | Optional project ID |
