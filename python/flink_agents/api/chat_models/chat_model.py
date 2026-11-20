@@ -30,6 +30,10 @@ from flink_agents.api.chat_message import (
     find_first_system_message,
 )
 from flink_agents.api.chat_models.subagent_tool import SubagentTool
+from flink_agents.api.chat_models.token_estimate import (
+    TokenEstimate,
+    approximate_token_estimate,
+)
 from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.prompts.prompt import Prompt
@@ -378,20 +382,136 @@ class BaseChatModelConnection(Resource, ABC):
             Model response message
         """
 
+    def estimate_input_tokens(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: List[Tool] | None = None,
+        **kwargs: Any,
+    ) -> TokenEstimate:
+        """Estimate the input tokens of a request before it is sent.
+
+        For callers that keep the model input within a budget. The default counts
+        characters with ``approximate_token_estimate`` and reports the result as
+        approximate. Instructions that the parameters carry for the provider under
+        ``instructions`` are counted like a system message. A connection whose
+        provider can count the tokens of a request overrides this method and returns
+        ``TokenEstimate.exact``.
+
+        The built-in chat action calls this method inside a durable call, before a
+        model call of a request that has an input budget and tool-call rounds. The
+        estimate is recorded, so a recovery reuses it and does not call this method
+        again; an override may ask its provider for the count.
+
+        Args:
+            messages: The messages as they would be sent. They are the request's own:
+                an override reads them and does not change them.
+            tools: The tools as they would be bound to the request.
+            **kwargs: The parameters the request would carry.
+        """
+        instructions = provider_instructions(kwargs)
+        if instructions is not None:
+            # The provider is sent these instructions with the messages.
+            messages = [ChatMessage.system(instructions), *messages]
+        return approximate_token_estimate(messages, tools or [])
+
+
+def provider_instructions(model_kwargs: Mapping[str, Any] | None) -> str | None:
+    """Return the instructions that model parameters give a provider.
+
+    These are instructions beside the messages: the ``instructions`` inside
+    ``additional_kwargs`` when that has the key, the ``instructions`` parameter
+    otherwise. A connection writes what is inside ``additional_kwargs`` to its request
+    last, so that value is what the provider is given, also when it is empty. Without
+    such instructions they are the ``system`` inside ``additional_kwargs``, which is
+    how the Anthropic API takes them: a text, or a list of text blocks.
+
+    Returns:
+        The instructions, or None when there are none.
+    """
+    if model_kwargs is None:
+        return None
+    additional = model_kwargs.get("additional_kwargs")
+    if isinstance(additional, Mapping) and "instructions" in additional:
+        instructions = additional["instructions"]
+    else:
+        instructions = model_kwargs.get("instructions")
+    if isinstance(instructions, str) and instructions:
+        return instructions
+    system = additional.get("system") if isinstance(additional, Mapping) else None
+    if isinstance(system, list | tuple):
+        system = "\n".join(
+            block["text"]
+            for block in system
+            if isinstance(block, Mapping) and isinstance(block.get("text"), str)
+        )
+    return system if isinstance(system, str) and system else None
+
 
 # Providers reject these parameters on a request that defines no tools.
 _TOOL_ONLY_PARAMS = frozenset(
     {"tool_choice", "tool_choice_option", "parallel_tool_calls"}
 )
 
+# What a setup's parameters can add to a request beyond its messages: tools of the
+# provider's own, also from MCP servers the provider connects to (mcp_servers),
+# functions as the OpenAI API bound them before it had tools (functions,
+# function_call), a format the answer has to take (response_format, format,
+# json_prefill, output_config, and text for the OpenAI Responses API), sequences at
+# which the answer stops, instructions (instructions, and system for the Anthropic
+# API), a prompt the provider keeps, and a conversation the provider keeps for the
+# setup, which the request and its answer would otherwise join. A request that is
+# sent as it is carries none of them.
+_REQUEST_SHAPING_PARAMS = frozenset(
+    {
+        "tools",
+        "mcp_servers",
+        "functions",
+        "function_call",
+        "response_format",
+        "format",
+        "json_prefill",
+        "output_config",
+        "stop",
+        "stop_sequences",
+        "instructions",
+        "system",
+        "text",
+        "prompt",
+        "conversation",
+        "previous_response_id",
+    }
+)
+
 
 def _without_tool_only_params(kwargs: Mapping[str, Any]) -> Dict[str, Any]:
-    stripped = {k: v for k, v in kwargs.items() if k not in _TOOL_ONLY_PARAMS}
+    return _without(kwargs, _TOOL_ONLY_PARAMS)
+
+
+def _without(
+    kwargs: Mapping[str, Any], names: frozenset[str], *, in_request_body: bool = False
+) -> Dict[str, Any]:
+    """Return the parameters without ``names``.
+
+    They are left out at the top level and inside ``additional_kwargs``. With
+    ``in_request_body`` they are left out in both places inside ``extra_body`` too,
+    which a provider's client merges into the request it sends.
+    """
+    stripped = _without_names(kwargs, names, in_request_body=in_request_body)
     nested = stripped.get("additional_kwargs")
     if isinstance(nested, Mapping):
-        stripped["additional_kwargs"] = {
-            k: v for k, v in nested.items() if k not in _TOOL_ONLY_PARAMS
-        }
+        stripped["additional_kwargs"] = _without_names(
+            nested, names, in_request_body=in_request_body
+        )
+    return stripped
+
+
+def _without_names(
+    params: Mapping[str, Any], names: frozenset[str], *, in_request_body: bool
+) -> Dict[str, Any]:
+    stripped = {k: v for k, v in params.items() if k not in names}
+    body = stripped.get("extra_body")
+    if in_request_body and isinstance(body, Mapping):
+        stripped["extra_body"] = {k: v for k, v in body.items() if k not in names}
     return stripped
 
 
@@ -614,6 +734,26 @@ class BaseChatModelSetup(Resource):
             messages = list(messages[:index]) + injected + list(messages[index:])
         return messages
 
+    def estimate_input_tokens(
+        self,
+        messages: Sequence[ChatMessage],
+        prompt_args: Mapping[str, Any] | None = None,
+    ) -> TokenEstimate:
+        """Estimate the input tokens of the request ``chat`` would prepare.
+
+        The bound prompt and the skill-discovery message are added as for a chat,
+        and the bound tools are counted. The connection decides how the tokens are
+        counted, see ``BaseChatModelConnection.estimate_input_tokens``.
+
+        Raises:
+            TypeError: If ``open()`` has not resolved the connection yet.
+        """
+        return self._get_connection().estimate_input_tokens(
+            self.prepare_request_messages(messages, prompt_args),
+            tools=self._get_tools(),
+            **self.model_kwargs,
+        )
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -678,6 +818,50 @@ class BaseChatModelSetup(Resource):
             merged_kwargs = _without_tool_only_params(merged_kwargs)
         return connection.chat(
             messages, tools=tools, output_schema=output_schema, **merged_kwargs
+        )
+
+    def chat_without_tools(self, messages: Sequence[ChatMessage]) -> ChatResult:
+        """Send the messages exactly as given in a request that binds no tools.
+
+        The bound prompt, the skill-discovery message and the bound tools are not
+        added, and the parameters omit ``tool_choice``, ``tool_choice_option`` and
+        ``parallel_tool_calls``, which providers reject on a request without tools.
+
+        The parameters with which the setup shapes its own requests are left out as
+        well, at the top level and inside ``additional_kwargs`` and ``extra_body``:
+        ``tools``, ``mcp_servers``, ``functions``, ``function_call``,
+        ``response_format``, ``format``, ``json_prefill``, ``output_config``,
+        ``text``, ``stop``, ``stop_sequences``, ``instructions``, ``system``,
+        ``prompt``, ``conversation`` and ``previous_response_id``.
+        They would bind tools of the provider's own or functions, force the answer
+        into a format, end it at a
+        sequence the chat model stops at, give the model the chat model's
+        instructions or a prompt the provider keeps in place of the messages, or add
+        the request to a conversation the provider keeps for the setup. A setup that
+        shapes its requests with other parameters is not a fit for this call.
+
+        Framework-facing: for a call the framework makes on behalf of a request, such
+        as writing a summary of it, where the chat model's own prompt and tools do
+        not apply. The call does not go through ``chat``: a setup that overrides
+        ``chat`` to change what it sends overrides this method as well.
+
+        Args:
+            messages: The messages to send.
+
+        Returns:
+            The connection's result for this request.
+
+        Raises:
+            TypeError: If ``open()`` has not resolved the connection yet.
+        """
+        return self._get_connection().chat(
+            messages,
+            tools=[],
+            **_without(
+                self.model_kwargs,
+                _TOOL_ONLY_PARAMS | _REQUEST_SHAPING_PARAMS,
+                in_request_body=True,
+            ),
         )
 
     def will_apply_native_structured_output(

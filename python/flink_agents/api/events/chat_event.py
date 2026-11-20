@@ -26,6 +26,7 @@ from uuid import UUID
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_result import ChatResult
+from flink_agents.api.context_management import ContextManagementPolicy
 from flink_agents.api.events.event import BuiltInAttribute, Event, copy_user_context
 
 
@@ -46,6 +47,13 @@ class ChatRequestEvent(Event):
     user_context : dict[str, Any] | None
         Application-defined data propagated to the matching response. Not added
         to messages or prompt arguments. Omitted when unset.
+    context_management : ContextManagementPolicy | Dict[str, Any] | None
+        How the built-in chat action bounds the model input of this request. The
+        policy replaces the agent's default policy as a whole;
+        ``ContextManagementPolicy.disabled()`` switches context management off for
+        this request. Omitted when unset: the request then uses the agent's default
+        policy. The dict form of a policy is taken as well, and is checked like a
+        policy when the request is made.
     """
 
     EVENT_TYPE: ClassVar[str] = "_chat_request_event"
@@ -58,6 +66,7 @@ class ChatRequestEvent(Event):
         BuiltInAttribute.optional("prompt_args", dict),
         BuiltInAttribute.optional_untyped("output_schema"),
         BuiltInAttribute.optional("user_context", dict),
+        BuiltInAttribute.optional_untyped("context_management"),
     )
 
     def __init__(
@@ -67,6 +76,7 @@ class ChatRequestEvent(Event):
         prompt_args: Dict[str, Any] | None = None,
         output_schema: OutputSchema | None = None,
         user_context: dict[str, Any] | None = None,
+        context_management: ContextManagementPolicy | Dict[str, Any] | None = None,
     ) -> None:
         """Create a ChatRequestEvent."""
         attributes: Dict[str, Any] = {
@@ -77,6 +87,12 @@ class ChatRequestEvent(Event):
         }
         if user_context is not None:
             attributes["user_context"] = copy_user_context(user_context)
+        if context_management is not None:
+            # Checked here, where the request is made. The chat action would otherwise
+            # be the first to find a policy that is not one.
+            attributes["context_management"] = self._context_management_of(
+                {"context_management": context_management}
+            )
         super().__init__(
             type=ChatRequestEvent.EVENT_TYPE,
             attributes=attributes,
@@ -102,8 +118,29 @@ class ChatRequestEvent(Event):
             prompt_args=attributes.get("prompt_args"),
             output_schema=output_schema_raw,
             user_context=attributes.get("user_context"),
+            context_management=cls._context_management_of(attributes),
         )
         return result.reconstruct_from(event)
+
+    @staticmethod
+    def _context_management_of(
+        attributes: Dict[str, Any],
+    ) -> ContextManagementPolicy | None:
+        """Read the policy attribute, which crosses the JSON boundary as a dict."""
+        policy = attributes.get("context_management")
+        if policy is None:
+            return None
+        if isinstance(policy, ContextManagementPolicy):
+            # A policy can be made without its checks, as a copy with an update for
+            # example, so it is checked by its dict form as well.
+            policy = policy.to_map()
+        if isinstance(policy, dict):
+            return ContextManagementPolicy.model_validate(policy)
+        msg = (
+            "Attribute 'context_management' of a ChatRequestEvent must be a "
+            f"ContextManagementPolicy or its dict form, got {type(policy).__name__}"
+        )
+        raise TypeError(msg)
 
     @property
     def model(self) -> str:
@@ -130,6 +167,16 @@ class ChatRequestEvent(Event):
     def user_context(self) -> dict[str, Any] | None:
         """Return application-defined data to propagate to the response, if set."""
         return self.get_attr("user_context")
+
+    @property
+    def context_management(self) -> ContextManagementPolicy | None:
+        """Return the policy set on this request.
+
+        ``None`` when the request uses the agent's default policy, declared by the
+        ``context-management.*`` execution options. A policy that was set as its dict
+        form is returned as a policy.
+        """
+        return self._context_management_of(self.attributes)
 
 
 class ChatResponseError(RuntimeError):

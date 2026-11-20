@@ -637,7 +637,11 @@ public final class ChatModelInvoker {
         return response;
     }
 
-    private static void reportSuccessfulResponse(
+    /**
+     * Closes the LLM span of a model call that returned a response, with its token usage, and
+     * records the token metrics when {@code requestMetricGroup} is given.
+     */
+    public static void reportSuccessfulResponse(
             RunnerContext ctx,
             String executionId,
             String model,

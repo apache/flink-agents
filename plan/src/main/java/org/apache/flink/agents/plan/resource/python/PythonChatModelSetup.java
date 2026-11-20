@@ -19,8 +19,10 @@ package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.model.ApproximateTokenEstimator;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.chat.model.StructuredOutputStrategy;
+import org.apache.flink.agents.api.chat.model.TokenEstimate;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -149,6 +151,31 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
                         + " schema from Java: the bridge carries only messages, prompt arguments and"
                         + " model parameters to the Python setup's chat, which adds its own bound"
                         + " prompt and tools. Apply the schema on the Python side instead.");
+    }
+
+    /**
+     * Always refuses, as the explicit {@code chat} does: the bridge reaches only the Python setup's
+     * {@code chat}, which adds its own bound prompt and tools.
+     *
+     * @throws UnsupportedOperationException always
+     */
+    @Override
+    public ChatResult chatWithoutTools(List<ChatMessage> messages) {
+        throw new UnsupportedOperationException(
+                "A Python chat model setup cannot be sent messages as they are from Java: the"
+                        + " bridge reaches only the Python setup's chat, which adds its own bound"
+                        + " prompt and tools.");
+    }
+
+    /**
+     * Approximates the input tokens from the given messages alone. The Python setup adds its bound
+     * prompt and tools on the Python side, where this wrapper cannot count them, so the estimate
+     * leaves them out.
+     */
+    @Override
+    public TokenEstimate estimateInputTokens(
+            List<ChatMessage> messages, Map<String, Object> promptArgs) {
+        return ApproximateTokenEstimator.estimate(messages, List.of());
     }
 
     @Override

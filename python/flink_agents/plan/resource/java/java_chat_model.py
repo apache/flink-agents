@@ -27,6 +27,10 @@ from flink_agents.api.chat_models.chat_model import (
     BaseChatModelSetup,
     StructuredOutputStrategy,
 )
+from flink_agents.api.chat_models.token_estimate import (
+    TokenEstimate,
+    approximate_token_estimate,
+)
 from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.tools.tool import Tool
@@ -232,6 +236,34 @@ class JavaChatModelSetup(BaseChatModelSetup):
         )
 
         return from_java_chat_result(j_response_message)
+
+    @override
+    def chat_without_tools(self, messages: Sequence[ChatMessage]) -> ChatResult:
+        """Always refuse, as ``chat`` refuses explicit tools.
+
+        Raises:
+            NotImplementedError: Always. The bridge reaches only the Java setup's
+                three-argument ``chat``, which adds its own bound prompt and tools.
+        """
+        msg = (
+            "A Java chat model setup cannot be sent messages as they are from "
+            "Python: the bridge reaches only the Java setup's three-argument chat, "
+            "which adds its own bound prompt and tools."
+        )
+        raise NotImplementedError(msg)
+
+    @override
+    def estimate_input_tokens(
+        self,
+        messages: Sequence[ChatMessage],
+        prompt_args: Mapping[str, Any] | None = None,
+    ) -> TokenEstimate:
+        """Approximate the input tokens from the given messages alone.
+
+        The Java setup adds its bound prompt and tools on the Java side, where this
+        wrapper cannot count them, so the estimate leaves them out.
+        """
+        return approximate_token_estimate(messages, [])
 
     @override
     def will_apply_native_structured_output(

@@ -124,4 +124,61 @@ public class AgentExecutionOptions {
                             "short-term-memory.state-ttl.visibility",
                             ShortTermMemoryTtlVisibility.class,
                             ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED);
+
+    /**
+     * The most characters of one tool result that the built-in chat action sends to the model; a
+     * longer result is cut in the middle. At least 100. Unset by default: tool results are sent in
+     * full. The {@code context-management.*} options declare the agent's default {@link
+     * org.apache.flink.agents.api.chat.contextmanagement.ContextManagementPolicy}.
+     */
+    public static final ConfigOption<Integer> CONTEXT_MANAGEMENT_TOOL_RESULTS_MAX_CHARS =
+            new ConfigOption<>("context-management.tool-results.max-chars", Integer.class, null);
+
+    /**
+     * How many of the most recent tool-call rounds keep their tool results; the results of older
+     * rounds are sent as a one line placeholder. At least 1. Unset by default: no result is masked.
+     */
+    public static final ConfigOption<Integer> CONTEXT_MANAGEMENT_TOOL_RESULTS_KEEP_LAST_ROUNDS =
+            new ConfigOption<>(
+                    "context-management.tool-results.keep-last-rounds", Integer.class, null);
+
+    /**
+     * How many rounds are masked in one step, so that the messages before the masking boundary stay
+     * unchanged between two steps. At least 1; 1 when unset. Only with {@link
+     * #CONTEXT_MANAGEMENT_TOOL_RESULTS_KEEP_LAST_ROUNDS}.
+     */
+    public static final ConfigOption<Integer> CONTEXT_MANAGEMENT_TOOL_RESULTS_MASK_STEP_ROUNDS =
+            new ConfigOption<>(
+                    "context-management.tool-results.mask-step-rounds", Integer.class, null);
+
+    /**
+     * The input budget of one model call in tokens. When the estimated input exceeds {@link
+     * #CONTEXT_MANAGEMENT_SUMMARIZATION_TRIGGER_RATIO} of it, the older tool-call rounds of the
+     * request are replaced by a summary. Unset by default: nothing is summarized.
+     */
+    public static final ConfigOption<Integer> CONTEXT_MANAGEMENT_MAX_INPUT_TOKENS =
+            new ConfigOption<>("context-management.max-input-tokens", Integer.class, null);
+
+    /**
+     * The share of {@link #CONTEXT_MANAGEMENT_MAX_INPUT_TOKENS} above which older rounds are
+     * summarized. Greater than 0 and at most 1; 0.8 when unset.
+     */
+    public static final ConfigOption<Double> CONTEXT_MANAGEMENT_SUMMARIZATION_TRIGGER_RATIO =
+            new ConfigOption<>(
+                    "context-management.summarization.trigger-ratio", Double.class, null);
+
+    /**
+     * How many of the most recent rounds a summarization leaves as they are. At least 1; 3 when
+     * unset.
+     */
+    public static final ConfigOption<Integer> CONTEXT_MANAGEMENT_SUMMARIZATION_KEEP_LAST_ROUNDS =
+            new ConfigOption<>(
+                    "context-management.summarization.keep-last-rounds", Integer.class, null);
+
+    /**
+     * The chat model resource that writes summaries. When unset, the chat model that answers the
+     * request writes them.
+     */
+    public static final ConfigOption<String> CONTEXT_MANAGEMENT_SUMMARIZATION_MODEL =
+            new ConfigOption<>("context-management.summarization.model", String.class, null);
 }

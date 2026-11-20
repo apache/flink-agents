@@ -20,6 +20,7 @@ package org.apache.flink.agents.api.chat.model;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -28,6 +29,7 @@ import org.apache.flink.agents.api.tools.Tool;
 
 import javax.annotation.Nullable;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -94,6 +96,75 @@ public abstract class BaseChatModelConnection extends Resource {
      */
     public abstract ChatResult chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams);
+
+    /**
+     * Estimates the input tokens of a request with these messages and tools before it is sent, for
+     * callers that keep the model input within a budget.
+     *
+     * <p>The default counts characters with {@link ApproximateTokenEstimator} and reports the
+     * result as approximate. Instructions that the parameters carry for the provider under {@code
+     * instructions} are counted like a system message. A connection whose provider can count the
+     * tokens of a request overrides this method and returns {@link TokenEstimate#exact}.
+     *
+     * <p>The built-in chat action calls this method inside a durable call, before a model call of a
+     * request that has an input budget and tool-call rounds. The estimate is recorded, so a
+     * recovery reuses it and does not call this method again; an override may ask its provider for
+     * the count.
+     *
+     * @param messages the messages as they would be sent; they are the request's own, and an
+     *     override reads them and does not change them
+     * @param tools the tools as they would be bound to the request
+     * @param modelParams the parameters the request would carry
+     */
+    public TokenEstimate estimateInputTokens(
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+        String instructions = providerInstructions(modelParams);
+        if (instructions == null) {
+            return ApproximateTokenEstimator.estimate(messages, tools);
+        }
+        // The provider is sent these instructions with the messages.
+        List<ChatMessage> counted = new ArrayList<>(messages.size() + 1);
+        counted.add(new ChatMessage(MessageRole.SYSTEM, instructions));
+        counted.addAll(messages);
+        return ApproximateTokenEstimator.estimate(counted, tools);
+    }
+
+    /**
+     * The instructions that model parameters give a provider beside the messages: the {@code
+     * instructions} inside {@code additional_kwargs} when that has the key, the {@code
+     * instructions} parameter otherwise. A connection writes what is inside {@code
+     * additional_kwargs} to its request last, so that value is what the provider is given, also
+     * when it is empty. Without such instructions they are the {@code system} inside {@code
+     * additional_kwargs}, which is how the Anthropic API takes them: a text, or a list of text
+     * blocks.
+     *
+     * @return the instructions, or null when there are none
+     */
+    @Nullable
+    public static String providerInstructions(@Nullable Map<String, Object> modelParams) {
+        if (modelParams == null) {
+            return null;
+        }
+        Object additional = modelParams.get("additional_kwargs");
+        Object instructions =
+                additional instanceof Map && ((Map<?, ?>) additional).containsKey("instructions")
+                        ? ((Map<?, ?>) additional).get("instructions")
+                        : modelParams.get("instructions");
+        if (instructions instanceof String && !((String) instructions).isEmpty()) {
+            return (String) instructions;
+        }
+        Object system = additional instanceof Map ? ((Map<?, ?>) additional).get("system") : null;
+        if (system instanceof List) {
+            List<String> texts = new ArrayList<>();
+            for (Object block : (List<?>) system) {
+                if (block instanceof Map && ((Map<?, ?>) block).get("text") instanceof String) {
+                    texts.add((String) ((Map<?, ?>) block).get("text"));
+                }
+            }
+            system = String.join("\n", texts);
+        }
+        return system instanceof String && !((String) system).isEmpty() ? (String) system : null;
+    }
 
     /**
      * Process a chat request that carries an output schema, and return a chat response.

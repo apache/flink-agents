@@ -41,6 +41,7 @@ import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +52,33 @@ public abstract class BaseChatModelSetup extends Resource {
     // Providers reject these parameters on a request that defines no tools.
     private static final Set<String> TOOL_ONLY_PARAMS =
             Set.of("tool_choice", "tool_choice_option", "parallel_tool_calls");
+
+    // What a setup's parameters can add to a request beyond its messages: tools of the provider's
+    // own, also from MCP servers the provider connects to (mcp_servers), functions as the OpenAI
+    // API bound them before it had tools (functions, function_call), a format the answer has to
+    // take (response_format, format, json_prefill, output_config, and text for the OpenAI
+    // Responses API), sequences at which the answer stops, instructions (instructions, and system
+    // for the Anthropic API), a prompt the provider keeps, and a conversation the provider keeps
+    // for the setup, which the request and its answer would otherwise join. A request that is
+    // sent as it is carries none of them.
+    private static final Set<String> REQUEST_SHAPING_PARAMS =
+            Set.of(
+                    "tools",
+                    "mcp_servers",
+                    "functions",
+                    "function_call",
+                    "response_format",
+                    "format",
+                    "json_prefill",
+                    "output_config",
+                    "stop",
+                    "stop_sequences",
+                    "instructions",
+                    "system",
+                    "text",
+                    "prompt",
+                    "conversation",
+                    "previous_response_id");
 
     /** Used to re-type the {@code skills_sources} marker on read (see below). */
     private static final ObjectMapper SKILL_SOURCES_MAPPER = new ObjectMapper();
@@ -292,6 +320,24 @@ public abstract class BaseChatModelSetup extends Resource {
         return messages;
     }
 
+    /**
+     * Estimates the input tokens of the request {@link #chat(List, Map, Map)} would send for these
+     * messages: the bound prompt and the skill-discovery message are added as for a chat, and the
+     * bound tools are counted. The connection decides how the tokens are counted, see {@link
+     * BaseChatModelConnection#estimateInputTokens}.
+     *
+     * @throws NullPointerException if {@link #open()} has not bound the connection yet
+     */
+    public TokenEstimate estimateInputTokens(
+            List<ChatMessage> messages, Map<String, Object> promptArgs) {
+        Preconditions.checkNotNull(
+                connection,
+                "Connection is not initialized. Ensure open() is called before"
+                        + " estimateInputTokens().");
+        return connection.estimateInputTokens(
+                prepareRequestMessages(messages, promptArgs), tools, getParameters());
+    }
+
     public ChatResult chat(List<ChatMessage> messages) {
         return this.chat(messages, Collections.emptyMap(), Collections.emptyMap());
     }
@@ -345,13 +391,82 @@ public abstract class BaseChatModelSetup extends Resource {
         return connection.chat(messages, tools, params, outputSchema);
     }
 
+    /**
+     * Sends the messages exactly as given in a request that binds no tools: the bound prompt, the
+     * skill-discovery message and the bound tools are not added, and the parameters omit {@code
+     * tool_choice}, {@code tool_choice_option} and {@code parallel_tool_calls}, which providers
+     * reject on a request without tools.
+     *
+     * <p>The parameters with which the setup shapes its own requests are left out as well, at the
+     * top level, inside {@code additional_kwargs} and inside {@code extra_body}, which the client
+     * of a connection that is declared in Python merges into its request: {@code tools}, {@code
+     * mcp_servers}, {@code functions}, {@code function_call}, {@code response_format}, {@code
+     * format}, {@code json_prefill}, {@code output_config}, {@code text}, {@code stop}, {@code
+     * stop_sequences}, {@code instructions}, {@code system}, {@code prompt}, {@code conversation}
+     * and {@code previous_response_id}. They would bind tools of the provider's own or functions,
+     * force the answer into a format, end it at a sequence the chat model stops at, give the model
+     * the chat model's instructions or a prompt the provider keeps in place of the messages, or add
+     * the request to a conversation the provider keeps for the setup. A setup that shapes its
+     * requests with other parameters is not a fit for this call.
+     *
+     * <p>Framework-facing: for a call the framework makes on behalf of a request, such as writing a
+     * summary of it, where the chat model's own prompt and tools do not apply. The call does not go
+     * through {@code chat}: a setup that overrides {@code chat} to change what it sends overrides
+     * this method as well.
+     *
+     * @param messages the messages to send
+     * @return the connection's result for this request
+     * @throws NullPointerException if {@link #open()} has not bound the connection yet
+     */
+    public ChatResult chatWithoutTools(List<ChatMessage> messages) {
+        Preconditions.checkNotNull(
+                connection,
+                "Connection is not initialized. Ensure open() is called before chat().");
+        Set<String> names = new HashSet<>(TOOL_ONLY_PARAMS);
+        names.addAll(REQUEST_SHAPING_PARAMS);
+        return connection.chat(messages, List.of(), withoutInRequestBody(getParameters(), names));
+    }
+
     private static Map<String, Object> withoutToolOnlyParams(Map<String, Object> params) {
+        return without(params, TOOL_ONLY_PARAMS);
+    }
+
+    /**
+     * The parameters without {@code names}: at the top level, inside {@code additional_kwargs}, and
+     * in both places inside {@code extra_body}, which the client of a connection that is declared
+     * in Python merges into the request it sends.
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> withoutInRequestBody(
+            Map<String, Object> params, Set<String> names) {
+        // Copies, also of additional_kwargs, so that the setup's own parameters stay as they are.
+        Map<String, Object> stripped = without(params, names);
+        withoutInBody((Map<Object, Object>) (Map<?, ?>) stripped, names);
+        Object nested = stripped.get("additional_kwargs");
+        if (nested instanceof Map) {
+            withoutInBody((Map<Object, Object>) nested, names);
+        }
+        return stripped;
+    }
+
+    /** Replaces the {@code extra_body} of {@code params} with one that has no {@code names}. */
+    private static void withoutInBody(Map<Object, Object> params, Set<String> names) {
+        Object body = params.get("extra_body");
+        if (body instanceof Map) {
+            Map<Object, Object> copy = new HashMap<>((Map<?, ?>) body);
+            copy.keySet().removeAll(names);
+            params.put("extra_body", copy);
+        }
+    }
+
+    /** The parameters without {@code names}, at the top level and inside additional_kwargs. */
+    private static Map<String, Object> without(Map<String, Object> params, Set<String> names) {
         Map<String, Object> stripped = new HashMap<>(params);
-        stripped.keySet().removeAll(TOOL_ONLY_PARAMS);
+        stripped.keySet().removeAll(names);
         Object nested = stripped.get("additional_kwargs");
         if (nested instanceof Map) {
             Map<Object, Object> nestedCopy = new HashMap<>((Map<?, ?>) nested);
-            nestedCopy.keySet().removeAll(TOOL_ONLY_PARAMS);
+            nestedCopy.keySet().removeAll(names);
             stripped.put("additional_kwargs", nestedCopy);
         }
         return stripped;

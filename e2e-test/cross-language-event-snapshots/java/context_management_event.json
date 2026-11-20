@@ -1,0 +1,21 @@
+{
+  "id" : "00000000-0000-0000-0000-000000000001",
+  "attributes" : {
+    "model" : "test-model",
+    "step" : "mask",
+    "details" : {
+      "keep_last_rounds" : 3,
+      "step_rounds" : 2,
+      "rounds" : 2,
+      "results" : [ {
+        "round" : 1,
+        "call_id" : "call_aaaa",
+        "tool" : "get_weather",
+        "omitted_chars" : 20000
+      } ]
+    },
+    "request_id" : "00000000-0000-0000-0000-000000000002"
+  },
+  "attachments" : { },
+  "type" : "_context_management_event"
+}

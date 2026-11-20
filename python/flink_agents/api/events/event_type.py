@@ -29,6 +29,9 @@ from flink_agents.api.events.chat_event import (
 from flink_agents.api.events.chat_event import (
     ChatResponseEvent as _ChatResponseEvent,
 )
+from flink_agents.api.events.context_management_event import (
+    ContextManagementEvent as _ContextManagementEvent,
+)
 from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent as _ContextRetrievalRequestEvent,
 )
@@ -93,6 +96,7 @@ class EventType:
     ChatRequestEvent: str = _ChatRequestEvent.EVENT_TYPE
     ChatResponseEvent: str = _ChatResponseEvent.EVENT_TYPE
     ModelRoutingEvent: str = _ModelRoutingEvent.EVENT_TYPE
+    ContextManagementEvent: str = _ContextManagementEvent.EVENT_TYPE
     DecisionRequestEvent: str = _DecisionRequestEvent.EVENT_TYPE
     DecisionResponseEvent: str = _DecisionResponseEvent.EVENT_TYPE
     ToolRequestEvent: str = _ToolRequestEvent.EVENT_TYPE
