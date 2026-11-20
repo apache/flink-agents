@@ -32,11 +32,11 @@ import java.util.Set;
  * Validates a model router's candidate declaration: at least one candidate, every name a non-empty
  * String, no duplicates, and a default model (when set) that is one of them.
  *
- * <p>This is the single check behind every declaration path: {@link ModelRouter.Builder#build()} at
- * the registration call site, plan construction for descriptors that never went through the
- * builder, and the {@link ModelRouter} constructor itself. A typo therefore fails with one message
- * wherever it is caught, rather than per routed request on the TaskManager, when the router is
- * resolved.
+ * <p>This is the single check behind both declaration paths: {@link ModelRouter.Builder#build()} at
+ * the registration call site, and plan construction for descriptors that never went through the
+ * builder. The router resource itself only decodes a descriptor that passed. A typo therefore fails
+ * with one message wherever it is caught, rather than per routed request on the TaskManager, when
+ * the router is resolved.
  *
  * <p>Internal contract shared with the plan module; not a stable public API.
  */
@@ -82,18 +82,10 @@ public final class RoutingCandidateValidator {
     }
 
     /**
-     * A decision-model strategy asks one choice question over the candidates, so it needs at least
-     * two of them, and it routes on their descriptions alone — they are the question's criteria —
-     * so a candidate without one is invisible to the decision model. Applied by the router
-     * constructor, by {@code ModelRouter.Builder#build()} and by plan validation, so every
-     * declaration path fails with the same diagnostic; {@code subject} names the router.
-     */
-    /**
-     * Every description declared for a candidate must be a String. Applied by the router
-     * constructor and by plan validation, so a descriptor that skipped the builder fails with the
-     * same diagnostic at plan construction rather than with a ClassCastException per routed
-     * request; {@code subject} names the router. Entries for names that are not candidates are
-     * ignored, as the constructor ignores them.
+     * Every description declared for a candidate must be a String. Applied by plan validation, so a
+     * descriptor that skipped the builder fails with this diagnostic at plan construction rather
+     * than with a ClassCastException per routed request; {@code subject} names the router. Entries
+     * for names that are not candidates are ignored, as the router resource ignores them.
      */
     public static void requireStringDescriptions(
             String subject, List<String> candidates, Map<?, ?> descriptions) {
@@ -108,6 +100,13 @@ public final class RoutingCandidateValidator {
         }
     }
 
+    /**
+     * A decision-model strategy asks one choice question over the candidates, so it needs at least
+     * two of them, and it routes on their descriptions alone — they are the question's criteria —
+     * so a candidate without one is invisible to the decision model. Applied by {@code
+     * ModelRouter.Builder#build()} and by plan validation, so every declaration path fails with the
+     * same diagnostic; {@code subject} names the router.
+     */
     public static void requireDescriptionsForDecisionStrategy(
             String subject,
             RoutingStrategy strategy,

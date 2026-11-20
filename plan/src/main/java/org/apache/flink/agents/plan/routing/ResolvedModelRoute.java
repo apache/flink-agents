@@ -17,22 +17,22 @@
  */
 package org.apache.flink.agents.plan.routing;
 
-import org.apache.flink.agents.api.event.ModelRoutingEvent;
+import org.apache.flink.agents.api.chat.model.routing.Escalation;
 
 import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * The outcome of route resolution for one chat request: the concrete model to call first, the
  * candidate set and fallback policy, and the decision facts (source, reason, score, metadata) that
- * feed the {@code model_routing} observability block. A plain (unrouted) request is the degenerate
- * {@link #direct(String)} route.
+ * {@link RoutingMetadata} turns into the {@code model_routing} observability block. A plain
+ * (unrouted) request is the degenerate {@link #direct(String)} route.
  */
 public final class ResolvedModelRoute {
     final String requestedModel;
@@ -44,6 +44,8 @@ public final class ResolvedModelRoute {
     @Nullable final String reason;
     @Nullable final Double score;
     final Map<String, Object> metadata;
+    @Nullable final Escalation escalation;
+    final int escalationsSoFar;
 
     ResolvedModelRoute(
             String requestedModel,
@@ -55,6 +57,34 @@ public final class ResolvedModelRoute {
             @Nullable String reason,
             @Nullable Double score,
             @Nullable Map<String, Object> metadata) {
+        this(
+                requestedModel,
+                selectedModel,
+                candidates,
+                isRouter,
+                fallbackEnabled,
+                decisionSource,
+                reason,
+                score,
+                metadata,
+                null,
+                0);
+    }
+
+    ResolvedModelRoute(
+            String requestedModel,
+            String selectedModel,
+            List<String> candidates,
+            boolean isRouter,
+            boolean fallbackEnabled,
+            String decisionSource,
+            @Nullable String reason,
+            @Nullable Double score,
+            @Nullable Map<String, Object> metadata,
+            @Nullable Escalation escalation,
+            int escalationsSoFar) {
+        this.escalation = escalation;
+        this.escalationsSoFar = escalationsSoFar;
         this.requestedModel = requestedModel;
         this.selectedModel = selectedModel;
         this.candidates = Collections.unmodifiableList(new ArrayList<>(candidates));
@@ -99,6 +129,44 @@ public final class ResolvedModelRoute {
         return metadata;
     }
 
+    /** The router's escalation policy, when the request is tiered. */
+    public Optional<Escalation> getEscalation() {
+        return Optional.ofNullable(escalation);
+    }
+
+    /** Hops already taken by this request in earlier rounds (continuation routes only). */
+    public int getEscalationsSoFar() {
+        return escalationsSoFar;
+    }
+
+    /**
+     * A tool round of a tiered request: no routing decision and no candidate fallback, as for any
+     * tool round (the attempt order is the current tier alone), but the escalation policy stays in
+     * force so a weak round can still move the request up a tier. {@code model} is the tier the
+     * request currently sits on; {@code fallbackEnabled} is the router's setting, carried for the
+     * routing events this round may emit.
+     */
+    public static ResolvedModelRoute continued(
+            String router,
+            String model,
+            List<String> candidates,
+            boolean fallbackEnabled,
+            Escalation escalation,
+            int escalationsSoFar) {
+        return new ResolvedModelRoute(
+                router,
+                model,
+                candidates,
+                false,
+                fallbackEnabled,
+                "direct",
+                null,
+                null,
+                null,
+                escalation,
+                escalationsSoFar);
+    }
+
     public static ResolvedModelRoute direct(String model) {
         return new ResolvedModelRoute(
                 model,
@@ -113,7 +181,7 @@ public final class ResolvedModelRoute {
     }
 
     /** Candidate order: the strategy's pick first, then declaration order if fallback is on. */
-    public List<String> attemptOrder() {
+    public List<String> getCandidateAttemptOrder() {
         List<String> order = new ArrayList<>();
         order.add(this.selectedModel);
         if (this.isRouter && this.fallbackEnabled) {
@@ -127,37 +195,14 @@ public final class ResolvedModelRoute {
     }
 
     public String durableChatCallId(String candidate) {
-        if (!this.isRouter) {
-            return "chat";
+        if (this.isRouter) {
+            return "chat:" + this.requestedModel + ":" + candidate;
         }
-        return "chat:" + this.requestedModel + ":" + candidate;
-    }
-
-    /** The {@code model_routing} extra-args block stamped on the loop's final response. */
-    public Map<String, Object> buildResponseMetadata(String finalModel, List<String> triedModels) {
-        boolean fallbackAttempted = !finalModel.equals(this.selectedModel);
-        List<String> fallbackModelsTried = new ArrayList<>();
-        for (int i = 1; i < triedModels.size(); i++) {
-            fallbackModelsTried.add(triedModels.get(i));
+        if (this.escalation != null && !candidate.equals(this.selectedModel)) {
+            // A tool round escalated to another tier: the current tier's attempt keeps the plain
+            // "chat" id that tool rounds always had; the escalated attempt gets its own.
+            return "chat:" + this.requestedModel + ":" + candidate;
         }
-        Map<String, Object> routing = new LinkedHashMap<>();
-        routing.put("router", this.requestedModel);
-        routing.put("selected_model", this.selectedModel);
-        routing.put("final_model", finalModel);
-        routing.put("candidates", new ArrayList<>(this.candidates));
-        routing.put(
-                org.apache.flink.agents.api.event.ModelRoutingEvent.DECISION_SOURCE_KEY,
-                fallbackAttempted ? ModelRoutingEvent.SOURCE_FALLBACK : this.decisionSource);
-        routing.put("fallback_enabled", this.fallbackEnabled);
-        routing.put("fallback_attempted", fallbackAttempted);
-        routing.put("fallback_models_tried", fallbackModelsTried);
-        routing.put("metadata", new LinkedHashMap<>(this.metadata));
-        if (this.reason != null) {
-            routing.put("reason", this.reason);
-        }
-        if (this.score != null) {
-            routing.put("score", this.score);
-        }
-        return routing;
+        return "chat";
     }
 }

@@ -23,7 +23,6 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
-import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
 import org.apache.flink.agents.api.chat.model.routing.Strategies;
 import org.apache.flink.agents.api.decision.BaseDecisionModelSetup;
 import org.apache.flink.agents.api.decision.DecisionResult;
@@ -34,6 +33,7 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.ChatModelAction;
+import org.apache.flink.agents.plan.routing.ModelRouter;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
@@ -56,6 +56,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
+import static org.apache.flink.agents.api.chat.model.routing.ModelRouter.of;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -218,7 +219,7 @@ class DecisionRoutingRecoveryTest {
         plan.getConfig().set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, Duration.ZERO);
         ModelRouter router =
                 new ModelRouter(
-                        ModelRouter.of("small", "big")
+                        of("small", "big")
                                 .describe("small", "short factual questions")
                                 .describe("big", "code and sql")
                                 .strategy(Strategies.decision("dm"))

@@ -54,23 +54,6 @@ class RoutingTest {
     }
 
     @Test
-    void rulesDeclarationRoundTripsThroughTheRouter() throws Exception {
-        // The router carries the declaration only; compilation/execution live in the plan layer
-        // (RuleBasedRoutingExecutor), so the round-trip is declaration data, not Patterns.
-        ModelRouter router =
-                new ModelRouter(
-                        ModelRouter.of("small", "big")
-                                .strategy(Strategies.rules(Map.of("big", "\\b(code|sql)\\b")))
-                                .defaultModel("small")
-                                .build(),
-                        null);
-        assertEquals(RoutingStrategyType.RULE_BASED, router.getStrategy().getType());
-        Object rules = router.getStrategy().getArguments().get(RoutingStrategy.ARG_RULES);
-        assertTrue(rules instanceof Map);
-        assertEquals("\\b(code|sql)\\b", ((Map<?, ?>) rules).get("big"));
-    }
-
-    @Test
     void routingContextExposesLatestAndFirstUserMessage() {
         RoutingContext multiTurn =
                 new RoutingContext(
@@ -87,91 +70,10 @@ class RoutingTest {
     }
 
     @Test
-    void modelRouterBuildsFromDeclaration() throws Exception {
-        ResourceDescriptor descriptor =
-                ModelRouter.of("small", "big")
-                        .strategy(Strategies.rules(Map.of("big", "\\b(code|sql)\\b")))
-                        .defaultModel("small")
-                        .fallback(true)
-                        .build();
-
-        ModelRouter router = new ModelRouter(descriptor, null);
-
-        assertEquals(List.of("small", "big"), router.getCandidateNames());
-        assertEquals("small", router.getDefaultModel().orElse(null));
-        assertTrue(router.isFallbackEnabled());
-        assertTrue(router.isCandidate("big"));
-        assertFalse(router.isCandidate("unknown"));
-
-        assertEquals(RoutingStrategyType.RULE_BASED, router.getStrategy().getType());
-        RoutingContext context =
-                new RoutingContext(
-                        REQUEST_ID,
-                        "router",
-                        List.of(new ChatMessage(MessageRole.USER, "write code")),
-                        Map.of(),
-                        router.getCandidates());
-        assertEquals(REQUEST_ID, context.getRequestId());
-    }
-
-    @Test
-    void candidateDescriptionsReachStrategies() throws Exception {
-        // Descriptions declared on the router flow into the RoutingContext candidates, which is
-        // how semantic strategies (and future framework-managed LLM routing) learn what each
-        // candidate is for.
-        ModelRouter router =
-                new ModelRouter(
-                        ModelRouter.of("small", "big")
-                                .describe("small", "fast and cheap; chit-chat")
-                                .describe("big", "strong; code and SQL")
-                                .strategy(Strategies.rules(Map.of()))
-                                .defaultModel("small")
-                                .build(),
-                        null);
-        assertEquals("fast and cheap; chit-chat", router.getCandidates().get(0).getDescription());
-        assertEquals("strong; code and SQL", router.getCandidates().get(1).getDescription());
-    }
-
-    @Test
     void describeRejectsUnknownCandidate() {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> ModelRouter.of("small", "big").describe("huge", "does not exist"));
-    }
-
-    @Test
-    void defaultModelMustBeCandidate() {
-        // A descriptor built outside the builder (e.g. deserialized) meets the same default-model
-        // check in the constructor; going through build() would throw before the constructor runs.
-        assertThrows(
-                IllegalArgumentException.class,
-                () ->
-                        new ModelRouter(
-                                new ResourceDescriptor(
-                                        ModelRouter.class.getName(), routerArgs("huge")),
-                                null));
-    }
-
-    @Test
-    void routerConstructionRejectsNonStringDefaultModel() {
-        Map<String, Object> args = routerArgs(null);
-        args.put(ModelRouter.DEFAULT_MODEL_KEY, 123);
-        assertThrows(
-                IllegalArgumentException.class,
-                () ->
-                        new ModelRouter(
-                                new ResourceDescriptor(ModelRouter.class.getName(), args), null));
-    }
-
-    private static Map<String, Object> routerArgs(String defaultModel) {
-        Map<String, Object> args = new HashMap<>();
-        args.put(ModelRouter.CANDIDATES_KEY, List.of("small", "big"));
-        args.put(ModelRouter.STRATEGY_TYPE_KEY, "rule_based");
-        args.put(ModelRouter.STRATEGY_ARGS_KEY, Map.of(RoutingStrategy.ARG_RULES, Map.of()));
-        if (defaultModel != null) {
-            args.put(ModelRouter.DEFAULT_MODEL_KEY, defaultModel);
-        }
-        return args;
     }
 
     @Test
@@ -379,39 +281,6 @@ class RoutingTest {
     }
 
     @Test
-    void routerConstructionRejectsNullRuleValue() {
-        // A descriptor built outside the builder (e.g. deserialized) is re-validated when the
-        // router compiles its patterns: String.valueOf(null) would otherwise become the literal
-        // pattern "null".
-        Map<String, Object> rules = new HashMap<>();
-        rules.put("big", null);
-        Map<String, Object> args = new HashMap<>();
-        args.put("candidates", List.of("small", "big"));
-        args.put(ModelRouter.STRATEGY_TYPE_KEY, "rule_based");
-        args.put(ModelRouter.STRATEGY_ARGS_KEY, Map.of(RoutingStrategy.ARG_RULES, rules));
-        assertThrows(
-                IllegalArgumentException.class,
-                () ->
-                        new ModelRouter(
-                                new ResourceDescriptor(ModelRouter.class.getName(), args), null));
-    }
-
-    @Test
-    void routerConstructionRejectsNonStringRuleValue() {
-        Map<String, Object> args = new HashMap<>();
-        args.put("candidates", List.of("small", "big"));
-        args.put(ModelRouter.STRATEGY_TYPE_KEY, "rule_based");
-        args.put(
-                ModelRouter.STRATEGY_ARGS_KEY,
-                Map.of(RoutingStrategy.ARG_RULES, Map.of("big", 42)));
-        assertThrows(
-                IllegalArgumentException.class,
-                () ->
-                        new ModelRouter(
-                                new ResourceDescriptor(ModelRouter.class.getName(), args), null));
-    }
-
-    @Test
     void routingContextMessagesAreDeepCopied() {
         ChatMessage original = new ChatMessage(MessageRole.USER, "original prompt");
         RoutingContext ctx =
@@ -515,21 +384,6 @@ class RoutingTest {
     }
 
     @Test
-    void routerConstructionRejectsBlankCandidateName() {
-        // A descriptor built outside the builder (e.g. deserialized) meets the same candidate
-        // check in the constructor.
-        Map<String, Object> args = new HashMap<>();
-        args.put(ModelRouter.CANDIDATES_KEY, List.of("small", ""));
-        args.put(ModelRouter.STRATEGY_TYPE_KEY, "rule_based");
-        args.put(ModelRouter.STRATEGY_ARGS_KEY, Map.of(RoutingStrategy.ARG_RULES, Map.of()));
-        assertThrows(
-                IllegalArgumentException.class,
-                () ->
-                        new ModelRouter(
-                                new ResourceDescriptor(ModelRouter.class.getName(), args), null));
-    }
-
-    @Test
     void strategiesDecisionRequiresDecisionModelAndNonEmptyInstructions() {
         assertThrows(IllegalArgumentException.class, () -> Strategies.decision(""));
         assertThrows(IllegalArgumentException.class, () -> Strategies.decision("dm", ""));
@@ -596,7 +450,7 @@ class RoutingTest {
 
     /** The descriptions are all the decision model sees of the candidates, so each needs one. */
     @Test
-    void decisionStrategyRequiresEveryCandidateDescribed() throws Exception {
+    void decisionStrategyRequiresEveryCandidateDescribed() {
         assertThrows(
                 IllegalArgumentException.class,
                 () ->
@@ -604,29 +458,6 @@ class RoutingTest {
                                 .describe("big", "code and sql")
                                 .strategy(Strategies.decision("dm"))
                                 .build());
-        ResourceDescriptor descriptor =
-                ModelRouter.of("small", "big")
-                        .describe("small", "chit-chat")
-                        .describe("big", "code and sql")
-                        .strategy(Strategies.decision("dm").withMinProbability(0.6))
-                        .defaultModel("small")
-                        .build();
-        ModelRouter router = new ModelRouter(descriptor, null);
-        assertEquals(RoutingStrategyType.DECISION_MODEL, router.getStrategy().getType());
-        assertEquals(
-                0.6, router.getStrategy().getArguments().get(RoutingStrategy.ARG_MIN_PROBABILITY));
-        assertEquals("code and sql", router.getCandidates().get(1).getDescription());
-        // a descriptor that skipped the builder is held to the same rule
-        Map<String, Object> args = new HashMap<>(descriptor.getInitialArguments());
-        args.put(ModelRouter.CANDIDATE_DESCRIPTIONS_KEY, Map.of("big", "code and sql"));
-        assertThrows(
-                IllegalArgumentException.class,
-                () ->
-                        new ModelRouter(
-                                new ResourceDescriptor(ModelRouter.class.getName(), args), null));
-        // other strategies keep descriptions optional
-        new ModelRouter(
-                ModelRouter.of("small", "big").strategy(Strategies.llm("judge")).build(), null);
         // a blank description is as good as none
         assertThrows(
                 IllegalArgumentException.class,
@@ -644,25 +475,22 @@ class RoutingTest {
                                 .describe("only", "everything")
                                 .strategy(Strategies.decision("dm"))
                                 .build());
-        // a non-String description is diagnosed by candidate name and type, for every strategy
-        Map<String, Object> typed = new HashMap<>(descriptor.getInitialArguments());
-        typed.put(ModelRouter.CANDIDATE_DESCRIPTIONS_KEY, Map.of("small", "chit-chat", "big", 42));
-        IllegalArgumentException typeError =
-                assertThrows(
-                        IllegalArgumentException.class,
-                        () ->
-                                new ModelRouter(
-                                        new ResourceDescriptor(ModelRouter.class.getName(), typed),
-                                        null));
-        assertTrue(typeError.getMessage().contains("'big' has a Integer description"));
-        // and a descriptions value that is not a map at all
-        Map<String, Object> notAMap = new HashMap<>(descriptor.getInitialArguments());
-        notAMap.put(ModelRouter.CANDIDATE_DESCRIPTIONS_KEY, List.of("small", "big"));
-        assertThrows(
-                IllegalArgumentException.class,
-                () ->
-                        new ModelRouter(
-                                new ResourceDescriptor(ModelRouter.class.getName(), notAMap),
-                                null));
+        // other strategies keep descriptions optional
+        ModelRouter.of("small", "big").strategy(Strategies.llm("judge")).build();
+        // the descriptor carries the declared threshold and descriptions for the plan to decode
+        ResourceDescriptor descriptor =
+                ModelRouter.of("small", "big")
+                        .describe("small", "chit-chat")
+                        .describe("big", "code and sql")
+                        .strategy(Strategies.decision("dm").withMinProbability(0.6))
+                        .defaultModel("small")
+                        .build();
+        assertEquals(
+                RoutingStrategyType.DECISION_MODEL.tag(),
+                descriptor.getArgument(ModelRouter.STRATEGY_TYPE_KEY));
+        Map<?, ?> args = descriptor.getArgument(ModelRouter.STRATEGY_ARGS_KEY);
+        assertEquals(0.6, args.get(RoutingStrategy.ARG_MIN_PROBABILITY));
+        Map<?, ?> descriptions = descriptor.getArgument(ModelRouter.CANDIDATE_DESCRIPTIONS_KEY);
+        assertEquals("code and sql", descriptions.get("big"));
     }
 }

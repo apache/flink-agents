@@ -21,7 +21,6 @@ package org.apache.flink.agents.plan;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.model.routing.CustomRoutingExecutor;
-import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
 import org.apache.flink.agents.api.chat.model.routing.RoutingCandidate;
 import org.apache.flink.agents.api.chat.model.routing.RoutingContext;
 import org.apache.flink.agents.api.chat.model.routing.RoutingDecision;
@@ -34,8 +33,10 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.yaml.YamlLoader;
 import org.apache.flink.agents.api.yaml.YamlLoader.LoadedFile;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
+import org.apache.flink.agents.plan.routing.ModelRouter;
 import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
 import org.apache.flink.agents.plan.routing.ResolvedModelRoute;
+import org.apache.flink.agents.plan.routing.RoutingMetadata;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -128,7 +129,7 @@ class YamlModelRouterDeclarationTest {
         ResolvedModelRoute matched = resolve(local, "local_router", "please write code");
         assertThat(matched.getSelectedModel()).isEqualTo("big");
         assertThat(matched.isFallbackEnabled()).isTrue();
-        assertThat(matched.attemptOrder()).containsExactly("big", "small");
+        assertThat(matched.getCandidateAttemptOrder()).containsExactly("big", "small");
         assertThat(metadata(matched))
                 .containsEntry("decision_source", ModelRoutingEvent.SOURCE_STRATEGY)
                 .containsEntry("reason", "matched rule: code");
@@ -214,8 +215,13 @@ class YamlModelRouterDeclarationTest {
     }
 
     private static Map<String, Object> metadata(ResolvedModelRoute route) {
-        return route.buildResponseMetadata(
-                route.getSelectedModel(), List.of(route.getSelectedModel()));
+        return RoutingMetadata.build(
+                route,
+                route.getSelectedModel(),
+                List.of(route.getSelectedModel()),
+                false,
+                List.of(),
+                0L);
     }
 
     private Path write(String yaml) throws Exception {

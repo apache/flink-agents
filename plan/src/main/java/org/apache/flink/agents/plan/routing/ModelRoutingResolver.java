@@ -18,7 +18,6 @@
 package org.apache.flink.agents.plan.routing;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
 import org.apache.flink.agents.api.chat.model.routing.RoutingContext;
 import org.apache.flink.agents.api.chat.model.routing.RoutingDecision;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
@@ -327,6 +326,8 @@ public final class ModelRoutingResolver {
                 decisionSource,
                 decision.getReason(),
                 decision.getScore(),
-                decision.getMetadata());
+                decision.getMetadata(),
+                router.getEscalation().orElse(null),
+                0);
     }
 }

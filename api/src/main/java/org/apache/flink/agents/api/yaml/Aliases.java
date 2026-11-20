@@ -50,6 +50,10 @@ import java.util.Map;
  *
  * <p>For Python resources, the loader resolves the alias to the Python FQN and wraps it in a Python
  * implementation descriptor.
+ *
+ * <p>The Java {@code router} alias is the one entry that is not a class path: a Java model router
+ * declaration carries a placeholder ({@code ResourceName.ModelRouter.MODEL_ROUTER}), and the plan
+ * names the class.
  */
 public final class Aliases {
 

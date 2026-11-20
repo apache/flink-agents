@@ -551,7 +551,7 @@ def test_python_can_deserialize_plan_with_java_model_router() -> None:
         descriptor=JavaResourceDescriptor(
             language="java",
             target_module="",
-            target_clazz=("org.apache.flink.agents.api.chat.model.routing.ModelRouter"),
+            target_clazz=("org.apache.flink.agents.plan.routing.ModelRouter"),
             arguments={"candidates": ["small", "big"]},
         ),
     )

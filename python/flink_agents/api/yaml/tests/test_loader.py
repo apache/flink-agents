@@ -1049,7 +1049,7 @@ def test_model_router_yaml_rejects_java_implementations(tmp_path: Path) -> None:
     source.write_text(
         "model_routers:\n"
         "  - name: router\n"
-        "    clazz: org.apache.flink.agents.api.chat.model.routing.ModelRouter\n"
+        "    clazz: org.apache.flink.agents.plan.routing.ModelRouter\n"
         "    type: java\n"
         "    candidates: [small]\n"
         "    strategy_type: rule_based\n"
