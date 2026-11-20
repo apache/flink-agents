@@ -57,7 +57,7 @@ Cross-language support is available for the following component APIs:
 | Function Tools | [YAML cross-language example]({{< ref "docs/development/create-agent/yaml#cross-language-agents" >}}) and [Tool Use]({{< ref "docs/development/calling-llms/tool_use" >}}) |
 | Chat models, embedding models, and vector stores | [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}) |
 | Decision models | [Decision Models]({{< ref "docs/development/decision_models" >}}) and [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}) |
-| Media providers | [Media Providers]({{< ref "docs/development/media" >}}) and [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}) |
+| Media providers | [Media Providers]({{< ref "docs/development/media_providers" >}}) and [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}) |
 | Rerank models | [Rerank Models]({{< ref "docs/development/rerank_models" >}}) and [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}) |
 
 For YAML examples, see
@@ -165,13 +165,13 @@ where supported and install its dependencies.
 
 | Provider | Python | Java |
 |---|---|---|
-| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/media" >}}) | ✅ | ❌ |
+| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/media_providers/providers#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
 
 **Rerank Models**
 
 | Provider | Python | Java |
 |---|---|---|
-| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/rerank_models" >}}) | ✅ | ❌ |
+| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/rerank_models/providers#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
 
 **MCP Server**
 

@@ -317,7 +317,7 @@ media_providers:
 ```
 
 The entry may appear under an agent or at file level for shared use. See
-[Media Providers]({{< ref "docs/development/media" >}}) for capability calls and
+[Media Providers]({{< ref "docs/development/media_providers" >}}) for capability calls and
 provider lifecycle.
 
 Rerank models register a synchronous ranking model under `RERANK_MODEL`. Set

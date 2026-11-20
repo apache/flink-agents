@@ -1,5 +1,5 @@
 ---
-title: Media Providers
+title: "Media Providers"
 weight: 9
 type: docs
 ---
@@ -24,30 +24,43 @@ under the License.
 
 # Media Providers
 
-Media providers expose dedicated operations for generating images and videos,
-transcribing recordings, and synthesizing speech. Register one provider for your
-service connection, bind a model for the capability you need, and reuse the
-bound model across requests.
+## Overview
 
-| Operation | Binding method | Inputs | Result `content` | DashScope execution |
-|---|---|---|---|---|
-| [Image generation and editing](#image-generation-and-editing) | `image(model)` | Text prompt and optional `ImageBlock` references | `ImageBlock` URLs | Async job (`AsyncJobModel`) |
-| [Video generation](#video-generation) | `video(model)` | Text prompt, ordered media blocks, or both | `VideoBlock` URL | Async job (`AsyncJobModel`) |
-| [Transcription](#transcription) | `transcription(model)` | `AudioBlock` or `VideoBlock` | `TextBlock`s | Async job (`AsyncJobModel`) |
-| [Speech synthesis](#speech-synthesis) | `speech(model[, voice])` | Non-empty text and a `voice` | `AudioBlock` URL | Synchronous |
+Media providers expose dedicated, non-chat media capabilities—such as media
+generation and audio or speech processing—through a single registered service
+connection (`MEDIA_PROVIDER`).
 
-Media providers take typed inputs directly and support resumable provider jobs
-where backed by asynchronous APIs. [Chat models]({{< ref "docs/development/calling-llms/chat" >}})
-instead express requests as role-based messages. Choose the interface that fits
-your workflow.
+In Flink Agents, media providers follow a three-layer model:
 
-## Register a provider
+1. **Provider (`BaseMediaProvider`)**: Stores connection and HTTP settings and
+   owns the shared client lifecycle.
+2. **Model binding**: A capability factory method binds a model name and
+   optional default `model_parameters`, returning a reusable capability view.
+3. **Invocation**: Call the capability's typed method directly, or use
+   [`AsyncJobModel`](#asynchronous-jobs-and-recovery) when the provider backs
+   that capability with resumable cloud jobs.
 
-Alibaba Cloud Model Studio (DashScope) is built in as a Python implementation,
-`DashScopeMediaProvider`. Java Actions can use it through
-[Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}).
-Set `DASHSCOPE_API_KEY` in the runtime environment, then register a provider
-descriptor:
+Each provider implements the subset of capabilities its service supports;
+calling an unsupported binding method raises `NotImplementedError` in Python or
+`UnsupportedOperationException` in Java. Whether a bound capability runs
+synchronously or exposes resumable jobs via `AsyncJobModel` is determined by
+the provider implementation.
+
+Media providers accept typed inputs directly rather than role-based
+conversation turns. [Chat models]({{< ref "docs/development/calling-llms/chat" >}})
+instead express requests as messages with roles (including multimodal
+messages). Choose the interface that fits your workflow.
+
+See [Built-in Media Providers]({{< ref "docs/development/media_providers/providers" >}})
+for available implementations, connection parameters, and provider-specific
+requirements.
+
+## Getting started
+
+Register a `MEDIA_PROVIDER` resource with a descriptor for your chosen
+implementation. The example below uses the built-in DashScope provider; replace
+the class and connection settings with those of any built-in or custom provider
+listed in [Built-in Media Providers]({{< ref "docs/development/media_providers/providers" >}}).
 
 {{< tabs "Register a media provider" >}}
 {{< tab "Python" >}}
@@ -55,7 +68,7 @@ descriptor:
 from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
 
 agents_env.add_resource(
-    "dashscope",
+    "media",
     ResourceType.MEDIA_PROVIDER,
     ResourceDescriptor(clazz=ResourceName.MediaProvider.DASHSCOPE),
 )
@@ -68,7 +81,7 @@ import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 
 agentsEnv.addResource(
-        "dashscope",
+        "media",
         ResourceType.MEDIA_PROVIDER,
         PythonResourceDescriptor.Builder.newBuilder(ResourceName.MediaProvider.Python.DASHSCOPE)
                 .build());
@@ -76,37 +89,37 @@ agentsEnv.addResource(
 {{< /tab >}}
 {{< /tabs >}}
 
-You can also declare the descriptor using `@media_provider` in Python,
+You can also declare a provider using `@media_provider` in Python,
 `@MediaProvider` in Java, or the YAML `media_providers` section. See
 [Registering Resources]({{< ref "docs/development/create-agent/resources#registering-resources" >}})
 for registration scopes and
 [YAML Resources]({{< ref "docs/development/create-agent/yaml#resources" >}})
 for YAML declarations.
 
-### DashScope Provider Parameters
+## Built-in capabilities
 
-The provider descriptor configures only the service connection. Model names and
-generation parameters belong to the capability calls below.
+Flink Agents currently defines the capability interfaces below and may expand
+this set over time. Inside an Action, retrieve the registered provider with
+`ctx.get_resource("media", ResourceType.MEDIA_PROVIDER)` (Java:
+`ctx.getResource(...)`) and bind a model for the capability you need.
 
-| Parameter | Type | Default | Description |
+| Capability | Binding method | Typical inputs | Result `content` |
 |---|---|---|---|
-| `api_key` | str | `$DASHSCOPE_API_KEY` | DashScope API key, resolved when the provider opens. |
-| `workspace` | str | `None` | Model Studio workspace ID. With `region`, selects `https://{workspace}.{region}.maas.aliyuncs.com`. |
-| `region` | str | `"cn-beijing"` | DashScope gateway region. |
-| `base_url` | str | `None` | Custom API root (including its path) replacing the SDK-derived address. |
-| `request_timeout` | float | `60.0` | HTTP timeout in seconds for a single request. |
+| [Image generation and editing](#image-generation-and-editing) | `image(model)` | Text prompt and optional `ImageBlock` references | `ImageBlock`s |
+| [Video generation](#video-generation) | `video(model)` | Text prompt, ordered media blocks, or both | `VideoBlock`s |
+| [Transcription](#transcription) | `transcription(model)` | `AudioBlock` or `VideoBlock` | `TextBlock`s |
+| [Speech synthesis](#speech-synthesis) | `speech(model[, voice])` | Text and optional `voice` | `AudioBlock`s |
 
-## Capabilities
-
-Inside an Action, retrieve the provider by its registered name and
-`ResourceType.MEDIA_PROVIDER`. Choose models and voices available to your
-account in the [Alibaba Cloud Model Studio model catalog](https://help.aliyun.com/en/model-studio/models).
 See [Multimodal Messages]({{< ref "docs/development/calling-llms/chat#message-content-blocks" >}})
-for constructing `ImageBlock`, `AudioBlock`, and `VideoBlock` values.
+for constructing `ImageBlock`, `AudioBlock`, `VideoBlock`, and `DocumentBlock`
+values. The examples below call the DashScope provider registered above; model
+names, accepted media sources (URL vs. inline Base64), and `model_parameters`
+keys depend on your provider—see
+[Built-in Media Providers]({{< ref "docs/development/media_providers/providers" >}}).
 
 ### Image generation and editing
 
-Bind a model with `image(model)` and call `generate()` with a prompt and
+Bind an image model with `image(model)` and call `generate()` with a prompt and
 optional reference images:
 
 {{< tabs "Image generation and editing" >}}
@@ -120,7 +133,7 @@ from flink_agents.api.resource import ResourceType
 
 provider = cast(
     BaseMediaProvider,
-    ctx.get_resource("dashscope", ResourceType.MEDIA_PROVIDER),
+    ctx.get_resource("media", ResourceType.MEDIA_PROVIDER),
 )
 image_model = provider.image("qwen-image-3.0", model_parameters={"n": 1})
 generated = image_model.generate(
@@ -152,7 +165,7 @@ import java.util.List;
 import java.util.Map;
 
 BaseMediaProvider provider =
-        (BaseMediaProvider) ctx.getResource("dashscope", ResourceType.MEDIA_PROVIDER);
+        (BaseMediaProvider) ctx.getResource("media", ResourceType.MEDIA_PROVIDER);
 ImageGenerationModel imageModel = provider.image("qwen-image-3.0", Map.of("n", 1));
 MediaResult<ImageBlock> generated =
         imageModel.generate(
@@ -173,17 +186,10 @@ MediaResult<ImageBlock> edited =
 {{< /tab >}}
 {{< /tabs >}}
 
-Reference images accept HTTP(S) URLs or inline Base64 data (`ImageBlock.from_bytes`
-/ `ImageBlock.fromBytes`). Generated images are returned as `ImageBlock` URLs in
-`result.content` (Java: `result.getContent()`). DashScope image URLs expire
-(check `expires_at_ms` / `getExpiresAtMs()`), so save any images you need to
-keep. See the [DashScope image generation and editing API](https://help.aliyun.com/en/model-studio/qwen-image-generation-and-editing-api-reference)
-for model-specific parameters and limits.
-
 ### Video generation
 
-Bind a model with `video(model)` and pass a text prompt, ordered media inputs,
-or both:
+Bind a video model with `video(model)` and pass a text prompt, ordered media
+blocks (`ImageBlock`, `AudioBlock`, `VideoBlock`, or `DocumentBlock`), or both:
 
 {{< tabs "Video generation" >}}
 {{< tab "Python" >}}
@@ -225,18 +231,10 @@ MediaResult<VideoBlock> result =
 {{< /tab >}}
 {{< /tabs >}}
 
-`media` accepts `ImageBlock`, `AudioBlock`, `VideoBlock`, and `DocumentBlock`
-values as URLs or inline Base64 data. When `media` is non-empty, DashScope
-requires `video_media_roles` in `model_parameters` with one role name per media
-block in matching order (for example, `["first_frame"]` or
-`["first_frame", "last_frame"]`). The result carries a temporary `VideoBlock`
-URL (`expires_at_ms`). See the [DashScope video generation API](https://help.aliyun.com/en/model-studio/video-generation-api)
-for supported models, roles, and parameters.
-
 ### Transcription
 
-Bind a file-transcription model with `transcription(model)` and pass an
-`AudioBlock` or `VideoBlock`:
+Bind a transcription model with `transcription(model)` and pass an `AudioBlock`
+or `VideoBlock`:
 
 {{< tabs "Transcription" >}}
 {{< tab "Python" >}}
@@ -266,17 +264,10 @@ MediaResult<TextBlock> result =
 {{< /tab >}}
 {{< /tabs >}}
 
-DashScope file transcription accepts **only accessible HTTP(S) URLs**; inline
-Base64 audio or video blocks are rejected. Transcript segments are returned as
-`TextBlock` items in `result.content`, and the full DashScope transcription
-JSON payload is retained in `result.metadata["transcription"]` (Java:
-`result.getMetadata().get("transcription")`). See the
-[DashScope file transcription API](https://help.aliyun.com/en/model-studio/qwen-audio-asr-filetrans-http-api)
-for supported formats and options.
-
 ### Speech synthesis
 
-Bind a speech model with `speech(model, voice=...)` and call `synthesize()`:
+Bind a speech model with `speech(model, voice=...)` and call `synthesize()`.
+`voice` can be configured as a binding default or overridden per call:
 
 {{< tabs "Speech synthesis" >}}
 {{< tab "Python" >}}
@@ -298,22 +289,15 @@ MediaResult<AudioBlock> result = speechModel.synthesize("Your notebook is ready.
 {{< /tab >}}
 {{< /tabs >}}
 
-DashScope speech synthesis requires a `voice` (set at binding or overridden per
-call) and runs synchronously—it does not implement `AsyncJobModel`. The result
-contains an `AudioBlock` URL (`expires_at_ms`). See the
-[DashScope speech synthesis API](https://help.aliyun.com/en/model-studio/qwen-tts-api)
-for available voices and parameters such as `format`, `sample_rate`, and
-`language_type`.
-
 ## Parameters, timeouts, and results
 
 Configuration is separated into three scopes:
 
 | Scope | Responsibility | Examples |
 |---|---|---|
-| Provider | Service connection and HTTP settings | `api_key`, `workspace`, `region`, `base_url`, `request_timeout` |
+| Provider | Service connection and HTTP settings | Credentials, endpoint/region, `request_timeout` |
 | Binding | Model selection and default model parameters | `model`, `model_parameters`, optional `voice` on `speech()` |
-| Call | Inputs, per-call overrides, and call timeout | prompt or media blocks, `model_parameters`, optional `voice`, `timeout` |
+| Call | Inputs, per-call overrides, and call timeout | Prompt or media blocks, `model_parameters`, optional `voice`, `timeout` |
 
 Parameter precedence is identical in Python and Java:
 
@@ -321,29 +305,24 @@ Parameter precedence is identical in Python and Java:
 call explicit (e.g. voice) > call model_parameters > binding explicit > binding model_parameters > provider default
 ```
 
-In Java request builders, `.voice(...)` always takes precedence over `"voice"`
-in `modelParameters` regardless of builder call order.
+In Java request builders, `.voice(...)` always overrides `"voice"` in
+`modelParameters` regardless of builder call order.
 
-- **Per-call `timeout`**: For synchronous capabilities (DashScope `speech()`),
-  `timeout` overrides the provider's HTTP `request_timeout` for that request.
-  For asynchronous capabilities (`image()`, `video()`, `transcription()`),
+- **Per-call `timeout`**: For synchronous capabilities, `timeout` overrides the
+  provider's HTTP request timeout for that call. For asynchronous capabilities,
   `timeout` on a direct call (`generate()` or `transcribe()`) sets the polling
-  budget (defaulting to 30 minutes) without changing the per-request HTTP
-  `request_timeout`.
-- **`MediaResult` fields**: Every capability returns a `MediaResult` containing
+  budget (defaulting to 30 minutes) without changing per-request HTTP timeouts.
+- **`MediaResult` fields**: Every capability returns a `MediaResult` carrying
   typed blocks in `content` (`getContent()`), along with optional
   `expires_at_ms`, `usage`, `request_id`, and `metadata`.
 
 ## Asynchronous jobs and recovery
 
-Capabilities backed by cloud jobs implement `AsyncJobModel` (`submit`, `fetch`,
-`wait`, `cancel`) alongside their task interface. In DashScope, `image()`,
-`video()`, and `transcription()` implement `AsyncJobModel`, while `speech()` is
-synchronous.
-
-Direct calls (`generate()`, `transcribe()`) submit a job and poll until it
-finishes. Use `AsyncJobModel` directly when long-running jobs must survive
-recovery or when you need manual polling or cancellation:
+Capabilities backed by provider-side cloud jobs implement `AsyncJobModel`
+(`submit`, `fetch`, `wait`, `cancel`) alongside their task interface. Direct
+calls submit a job and poll until completion; check for `AsyncJobModel` when
+long-running jobs must survive recovery or when you need manual polling or
+cancellation:
 
 {{< tabs "Resume asynchronous media jobs" >}}
 {{< tab "Python" >}}
@@ -352,11 +331,17 @@ from flink_agents.api.media.media_model import AsyncJobModel
 
 image_model = provider.image("qwen-image-3.0")
 if isinstance(image_model, AsyncJobModel):
-    job = image_model.submit(
+    job = await ctx.durable_execute_async(
+        image_model.submit,
         "A navy notebook on a white desk.",
         model_parameters={"size": "512*512"},
     )
-    result = image_model.wait(job, timeout=180, poll_interval=2)
+    result = await ctx.durable_execute_async(
+        image_model.wait,
+        job,
+        timeout=180,
+        poll_interval=2,
+    )
 ```
 {{< /tab >}}
 {{< tab "Java" >}}
@@ -388,36 +373,59 @@ if (imageModel instanceof AsyncJobModel) {
 {{< /tabs >}}
 
 - **Recovery**: `MediaJob` is immutable and JSON-serializable. Persist the job
-  handle returned by `submit()` before waiting so recovery can resume with
-  `fetch(job)` or `wait(job)` instead of resubmitting.
+  handle returned by `submit()` before waiting (for example, with durable
+  execution) so recovery resumes with `fetch(job)` or `wait(job)` instead of
+  resubmitting.
 - **Polling budget**: `wait()` defaults to 30 minutes (`DEFAULT_WAIT_TIMEOUT`)
   and 5-second intervals (`DEFAULT_POLL_INTERVAL`). Pass `timeout=None` (Java:
   `null`) for unlimited polling. If the budget expires, `MediaJobTimeoutError`
   (Java: `MediaJobTimeoutException`) is raised while the remote task keeps
   running and remains queryable.
-- **Cancellation**: In DashScope, `cancel(job)` cancels only `PENDING` tasks;
-  canceling any other status raises `MediaJobError` (Java: `MediaJobException`).
+- **Cancellation**: `cancel(job)` asks the provider to cancel a submitted job;
+  providers that cannot cancel a job in its current status raise
+  `MediaJobError` (Java: `MediaJobException`).
 
-## Run the example
-
-After [setting up PyFlink]({{< ref "docs/get-started/setup" >}}), activate your
-Python environment, set `DASHSCOPE_API_KEY`, and run
-{{< gh_link file="python/flink_agents/examples/media/image_generation_example.py" name="`image_generation_example.py`" >}}:
-
-```shell
-DASHSCOPE_API_KEY=... python -m flink_agents.examples.media.image_generation_example
-```
-
-The job registers `DashScopeMediaProvider`, submits an async image job to
-`qwen-image-3.0` through `durable_execute_async`, waits for completion, and
-prints the generated image URLs and request ID.
-
-## Provider lifecycle
+## Lifecycle
 
 Flink Agents opens registered providers before use and closes them when their
 resource scope ends. Actions should leave lifecycle management to the framework.
-Capability objects share their provider's connection and lifetime; they are not
-registered or closed separately and must not be used after their provider closes.
+Bound capability objects share their provider's connection and lifetime; they
+are not registered or closed separately and must not be used after their
+provider closes.
 
-For standalone Python use, construct `DashScopeMediaProvider`, call `open()`
-before making requests, and call `close()` in a `finally` block when finished.
+For standalone Python use outside a Flink job, construct a provider, call
+`open()` before making requests, and call `close()` in a `finally` block when
+finished.
+
+## Using cross-language providers
+
+Media providers support Java-to-Python cross-language use: Java Actions can
+invoke Python provider implementations through `PythonResourceDescriptor` or
+YAML `type: python`. See
+[Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}})
+for descriptor selection and runtime requirements.
+
+## Custom providers
+
+{{< hint warning >}}
+The custom provider APIs are experimental and unstable, subject to incompatible
+changes in future releases.
+{{< /hint >}}
+
+To integrate another media service, subclass `BaseMediaProvider` (Python:
+`flink_agents.api.media.media_provider.BaseMediaProvider`; Java:
+`org.apache.flink.agents.api.media.BaseMediaProvider`), manage the shared
+client in `open()` and `close()`, and override the capability factory methods
+your service supports:
+
+- Return objects implementing the corresponding task interface
+  (`ImageGenerationModel`, `VideoGenerationModel`, `TranscriptionModel`,
+  `SpeechSynthesisModel`), and additionally implement `AsyncJobModel` only for
+  capabilities backed by resumable provider jobs.
+- Keep bound capability views lightweight and free of independent mutable state
+  so the same `(model, model_parameters)` binding can be recreated safely.
+  Shared state belongs on the provider itself (or in a persisted `MediaJob`),
+  which also ensures compatibility with Java-to-Python cross-language bridges
+  and recovery.
+
+[Built-in Media Providers]({{< ref "docs/development/media_providers/providers" >}}).

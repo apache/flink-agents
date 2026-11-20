@@ -1,5 +1,5 @@
 ---
-title: Rerank Models
+title: "Rerank Models"
 weight: 10
 type: docs
 ---
@@ -24,21 +24,28 @@ under the License.
 
 # Rerank Models
 
-Rerank models synchronously score and order candidate documents against a single
-query, returning the most relevant hits first. Use a rerank model to refine
-candidates retrieved from a [vector store]({{< ref "docs/development/vector-search/vector_stores" >}})
-or to rank text, image, and video results directly.
+## Overview
 
-Each `RERANK_MODEL` resource binds one model name and owns its client
-connection. Calls are synchronous and return a `RerankResult`.
+Rerank models synchronously score and order candidate documents against a
+single query, returning the most relevant hits first. Use a rerank model to
+refine candidates retrieved from a
+[vector store]({{< ref "docs/development/vector-search/vector_stores" >}}) or
+to rank text and multimodal candidate lists directly.
 
-## Register a rerank model
+Each `RERANK_MODEL` resource (`BaseRerankModel`) binds a single model name and
+owns its service connection. Calls are synchronous and return a `RerankResult`.
 
-Alibaba Cloud Model Studio (DashScope) is built in as a Python implementation,
-`DashScopeRerankModel`. Java Actions can use it through
-[Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}).
-Set `DASHSCOPE_API_KEY` in the runtime environment, then register a descriptor
-with the model you want to call:
+See [Built-in Rerank Model Providers]({{< ref "docs/development/rerank_models/providers" >}})
+for available implementations, parameters, and provider-specific input limits.
+
+## Getting started
+
+### Register a rerank model
+
+Register a `RERANK_MODEL` resource with a descriptor for your chosen
+implementation. The example below uses the built-in DashScope implementation;
+replace the class and parameters with those of any built-in or custom provider
+listed in [Built-in Rerank Model Providers]({{< ref "docs/development/rerank_models/providers" >}}).
 
 {{< tabs "Register a rerank model" >}}
 {{< tab "Python" >}}
@@ -71,20 +78,18 @@ agentsEnv.addResource(
 {{< /tab >}}
 {{< /tabs >}}
 
-Use a text model such as `qwen3-rerank` for text-only ranking, or a multimodal
-model such as `qwen3-vl-rerank` when any query or document is an image or video.
-You can also declare the descriptor using `@rerank_model` in Python,
+You can also declare a rerank model using `@rerank_model` in Python,
 `@RerankModel` in Java, or the YAML `rerank_models` section. See
 [Registering Resources]({{< ref "docs/development/create-agent/resources#registering-resources" >}})
 for registration scopes and
 [YAML Resources]({{< ref "docs/development/create-agent/yaml#resources" >}})
 for YAML declarations.
 
-## Rank candidates
+### Rank candidates
 
 Inside an Action, retrieve the registered model by name and
-`ResourceType.RERANK_MODEL`, then pass a query block and candidate document
-blocks to `rerank()`:
+`ResourceType.RERANK_MODEL`, then pass a query block and candidate blocks to
+`rerank()`:
 
 {{< tabs "Call a rerank model" >}}
 {{< tab "Python" >}}
@@ -146,67 +151,32 @@ RerankHit topHit = result.getResults().get(0);
 {{< /tab >}}
 {{< /tabs >}}
 
-### Inputs and results
+## Inputs, results, and parameters
 
-See [Multimodal Messages]({{< ref "docs/development/calling-llms/chat#message-content-blocks" >}})
-for constructing content blocks. DashScope accepts the following input forms:
-
-| Input | Supported blocks | Supported sources |
-|---|---|---|
-| Query | `TextBlock`, `ImageBlock` | Non-empty text; image HTTP(S) URL or inline Base64 |
-| Document | `TextBlock`, `ImageBlock`, `VideoBlock` | Non-empty text; image HTTP(S) URL or inline Base64; video **HTTP(S) URL only** |
-
-- `result.results` (Java: `result.getResults()`) is ordered from highest to
-  lowest `relevance_score`. Each hit's `index` is the candidate's zero-based
-  position in the request's `documents` list.
-- `hit.document` (`hit.getDocument()`) is populated only when
-  `return_documents` is `True`, returning the original input block; otherwise it
-  is `None` (`null`). `RerankResult` also includes `usage` and `request_id`.
-- See the [DashScope Rerank API](https://help.aliyun.com/en/model-studio/text-rerank-api)
-  for available models, limits, and model-specific parameters such as `instruct`
-  and `fps`.
-
-## Parameters and precedence
-
-### DashScopeRerankModel Parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `model` | str | Required | Rerank model name (for example, `qwen3-rerank` or `qwen3-vl-rerank`). |
-| `api_key` | str | `$DASHSCOPE_API_KEY` | DashScope API key, resolved when the resource opens. |
-| `workspace` | str | `None` | Model Studio workspace ID. With `region`, selects `https://{workspace}.{region}.maas.aliyuncs.com`. |
-| `region` | str | `"cn-beijing"` | DashScope gateway region. |
-| `base_url` | str | `None` | Custom API root (including its path) replacing the SDK-derived address. |
-| `request_timeout` | float | `60.0` | HTTP timeout in seconds for a single request. |
-| `model_parameters` | dict | `{}` | Default model parameters (for example, `top_n`, `return_documents`, `instruct`, or `fps`). |
-
-### Call-level overrides
-
-In Python, `rerank()` accepts explicit `top_n` and `return_documents` arguments,
-a `model_parameters` mapping for additional provider options (such as `instruct`
-or `fps`), and an optional per-call `timeout` overriding `request_timeout`. In
-Java, pass model parameters (including `top_n`, `return_documents`, `instruct`,
-and `fps`) in the `modelParameters` map along with an optional `Duration timeout`.
-
-Parameter precedence is:
+- **Inputs**: `rerank()` accepts a query block (`TextBlock` or `ImageBlock`)
+  and an ordered sequence of candidate document blocks (`TextBlock`,
+  `ImageBlock`, or `VideoBlock`). See
+  [Multimodal Messages]({{< ref "docs/development/calling-llms/chat#message-content-blocks" >}})
+  for constructing blocks. Which modalities and media sources (URL vs. inline
+  Base64) are accepted depends on the provider and model; see
+  [Built-in Rerank Model Providers]({{< ref "docs/development/rerank_models/providers" >}}).
+- **Results**: `result.results` (Java: `result.getResults()`) returns
+  `RerankHit` items ordered from highest to lowest `relevance_score`. Each
+  hit's `index` is the candidate's zero-based position in the request's
+  `documents` list. `hit.document` (`hit.getDocument()`) is populated with the
+  original input block only when `return_documents` is enabled; otherwise it is
+  `None` (`null`). `RerankResult` also includes optional `usage` and
+  `request_id`.
+- **Call options and precedence**: In Python, `rerank()` accepts explicit
+  `top_n` and `return_documents` arguments, a `model_parameters` mapping for
+  additional provider options, and an optional per-call `timeout`. In Java,
+  pass model parameters (including `top_n` and `return_documents`) in the
+  `modelParameters` map along with an optional `Duration timeout`. Precedence
+  is:
 
 ```text
 call explicit (Python: top_n / return_documents) > call model_parameters > resource model_parameters > provider default
 ```
-
-## Run the example
-
-After [setting up PyFlink]({{< ref "docs/get-started/setup" >}}), activate your
-Python environment, set `DASHSCOPE_API_KEY`, and run
-{{< gh_link file="python/flink_agents/examples/rerank_models/search_ranking_example.py" name="`search_ranking_example.py`" >}}:
-
-```shell
-DASHSCOPE_API_KEY=... python -m flink_agents.examples.rerank_models.search_ranking_example
-```
-
-The job registers `qwen3-vl-rerank`, ranks two questions against a text, image,
-and video candidate, and prints the top hit's index, content block type, and
-relevance score.
 
 ## Lifecycle
 
@@ -214,6 +184,30 @@ Flink Agents opens registered rerank models before use and closes them when
 their resource scope ends. Actions should leave lifecycle management to the
 framework.
 
-For standalone Python use, construct `DashScopeRerankModel`, call `open()`
-before calling `rerank()`, and call `close()` in a `finally` block when
-finished.
+For standalone Python use outside a Flink job, construct the model, call
+`open()` before calling `rerank()`, and call `close()` in a `finally` block
+when finished.
+
+## Using cross-language providers
+
+Rerank models support Java-to-Python cross-language use: Java Actions can
+invoke Python implementations through `PythonResourceDescriptor` or YAML
+`type: python`. See
+[Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}})
+for descriptor selection and runtime requirements.
+
+## Custom providers
+
+{{< hint warning >}}
+The custom provider APIs are experimental and unstable, subject to incompatible
+changes in future releases.
+{{< /hint >}}
+
+To integrate another reranking service, extend `BaseRerankModel` (Python:
+`flink_agents.api.rerank_models.rerank_model.BaseRerankModel`; Java:
+`org.apache.flink.agents.api.rerank.BaseRerankModel`), manage client lifecycle
+in `open()` and `close()`, and implement `rerank(...)` to return a
+`RerankResult`. Keep `rerank(...)` side-effect-free with respect to Agent
+memory and events so it can run safely inside durable executions.
+
+[Built-in Rerank Model Providers]({{< ref "docs/development/rerank_models/providers" >}}).

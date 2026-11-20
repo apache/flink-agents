@@ -43,7 +43,7 @@ the following type names:
 | `EMBEDDING_MODEL_CONNECTION` | Connect to an embedding model service. | [Embedding Models]({{< ref "docs/development/vector-search/embedding_models" >}}) |
 | `EMBEDDING_MODEL` | Configure an embedding model setup for converting text into vectors. | [Embedding Models]({{< ref "docs/development/vector-search/embedding_models" >}}) |
 | `VECTOR_STORE` | Store and retrieve documents using vector search. | [Vector Stores]({{< ref "docs/development/vector-search/vector_stores" >}}) |
-| `MEDIA_PROVIDER` | Configure a media service connection and bind models for image, video, transcription, or speech capabilities. | [Media Providers]({{< ref "docs/development/media" >}}) |
+| `MEDIA_PROVIDER` | Configure a media service connection and bind models for non-chat media capabilities such as media generation and audio processing. | [Media Providers]({{< ref "docs/development/media_providers" >}}) |
 | `RERANK_MODEL` | Synchronously rank candidate documents against a query. | [Rerank Models]({{< ref "docs/development/rerank_models" >}}) |
 | `PROMPT` | Provide a reusable text or message template. | [Prompts]({{< ref "docs/development/calling-llms/prompts" >}}) |
 | `TOOL` | Expose a callable operation that a model or Action can invoke. | [Tool Use]({{< ref "docs/development/calling-llms/tool_use" >}}) |
