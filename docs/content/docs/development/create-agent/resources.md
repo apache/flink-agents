@@ -43,6 +43,8 @@ the following type names:
 | `EMBEDDING_MODEL_CONNECTION` | Connect to an embedding model service. | [Embedding Models]({{< ref "docs/development/vector-search/embedding_models" >}}) |
 | `EMBEDDING_MODEL` | Configure an embedding model setup for converting text into vectors. | [Embedding Models]({{< ref "docs/development/vector-search/embedding_models" >}}) |
 | `VECTOR_STORE` | Store and retrieve documents using vector search. | [Vector Stores]({{< ref "docs/development/vector-search/vector_stores" >}}) |
+| `MEDIA_MODEL_PROVIDER` | Configure a media model service connection and bind models for non-chat media capabilities such as image/video generation and audio processing. | [Media Models]({{< ref "docs/development/media_models" >}}) |
+| `RERANK_MODEL` | Synchronously rank candidate documents against a query. | [Rerank Models]({{< ref "docs/development/rerank_models" >}}) |
 | `PROMPT` | Provide a reusable text or message template. | [Prompts]({{< ref "docs/development/calling-llms/prompts" >}}) |
 | `TOOL` | Expose a callable operation that a model or Action can invoke. | [Tool Use]({{< ref "docs/development/calling-llms/tool_use" >}}) |
 | `MCP_SERVER` | Connect to an MCP server to access its tools and prompts. | [MCP]({{< ref "docs/development/calling-llms/mcp" >}}) |
@@ -283,7 +285,8 @@ for these workflows.
 An Agent can use supported Resource implementations from either Java or Python.
 Chat model connections and setups, embedding model connections and setups, and
 vector stores support cross-language use in both directions. Decision model
-connections and setups support cross-language use only from Java to Python:
+connections and setups, media model providers, and rerank models
+support cross-language use only from Java to Python:
 Java Agents can use Python implementations, but Python Agents cannot use Java
 implementations. Within these limits, choose an implementation based on the
 provider capabilities you need.

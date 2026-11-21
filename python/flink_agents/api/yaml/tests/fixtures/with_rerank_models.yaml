@@ -1,0 +1,15 @@
+rerank_models:
+  - name: shared_ranker
+    clazz: dashscope
+    type: python
+    model: qwen3-rerank
+    request_timeout: 12
+
+agents:
+  - name: rerank_agent
+    rerank_models:
+      - name: own_ranker
+        clazz: dashscope
+        type: python
+        model: qwen3-rerank
+        request_timeout: 12

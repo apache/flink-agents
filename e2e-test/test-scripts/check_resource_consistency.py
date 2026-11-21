@@ -124,6 +124,8 @@ def get_python_resource_name_map(python_path: Path) -> dict:
             "EmbeddingModel",
             "VectorStore",
             "ModelRouter",
+            "MediaModelProvider",
+            "RerankModel",
         ]:
             if not hasattr(ResourceName, resource_name):
                 continue

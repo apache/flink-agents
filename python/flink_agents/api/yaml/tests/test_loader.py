@@ -1098,6 +1098,37 @@ def test_model_router_name_collision_matches_programmatic_registration(
     assert str(yaml_error.value) == str(programmatic.value)
 
 
+def test_media_model_providers_support_agent_and_shared_resources() -> None:
+    agents, shared, _ = build_agents(_FIXTURES / "with_media_model_providers.yaml")
+    own = agents["media_agent"].resources[ResourceType.MEDIA_MODEL_PROVIDER][
+        "own_media"
+    ]
+    shared_provider = shared[ResourceType.MEDIA_MODEL_PROVIDER]["shared_media"]
+    for descriptor in (own, shared_provider):
+        assert isinstance(descriptor, ResourceDescriptor)
+        assert descriptor.clazz.__module__ == (
+            "flink_agents.integrations.media_model_providers.dashscope_media_model_provider"
+        )
+        assert descriptor.clazz.__name__ == "DashScopeMediaModelProvider"
+        assert descriptor.arguments == {"request_timeout": 12}
+
+
+def test_rerank_models_support_agent_and_shared_resources() -> None:
+    agents, shared, _ = build_agents(_FIXTURES / "with_rerank_models.yaml")
+    own = agents["rerank_agent"].resources[ResourceType.RERANK_MODEL]["own_ranker"]
+    shared_ranker = shared[ResourceType.RERANK_MODEL]["shared_ranker"]
+    for descriptor in (own, shared_ranker):
+        assert isinstance(descriptor, ResourceDescriptor)
+        assert descriptor.clazz.__module__ == (
+            "flink_agents.integrations.rerank_models.dashscope_rerank_model"
+        )
+        assert descriptor.clazz.__name__ == "DashScopeRerankModel"
+        assert descriptor.arguments == {
+            "model": "qwen3-rerank",
+            "request_timeout": 12,
+        }
+
+
 def test_load_yaml_chat_model_clashing_with_registered_router_registers_nothing(
     tmp_path: Path,
 ) -> None:

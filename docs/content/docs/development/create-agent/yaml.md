@@ -277,7 +277,7 @@ cross-language runtime requirements.
 **Resources configured by implementation class** — `chat_model_connections`,
 `chat_model_setups`, `decision_model_connections`, `decision_model_setups`,
 `embedding_model_connections`, `embedding_model_setups`, `vector_stores`,
-`mcp_servers`, and `model_routers`, plus `subagents` for external sub-agents.
+`media_model_providers`, `rerank_models`, `mcp_servers`, and `model_routers`, plus `subagents` for external sub-agents.
 Declare the implementation and its configuration using the fields below.
 This corresponds to a `ResourceDescriptor` in Java or Python; the framework creates the
 Resource instance at runtime.
@@ -302,6 +302,39 @@ mcp_servers:
     type: python
     endpoint: http://127.0.0.1:8000/mcp
 ```
+
+Media model providers register connection settings under `MEDIA_MODEL_PROVIDER`.
+Choose a model when calling a capability from an Action, for example
+`ctx.get_resource("dashscope", ResourceType.MEDIA_MODEL_PROVIDER).image(model_name)`.
+Set `DASHSCOPE_API_KEY` in the runtime environment for this declaration:
+
+```yaml
+media_model_providers:
+  - name: dashscope
+    clazz: dashscope
+    type: python
+    request_timeout: 60
+```
+
+The entry may appear under an agent or at file level for shared use. See
+[Media Models]({{< ref "docs/development/media_models" >}}) for capability calls and
+provider lifecycle.
+
+Rerank models register a synchronous ranking model under `RERANK_MODEL`. Set
+`DASHSCOPE_API_KEY` in the runtime environment for this declaration:
+
+```yaml
+rerank_models:
+  - name: ranker
+    clazz: dashscope
+    type: python
+    model: qwen3-rerank
+    request_timeout: 60
+```
+
+The entry may appear under an agent or at file level for shared use. See
+[Rerank Models]({{< ref "docs/development/rerank_models" >}}) for supported
+inputs, parameters, and lifecycle.
 
 `model_routers` carries the same arguments as a programmatic `ModelRouter`
 descriptor: `candidates`, `candidate_descriptions`, `strategy_type`,
@@ -771,6 +804,18 @@ Embedding-model aliases (apply to both `embedding_model_connections` and `embedd
 | `dashscope` | Alibaba Cloud Model Studio (DashScope) | —              |
 | `bedrock` | —              | Bedrock (Java) |
 
+Media-model-provider aliases (apply to `media_model_providers`):
+
+| Alias | `type: python` | `type: java` |
+| ----- | -------------- | ------------ |
+| `dashscope` | Alibaba Cloud Model Studio (DashScope) | — |
+
+Rerank-model aliases (apply to `rerank_models`):
+
+| Alias | `type: python` | `type: java` |
+| ----- | -------------- | ------------ |
+| `dashscope` | Alibaba Cloud Model Studio (DashScope) | — |
+
 Vector-store aliases:
 
 | Alias           | `type: python` | `type: java`    |
@@ -860,7 +905,7 @@ Application payloads must use the supported
 Cross-language support varies by component:
 
 - `actions`, `tools`, `chat_model_connections`, `chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, and `vector_stores` support both directions: `type: python` when loaded from Java, and `type: java` when loaded from Python.
-- `decision_model_connections`, `decision_model_setups`, and `mcp_servers` support only Java-to-Python cross-language use: Java-loaded YAML can use Python implementations, but Python-loaded YAML cannot use Java implementations.
+- `decision_model_connections`, `decision_model_setups`, `media_model_providers`, `rerank_models`, and `mcp_servers` support only Java-to-Python cross-language use: Java-loaded YAML can use Python implementations, but Python-loaded YAML cannot use Java implementations.
 - `model_routers` do not support cross-language use. Java YAML sets `type: java`. Python YAML uses the default Python implementation. Declaring the other language fails when the file is loaded.
 - Other components, including external `subagents`, do not support cross-language use.
 

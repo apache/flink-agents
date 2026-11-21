@@ -54,7 +54,7 @@ dependencies = [
     "tree-sitter-bash>=0.23,<0.26",
     #TODO: Seperate integration dependencies from project
     "ollama==0.6.1",
-    "dashscope~=1.24.2",
+    "dashscope~=2.0,>=2.0.4",
     "openai>=3.26.0,<4",
     "typesafe-sdk>=0.7.4,<0.8",
     "anthropic>=0.77.0",

@@ -277,6 +277,32 @@ public final class ResourceName {
         private ModelRouter() {}
     }
 
+    // ==================== MediaModelProvider ====================
+    public static final class MediaModelProvider {
+        /** Python implementations of MediaModelProvider. */
+        public static final class Python {
+            public static final String DASHSCOPE =
+                    "flink_agents.integrations.media_model_providers.dashscope_media_model_provider.DashScopeMediaModelProvider";
+
+            private Python() {}
+        }
+
+        private MediaModelProvider() {}
+    }
+
+    // ==================== RerankModel ====================
+    public static final class RerankModel {
+        /** Python implementations of RerankModel. */
+        public static final class Python {
+            public static final String DASHSCOPE =
+                    "flink_agents.integrations.rerank_models.dashscope_rerank_model.DashScopeRerankModel";
+
+            private Python() {}
+        }
+
+        private RerankModel() {}
+    }
+
     // ==================== MCP ====================
     public static final String MCP_SERVER = "DECIDE_IN_RUNTIME_MCPServer";
 }

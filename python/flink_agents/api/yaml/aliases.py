@@ -171,6 +171,16 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "router": ResourceName.ModelRouter.Java.MODEL_ROUTER,
         },
     },
+    ResourceType.MEDIA_MODEL_PROVIDER: {
+        "python": {
+            "dashscope": ResourceName.MediaModelProvider.DASHSCOPE,
+        },
+    },
+    ResourceType.RERANK_MODEL: {
+        "python": {
+            "dashscope": ResourceName.RerankModel.DASHSCOPE,
+        },
+    },
 }
 
 

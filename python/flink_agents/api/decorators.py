@@ -296,6 +296,40 @@ def vector_store(func: Callable) -> Callable:
     return func
 
 
+def media_model_provider(func: Callable) -> Callable:
+    """Decorator for marking a function declaring a media model provider.
+
+    Parameters
+    ----------
+    func : Callable
+        Function to be decorated.
+
+    Returns:
+    -------
+    Callable
+        Decorator function marking the target as a media model provider.
+    """
+    func._is_media_model_provider = True
+    return func
+
+
+def rerank_model(func: Callable) -> Callable:
+    """Decorator for marking a function declaring a rerank model.
+
+    Parameters
+    ----------
+    func : Callable
+        Function to be decorated.
+
+    Returns:
+    -------
+    Callable
+        Decorator function that marks the target function declare a rerank model.
+    """
+    func._is_rerank_model = True
+    return func
+
+
 def skills(func: Callable) -> Callable:
     """Decorator for marking a function declaring skills.
 
