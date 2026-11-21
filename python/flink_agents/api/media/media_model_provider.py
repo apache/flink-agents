@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     )
 
 
-class BaseMediaProvider(Resource, ABC):
+class BaseMediaModelProvider(Resource, ABC):
     """A provider resource that binds models for media capabilities.
 
     Register this resource with a ``ResourceDescriptor`` and retrieve it with
@@ -52,7 +52,7 @@ class BaseMediaProvider(Resource, ABC):
     @override
     def resource_type(cls) -> ResourceType:
         """Return resource type of class."""
-        return ResourceType.MEDIA_PROVIDER
+        return ResourceType.MEDIA_MODEL_PROVIDER
 
     def speech(
         self,

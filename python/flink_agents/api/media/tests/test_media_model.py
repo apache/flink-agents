@@ -43,7 +43,7 @@ from flink_agents.api.media.media_model import (
     TranscriptionModel,
     VideoGenerationModel,
 )
-from flink_agents.api.media.media_provider import BaseMediaProvider
+from flink_agents.api.media.media_model_provider import BaseMediaModelProvider
 from flink_agents.api.resource import ResourceType
 
 _JOB = MediaJob(
@@ -152,9 +152,9 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
 
 
 def test_provider_resource_type_and_defaults() -> None:
-    assert BaseMediaProvider.resource_type() is ResourceType.MEDIA_PROVIDER
-    assert ResourceType.MEDIA_PROVIDER.value == "media_provider"
-    provider = BaseMediaProvider()
+    assert BaseMediaModelProvider.resource_type() is ResourceType.MEDIA_MODEL_PROVIDER
+    assert ResourceType.MEDIA_MODEL_PROVIDER.value == "media_model_provider"
+    provider = BaseMediaModelProvider()
     for method in (
         provider.speech,
         provider.transcription,

@@ -34,8 +34,8 @@ from flink_agents.api.media.media_model import (
     MediaResult,
     VideoGenerationModel,
 )
-from flink_agents.integrations.media_providers.dashscope_media_provider import (
-    DashScopeMediaProvider,
+from flink_agents.integrations.media_model_providers.dashscope_media_model_provider import (
+    DashScopeMediaModelProvider,
 )
 
 _IMAGE = "https://example.test/frame.png"
@@ -44,7 +44,7 @@ _VIDEO = "https://oss.example/out.mp4?Expires=1700000000"
 
 @pytest.fixture
 def model_factory(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
 ) -> Callable[..., VideoGenerationModel]:
     def create(**overrides: Any) -> VideoGenerationModel:
         values: dict[str, Any] = {"model": "custom-video-deployment"}

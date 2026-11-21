@@ -101,24 +101,25 @@ class YamlLoaderBuildAgentsTest {
     }
 
     @Test
-    void mediaProvidersSupportAgentAndSharedPythonResources() {
-        LoadedFile out = YamlLoader.buildAgents(FIXTURES.resolve("with_media_providers.yaml"));
+    void mediaModelProvidersSupportAgentAndSharedPythonResources() {
+        LoadedFile out =
+                YamlLoader.buildAgents(FIXTURES.resolve("with_media_model_providers.yaml"));
         Object own =
                 out.getAgents()
                         .get("media_agent")
                         .getResources()
-                        .get(ResourceType.MEDIA_PROVIDER)
+                        .get(ResourceType.MEDIA_MODEL_PROVIDER)
                         .get("own_media");
         Object shared =
-                out.getSharedResources().get(ResourceType.MEDIA_PROVIDER).get("shared_media");
+                out.getSharedResources().get(ResourceType.MEDIA_MODEL_PROVIDER).get("shared_media");
 
         for (Object resource : new Object[] {own, shared}) {
             assertThat(resource).isInstanceOf(PythonResourceDescriptor.class);
             ResourceDescriptor descriptor = (ResourceDescriptor) resource;
             assertThat(descriptor.getModule())
                     .isEqualTo(
-                            "flink_agents.integrations.media_providers.dashscope_media_provider");
-            assertThat(descriptor.getClazz()).isEqualTo("DashScopeMediaProvider");
+                            "flink_agents.integrations.media_model_providers.dashscope_media_model_provider");
+            assertThat(descriptor.getClazz()).isEqualTo("DashScopeMediaModelProvider");
             assertThat(descriptor.getInitialArguments())
                     .containsExactlyEntriesOf(Map.of("request_timeout", 12));
         }

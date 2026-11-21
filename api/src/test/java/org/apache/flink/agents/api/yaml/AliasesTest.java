@@ -67,8 +67,10 @@ class AliasesTest {
 
     @Test
     void clazzAliasCoversPythonMediaAndRerank() {
-        assertThat(Aliases.resolveClazz("dashscope", ResourceType.MEDIA_PROVIDER, Language.PYTHON))
-                .isEqualTo(ResourceName.MediaProvider.Python.DASHSCOPE);
+        assertThat(
+                        Aliases.resolveClazz(
+                                "dashscope", ResourceType.MEDIA_MODEL_PROVIDER, Language.PYTHON))
+                .isEqualTo(ResourceName.MediaModelProvider.Python.DASHSCOPE);
         assertThat(Aliases.resolveClazz("dashscope", ResourceType.RERANK_MODEL, Language.PYTHON))
                 .isEqualTo(ResourceName.RerankModel.Python.DASHSCOPE);
     }

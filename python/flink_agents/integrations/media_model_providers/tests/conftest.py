@@ -23,18 +23,18 @@ import httpx
 import pytest
 
 from flink_agents.api.media.media_model import AsyncJobModel
-from flink_agents.integrations.media_providers.dashscope_media_provider import (
-    DashScopeMediaProvider,
+from flink_agents.integrations.media_model_providers.dashscope_media_model_provider import (
+    DashScopeMediaModelProvider,
 )
 
 
 @pytest.fixture
-def provider_factory() -> Iterator[Callable[..., DashScopeMediaProvider]]:
+def provider_factory() -> Iterator[Callable[..., DashScopeMediaModelProvider]]:
     providers = []
 
-    def create(**overrides: Any) -> DashScopeMediaProvider:
+    def create(**overrides: Any) -> DashScopeMediaModelProvider:
         values = {"api_key": "sk-test", "workspace": "ws-1", **overrides}
-        provider = DashScopeMediaProvider(**values)
+        provider = DashScopeMediaModelProvider(**values)
         providers.append(provider)
         return provider
 

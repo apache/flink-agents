@@ -33,8 +33,8 @@ from flink_agents.api.media.media_model import (
     MediaResult,
 )
 from flink_agents.api.rerank_models.rerank_model import RerankHit, RerankResult
-from flink_agents.integrations.media_providers.dashscope_media_provider import (
-    DashScopeMediaProvider,
+from flink_agents.integrations.media_model_providers.dashscope_media_model_provider import (
+    DashScopeMediaModelProvider,
 )
 from flink_agents.runtime.python_java_utils import (
     call_media_cancel,
@@ -206,7 +206,7 @@ def test_call_media_generate_decodes_capability_input(task, content, result) -> 
 
 
 def test_validate_media_binding_reports_async_capability() -> None:
-    provider = DashScopeMediaProvider(api_key="sk-test", workspace="ws-1")
+    provider = DashScopeMediaModelProvider(api_key="sk-test", workspace="ws-1")
     assert (
         validate_media_binding(
             provider, "speech_synthesis", "qwen-audio-3.0-tts-flash", "{}"

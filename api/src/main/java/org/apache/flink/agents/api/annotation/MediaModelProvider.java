@@ -24,11 +24,11 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Annotation to mark a static method as a media provider resource managed by the agent plan.
+ * Annotation to mark a static method as a media model provider resource managed by the agent plan.
  *
  * <p>The method is scanned during agent plan creation. It must be static and return a {@code
  * ResourceDescriptor}.
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
-public @interface MediaProvider {}
+public @interface MediaModelProvider {}

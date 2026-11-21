@@ -1098,16 +1098,18 @@ def test_model_router_name_collision_matches_programmatic_registration(
     assert str(yaml_error.value) == str(programmatic.value)
 
 
-def test_media_providers_support_agent_and_shared_resources() -> None:
-    agents, shared, _ = build_agents(_FIXTURES / "with_media_providers.yaml")
-    own = agents["media_agent"].resources[ResourceType.MEDIA_PROVIDER]["own_media"]
-    shared_provider = shared[ResourceType.MEDIA_PROVIDER]["shared_media"]
+def test_media_model_providers_support_agent_and_shared_resources() -> None:
+    agents, shared, _ = build_agents(_FIXTURES / "with_media_model_providers.yaml")
+    own = agents["media_agent"].resources[ResourceType.MEDIA_MODEL_PROVIDER][
+        "own_media"
+    ]
+    shared_provider = shared[ResourceType.MEDIA_MODEL_PROVIDER]["shared_media"]
     for descriptor in (own, shared_provider):
         assert isinstance(descriptor, ResourceDescriptor)
         assert descriptor.clazz.__module__ == (
-            "flink_agents.integrations.media_providers.dashscope_media_provider"
+            "flink_agents.integrations.media_model_providers.dashscope_media_model_provider"
         )
-        assert descriptor.clazz.__name__ == "DashScopeMediaProvider"
+        assert descriptor.clazz.__name__ == "DashScopeMediaModelProvider"
         assert descriptor.arguments == {"request_timeout": 12}
 
 

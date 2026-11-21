@@ -24,7 +24,7 @@ import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.VideoBlock;
 import org.apache.flink.agents.api.media.AsyncJobModel;
-import org.apache.flink.agents.api.media.BaseMediaProvider;
+import org.apache.flink.agents.api.media.BaseMediaModelProvider;
 import org.apache.flink.agents.api.media.ImageGenerationModel;
 import org.apache.flink.agents.api.media.ImageGenerationRequest;
 import org.apache.flink.agents.api.media.MediaJob;
@@ -66,8 +66,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
-/** Java calls a Python media provider through the tagged JSON bridge. */
-class PythonMediaProviderTest {
+/** Java calls a Python media model provider through the tagged JSON bridge. */
+class PythonMediaModelProviderTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final MediaJob JOB =
             new MediaJob("dashscope", "model", "video_generation", "job-1", 1, null);
@@ -106,7 +106,7 @@ class PythonMediaProviderTest {
                         any()))
                 .thenReturn(true);
 
-        PythonMediaProvider provider = provider(adapter);
+        PythonMediaModelProvider provider = provider(adapter);
 
         assertThat(provider.speech("tts")).isNotInstanceOf(AsyncJobModel.class);
         assertThat(provider.image("sync-image")).isNotInstanceOf(AsyncJobModel.class);
@@ -123,7 +123,7 @@ class PythonMediaProviderTest {
 
         assertThatThrownBy(() -> provider(adapter).image("img"))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Invalid MediaProvider binding validation result from Python");
+                .hasMessage("Invalid MediaModelProvider binding validation result from Python");
     }
 
     @Test
@@ -291,7 +291,7 @@ class PythonMediaProviderTest {
     void bindingSnapshotsOptionsAndSharesProviderLifetime() throws Exception {
         PythonResourceAdapter adapter = mockAdapter(true);
         stubGenerate(adapter, "{\"content\":[]}");
-        PythonMediaProvider provider = provider(adapter);
+        PythonMediaModelProvider provider = provider(adapter);
         InOrder lifecycle = inOrder(adapter);
         lifecycle.verify(adapter).callMethod(null, "open", Map.of());
         Map<String, Object> parameters = new HashMap<>();
@@ -317,7 +317,7 @@ class PythonMediaProviderTest {
         verify(adapter, times(1)).callMethod(null, "close", Map.of());
         assertThatThrownBy(() -> video.generate("A notebook."))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Media provider is closed");
+                .hasMessage("Media model provider is closed");
     }
 
     @Test
@@ -393,7 +393,7 @@ class PythonMediaProviderTest {
                                 + blockType
                                 + "/test\",\"source\":{\"type\":\"url\",\"url\":\"https://example.test/result\"}}";
         stubGenerate(adapter, "{\"content\":[" + block + "]}");
-        BaseMediaProvider model = provider(adapter);
+        BaseMediaModelProvider model = provider(adapter);
         MediaResult<?> result;
         switch (task) {
             case "speech_synthesis":
@@ -558,7 +558,7 @@ class PythonMediaProviderTest {
                                     asAsync(provider(badAdapter).video("model"))
                                             .wait(JOB, Duration.ofSeconds(1)))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("Invalid MediaProvider timeout from Python");
+                    .hasMessage("Invalid MediaModelProvider timeout from Python");
         }
     }
 
@@ -575,7 +575,7 @@ class PythonMediaProviderTest {
                         any(),
                         any()))
                 .thenReturn(Map.of("status", "SUCCESS", "result", JOB_JSON));
-        PythonMediaProvider provider = provider(adapter);
+        PythonMediaModelProvider provider = provider(adapter);
 
         provider.speech("tts-model", (Map<String, Object>) null);
         ImageGenerationModel image = provider.image("img-model", null);
@@ -627,7 +627,7 @@ class PythonMediaProviderTest {
     @Test
     void rejectsNullRequiredInputsBeforeCallingPython() {
         PythonResourceAdapter adapter = mockAdapter(true);
-        PythonMediaProvider provider = provider(adapter);
+        PythonMediaModelProvider provider = provider(adapter);
         SpeechSynthesisModel speech = provider.speech("tts");
         TranscriptionModel transcription = provider.transcription("asr");
         ImageGenerationModel image = provider.image("img");
@@ -662,7 +662,7 @@ class PythonMediaProviderTest {
     @Test
     void rejectsInvalidDurationsAndAllowsZeroWaitBudget() {
         PythonResourceAdapter adapter = mockAdapter(true);
-        PythonMediaProvider provider = provider(adapter);
+        PythonMediaModelProvider provider = provider(adapter);
         SpeechSynthesisModel speech = provider.speech("tts");
         ImageGenerationModel image = provider.image("img");
         VideoGenerationModel video = provider.video("vid");
@@ -762,9 +762,9 @@ class PythonMediaProviderTest {
         return adapter;
     }
 
-    private static PythonMediaProvider provider(PythonResourceAdapter adapter) {
-        PythonMediaProvider provider =
-                new PythonMediaProvider(
+    private static PythonMediaModelProvider provider(PythonResourceAdapter adapter) {
+        PythonMediaModelProvider provider =
+                new PythonMediaModelProvider(
                         adapter, null, new ResourceDescriptor("unused", Map.of()), null);
         provider.open();
         return provider;

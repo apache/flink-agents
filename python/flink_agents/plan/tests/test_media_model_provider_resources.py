@@ -22,13 +22,13 @@ import pytest
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import AudioBlock
-from flink_agents.api.decorators import media_provider
+from flink_agents.api.decorators import media_model_provider
 from flink_agents.api.media.media_model import (
     MediaResult,
 )
 from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
-from flink_agents.integrations.media_providers.dashscope_media_provider import (
-    DashScopeMediaProvider,
+from flink_agents.integrations.media_model_providers.dashscope_media_model_provider import (
+    DashScopeMediaModelProvider,
 )
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
@@ -45,13 +45,13 @@ class _MediaAgent(Agent):
         super().__init__()
         self._descriptor = descriptor
 
-    @media_provider
+    @media_model_provider
     def media(self) -> ResourceDescriptor:
         return self._descriptor
 
 
 @pytest.mark.parametrize("registration", ["decorator", "agent", "environment"])
-def test_media_provider_plan_and_shared_client_lifecycle(
+def test_media_model_provider_plan_and_shared_client_lifecycle(
     registration: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A worker provider owns one client shared by its bound media capabilities."""
@@ -65,12 +65,12 @@ def test_media_provider_plan_and_shared_client_lifecycle(
     )
     client_factory = Mock(return_value=client)
     monkeypatch.setattr(
-        "flink_agents.integrations.media_providers.dashscope_media_provider.create_client",
+        "flink_agents.integrations.media_model_providers.dashscope_media_model_provider.create_client",
         client_factory,
     )
     monkeypatch.setenv("DASHSCOPE_API_KEY", "submitter-key")
     descriptor = ResourceDescriptor(
-        clazz=ResourceName.MediaProvider.DASHSCOPE,
+        clazz=ResourceName.MediaModelProvider.DASHSCOPE,
         workspace="workspace-1",
         request_timeout=12,
     )
@@ -86,7 +86,7 @@ def test_media_provider_plan_and_shared_client_lifecycle(
                 lambda _: AgentConfiguration(),
             )
             owner = RemoteExecutionEnvironment(env=Mock())
-        owner.add_resource("media", ResourceType.MEDIA_PROVIDER, descriptor)
+        owner.add_resource("media", ResourceType.MEDIA_MODEL_PROVIDER, descriptor)
 
     if registration == "environment":
         # Keep environment merging and Python plan compilation real; replace the
@@ -107,10 +107,10 @@ def test_media_provider_plan_and_shared_client_lifecycle(
     client_factory.assert_not_called()
     assert "submitter-key" not in wire
     restored = AgentPlan.model_validate_json(wire)
-    providers = restored.resource_providers[ResourceType.MEDIA_PROVIDER]
+    providers = restored.resource_providers[ResourceType.MEDIA_MODEL_PROVIDER]
     assert set(providers) == {"media"}
     assert isinstance(providers["media"], PythonResourceProvider)
-    assert providers["media"].descriptor.clazz is DashScopeMediaProvider
+    assert providers["media"].descriptor.clazz is DashScopeMediaModelProvider
     assert providers["media"].descriptor.arguments == {
         "workspace": "workspace-1",
         "request_timeout": 12,
@@ -119,12 +119,14 @@ def test_media_provider_plan_and_shared_client_lifecycle(
     monkeypatch.setenv("DASHSCOPE_API_KEY", "worker-key")
     cache = ResourceCache(restored.resource_providers, config=AgentConfiguration())
     try:
-        provider = cache.get_resource("media", ResourceType.MEDIA_PROVIDER)
-        assert isinstance(provider, DashScopeMediaProvider)
+        provider = cache.get_resource("media", ResourceType.MEDIA_MODEL_PROVIDER)
+        assert isinstance(provider, DashScopeMediaModelProvider)
         assert provider.resource_context is cache.get_resource_context()
         assert provider.workspace == "workspace-1"
         assert provider.request_timeout == 12
-        assert cache.get_resource("media", ResourceType.MEDIA_PROVIDER) is provider
+        assert (
+            cache.get_resource("media", ResourceType.MEDIA_MODEL_PROVIDER) is provider
+        )
         speech = provider.speech(
             "speech-model", voice="speaker", model_parameters={"volume": 50}
         )

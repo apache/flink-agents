@@ -82,15 +82,15 @@ class _Service:
 
 def _resource_cache() -> ResourceCache:
     descriptor = ResourceDescriptor(
-        clazz=ResourceName.MediaProvider.DASHSCOPE,
+        clazz=ResourceName.MediaModelProvider.DASHSCOPE,
         api_key="sk-test",
         workspace="ws-test",
     )
     resource_provider = PythonResourceProvider.get(
-        "media", descriptor, ResourceType.MEDIA_PROVIDER
+        "media", descriptor, ResourceType.MEDIA_MODEL_PROVIDER
     )
     return ResourceCache(
-        {ResourceType.MEDIA_PROVIDER: {"media": resource_provider}},
+        {ResourceType.MEDIA_MODEL_PROVIDER: {"media": resource_provider}},
         AgentConfiguration(),
     )
 
@@ -123,11 +123,11 @@ def test_interrupted_wait_replays_the_submitted_job(
     )
     service = _Service()
     monkeypatch.setattr(
-        "flink_agents.integrations.media_providers.dashscope_media_provider.create_client",
+        "flink_agents.integrations.media_model_providers.dashscope_media_model_provider.create_client",
         service.create_client,
     )
     cache = _resource_cache()
-    provider = cache.get_resource("media", ResourceType.MEDIA_PROVIDER)
+    provider = cache.get_resource("media", ResourceType.MEDIA_MODEL_PROVIDER)
     model = provider.video("wan2.7-i2v")
 
     def submit_job() -> MediaJob:
@@ -157,7 +157,7 @@ def test_interrupted_wait_replays_the_submitted_job(
 
     store.current_call_index = 0
     cache = _resource_cache()
-    recovered_provider = cache.get_resource("media", ResourceType.MEDIA_PROVIDER)
+    recovered_provider = cache.get_resource("media", ResourceType.MEDIA_MODEL_PROVIDER)
     recovered_model = recovered_provider.video("wan2.7-i2v")
     assert recovered_provider is not provider
     assert recovered_model is not model

@@ -27,8 +27,8 @@ from flink_agents.api.media.media_model import (
     MediaJobStatus,
     MediaResult,
 )
-from flink_agents.integrations.media_providers.dashscope_media_provider import (
-    DashScopeMediaProvider,
+from flink_agents.integrations.media_model_providers.dashscope_media_model_provider import (
+    DashScopeMediaModelProvider,
 )
 
 _IMAGE = "https://example.test/source.png"
@@ -37,7 +37,7 @@ _RESULT = "https://oss.example/out.png?Expires=1700000000"
 
 @pytest.fixture
 def model_factory(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
 ) -> Callable[..., ImageGenerationModel]:
     def create(**overrides: Any) -> ImageGenerationModel:
         values: dict[str, Any] = {"model": "qwen-image-3.0"}

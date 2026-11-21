@@ -30,7 +30,7 @@ from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
 
 if TYPE_CHECKING:
-    from flink_agents.api.media.media_provider import BaseMediaProvider
+    from flink_agents.api.media.media_model_provider import BaseMediaModelProvider
 
 
 class ImagePrompt(BaseModel):
@@ -49,8 +49,8 @@ class ImageGenerationAgent(Agent):
         """Submit an async image job, persist its handle, and wait for the result."""
         request = ImagePrompt.model_validate(InputEvent.from_event(event).input)
         dashscope = cast(
-            "BaseMediaProvider",
-            ctx.get_resource("dashscope", ResourceType.MEDIA_PROVIDER),
+            "BaseMediaModelProvider",
+            ctx.get_resource("dashscope", ResourceType.MEDIA_MODEL_PROVIDER),
         )
         image_model = dashscope.image(
             "qwen-image-3.0", model_parameters={"size": "512*512"}

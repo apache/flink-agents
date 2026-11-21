@@ -15,4 +15,4 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-"""Examples using media provider resources in Flink Agents."""
+"""Examples using media model provider resources in Flink Agents."""

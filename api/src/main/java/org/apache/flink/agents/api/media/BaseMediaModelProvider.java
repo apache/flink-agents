@@ -28,7 +28,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * A media provider that binds capabilities to models and owns their shared client.
+ * A media model provider that binds capabilities to models and owns their shared client.
  *
  * <p>Each binding accepts a map of default model parameters. Whether a bound capability runs
  * synchronously or exposes resumable provider jobs via {@link AsyncJobModel} is determined by the
@@ -39,14 +39,15 @@ import java.util.Objects;
  * rather than retaining child Python object handles. The bound model shares this provider's
  * lifetime and must not be used after the provider closes.
  */
-public abstract class BaseMediaProvider extends Resource {
-    protected BaseMediaProvider(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+public abstract class BaseMediaModelProvider extends Resource {
+    protected BaseMediaModelProvider(
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
     }
 
     @Override
     public ResourceType getResourceType() {
-        return ResourceType.MEDIA_PROVIDER;
+        return ResourceType.MEDIA_MODEL_PROVIDER;
     }
 
     /** Bind a speech model using the provider's default options. */

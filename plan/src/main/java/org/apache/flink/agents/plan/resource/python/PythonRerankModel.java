@@ -70,7 +70,7 @@ public final class PythonRerankModel extends BaseRerankModel implements PythonRe
         checkNotClosed();
         Objects.requireNonNull(query, "query");
         Objects.requireNonNull(documents, "documents");
-        PythonMediaProvider.validatePositiveDuration(timeout, "timeout");
+        PythonMediaModelProvider.validatePositiveDuration(timeout, "timeout");
         final String queryJson;
         final String documentsJson;
         final String modelParametersJson;

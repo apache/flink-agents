@@ -145,11 +145,11 @@
           "title": "Mcp Servers",
           "type": "array"
         },
-        "media_providers": {
+        "media_model_providers": {
           "items": {
             "$ref": "#/$defs/DescriptorSpec"
           },
-          "title": "Media Providers",
+          "title": "Media Model Providers",
           "type": "array"
         },
         "model_routers": {
@@ -1073,11 +1073,11 @@
       "title": "Mcp Servers",
       "type": "array"
     },
-    "media_providers": {
+    "media_model_providers": {
       "items": {
         "$ref": "#/$defs/DescriptorSpec"
       },
-      "title": "Media Providers",
+      "title": "Media Model Providers",
       "type": "array"
     },
     "model_routers": {

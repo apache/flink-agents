@@ -44,8 +44,8 @@ from flink_agents.api.resource import (
     ResourceName,
     ResourceType,
 )
-from flink_agents.integrations.media_providers.dashscope_media_provider import (
-    DashScopeMediaProvider,
+from flink_agents.integrations.media_model_providers.dashscope_media_model_provider import (
+    DashScopeMediaModelProvider,
 )
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.resource_provider import PythonResourceProvider
@@ -61,7 +61,7 @@ _JOB = MediaJob(
 
 @pytest.fixture
 def model_factory(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
 ) -> Callable[..., TranscriptionModel]:
     def create(**overrides: Any) -> TranscriptionModel:
         provider = provider_factory(**overrides)
@@ -72,7 +72,7 @@ def model_factory(
 
 
 def test_api_key_is_resolved_when_the_resource_opens(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
@@ -85,7 +85,7 @@ def test_api_key_is_resolved_when_the_resource_opens(
 
 
 def test_missing_api_key_is_rejected_when_the_resource_opens(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
@@ -95,7 +95,7 @@ def test_missing_api_key_is_rejected_when_the_resource_opens(
         model.open()
 
 
-def test_defaults(provider_factory: Callable[..., DashScopeMediaProvider]) -> None:
+def test_defaults(provider_factory: Callable[..., DashScopeMediaModelProvider]) -> None:
     model = provider_factory()
 
     assert model.region == "cn-beijing"
@@ -105,7 +105,7 @@ def test_defaults(provider_factory: Callable[..., DashScopeMediaProvider]) -> No
 
 
 def test_workspace_gateway_and_request_timeout(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("DASHSCOPE_BASE_URL", raising=False)
@@ -122,7 +122,7 @@ def test_workspace_gateway_and_request_timeout(
 
 
 def test_missing_workspace_uses_the_legacy_gateway(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("DASHSCOPE_WORKSPACE", raising=False)
@@ -138,7 +138,7 @@ def test_missing_workspace_uses_the_legacy_gateway(
 
 
 def test_workspace_environment_is_used_when_the_field_is_unset(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("DASHSCOPE_BASE_URL", raising=False)
@@ -154,7 +154,7 @@ def test_workspace_environment_is_used_when_the_field_is_unset(
 
 
 def test_explicit_base_url_replaces_the_derived_address(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
 ) -> None:
     model = provider_factory(base_url="https://example.test/custom")
     model.open()
@@ -163,7 +163,7 @@ def test_explicit_base_url_replaces_the_derived_address(
 
 
 def test_invalid_region_is_rejected(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
 ) -> None:
     model = provider_factory(region="mars-1")
 
@@ -308,7 +308,7 @@ def test_cancel_rejection_reports_the_observed_status(
 
 
 def test_generate_submits_once_and_waits(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
     sdk_jobs: SimpleNamespace,
     task_responses: Callable[..., list[dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
@@ -357,7 +357,7 @@ def test_transcribe_rejects_non_finite_timeout_before_submitting(
 
 
 def test_signatures_reject_misplaced_control_or_unknown_kwargs(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
 ) -> None:
     provider = provider_factory()
     image = provider.image("qwen-image-3.0")
@@ -375,7 +375,7 @@ def test_signatures_reject_misplaced_control_or_unknown_kwargs(
 
 
 def test_generate_forwards_timeout_as_polling_budget(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
     sdk_jobs: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -407,7 +407,7 @@ def test_generate_forwards_timeout_as_polling_budget(
 
 
 def test_client_does_not_take_max_retries_from_the_environment(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DASHSCOPE_MAX_RETRIES", "2")
@@ -426,20 +426,20 @@ def test_provider_descriptor_binds_non_resource_capabilities_without_a_client(
         raise AssertionError(msg)
 
     monkeypatch.setattr(
-        "flink_agents.integrations.media_providers.dashscope_media_provider.create_client",
+        "flink_agents.integrations.media_model_providers.dashscope_media_model_provider.create_client",
         reject_client_creation,
     )
     descriptor = ResourceDescriptor(
-        clazz=ResourceName.MediaProvider.DASHSCOPE,
+        clazz=ResourceName.MediaModelProvider.DASHSCOPE,
         api_key="sk-test",
         workspace="ws-1",
     )
     provider = PythonResourceProvider.get(
         "dashscope",
         ResourceDescriptor.model_validate_json(descriptor.model_dump_json()),
-        ResourceType.MEDIA_PROVIDER,
+        ResourceType.MEDIA_MODEL_PROVIDER,
     ).provide(None, AgentConfiguration())
-    assert isinstance(provider, DashScopeMediaProvider)
+    assert isinstance(provider, DashScopeMediaModelProvider)
     assert isinstance(provider, Resource)
     speech = provider.speech("qwen-audio-3.0-tts-flash", voice="longanhuan")
     transcription = provider.transcription("fun-asr")
@@ -465,7 +465,7 @@ def test_provider_descriptor_binds_non_resource_capabilities_without_a_client(
 
 
 def test_bound_models_copy_their_parameters(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
 ) -> None:
     provider = provider_factory()
     model_parameters = {"n": 1, "nested": {"seed": 7}}
@@ -483,7 +483,7 @@ def test_bound_models_copy_their_parameters(
 
 
 def test_provider_owns_and_closes_the_shared_client(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = provider_factory()
@@ -518,7 +518,7 @@ def test_provider_owns_and_closes_the_shared_client(
 
 
 def test_closing_unused_provider_prevents_later_connections(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def reject_client_creation(**_kwargs: Any) -> None:
@@ -526,7 +526,7 @@ def test_closing_unused_provider_prevents_later_connections(
         raise AssertionError(msg)
 
     monkeypatch.setattr(
-        "flink_agents.integrations.media_providers.dashscope_media_provider.create_client",
+        "flink_agents.integrations.media_model_providers.dashscope_media_model_provider.create_client",
         reject_client_creation,
     )
     provider = provider_factory()
@@ -548,7 +548,7 @@ def test_closing_unused_provider_prevents_later_connections(
 
 
 def test_concurrent_calls_share_the_client_created_during_open(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = provider_factory()
@@ -556,7 +556,7 @@ def test_concurrent_calls_share_the_client_created_during_open(
     client = Mock()
     factory = Mock(return_value=client)
     monkeypatch.setattr(
-        "flink_agents.integrations.media_providers.dashscope_media_provider.create_client",
+        "flink_agents.integrations.media_model_providers.dashscope_media_model_provider.create_client",
         factory,
     )
     factory.assert_not_called()
@@ -579,12 +579,12 @@ def test_concurrent_calls_share_the_client_created_during_open(
 
 
 def test_bound_model_requires_an_open_provider(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     factory = Mock()
     monkeypatch.setattr(
-        "flink_agents.integrations.media_providers.dashscope_media_provider.create_client",
+        "flink_agents.integrations.media_model_providers.dashscope_media_model_provider.create_client",
         factory,
     )
     provider = provider_factory()

@@ -21,8 +21,8 @@ package org.apache.flink.agents.api.resource;
 /**
  * Type enum of resource.
  *
- * <p>Currently, support chat models, decision models, embedding models, media providers, rerank
- * models, vector stores, tools, and prompts.
+ * <p>Currently, support chat models, decision models, embedding models, media model providers,
+ * rerank models, vector stores, tools, and prompts.
  */
 public enum ResourceType {
     CHAT_MODEL("chat_model"),
@@ -31,7 +31,7 @@ public enum ResourceType {
     DECISION_MODEL_CONNECTION("decision_model_connection"),
     EMBEDDING_MODEL("embedding_model"),
     EMBEDDING_MODEL_CONNECTION("embedding_model_connection"),
-    MEDIA_PROVIDER("media_provider"),
+    MEDIA_MODEL_PROVIDER("media_model_provider"),
     RERANK_MODEL("rerank_model"),
     VECTOR_STORE("vector_store"),
     PROMPT("prompt"),

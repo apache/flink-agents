@@ -26,8 +26,8 @@ from flink_agents.api.media.media_model import (
     MediaResult,
     SpeechSynthesisModel,
 )
-from flink_agents.integrations.media_providers.dashscope_media_provider import (
-    DashScopeMediaProvider,
+from flink_agents.integrations.media_model_providers.dashscope_media_model_provider import (
+    DashScopeMediaModelProvider,
 )
 
 _AUDIO = "https://oss.example/out.wav?Expires=1700000000"
@@ -35,7 +35,7 @@ _AUDIO = "https://oss.example/out.wav?Expires=1700000000"
 
 @pytest.fixture
 def model_factory(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
 ) -> Callable[..., SpeechSynthesisModel]:
     def create(**overrides: Any) -> SpeechSynthesisModel:
         values: dict[str, Any] = {
@@ -111,7 +111,7 @@ def test_synthesize_sends_text_voice_and_format(
 
 
 def test_bound_models_keep_model_voice_and_call_parameters_separate(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
 ) -> None:
     provider = provider_factory()
     provider.open()

@@ -27,7 +27,7 @@ import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.VideoBlock;
 import org.apache.flink.agents.api.media.AsyncJobModel;
-import org.apache.flink.agents.api.media.BaseMediaProvider;
+import org.apache.flink.agents.api.media.BaseMediaModelProvider;
 import org.apache.flink.agents.api.media.ImageGenerationModel;
 import org.apache.flink.agents.api.media.ImageGenerationRequest;
 import org.apache.flink.agents.api.media.MediaJob;
@@ -56,8 +56,9 @@ import java.util.Objects;
 import java.util.concurrent.CancellationException;
 import java.util.function.Function;
 
-/** Java access to a Python media provider. */
-public final class PythonMediaProvider extends BaseMediaProvider implements PythonResourceWrapper {
+/** Java access to a Python media model provider. */
+public final class PythonMediaModelProvider extends BaseMediaModelProvider
+        implements PythonResourceWrapper {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private static final Capability<SpeechSynthesisRequest, AudioBlock> SPEECH =
@@ -85,7 +86,7 @@ public final class PythonMediaProvider extends BaseMediaProvider implements Pyth
     private final PyObject resource;
     private volatile boolean closed;
 
-    public PythonMediaProvider(
+    public PythonMediaModelProvider(
             PythonResourceAdapter adapter,
             PyObject resource,
             ResourceDescriptor descriptor,
@@ -185,7 +186,7 @@ public final class PythonMediaProvider extends BaseMediaProvider implements Pyth
                         optionsJson);
         if (!(result instanceof Boolean)) {
             throw new IllegalStateException(
-                    "Invalid MediaProvider binding validation result from Python");
+                    "Invalid MediaModelProvider binding validation result from Python");
         }
         return new Binding(task, nonNullModel, optionsJson, (Boolean) result);
     }
@@ -225,7 +226,7 @@ public final class PythonMediaProvider extends BaseMediaProvider implements Pyth
 
     private void checkOpen() {
         if (closed) {
-            throw new IllegalStateException("Media provider is closed");
+            throw new IllegalStateException("Media model provider is closed");
         }
     }
 
@@ -434,19 +435,21 @@ public final class PythonMediaProvider extends BaseMediaProvider implements Pyth
     private static <T> T read(Object value, JavaType type) {
         String payload = outcome(value);
         if (payload == null) {
-            throw new IllegalStateException("Missing MediaProvider invocation payload from Python");
+            throw new IllegalStateException(
+                    "Missing MediaModelProvider invocation payload from Python");
         }
         try {
             return MAPPER.readValue(payload, type);
         } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Invalid MediaProvider result from Python", e);
+            throw new IllegalStateException("Invalid MediaModelProvider result from Python", e);
         }
     }
 
     /** Return the success payload. Cancel completes with a null result. */
     private static String outcome(Object value) {
         if (!(value instanceof Map)) {
-            throw new IllegalStateException("Invalid MediaProvider invocation outcome from Python");
+            throw new IllegalStateException(
+                    "Invalid MediaModelProvider invocation outcome from Python");
         }
         Map<?, ?> outcome = (Map<?, ?>) value;
         if ("INTERRUPTED".equals(outcome.get("status"))
@@ -454,7 +457,7 @@ public final class PythonMediaProvider extends BaseMediaProvider implements Pyth
             Object message = outcome.get("message");
             if (!(message instanceof String)) {
                 throw new IllegalStateException(
-                        "Invalid MediaProvider cancellation message from Python");
+                        "Invalid MediaModelProvider cancellation message from Python");
             }
             CancellationException cancellation = new CancellationException((String) message);
             if ("INTERRUPTED".equals(outcome.get("status"))) {
@@ -470,27 +473,27 @@ public final class PythonMediaProvider extends BaseMediaProvider implements Pyth
             }
             if (!(result instanceof String)) {
                 throw new IllegalStateException(
-                        "Invalid MediaProvider invocation payload from Python");
+                        "Invalid MediaModelProvider invocation payload from Python");
             }
             return (String) result;
         }
         if ("JOB_ERROR".equals(status) || "TIMEOUT".equals(status)) {
             throw jobException(outcome, "TIMEOUT".equals(status));
         }
-        throw new IllegalStateException("Invalid MediaProvider invocation status from Python");
+        throw new IllegalStateException("Invalid MediaModelProvider invocation status from Python");
     }
 
     private static MediaJobException jobException(Map<?, ?> outcome, boolean timeout) {
         Object jobJson = outcome.get("job");
         Object statusValue = outcome.get("job_status");
         if (!(jobJson instanceof String) || !(statusValue instanceof String)) {
-            throw new IllegalStateException("Invalid MediaProvider job error from Python");
+            throw new IllegalStateException("Invalid MediaModelProvider job error from Python");
         }
         final MediaJob job;
         try {
             job = MAPPER.readValue((String) jobJson, MediaJob.class);
         } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Invalid MediaProvider job from Python", e);
+            throw new IllegalStateException("Invalid MediaModelProvider job from Python", e);
         }
         MediaJobStatus status = MediaJobStatus.fromValue((String) statusValue);
         String message =
@@ -505,11 +508,11 @@ public final class PythonMediaProvider extends BaseMediaProvider implements Pyth
 
     private static Duration timeoutFromSeconds(@Nullable Object timeoutValue) {
         if (!(timeoutValue instanceof Number)) {
-            throw new IllegalStateException("Invalid MediaProvider timeout from Python");
+            throw new IllegalStateException("Invalid MediaModelProvider timeout from Python");
         }
         double seconds = ((Number) timeoutValue).doubleValue();
         if (!Double.isFinite(seconds) || seconds < 0 || seconds >= Long.MAX_VALUE) {
-            throw new IllegalStateException("Invalid MediaProvider timeout from Python");
+            throw new IllegalStateException("Invalid MediaModelProvider timeout from Python");
         }
         long wholeSeconds = (long) seconds;
         long nanos = Math.round((seconds - wholeSeconds) * 1_000_000_000.0);

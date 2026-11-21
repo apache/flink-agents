@@ -35,8 +35,8 @@ from flink_agents.api.media.media_model import (
     MediaResult,
     TranscriptionModel,
 )
-from flink_agents.integrations.media_providers.dashscope_media_provider import (
-    DashScopeMediaProvider,
+from flink_agents.integrations.media_model_providers.dashscope_media_model_provider import (
+    DashScopeMediaModelProvider,
 )
 
 _FILE_URL = "https://example.test/audio.wav"
@@ -52,7 +52,7 @@ _TRANSCRIPT = {
 
 @pytest.fixture
 def model_factory(
-    provider_factory: Callable[..., DashScopeMediaProvider],
+    provider_factory: Callable[..., DashScopeMediaModelProvider],
 ) -> Callable[..., TranscriptionModel]:
     def create(**overrides: Any) -> TranscriptionModel:
         request_timeout = overrides.pop("request_timeout", 60.0)
@@ -176,7 +176,7 @@ def test_fetch_downloads_transcription_without_dashscope_credentials(
         return httpx.Response(200, json=_TRANSCRIPT, request=httpx.Request("GET", url))
 
     monkeypatch.setattr(
-        "flink_agents.integrations.media_providers.dashscope_media_provider.httpx.get",
+        "flink_agents.integrations.media_model_providers.dashscope_media_model_provider.httpx.get",
         download,
     )
     job = model.submit(_audio())

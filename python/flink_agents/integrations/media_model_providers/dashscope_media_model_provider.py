@@ -53,7 +53,7 @@ from flink_agents.api.media.media_model import (
     TranscriptionModel,
     VideoGenerationModel,
 )
-from flink_agents.api.media.media_provider import BaseMediaProvider
+from flink_agents.api.media.media_model_provider import BaseMediaModelProvider
 from flink_agents.integrations.dashscope_utils import (
     create_client,
     media_source_url,
@@ -87,10 +87,10 @@ _TASK_STATUS = {
 ResultT = TypeVar("ResultT", bound=MediaResult)
 
 
-class DashScopeMediaProvider(BaseMediaProvider):
+class DashScopeMediaModelProvider(BaseMediaModelProvider):
     """DashScope media generation, transcription, and speech synthesis.
 
-    Register ``ResourceDescriptor(clazz=ResourceName.MediaProvider.DASHSCOPE)``
+    Register ``ResourceDescriptor(clazz=ResourceName.MediaModelProvider.DASHSCOPE)``
     and retrieve the provider with ``get_resource``. For example,
     ``dashscope.speech(model, voice="Cherry").synthesize("Hello")`` synthesizes
     speech. A bound model can also be reused for multiple calls.
@@ -249,9 +249,9 @@ class _DashScopeModel(BaseModel):
         default_factory=dict,
         description="Bailian model parameters overridden by call-time model_parameters.",
     )
-    _provider: DashScopeMediaProvider = PrivateAttr()
+    _provider: DashScopeMediaModelProvider = PrivateAttr()
 
-    def __init__(self, *, provider: DashScopeMediaProvider, **kwargs: Any) -> None:
+    def __init__(self, *, provider: DashScopeMediaModelProvider, **kwargs: Any) -> None:
         if provider._closed:
             msg = "The DashScope resource is closed."
             raise RuntimeError(msg)

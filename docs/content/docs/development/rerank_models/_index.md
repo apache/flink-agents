@@ -26,26 +26,23 @@ under the License.
 
 ## Overview
 
-Rerank models synchronously score and order candidate documents against a
-single query, returning the most relevant hits first. Use a rerank model to
-refine candidates retrieved from a
+Use a rerank model to score and order candidate documents by relevance to a
+query—for example, refining results retrieved from a
 [vector store]({{< ref "docs/development/vector-search/vector_stores" >}}) or
-to rank text and multimodal candidate lists directly.
+ranking mixed text, image, and video candidates directly.
 
-Each `RERANK_MODEL` resource (`BaseRerankModel`) binds a single model name and
-owns its service connection. Calls are synchronous and return a `RerankResult`.
+Register a `RERANK_MODEL` resource for the model you want to call, then pass a
+query and candidate list to `rerank()` inside an Action. See
+[Built-in Rerank Model Providers]({{< ref "docs/development/rerank_models/providers" >}})
+for available implementations and provider options.
 
-See [Built-in Rerank Model Providers]({{< ref "docs/development/rerank_models/providers" >}})
-for available implementations, parameters, and provider-specific input limits.
+## Quick start
 
-## Getting started
+### 1. Register a rerank model
 
-### Register a rerank model
-
-Register a `RERANK_MODEL` resource with a descriptor for your chosen
-implementation. The example below uses the built-in DashScope implementation;
-replace the class and parameters with those of any built-in or custom provider
-listed in [Built-in Rerank Model Providers]({{< ref "docs/development/rerank_models/providers" >}}).
+Register a `RERANK_MODEL` resource with your chosen provider descriptor. The
+example below uses DashScope; replace it with any provider from
+[Built-in Rerank Model Providers]({{< ref "docs/development/rerank_models/providers" >}}):
 
 {{< tabs "Register a rerank model" >}}
 {{< tab "Python" >}}
@@ -81,15 +78,12 @@ agentsEnv.addResource(
 You can also declare a rerank model using `@rerank_model` in Python,
 `@RerankModel` in Java, or the YAML `rerank_models` section. See
 [Registering Resources]({{< ref "docs/development/create-agent/resources#registering-resources" >}})
-for registration scopes and
-[YAML Resources]({{< ref "docs/development/create-agent/yaml#resources" >}})
-for YAML declarations.
+and [YAML Resources]({{< ref "docs/development/create-agent/yaml#resources" >}}).
 
-### Rank candidates
+### 2. Rank candidates
 
-Inside an Action, retrieve the registered model by name and
-`ResourceType.RERANK_MODEL`, then pass a query block and candidate blocks to
-`rerank()`:
+Inside an Action, retrieve the model and call `rerank()` with a query block and
+candidate blocks:
 
 {{< tabs "Call a rerank model" >}}
 {{< tab "Python" >}}
@@ -115,7 +109,7 @@ result = ranker.rerank(
     return_documents=True,
     model_parameters={"fps": 0.1},
 )
-top_hit = result.results[0]  # top_hit.index, top_hit.relevance_score, top_hit.document
+top_hit = result.results[0]  # index, relevance_score, document
 ```
 {{< /tab >}}
 {{< tab "Java" >}}
@@ -151,50 +145,38 @@ RerankHit topHit = result.getResults().get(0);
 {{< /tab >}}
 {{< /tabs >}}
 
-## Inputs, results, and parameters
+## Inputs, results, and options
 
-- **Inputs**: `rerank()` accepts a query block (`TextBlock` or `ImageBlock`)
-  and an ordered sequence of candidate document blocks (`TextBlock`,
-  `ImageBlock`, or `VideoBlock`). See
+- **Inputs**: `rerank()` accepts a query (`TextBlock` or `ImageBlock`) and a
+  non-empty list of candidate documents (`TextBlock`, `ImageBlock`, or
+  `VideoBlock`). See
   [Multimodal Messages]({{< ref "docs/development/calling-llms/chat#message-content-blocks" >}})
-  for constructing blocks. Which modalities and media sources (URL vs. inline
-  Base64) are accepted depends on the provider and model; see
-  [Built-in Rerank Model Providers]({{< ref "docs/development/rerank_models/providers" >}}).
-- **Results**: `result.results` (Java: `result.getResults()`) returns
-  `RerankHit` items ordered from highest to lowest `relevance_score`. Each
-  hit's `index` is the candidate's zero-based position in the request's
-  `documents` list. `hit.document` (`hit.getDocument()`) is populated with the
-  original input block only when `return_documents` is enabled; otherwise it is
-  `None` (`null`). `RerankResult` also includes optional `usage` and
+  for constructing blocks, and
+  [Built-in Rerank Model Providers]({{< ref "docs/development/rerank_models/providers" >}})
+  for what each provider and model supports.
+- **Results**: `rerank()` returns a `RerankResult` whose `results`
+  (`getResults()`) list hits ordered from highest to lowest `relevance_score`,
+  with each hit's zero-based `index` in the input list and optional `document`
+  when `return_documents` is enabled, along with optional `usage` and
   `request_id`.
-- **Call options and precedence**: In Python, `rerank()` accepts explicit
-  `top_n` and `return_documents` arguments, a `model_parameters` mapping for
-  additional provider options, and an optional per-call `timeout`. In Java,
-  pass model parameters (including `top_n` and `return_documents`) in the
-  `modelParameters` map along with an optional `Duration timeout`. Precedence
-  is:
+- **Options**: Configured at two levels, with per-call values overriding
+  resource defaults:
+  - **Resource level (`RERANK_MODEL` descriptor)**: Connection and client
+    settings (`api_key`, `region`, `base_url`, `request_timeout`), `model`, and
+    default `model_parameters` (`top_n`, `return_documents`, `instruct`, `fps`).
+  - **Per-call level (`rerank()`)**: Request-specific overrides for
+    `model_parameters` (Python also exposes `top_n` and `return_documents` as
+    keyword arguments) and `timeout` (`timeout=30` in Python or
+    `Duration.ofSeconds(30)` in Java, overriding `request_timeout`).
 
-```text
-call explicit (Python: top_n / return_documents) > call model_parameters > resource model_parameters > provider default
-```
+## Lifecycle and cross-language use
 
-## Lifecycle
-
-Flink Agents opens registered rerank models before use and closes them when
-their resource scope ends. Actions should leave lifecycle management to the
-framework.
-
-For standalone Python use outside a Flink job, construct the model, call
-`open()` before calling `rerank()`, and call `close()` in a `finally` block
-when finished.
-
-## Using cross-language providers
-
-Rerank models support Java-to-Python cross-language use: Java Actions can
-invoke Python implementations through `PythonResourceDescriptor` or YAML
-`type: python`. See
-[Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}})
-for descriptor selection and runtime requirements.
+- **Lifecycle**: Flink Agents opens and closes registered rerank models
+  automatically. For standalone Python scripts, call `open()` before use and
+  `close()` in a `finally` block.
+- **Cross-language**: Java Agents can use Python rerank models via
+  `PythonResourceDescriptor` or YAML `type: python`. See
+  [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}).
 
 ## Custom providers
 
@@ -203,11 +185,6 @@ The custom provider APIs are experimental and unstable, subject to incompatible
 changes in future releases.
 {{< /hint >}}
 
-To integrate another reranking service, extend `BaseRerankModel` (Python:
-`flink_agents.api.rerank_models.rerank_model.BaseRerankModel`; Java:
-`org.apache.flink.agents.api.rerank.BaseRerankModel`), manage client lifecycle
-in `open()` and `close()`, and implement `rerank(...)` to return a
-`RerankResult`. Keep `rerank(...)` side-effect-free with respect to Agent
-memory and events so it can run safely inside durable executions.
-
-[Built-in Rerank Model Providers]({{< ref "docs/development/rerank_models/providers" >}}).
+To integrate another reranking service, extend `BaseRerankModel`, manage the
+client in `open()` and `close()`, and implement `rerank(...)` to return a
+`RerankResult`.

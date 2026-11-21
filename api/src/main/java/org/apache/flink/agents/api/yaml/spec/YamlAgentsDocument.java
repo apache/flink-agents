@@ -40,7 +40,7 @@ public final class YamlAgentsDocument {
     private final List<DescriptorSpec> embeddingModelConnections;
     private final List<DescriptorSpec> embeddingModelSetups;
     private final List<DescriptorSpec> vectorStores;
-    private final List<DescriptorSpec> mediaProviders;
+    private final List<DescriptorSpec> mediaModelProviders;
     private final List<DescriptorSpec> rerankModels;
     private final List<DescriptorSpec> mcpServers;
     private final List<DescriptorSpec> modelRouters;
@@ -62,7 +62,7 @@ public final class YamlAgentsDocument {
                     List<DescriptorSpec> embeddingModelConnections,
             @JsonProperty("embedding_model_setups") List<DescriptorSpec> embeddingModelSetups,
             @JsonProperty("vector_stores") List<DescriptorSpec> vectorStores,
-            @JsonProperty("media_providers") List<DescriptorSpec> mediaProviders,
+            @JsonProperty("media_model_providers") List<DescriptorSpec> mediaModelProviders,
             @JsonProperty("rerank_models") List<DescriptorSpec> rerankModels,
             @JsonProperty("mcp_servers") List<DescriptorSpec> mcpServers,
             @JsonProperty("model_routers") List<DescriptorSpec> modelRouters,
@@ -79,7 +79,7 @@ public final class YamlAgentsDocument {
         this.embeddingModelConnections = orEmpty(embeddingModelConnections);
         this.embeddingModelSetups = orEmpty(embeddingModelSetups);
         this.vectorStores = orEmpty(vectorStores);
-        this.mediaProviders = orEmpty(mediaProviders);
+        this.mediaModelProviders = orEmpty(mediaModelProviders);
         this.rerankModels = orEmpty(rerankModels);
         this.mcpServers = orEmpty(mcpServers);
         this.modelRouters = orEmpty(modelRouters);
@@ -138,8 +138,8 @@ public final class YamlAgentsDocument {
         return vectorStores;
     }
 
-    public List<DescriptorSpec> getMediaProviders() {
-        return mediaProviders;
+    public List<DescriptorSpec> getMediaModelProviders() {
+        return mediaModelProviders;
     }
 
     public List<DescriptorSpec> getRerankModels() {

@@ -24,8 +24,8 @@ from flink_agents.api.media.media_model import (
     MediaJobError,
     MediaResult,
 )
-from flink_agents.integrations.media_providers.dashscope_media_provider import (
-    DashScopeMediaProvider,
+from flink_agents.integrations.media_model_providers.dashscope_media_model_provider import (
+    DashScopeMediaModelProvider,
 )
 
 pytestmark = pytest.mark.integration
@@ -41,7 +41,7 @@ def _assert_http_url(url: str) -> None:
 @pytest.mark.skipif(not _api_key_available, reason="DashScope API key is not set")
 def test_transcription_returns_text() -> None:
     """A short public recording returns transcript text."""
-    provider = DashScopeMediaProvider()
+    provider = DashScopeMediaModelProvider()
     model = provider.transcription("fun-asr")
     try:
         provider.open()
@@ -60,7 +60,7 @@ def test_transcription_returns_text() -> None:
 @pytest.mark.skipif(not _api_key_available, reason="DashScope API key is not set")
 def test_transcription_cancel_returns_or_reports_rejection() -> None:
     """Cancel returns successfully or reports UnsupportedOperation."""
-    provider = DashScopeMediaProvider()
+    provider = DashScopeMediaModelProvider()
     model = provider.transcription("fun-asr")
     try:
         provider.open()
@@ -79,7 +79,7 @@ def test_transcription_cancel_returns_or_reports_rejection() -> None:
 @pytest.mark.skipif(not _api_key_available, reason="DashScope API key is not set")
 def test_speech_synthesis_returns_an_audio_url() -> None:
     """Speech synthesis returns an MP3 URL without a task id."""
-    provider = DashScopeMediaProvider()
+    provider = DashScopeMediaModelProvider()
     model = provider.speech("qwen-audio-3.0-tts-flash", voice="longanhuan_v3.6")
     try:
         provider.open()
@@ -97,7 +97,7 @@ def test_speech_synthesis_returns_an_audio_url() -> None:
 @pytest.mark.skipif(not _api_key_available, reason="DashScope API key is not set")
 def test_async_image_generation_returns_a_png_url() -> None:
     """Async image generation returns a PNG URL."""
-    provider = DashScopeMediaProvider()
+    provider = DashScopeMediaModelProvider()
     model = provider.image("qwen-image-3.0")
     try:
         provider.open()
@@ -119,7 +119,7 @@ def test_async_image_generation_returns_a_png_url() -> None:
 @pytest.mark.skipif(not _api_key_available, reason="DashScope API key is not set")
 def test_video_generation_returns_an_mp4_url() -> None:
     """The shortest HappyHorse text-to-video request returns an MP4 URL."""
-    provider = DashScopeMediaProvider()
+    provider = DashScopeMediaModelProvider()
     model = provider.video("happyhorse-1.1-t2v")
     try:
         provider.open()

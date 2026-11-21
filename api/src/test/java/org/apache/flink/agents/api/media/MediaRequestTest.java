@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** Unit tests for typed media request objects and {@link BaseMediaProvider} defaults. */
+/** Unit tests for typed media request objects and {@link BaseMediaModelProvider} defaults. */
 class MediaRequestTest {
 
     @Test
@@ -144,10 +144,10 @@ class MediaRequestTest {
     }
 
     @Test
-    void baseMediaProviderVoiceOverloadMergesVoiceAndOverridesParameterVoice() {
+    void baseMediaModelProviderVoiceOverloadMergesVoiceAndOverridesParameterVoice() {
         AtomicReference<Map<String, Object>> captured = new AtomicReference<>();
-        BaseMediaProvider provider =
-                new BaseMediaProvider(new ResourceDescriptor("unused", Map.of()), null) {
+        BaseMediaModelProvider provider =
+                new BaseMediaModelProvider(new ResourceDescriptor("unused", Map.of()), null) {
                     @Override
                     public SpeechSynthesisModel speech(
                             String model, Map<String, Object> parameters) {

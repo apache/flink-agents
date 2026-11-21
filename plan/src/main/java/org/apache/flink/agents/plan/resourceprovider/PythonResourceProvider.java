@@ -30,7 +30,7 @@ import org.apache.flink.agents.plan.resource.python.PythonDecisionModelSetup;
 import org.apache.flink.agents.plan.resource.python.PythonEmbeddingModelConnection;
 import org.apache.flink.agents.plan.resource.python.PythonEmbeddingModelSetup;
 import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
-import org.apache.flink.agents.plan.resource.python.PythonMediaProvider;
+import org.apache.flink.agents.plan.resource.python.PythonMediaModelProvider;
 import org.apache.flink.agents.plan.resource.python.PythonRerankModel;
 import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.util.ExceptionUtils;
@@ -62,7 +62,7 @@ public class PythonResourceProvider extends ResourceProvider {
                     ResourceType.EMBEDDING_MODEL_CONNECTION, PythonEmbeddingModelConnection.class,
                     ResourceType.VECTOR_STORE, PythonCollectionManageableVectorStore.class,
                     ResourceType.MCP_SERVER, PythonMCPServer.class,
-                    ResourceType.MEDIA_PROVIDER, PythonMediaProvider.class,
+                    ResourceType.MEDIA_MODEL_PROVIDER, PythonMediaModelProvider.class,
                     ResourceType.RERANK_MODEL, PythonRerankModel.class);
 
     protected PythonResourceAdapter pythonResourceAdapter;

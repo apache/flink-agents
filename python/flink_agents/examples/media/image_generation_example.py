@@ -43,8 +43,8 @@ def main() -> None:
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
     agents_env.add_resource(
         "dashscope",
-        ResourceType.MEDIA_PROVIDER,
-        ResourceDescriptor(clazz=ResourceName.MediaProvider.DASHSCOPE),
+        ResourceType.MEDIA_MODEL_PROVIDER,
+        ResourceDescriptor(clazz=ResourceName.MediaModelProvider.DASHSCOPE),
     )
     prompts = env.from_collection(
         [ImagePrompt(id="notebook-1", prompt="A navy notebook on a white desk.")]
@@ -55,7 +55,7 @@ def main() -> None:
         .to_datastream()
     )
     output.print()
-    agents_env.execute("Media Provider Image Generation Example Job")
+    agents_env.execute("Media Model Provider Image Generation Example Job")
 
 
 if __name__ == "__main__":
