@@ -282,6 +282,12 @@ public class ChatModelAction {
             }
             structuredOutput = Row.withNames();
             for (String name : info.getFieldNames()) {
+                if (!fields.containsKey(name)) {
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "Model output is missing field '%s' required by the output schema.",
+                                    name));
+                }
                 ((Row) structuredOutput).setField(name, fields.get(name));
             }
         } else {
