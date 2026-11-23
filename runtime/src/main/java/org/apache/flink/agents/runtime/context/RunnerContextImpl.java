@@ -24,8 +24,8 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
-import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.configuration.DurationUtils;
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
@@ -404,9 +404,10 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         return outputIdentities;
     }
 
-    /** Reserves the bootstrap occurrence when a completed graph call is reused on replay. */
-    public void reserveOutputIdentity() {
-        Preconditions.checkNotNull(outputIdentities, "Output identity requires an executing action")
+    /** Reserves an occurrence before a graph is started or its completed result is replayed. */
+    public String reserveOutputIdentity() {
+        return Preconditions.checkNotNull(
+                        outputIdentities, "Output identity requires an executing action")
                 .nextId();
     }
 
@@ -615,6 +616,19 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     /** Enqueues a runtime event without applying user-event or sub-agent routing. */
     public void addPendingEvent(Event event) {
         assignOutputIdentity(event);
+        bufferPendingEvent(event);
+    }
+
+    /** Enqueues a graph bootstrap using the occurrence reserved during call preparation. */
+    public void addSubgraphBootstrap(SubgraphEvent event, String occurrenceId) {
+        Preconditions.checkArgument(event.isBootstrap(), "Expected a subgraph bootstrap");
+        Preconditions.checkArgument(
+                event.getOccurrenceId() == null, "Each send requires a new Event instance");
+        event.setOccurrenceId(Preconditions.checkNotNull(occurrenceId));
+        bufferPendingEvent(event);
+    }
+
+    private void bufferPendingEvent(Event event) {
         try {
             EventAttachmentUtils.storeEventAttachments(event, this);
         } catch (Exception e) {
@@ -1150,9 +1164,9 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     /** Common lifecycle scheduler for both individual calls and batches. */
     private <T> List<Outcome<T>> resolveAsyncCalls(
-            List<SchedulableFuture<T>> futures, int parallelism, @Nullable Duration timeout)
+            List<SchedulableFuture<T>> futures, int parallelism, @Nullable Duration timeoutDuration)
             throws Exception {
-        long timeoutNanos = DurationUtils.positiveNanos(timeout);
+        long timeoutNanos = DurationUtils.positiveNanos(timeoutDuration);
         long deadline = timeoutNanos == 0L ? Long.MAX_VALUE : System.nanoTime() + timeoutNanos;
         Map<SchedulableFuture<T>, CompletableFuture<?>> running = new LinkedHashMap<>();
         Map<SchedulableFuture<T>, Outcome<T>> completed = new IdentityHashMap<>();
@@ -1183,7 +1197,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 if (System.nanoTime() >= deadline) {
                     TimeoutException timeout =
                             new TimeoutException(
-                                    "Async batch execution timed out after " + timeoutMs + " ms");
+                                    "Async batch execution timed out after " + timeoutDuration);
                     // Fence all queued suppliers before any cancellation can free a worker.
                     for (SchedulableFuture<T> future : futures) {
                         if (!completed.containsKey(future)) {

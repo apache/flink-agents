@@ -38,6 +38,7 @@ import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.tools.AsyncTool;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
@@ -81,7 +82,10 @@ class BaseChatModelSetupSubagentTest {
                             throw new IllegalArgumentException("No such resource: " + name);
                         }
                         return resource;
-                    }) {
+                    },
+                    Thread.currentThread().getContextClassLoader(),
+                    () -> null,
+                    new AgentConfiguration()) {
                 @Override
                 public String generateAvailableSkillsPrompt(List<String> skillNames) {
                     return "<available_skills>" + skillNames + "</available_skills>";
@@ -262,8 +266,7 @@ class BaseChatModelSetupSubagentTest {
 
             assertThat(tool.getDescription()).isEqualTo("Parent reviewer. This is subagent.");
             assertThat(tool.getResourceContext()).isSameAs(child.getResourceContext());
-            assertThat(child.hasResourceInHierarchy("_subagent_reviewer", ResourceType.TOOL))
-                    .isTrue();
+            assertThat(child.hasResource("_subagent_reviewer", ResourceType.TOOL)).isTrue();
         }
     }
 

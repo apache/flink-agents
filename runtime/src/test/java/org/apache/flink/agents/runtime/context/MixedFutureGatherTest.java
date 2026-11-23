@@ -47,6 +47,7 @@ import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.agents.runtime.subgraph.SubgraphFuture;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
+import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
@@ -59,7 +60,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.time.Duration;
-
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -76,6 +76,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.fail;
 import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
@@ -139,6 +140,10 @@ class MixedFutureGatherTest {
                     AsyncFutureImpl.map(f.runner, f.internal("child"), r -> (String) r.getResult());
             var run = f.start(() -> f.runner.gather(List.of(tool, child)).await());
             while (!f.state.getCallResults().get(0).isSuccess()) {
+                if (run.done) {
+                    run.result();
+                    fail("Gather completed before the tool result was persisted");
+                }
                 f.step(run);
             }
             snapshot = ActionStateSerde.serialize(f.state);
@@ -157,6 +162,55 @@ class MixedFutureGatherTest {
                     .extracting(Outcome::getValue)
                     .containsExactly("value-1", "child-answer");
             assertThat(calls).hasValue(1);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void partialGraphReplayPreservesBootstrapAndFollowingEventIdentities(boolean firstCompleted)
+            throws Exception {
+        byte[] snapshot;
+        String pendingId = firstCompleted ? "second" : "first";
+        String completedId = firstCompleted ? "first" : "second";
+        String bootstrapOccurrence;
+        String followingOccurrence;
+        try (Fixture f = new Fixture()) {
+            var first = f.internal("first");
+            var second = f.internal("second");
+            var run = f.start(() -> f.runner.gather(List.of(first, second)).await());
+            List<Event> bootstraps = f.runner.drainEventsAtActionYield(null);
+            assertThat(bootstraps).hasSize(2);
+            bootstrapOccurrence = bootstraps.get(firstCompleted ? 1 : 0).getOccurrenceId();
+            f.runner.getSubgraphCalls().get(completedId).dispatch(new OutputEvent("completed"));
+            while (!f.state.getCallResult(firstCompleted ? 0 : 1).isSuccess()) {
+                if (run.done) {
+                    run.result();
+                    fail("Gather completed before recording the completed child");
+                }
+                f.step(run);
+            }
+            snapshot = ActionStateSerde.serialize(f.state);
+            f.runner.getSubgraphCalls().get(pendingId).dispatch(new OutputEvent("pending"));
+            assertThat(f.finish(run)).allMatch(outcome -> !outcome.isFailure());
+            Event following = new Event("after-gather");
+            f.runner.sendEvent(following);
+            followingOccurrence = following.getOccurrenceId();
+        }
+        try (Fixture f = new Fixture(ActionStateSerde.deserialize(snapshot))) {
+            var first = f.internal("first");
+            var second = f.internal("second");
+            var run = f.start(() -> f.runner.gather(List.of(first, second)).await());
+            assertThat(f.runner.drainEventsAtActionYield(null))
+                    .singleElement()
+                    .satisfies(
+                            event ->
+                                    assertThat(event.getOccurrenceId())
+                                            .isEqualTo(bootstrapOccurrence));
+            f.runner.getSubgraphCalls().get(pendingId).dispatch(new OutputEvent("pending"));
+            assertThat(f.finish(run)).allMatch(outcome -> !outcome.isFailure());
+            Event following = new Event("after-gather");
+            f.runner.sendEvent(following);
+            assertThat(following.getOccurrenceId()).isEqualTo(followingOccurrence);
         }
     }
 
@@ -731,14 +785,14 @@ class MixedFutureGatherTest {
                     null);
             runner.setContinuationContext(new ContinuationContext());
             runner.setSubgraphCalls(new SubgraphCallManager());
+            runner.setOutputIdentities(
+                    new RuntimeIdentity.OutputIdentityAllocator("test-execution"));
             Map<String, DeterministicIdAllocator> ids = new HashMap<>();
             runner.setIdAllocatorSource(
                     name ->
                             ids.computeIfAbsent(
                                     name,
-                                    target ->
-                                            new DeterministicIdAllocator(
-                                                    "key", 1, "action", input, target)));
+                                    target -> new DeterministicIdAllocator("key:action", target)));
             runner.setDurableExecutionContext(
                     new RunnerContextImpl.DurableExecutionContext(
                             "key",

@@ -43,6 +43,7 @@ public final class SubgraphFuture<R, T> extends AsyncFutureImpl<T>
     private final FunctionWithException<R, T, Exception> mapper;
     private SubgraphInvocation<R> invocation;
     private DurableCallSlot<R> slot;
+    private String bootstrapOccurrenceId;
     private boolean started;
 
     public SubgraphFuture(
@@ -86,6 +87,9 @@ public final class SubgraphFuture<R, T> extends AsyncFutureImpl<T>
                     new DurableCallSlot<>(
                             getOwner(), invocation.getDurableSlotKey(), invocation.resultClass());
             Outcome<R> saved = prepared.prepare();
+            // Reserve in input order even for terminal replay. Starting only pending calls must
+            // not shift their bootstraps or any events emitted after the gather.
+            bootstrapOccurrenceId = getOwner().reserveOutputIdentity();
             slot = prepared;
             if (saved != null) {
                 convert(saved);
@@ -108,7 +112,10 @@ public final class SubgraphFuture<R, T> extends AsyncFutureImpl<T>
             getOwner().getSubgraphCalls().register(invocation);
             Event delegate = invocation.inputEvent(input);
             EventAttachmentUtils.storeEventAttachments(delegate, getOwner());
-            getOwner().addPendingEvent(new SubgraphEvent(invocation.getId(), delegate, true));
+            getOwner()
+                    .addSubgraphBootstrap(
+                            new SubgraphEvent(invocation.getId(), delegate, true),
+                            bootstrapOccurrenceId);
             started = true;
             getOwner().dispatchSubgraphBootstrap();
             return invocation.completionFuture();

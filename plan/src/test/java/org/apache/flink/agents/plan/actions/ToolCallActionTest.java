@@ -634,7 +634,9 @@ public class ToolCallActionTest {
 
                     @Override
                     public Resource getResource(String name, ResourceType type) throws Exception {
-                        return lookups++ == 0 ? new AsyncEchoTool() : super.getResource(name, type);
+                        return type == ResourceType.TOOL && lookups++ == 0
+                                ? new AsyncEchoTool()
+                                : super.getResource(name, type);
                     }
                 }.withToolCallParallelism(2);
 
@@ -653,8 +655,10 @@ public class ToolCallActionTest {
         FakeRunnerContext ctx =
                 new FakeRunnerContext() {
                     @Override
-                    public Resource getResource(String name, ResourceType type) {
-                        return new AsyncEchoTool();
+                    public Resource getResource(String name, ResourceType type) throws Exception {
+                        return type == ResourceType.TOOL
+                                ? new AsyncEchoTool()
+                                : super.getResource(name, type);
                     }
                 }.withToolCallAsync(false);
 

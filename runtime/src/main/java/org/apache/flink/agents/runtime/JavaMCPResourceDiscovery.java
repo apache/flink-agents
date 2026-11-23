@@ -20,9 +20,9 @@ package org.apache.flink.agents.runtime;
 
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.plan.subagent.SubagentConstants;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.subagent.SubagentConstants;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;

@@ -468,7 +468,11 @@ class EscalationRecoveryTest {
                         state,
                         (key, sequence, action, event, current) -> {
                             persisted.set(ActionStateSerde.serialize(current));
-                            if (current.getCallResultCount() == failAfterCallResults) {
+                            // Async calls persist pending slots before invoking the verifier.
+                            // Fail only after the intended terminal outcome has been journaled.
+                            if (current.getCallResultCount() == failAfterCallResults
+                                    && !current.getCallResult(failAfterCallResults - 1)
+                                            .isPending()) {
                                 throw new IllegalStateException(FAILURE);
                             }
                         });

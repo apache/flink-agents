@@ -52,6 +52,7 @@ import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.plan.subagent.SubagentConstants;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
+import org.apache.flink.agents.runtime.utils.ToolCallTestModel;
 import org.apache.flink.util.ExceptionUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -1059,7 +1060,8 @@ class ToolCallActionSubagentTest {
                 java.util.Set<String> names = new java.util.HashSet<>(tools.keySet());
                 agents.keySet().forEach(k -> names.add(SubagentConstants.TOOL_NAME_PREFIX + k));
                 names.add(SubagentConstants.TOOL_NAME_PREFIX + "missing");
-                return ChatFixtures.modelWithCallables(names.toArray(new String[0]));
+                return new ToolCallTestModel(
+                        ToolCallTestModel.withTools(names.toArray(new String[0])), null);
             }
             if (type == ResourceType.TOOL && name.startsWith(SubagentConstants.TOOL_NAME_PREFIX)) {
                 return new ResourceContextImpl(
@@ -1070,7 +1072,10 @@ class ToolCallActionSubagentTest {
                                                 "Resource does not exist: " + agentName);
                                     }
                                     return agent;
-                                })
+                                },
+                                Thread.currentThread().getContextClassLoader(),
+                                () -> null,
+                                config)
                         .getSubagentTool(
                                 name.substring(SubagentConstants.TOOL_NAME_PREFIX.length()));
             }
