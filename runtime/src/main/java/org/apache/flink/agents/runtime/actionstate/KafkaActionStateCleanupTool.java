@@ -19,7 +19,6 @@ package org.apache.flink.agents.runtime.actionstate;
 
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.api.common.RuntimeExecutionMode;
-import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.state.api.OperatorIdentifier;
 import org.apache.flink.state.api.SavepointReader;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -85,8 +84,8 @@ public final class KafkaActionStateCleanupTool {
         DataStream<Object> markerStream =
                 reader.readUnionState(
                         identifier,
-                        KafkaActionStateRecoveryMarker.UNION_STATE_NAME,
-                        TypeInformation.of(Object.class));
+                        RecoveryMarkerState.NAME,
+                        RecoveryMarkerState.typeInformation());
         List<Object> markers = new ArrayList<>();
         try (CloseableIterator<Object> iterator = markerStream.executeAndCollect()) {
             iterator.forEachRemaining(markers::add);
