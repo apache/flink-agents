@@ -28,8 +28,8 @@ import org.apache.flink.agents.api.chat.model.routing.RoutingDecision;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
-import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ChatModelInvoker;
+import org.apache.flink.agents.plan.actions.ChatRetryStats;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 
 import java.util.ArrayList;
@@ -118,7 +118,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
                             ctx,
                             numRetries,
                             retryWaitMillis);
-            ChatModelAction.recordAttemptRetryStats(
+            ChatRetryStats.recordAttempt(
                     ctx,
                     context.getRequestId(),
                     judgeResult.model,
@@ -141,7 +141,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
             Thread.currentThread().interrupt();
             throw cancellation;
         } catch (ChatModelInvoker.ChatAttemptFailed failure) {
-            ChatModelAction.recordAttemptRetryStats(
+            ChatRetryStats.recordAttempt(
                     ctx,
                     context.getRequestId(),
                     failure.model,

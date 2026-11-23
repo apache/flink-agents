@@ -275,6 +275,11 @@ class AgentPlanCrossLanguageTest {
         assertThat(actual).isEqualTo(expected);
     }
 
+    /** The provider's descriptor as the plan creates it from a declaration. */
+    private static ResourceDescriptor routerResource(ResourceDescriptor declaration) {
+        return org.apache.flink.agents.plan.routing.ModelRouter.resourceDescriptor(declaration);
+    }
+
     /** A plan whose only resources are a judge-strategy router and its chat models. */
     private static AgentPlan compileWithJudgeRouter() throws Exception {
         Map<ResourceType, Map<String, ResourceProvider>> providers = new LinkedHashMap<>();
@@ -288,7 +293,8 @@ class AgentPlanCrossLanguageTest {
         Map<String, ResourceProvider> routers = new LinkedHashMap<>();
         routers.put(
                 "router",
-                new JavaResourceProvider("router", ResourceType.MODEL_ROUTER, routerDescriptor));
+                new JavaResourceProvider(
+                        "router", ResourceType.MODEL_ROUTER, routerResource(routerDescriptor)));
         providers.put(ResourceType.MODEL_ROUTER, routers);
         Map<String, ResourceProvider> chatModels = new LinkedHashMap<>();
         ResourceDescriptor model = new ResourceDescriptor("some.Clazz", Map.of());
@@ -361,10 +367,12 @@ class AgentPlanCrossLanguageTest {
         Map<String, ResourceProvider> routers = new LinkedHashMap<>();
         routers.put(
                 "router",
-                new JavaResourceProvider("router", ResourceType.MODEL_ROUTER, routerDescriptor));
+                new JavaResourceProvider(
+                        "router", ResourceType.MODEL_ROUTER, routerResource(routerDescriptor)));
         routers.put(
                 "router_full",
-                new JavaResourceProvider("router_full", ResourceType.MODEL_ROUTER, fullDescriptor));
+                new JavaResourceProvider(
+                        "router_full", ResourceType.MODEL_ROUTER, routerResource(fullDescriptor)));
         providers.put(ResourceType.MODEL_ROUTER, routers);
         Map<String, ResourceProvider> chatModels = new LinkedHashMap<>();
         ResourceDescriptor model = new ResourceDescriptor("some.Clazz", Map.of());

@@ -17,8 +17,10 @@
  */
 package org.apache.flink.agents.plan.actions;
 
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
@@ -32,12 +34,13 @@ import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
-import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.agents.plan.routing.ModelRoutingExecutionException;
+import org.apache.flink.agents.plan.routing.ModelRoutingExecutor;
 import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
 import org.apache.flink.agents.plan.routing.ResolvedModelRoute;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
@@ -62,8 +65,9 @@ import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
  *
  * <h2>Model routing overview</h2>
  *
- * <p>When a {@link ChatRequestEvent} names a {@code MODEL_ROUTER} instead of a chat model, this
- * action layers five jobs on top of the normal chat path; each is localized to one place:
+ * <p>When a {@link ChatRequestEvent} names a {@code MODEL_ROUTER} instead of a chat model, the
+ * routing layer in {@code org.apache.flink.agents.plan.routing} does five jobs around the normal
+ * chat path; this action only resolves the route, runs one round and processes the accepted answer:
  *
  * <ol>
  *   <li><b>Decide</b> — {@link ModelRoutingResolver} runs the router's strategy and normalizes the
@@ -77,13 +81,17 @@ import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
  *       decision and the chat call re-execute together on recovery, which is self-consistent but
  *       re-derives the decision.
  *   <li><b>Once per reasoning loop</b> — the selected concrete model is saved in the tool-request
- *       context and reused by tool rounds with no re-routing; the routing metadata block is parked
- *       once in an initial-request-keyed context and attached only to the loop's final response.
- *   <li><b>Fallback over retries</b> — {@link ResolvedModelRoute#attemptOrder} tries the selected
- *       model first (with its full retry budget, durable id {@code "chat:<router>:<candidate>"}),
- *       then remaining candidates in declaration order if fallback is enabled.
- *   <li><b>Observably</b> — a {@link ModelRoutingEvent} records the decision (and a second one any
- *       fallback outcome); {@link ResolvedModelRoute#buildResponseMetadata} supplies the {@code
+ *       context and reused by tool rounds with no re-routing; {@link ModelRoutingExecutor} keeps
+ *       the routing metadata block across the tool loop, keyed by the initial request: the next
+ *       round of a tiered request reads its router and hops from it, and the response that
+ *       completes the request carries it.
+ *   <li><b>Fallback and escalation over retries</b> — {@link ModelRoutingExecutor#execute} tries
+ *       the selected model first (with its full retry budget, durable id {@code
+ *       "chat:<router>:<candidate>"}), then remaining candidates in declaration order if fallback
+ *       is enabled; an answer a quality signal rejects is discarded and the request moves to the
+ *       next tier.
+ *   <li><b>Observably</b> — a {@link ModelRoutingEvent} records the decision (and further ones for
+ *       fallback and escalation outcomes); {@link ModelRoutingExecutor} supplies the {@code
  *       model_routing} extra args stamped on the final response; decision latency feeds {@code
  *       decision_ms} and the {@code routingDecisionLatencyMs} histogram.
  * </ol>
@@ -101,12 +109,8 @@ public class ChatModelAction {
     /** Sensory-memory key for the chat request's user context. Matches the event attribute. */
     private static final String USER_CONTEXT = "user_context";
 
-    private static final String ROUTING_METADATA_CONTEXT = "_ROUTING_METADATA_CONTEXT";
     private static final String OUTPUT_SCHEMA = "outputSchema";
     private static final String PROMPT_ARGS = "prompt_args";
-    private static final String RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT";
-    private static final String TOTAL_RETRY_COUNT = "totalRetryCount";
-    private static final String TOTAL_RETRY_WAIT_MS = "totalRetryWaitMs";
     private static final String FINISH_REASON = "finish_reason";
     private static final String TRUNCATED_FINISH_REASON = "length";
     private static final String CONTENT_FILTERED_FINISH_REASON = "content_filter";
@@ -192,50 +196,6 @@ public class ChatModelAction {
         return Objects.requireNonNull(result, "Missing tool request context");
     }
 
-    @SuppressWarnings("unchecked")
-    private static void accumulateRetryStats(
-            MemoryObject sensoryMem, UUID initialRequestId, int retryCount, long retryWaitMs)
-            throws Exception {
-        Map<UUID, Map<String, Long>> retryStatsContext;
-        if (sensoryMem.isExist(RETRY_STATS_CONTEXT)) {
-            retryStatsContext =
-                    (Map<UUID, Map<String, Long>>) sensoryMem.get(RETRY_STATS_CONTEXT).getValue();
-        } else {
-            retryStatsContext = new HashMap<>();
-        }
-        Map<String, Long> stats = retryStatsContext.getOrDefault(initialRequestId, new HashMap<>());
-        stats.put(TOTAL_RETRY_COUNT, stats.getOrDefault(TOTAL_RETRY_COUNT, 0L) + retryCount);
-        stats.put(TOTAL_RETRY_WAIT_MS, stats.getOrDefault(TOTAL_RETRY_WAIT_MS, 0L) + retryWaitMs);
-        retryStatsContext.put(initialRequestId, stats);
-        sensoryMem.set(RETRY_STATS_CONTEXT, retryStatsContext);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Long> getRetryStats(MemoryObject sensoryMem, UUID initialRequestId)
-            throws Exception {
-        if (!sensoryMem.isExist(RETRY_STATS_CONTEXT)) {
-            return Map.of(TOTAL_RETRY_COUNT, 0L, TOTAL_RETRY_WAIT_MS, 0L);
-        }
-        Map<UUID, Map<String, Long>> retryStatsContext =
-                (Map<UUID, Map<String, Long>>) sensoryMem.get(RETRY_STATS_CONTEXT).getValue();
-        return retryStatsContext.getOrDefault(
-                initialRequestId, Map.of(TOTAL_RETRY_COUNT, 0L, TOTAL_RETRY_WAIT_MS, 0L));
-    }
-
-    private static void recordRetryMetrics(
-            RunnerContext ctx, String modelResource, int retryCount, long totalRetryWaitMs) {
-        if (retryCount <= 0) {
-            return;
-        }
-        FlinkAgentsMetricGroup metricGroup = ctx.getActionMetricGroup();
-        if (metricGroup != null) {
-            FlinkAgentsMetricGroup modelResourceGroup =
-                    metricGroup.getSubGroup("model_resource", modelResource);
-            modelResourceGroup.getCounter("retryCount").inc(retryCount);
-            modelResourceGroup.getCounter("retryWaitMs").inc(totalRetryWaitMs);
-        }
-    }
-
     private static void handleToolCalls(
             ChatResult response,
             UUID initialRequestId,
@@ -315,6 +275,11 @@ public class ChatModelAction {
         } else if (outputSchema instanceof OutputSchema) {
             RowTypeInfo info = ((OutputSchema) outputSchema).getSchema();
             Map<String, Object> fields = mapper.readValue(String.valueOf(output), Map.class);
+            if (fields == null) {
+                // A bare JSON null parses but carries no fields: a parse failure like any other.
+                throw MismatchedInputException.from(
+                        (JsonParser) null, Map.class, "JSON null where an object was expected");
+            }
             structuredOutput = Row.withNames();
             for (String name : info.getFieldNames()) {
                 ((Row) structuredOutput).setField(name, fields.get(name));
@@ -356,135 +321,60 @@ public class ChatModelAction {
 
     private static void chat(
             UUID initialRequestId,
-            ResolvedModelRoute selection,
+            ResolvedModelRoute route,
             List<ChatMessage> messages,
             Map<String, Object> promptArgs,
             @Nullable Object outputSchema,
             @Nullable Map<String, Object> userContext,
             RunnerContext ctx)
             throws Exception {
-        int numRetries = ChatModelInvoker.configuredRetries(ctx);
-        long retryWaitMillis = ChatModelInvoker.configuredRetryWaitMillis(ctx);
-
-        List<String> triedModels = new ArrayList<>();
-        Exception lastError = null;
-        for (String candidate : selection.attemptOrder()) {
-            triedModels.add(candidate);
-            try {
-                ChatModelInvoker.ChatAttemptResult result =
-                        ChatModelInvoker.chatWithRetries(
-                                initialRequestId,
-                                candidate,
-                                selection.durableChatCallId(candidate),
-                                messages,
-                                promptArgs,
-                                outputSchema,
-                                ctx,
-                                numRetries,
-                                retryWaitMillis);
-                recordAttemptRetryStats(
-                        ctx,
-                        initialRequestId,
-                        result.model,
-                        result.retryCount,
-                        result.totalRetryWaitMs);
-                if (selection.isRouter()) {
-                    if (!result.model.equals(selection.getSelectedModel())) {
-                        // The strategy's pick failed and another candidate answered; emit a
-                        // routing Event to report the fallback outcome.
-                        ctx.sendEvent(
-                                new ModelRoutingEvent(
-                                        initialRequestId,
-                                        selection.getRequestedModel(),
-                                        selection.getCandidates(),
-                                        result.model,
-                                        ModelRoutingEvent.SOURCE_FALLBACK,
-                                        selection.isFallbackEnabled(),
-                                        String.format(
-                                                "fallback after selected model '%s' failed",
-                                                selection.getSelectedModel()),
-                                        null,
-                                        selection.getMetadata(),
-                                        null));
-                    }
-                }
-
-                // Routing metadata is observability-only and needed exactly once, on the final
-                // response. If this response starts (or continues) a tool loop, park the block
-                // in an initial-request-keyed context instead of stamping intermediate messages
-                // and copying it through every tool round.
-                Map<String, Object> routingMetadata =
-                        selection.isRouter()
-                                ? selection.buildResponseMetadata(result.model, triedModels)
-                                : null;
-                if (!Objects.requireNonNull(result.response).getToolCalls().isEmpty()) {
-                    if (routingMetadata != null) {
-                        saveRoutingMetadata(
-                                ctx.getSensoryMemory(), initialRequestId, routingMetadata);
-                    }
-                    handleToolCalls(
-                            result.response,
-                            initialRequestId,
-                            result.model,
-                            result.chatModel,
-                            messages,
-                            promptArgs,
-                            outputSchema,
-                            userContext,
-                            ctx);
-                } else {
-                    if (routingMetadata == null) {
-                        routingMetadata =
-                                takeRoutingMetadata(ctx.getSensoryMemory(), initialRequestId);
-                    }
-                    Map<String, Long> retryStats =
-                            getRetryStats(ctx.getSensoryMemory(), initialRequestId);
-                    int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
-                    long totalRetryWaitMs = retryStats.get(TOTAL_RETRY_WAIT_MS);
-                    clearRequestContext(ctx.getSensoryMemory(), initialRequestId);
-                    ChatResponseEvent completed =
-                            ChatResponseEvent.success(
-                                            initialRequestId,
-                                            result.response,
-                                            totalRetryCount,
-                                            totalRetryWaitMs)
-                                    .withUserContext(userContext);
-                    completed.setStructuredOutput(result.structuredOutput);
-                    if (routingMetadata != null) completed.setRoutingMetadata(routingMetadata);
-                    ctx.sendEvent(completed);
-                }
-                return;
-            } catch (ChatModelInvoker.ChatAttemptFailed e) {
-                recordAttemptRetryStats(
-                        ctx, initialRequestId, e.model, e.retryCount, e.totalRetryWaitMs);
-                // Keep every candidate's failure: chain the previous error into the new one so
-                // exhaustion surfaces A's and B's errors as suppressed of C's, not just C's.
-                if (lastError != null && lastError != e.error) {
-                    e.error.addSuppressed(lastError);
-                }
-                lastError = e.error;
-                LOG.debug(
-                        "Chat request {} failed for model {} with error: {}. The input chat"
-                                + " messages are {}.",
-                        initialRequestId,
-                        e.model,
-                        e.error.toString(),
-                        messages);
-            }
+        // The routing layer owns the attempts: the strategy's pick, fallback after a failure,
+        // escalation after a rejected answer, and the routing events and metrics. This action
+        // processes the one answer it accepted.
+        ModelRoutingExecutor.Result routed;
+        try {
+            routed =
+                    ModelRoutingExecutor.execute(
+                            initialRequestId, route, messages, promptArgs, outputSchema, ctx);
+        } catch (ModelRoutingExecutionException e) {
+            sendFailure(initialRequestId, e.error, userContext, ctx);
+            return;
         }
-
-        if (selection.isRouter() && triedModels.size() > 1) {
-            LOG.warn(
-                    "Chat request {} exhausted all candidates {} of router '{}'; last error: {}.",
+        ChatModelInvoker.ChatAttemptResult result = routed.attempt;
+        if (!Objects.requireNonNull(result.response).getToolCalls().isEmpty()) {
+            // The routing block goes on the response that completes the request. Until then it
+            // is kept for the tool loop: the next round of a tiered request reads its router and
+            // hops from it.
+            ModelRoutingExecutor.saveRoutingMetadata(ctx.getSensoryMemory(), routed);
+            handleToolCalls(
+                    result.response,
                     initialRequestId,
-                    triedModels,
-                    selection.getRequestedModel(),
-                    lastError == null ? null : lastError.toString());
+                    result.model,
+                    result.chatModel,
+                    messages,
+                    promptArgs,
+                    outputSchema,
+                    userContext,
+                    ctx);
+            return;
         }
-        // The reasoning loop is over; a routed loop that dies mid-way must not leak its
-        // parked metadata before completing the failed logical request.
-        takeRoutingMetadata(ctx.getSensoryMemory(), initialRequestId);
-        sendFailure(initialRequestId, Objects.requireNonNull(lastError), userContext, ctx);
+        Map<String, Object> routingMetadata =
+                ModelRoutingExecutor.getAndClearRoutingMetadata(ctx.getSensoryMemory(), routed);
+        ChatRetryStats.Totals retries =
+                ChatRetryStats.totals(ctx.getSensoryMemory(), initialRequestId);
+        clearRequestContext(ctx.getSensoryMemory(), initialRequestId);
+        ChatResponseEvent completed =
+                ChatResponseEvent.success(
+                                initialRequestId,
+                                result.response,
+                                retries.retryCount,
+                                retries.retryWaitMs)
+                        .withUserContext(userContext);
+        completed.setStructuredOutput(result.structuredOutput);
+        if (routingMetadata != null) {
+            completed.setRoutingMetadata(routingMetadata);
+        }
+        ctx.sendEvent(completed);
     }
 
     private static void sendFailure(
@@ -494,83 +384,28 @@ public class ChatModelAction {
             RunnerContext ctx)
             throws Exception {
         LOG.warn("Chat request {} failed", requestId, error);
-        Map<String, Long> stats = getRetryStats(ctx.getSensoryMemory(), requestId);
+        ChatRetryStats.Totals retries = ChatRetryStats.totals(ctx.getSensoryMemory(), requestId);
         clearRequestContext(ctx.getSensoryMemory(), requestId);
         ctx.sendEvent(
                 ChatResponseEvent.failed(
                                 requestId,
                                 ChatModelInvoker.errorText(error),
-                                stats.get(TOTAL_RETRY_COUNT).intValue(),
-                                stats.get(TOTAL_RETRY_WAIT_MS))
+                                retries.retryCount,
+                                retries.retryWaitMs)
                         .withUserContext(userContext));
     }
 
+    /** Removes what the request kept in sensory memory: its tool-call context and retry totals. */
     @SuppressWarnings("unchecked")
     private static void clearRequestContext(MemoryObject memory, UUID requestId) throws Exception {
-        for (String key : List.of(TOOL_CALL_CONTEXT, RETRY_STATS_CONTEXT)) {
-            if (memory.isExist(key)) {
-                Map<UUID, Object> context =
-                        new HashMap<>((Map<UUID, Object>) memory.get(key).getValue());
-                if (context.remove(requestId) != null) {
-                    memory.set(key, context);
-                }
+        if (memory.isExist(TOOL_CALL_CONTEXT)) {
+            Map<UUID, Object> context =
+                    new HashMap<>((Map<UUID, Object>) memory.get(TOOL_CALL_CONTEXT).getValue());
+            if (context.remove(requestId) != null) {
+                memory.set(TOOL_CALL_CONTEXT, context);
             }
         }
-    }
-
-    /**
-     * Compatibility note: retry metrics are recorded per attempt (including attempts on the failure
-     * path), where previously they were recorded once with cumulative totals on the final response.
-     * Totals over a completed request are unchanged; requests that ultimately fail now contribute
-     * their retry counts where they previously did not.
-     */
-    public static void recordAttemptRetryStats(
-            RunnerContext ctx,
-            UUID initialRequestId,
-            String modelResource,
-            int retryCount,
-            long retryWaitMs)
-            throws Exception {
-        if (retryCount <= 0) {
-            return;
-        }
-        accumulateRetryStats(ctx.getSensoryMemory(), initialRequestId, retryCount, retryWaitMs);
-        recordRetryMetrics(ctx, modelResource, retryCount, retryWaitMs);
-    }
-
-    /**
-     * Parks the routed request's {@code model_routing} block for the lifetime of its reasoning
-     * loop, keyed by the initial request id. Stored once when the loop starts; taken (removed) once
-     * when the final response is produced or the loop is abandoned.
-     */
-    @SuppressWarnings("unchecked")
-    private static void saveRoutingMetadata(
-            MemoryObject sensoryMem, UUID initialRequestId, Map<String, Object> routing)
-            throws Exception {
-        Map<UUID, Object> context;
-        if (sensoryMem.isExist(ROUTING_METADATA_CONTEXT)) {
-            context = (Map<UUID, Object>) sensoryMem.get(ROUTING_METADATA_CONTEXT).getValue();
-        } else {
-            context = new HashMap<>();
-        }
-        context.put(initialRequestId, routing);
-        sensoryMem.set(ROUTING_METADATA_CONTEXT, context);
-    }
-
-    @SuppressWarnings("unchecked")
-    @Nullable
-    private static Map<String, Object> takeRoutingMetadata(
-            MemoryObject sensoryMem, UUID initialRequestId) throws Exception {
-        if (!sensoryMem.isExist(ROUTING_METADATA_CONTEXT)) {
-            return null;
-        }
-        Map<UUID, Object> context =
-                (Map<UUID, Object>) sensoryMem.get(ROUTING_METADATA_CONTEXT).getValue();
-        Map<String, Object> routing = (Map<String, Object>) context.remove(initialRequestId);
-        if (routing != null) {
-            sensoryMem.set(ROUTING_METADATA_CONTEXT, context);
-        }
-        return routing;
+        ChatRetryStats.clear(memory, requestId);
     }
 
     /**
@@ -681,11 +516,13 @@ public class ChatModelAction {
                         toolResponseMessages);
 
         // Tool rounds reuse the already-selected concrete model (no re-routing). If the initial
-        // request was routed, its metadata block waits in ROUTING_METADATA_CONTEXT and is
-        // attached when this loop produces its final response.
+        // request was routed, its metadata block waits where the routing layer saved it and is
+        // attached when this loop produces its final response. A tiered request keeps its
+        // escalation policy, so a weak round can still move it up a tier.
         chat(
                 initialRequestId,
-                ResolvedModelRoute.direct(model),
+                ModelRoutingExecutor.resolveRouteAfterToolCalls(
+                        sensoryMem, initialRequestId, model, ctx),
                 messages,
                 promptArgs,
                 outputSchema,

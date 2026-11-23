@@ -29,7 +29,6 @@ import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.chat.model.StructuredOutputStrategy;
-import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.prompt.Prompt;
@@ -276,7 +275,7 @@ public class ReActAgentTest {
     public void testNonSetupChatModelKeepsInstruction() throws Exception {
         ReActAgent agent = agentWithSchema(WithCount.class);
 
-        ChatRequestEvent request = runStart(agent, mock(ModelRouter.class));
+        ChatRequestEvent request = runStart(agent, mock(Resource.class));
 
         assertThat(systemTexts(request)).anyMatch(text -> text.contains(SCHEMA_INSTRUCTION));
     }

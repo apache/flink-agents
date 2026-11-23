@@ -33,10 +33,13 @@ import org.apache.flink.agents.api.annotation.Prompt;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.VectorStore;
 import org.apache.flink.agents.api.chat.model.routing.CustomRoutingExecutor;
+import org.apache.flink.agents.api.chat.model.routing.Escalation;
 import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
+import org.apache.flink.agents.api.chat.model.routing.QualitySignal;
 import org.apache.flink.agents.api.chat.model.routing.RoutingCandidateValidator;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategyType;
+import org.apache.flink.agents.api.chat.model.routing.Strategies;
 import org.apache.flink.agents.api.function.JavaFunctionUtils;
 import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.Resource;
@@ -411,6 +414,13 @@ public class AgentPlan implements Serializable {
         if (isPython || isPythonResource(descriptor)) {
             return new PythonResourceProvider(name, type, descriptor);
         }
+        if (type == ResourceType.MODEL_ROUTER) {
+            // A router declaration carries a placeholder for its class. The plan names the router
+            // resource before it creates the provider, as extractJavaMCPServer does for a Java MCP
+            // server.
+            descriptor =
+                    org.apache.flink.agents.plan.routing.ModelRouter.resourceDescriptor(descriptor);
+        }
         return new JavaResourceProvider(name, type, descriptor);
     }
 
@@ -772,10 +782,10 @@ public class AgentPlan implements Serializable {
      * and expose a supported constructor — checked without instantiation, so plan construction
      * never runs user constructors (or their static initializers).
      *
-     * <p>{@code RULE_BASED}: rule shape and pattern validity are enforced by the {@link
-     * RoutingStrategy} constructor invoked below (the single declaration-validation path, so
-     * diagnostics match the builder's); this arm additionally checks that every rule key names a
-     * declared candidate.
+     * <p>{@code RULE_BASED}: rule shape and pattern validity are enforced by {@link
+     * RoutingStrategy#validate()}, called below on the decoded declaration (the same rules the
+     * fluent factories apply, so diagnostics match the builder's); this arm additionally checks
+     * that every rule key names a declared candidate.
      *
      * <p>{@code DECISION_MODEL}: the decision-model setup must be registered (as for the judge, a
      * typo'd name would otherwise fail every request), and every candidate must carry a description
@@ -798,11 +808,20 @@ public class AgentPlan implements Serializable {
                 resourceProviders.getOrDefault(
                         ResourceType.DECISION_MODEL_CONNECTION, Collections.emptyMap());
         for (ResourceProvider provider : routers.values()) {
-            // Java- and Python-provided declarations carry the same keys; a router without an
-            // introspectable descriptor is left to its constructor.
+            // This is the one place the declaration rules are applied: the router resource decodes
+            // a descriptor that passed here. Java- and Python-provided declarations carry the same
+            // keys; a Python router with a Python target is checked by the Python plan compiler.
             ResourceDescriptor descriptor = descriptorOf(provider);
-            if (descriptor == null || descriptor.getInitialArguments() == null) {
+            if (descriptor == null) {
                 continue;
+            }
+            if (descriptor.getInitialArguments() == null) {
+                // The router resource reads its arguments without checks of its own, so a
+                // descriptor with none has to fail here, named, rather than per routed request.
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Model router '%s' declares no arguments; it needs at least '%s'.",
+                                provider.getName(), ModelRouter.CANDIDATES_KEY));
             }
             Object typeTagValue = descriptor.getArgument(ModelRouter.STRATEGY_TYPE_KEY);
             if (typeTagValue != null && !(typeTagValue instanceof String)) {
@@ -817,27 +836,42 @@ public class AgentPlan implements Serializable {
                                 typeTagValue.getClass().getSimpleName()));
             }
             String typeTag = (String) typeTagValue;
-            if (typeTag == null) {
-                // Fail here, not per record on the TaskManager: ModelRouter's constructor
-                // unconditionally rejects a descriptor without a strategy, and a throwing
-                // construction is never cached, so it would re-throw on every routed request.
+            String subject = String.format("Model router '%s'", provider.getName());
+            // The escalation policy, if any: decoded with the router named, then held to the
+            // declaration rules, so a hand-built descriptor fails here rather than per request.
+            Escalation escalation =
+                    Escalation.fromArguments(subject, descriptor.getInitialArguments())
+                            .orElse(null);
+            if (escalation != null) {
+                escalation.validate(subject);
+            }
+            if (typeTag == null && escalation == null) {
+                // Fail here, not per record on the TaskManager: a router with neither a strategy
+                // nor escalation tiers has no way to pick a model.
                 throw new IllegalArgumentException(
                         String.format(
                                 "Model router '%s' declares no routing strategy ('%s' missing"
-                                        + " from its descriptor).",
+                                        + " from its descriptor) and no escalation tiers.",
                                 provider.getName(), ModelRouter.STRATEGY_TYPE_KEY));
             }
-            // The declaration constructor re-validates the per-type argument rules, so a
-            // structurally invalid configuration (e.g. a judge without a judge model) fails
-            // plan construction with the same message as build().
-            RoutingStrategy strategy =
-                    new RoutingStrategy(
-                            RoutingStrategyType.fromTag(typeTag),
-                            descriptor.getArgument(
-                                    ModelRouter.STRATEGY_ARGS_KEY, Collections.emptyMap()),
-                            descriptor.getArgument(ModelRouter.STRATEGY_EXECUTOR_CLASS_KEY));
-            // Every strategy reads 'candidates' through ModelRouter's unchecked cast, so the
-            // shape guard applies to all of them — not only where the rule keys are checked.
+            // The per-type argument rules run here, on the decoded declaration, so a structurally
+            // invalid configuration (e.g. a judge without a judge model) fails plan construction
+            // with the same message as build(). Tiers without a strategy start every request on
+            // the first tier (see the plan-side ModelRouter).
+            RoutingStrategy strategy;
+            if (typeTag == null) {
+                strategy = Strategies.rules(Collections.emptyMap());
+            } else {
+                strategy =
+                        RoutingStrategy.parse(
+                                RoutingStrategyType.fromTag(typeTag),
+                                descriptor.getArgument(
+                                        ModelRouter.STRATEGY_ARGS_KEY, Collections.emptyMap()),
+                                descriptor.getArgument(ModelRouter.STRATEGY_EXECUTOR_CLASS_KEY));
+                strategy.validate();
+            }
+            // The router resource reads 'candidates' through an unchecked cast, so the shape
+            // guard applies to every strategy — not only where the rule keys are checked.
             Object candidates = descriptor.getArgument(ModelRouter.CANDIDATES_KEY);
             validateCandidatesShape(provider.getName(), candidates);
             Object candidateDescriptions =
@@ -851,20 +885,21 @@ public class AgentPlan implements Serializable {
                                 ModelRouter.CANDIDATE_DESCRIPTIONS_KEY,
                                 candidateDescriptions.getClass().getSimpleName()));
             }
-            // The constructor's own candidate rules (non-empty, no duplicates, default model is a
-            // candidate, String descriptions), applied here so a descriptor that skipped the
-            // builder fails at plan construction rather than per routed request on the TaskManager.
+            // The candidate rules (non-empty, no duplicates, default model is a candidate, String
+            // descriptions): a descriptor that skipped the builder fails at plan construction
+            // rather than per routed request on the TaskManager.
             RoutingCandidateValidator.validate(
-                    String.format("Model router '%s'", provider.getName()),
+                    subject,
                     (List<?>) candidates,
                     descriptor.getArgument(ModelRouter.DEFAULT_MODEL_KEY));
+            if (escalation != null) {
+                validateEscalation(subject, escalation, (List<?>) candidates, decisionModels);
+            }
             if (candidateDescriptions != null) {
                 @SuppressWarnings("unchecked")
                 List<String> candidateNames = (List<String>) candidates;
                 RoutingCandidateValidator.requireStringDescriptions(
-                        String.format("Model router '%s'", provider.getName()),
-                        candidateNames,
-                        (Map<?, ?>) candidateDescriptions);
+                        subject, candidateNames, (Map<?, ?>) candidateDescriptions);
             }
             switch (strategy.getType()) {
                 case LLM_JUDGE:
@@ -891,6 +926,84 @@ public class AgentPlan implements Serializable {
                     break;
                 default:
                     break;
+            }
+        }
+    }
+
+    /**
+     * The escalation policy's static constraints: every tier is a candidate, every decision-model
+     * signal names a registered decision model, every custom signal names a loadable {@link
+     * QualitySignal} with a public {@code (Map)} or no-arg constructor, the two the gate can call.
+     * The policy's own declaration rules ran just before, in {@link Escalation#validate(String)}.
+     */
+    @SuppressWarnings("unchecked")
+    private static void validateEscalation(
+            String subject,
+            Escalation escalation,
+            List<?> candidates,
+            Map<String, ResourceProvider> decisionModels) {
+        escalation.requireTiersAreCandidates(subject, (List<String>) candidates);
+        for (Escalation.Signal signal : escalation.getSignals()) {
+            if (Escalation.Signal.TYPE_DECISION_MODEL.equals(signal.getType())) {
+                if (!decisionModels.containsKey(signal.decisionModel())) {
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "%s escalation signal uses decision model '%s', but no"
+                                            + " DECISION_MODEL resource with that name is"
+                                            + " registered.",
+                                    subject, signal.decisionModel()));
+                }
+            } else {
+                Class<?> clazz;
+                try {
+                    clazz =
+                            Class.forName(
+                                    signal.signalClass(),
+                                    false,
+                                    Thread.currentThread().getContextClassLoader());
+                } catch (ClassNotFoundException | LinkageError e) {
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "%s escalation signal class '%s' cannot be loaded.",
+                                    subject, signal.signalClass()),
+                            e);
+                }
+                if (!QualitySignal.class.isAssignableFrom(clazz)) {
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "%s escalation signal class '%s' does not implement"
+                                            + " QualitySignal.",
+                                    subject, signal.signalClass()));
+                }
+                if (!hasMapOrNoArgConstructor(clazz)) {
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "%s escalation signal class '%s' must be a public class"
+                                            + " with a (Map<String,Object>) or no-arg public"
+                                            + " constructor.",
+                                    subject, signal.signalClass()));
+                }
+            }
+        }
+    }
+
+    private static boolean hasMapOrNoArgConstructor(Class<?> clazz) {
+        int modifiers = clazz.getModifiers();
+        // The gate creates the signal from another package, so the class itself has to be public
+        // and concrete, not only its constructor.
+        if (java.lang.reflect.Modifier.isAbstract(modifiers)
+                || !java.lang.reflect.Modifier.isPublic(modifiers)) {
+            return false;
+        }
+        try {
+            clazz.getConstructor(Map.class);
+            return true;
+        } catch (NoSuchMethodException noMapCtor) {
+            try {
+                clazz.getConstructor();
+                return true;
+            } catch (NoSuchMethodException noArgCtor) {
+                return false;
             }
         }
     }
@@ -956,9 +1069,8 @@ public class AgentPlan implements Serializable {
                                     + " 'model'.",
                             decisionModel, routerName));
         }
-        // Same rule and message as the router constructor, applied here so a descriptor that
-        // skipped the builder fails at plan construction rather than at resource construction on
-        // the TaskManager.
+        // Same rule and message as the builder, applied here so a descriptor that skipped the
+        // builder fails at plan construction rather than per routed request on the TaskManager.
         Object descriptions = descriptor.getArgument(ModelRouter.CANDIDATE_DESCRIPTIONS_KEY);
         List<String> names = new ArrayList<>();
         for (Object candidate : (List<?>) candidates) {
@@ -980,7 +1092,7 @@ public class AgentPlan implements Serializable {
      * (regardless of the 'candidates' shape); the key-vs-candidate check here mirrors build().
      */
     /**
-     * Fail here, not per record: the router constructor's unchecked read would turn a mis-shaped
+     * Fail here, not per record: the router resource's unchecked read would turn a mis-shaped
      * 'candidates' value into a raw ClassCastException when the router is resolved. A missing or
      * empty list is rejected next by {@link RoutingCandidateValidator}.
      */

@@ -88,6 +88,14 @@ public final class RoutingStrategy implements Serializable {
             RoutingStrategyType type,
             Map<String, Object> arguments,
             @Nullable String executorClass) {
+        this(type, arguments, executorClass, true);
+    }
+
+    private RoutingStrategy(
+            RoutingStrategyType type,
+            Map<String, Object> arguments,
+            @Nullable String executorClass,
+            boolean validate) {
         if (type == null) {
             throw new IllegalArgumentException("Routing strategy type must be non-null.");
         }
@@ -97,11 +105,30 @@ public final class RoutingStrategy implements Serializable {
                         ? Collections.emptyMap()
                         : Collections.unmodifiableMap(new LinkedHashMap<>(arguments));
         this.executorClass = executorClass;
-        validate();
+        if (validate) {
+            validate();
+        }
     }
 
-    /** The declaration's argument rules — the single source of truth for per-type validation. */
-    private void validate() {
+    /**
+     * Decodes a declaration read back from a router's descriptor without applying the per-type
+     * argument rules; {@link #validate()} applies them. The plan validates once when the agent plan
+     * is built, and the router resource then only decodes. The fluent factories in {@link
+     * Strategies} use the constructor, which validates as the declaration is written.
+     */
+    public static RoutingStrategy parse(
+            RoutingStrategyType type,
+            Map<String, Object> arguments,
+            @Nullable String executorClass) {
+        return new RoutingStrategy(type, arguments, executorClass, false);
+    }
+
+    /**
+     * The declaration's argument rules — the single source of truth for per-type validation.
+     *
+     * @throws IllegalArgumentException when a rule is broken
+     */
+    public void validate() {
         switch (type) {
             case LLM_JUDGE:
                 Object judge = arguments.get(ARG_JUDGE_MODEL);
@@ -153,10 +180,10 @@ public final class RoutingStrategy implements Serializable {
                 break;
             case RULE_BASED:
                 // Declaration-level rule validation (shape, key/value types, regex syntax) lives
-                // here so every path that constructs the declaration — the fluent builder, the
-                // router constructor, plan-time validation — fails identically. Key-vs-candidate
-                // checks happen where the candidates are in hand: ModelRouter.Builder#build() for
-                // the fluent path, AgentPlan#validateRuleKeys for descriptor-built plans.
+                // here so every path that validates the declaration — the fluent builder and
+                // plan-time validation — fails identically. Key-vs-candidate checks happen where
+                // the candidates are in hand: ModelRouter.Builder#build() for the fluent path,
+                // AgentPlan#validateRuleKeys for descriptor-built plans.
                 validateRules(arguments.get(ARG_RULES));
                 break;
             default:

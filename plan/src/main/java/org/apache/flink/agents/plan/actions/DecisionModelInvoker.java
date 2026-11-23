@@ -94,7 +94,7 @@ public final class DecisionModelInvoker {
      * outcome; persistence and recovery errors escape, and cancellation propagates immediately.
      * Token metrics for a successful result land on {@code model_resource/<modelName>}; when {@code
      * recordRetryMetrics} is set, the retry counters do too (a caller that accumulates retry stats
-     * through {@link ChatModelAction#recordAttemptRetryStats} passes {@code false}).
+     * through {@link ChatRetryStats#recordAttempt} passes {@code false}).
      *
      * @param label what is being decided, for the retry log line
      */

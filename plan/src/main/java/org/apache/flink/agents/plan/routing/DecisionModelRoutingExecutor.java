@@ -31,8 +31,8 @@ import org.apache.flink.agents.api.decision.DecisionRequest;
 import org.apache.flink.agents.api.decision.DecisionResult;
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ChatModelInvoker;
+import org.apache.flink.agents.plan.actions.ChatRetryStats;
 import org.apache.flink.agents.plan.actions.DecisionModelInvoker;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 
@@ -157,7 +157,7 @@ final class DecisionModelRoutingExecutor implements RoutingExecutor {
                         false);
         // Retries count against the routed request, like the judge's: response-level totals and
         // the model_resource counters both come from this one call.
-        ChatModelAction.recordAttemptRetryStats(
+        ChatRetryStats.recordAttempt(
                 ctx, context.getRequestId(), decisionModel, result.retryCount, result.totalWaitMs);
         if (!result.isSuccess()) {
             throw new ModelRoutingResolver.RoutingFailure(
