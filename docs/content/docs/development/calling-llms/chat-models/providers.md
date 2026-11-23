@@ -76,10 +76,10 @@ request is sent.
 |---|---|
 | [Alibaba Cloud Model Studio (DashScope)](#alibaba-cloud-model-studio-dashscope) | Not supported |
 | [OpenAI Chat Completions](#multimodal-input), [Azure OpenAI](#azure-openai), [vLLM](#vllm) | Not supported |
-| [OpenAI Responses](#responses-api) | The media accepted in user messages, sent as `function_call_output` output items in block order. The tool result's error flag is not sent, because the API has no field for it. |
-| [Anthropic](#anthropic) | The media accepted in user messages, sent in the `tool_result` content in block order. |
+| [OpenAI Responses](#responses-api) | Images and documents by URL or Base64. No audio or video. |
+| [Anthropic](#anthropic) | JPEG/PNG/GIF/WebP images and PDF documents by URL or Base64; plain-text documents by Base64. |
 | [Ollama](#ollama) | Not supported |
-| [Gemini](#gemini) | The media accepted in user messages, sent as the `parts` of the `functionResponse` in block order, with the tool result's text in its `response`. Google documents media in function responses for Gemini 3 models. |
+| [Gemini](#gemini) | PNG/JPEG/WebP images and PDF or plain-text documents by URL or Base64. No audio or video. |
 | [Amazon Bedrock](#amazon-bedrock) | Not supported |
 | [IBM watsonx.ai](#watsonx-ibm-watsonxai) | Not supported |
 
@@ -640,14 +640,14 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
-**Multimodal input.** The media blocks of a user message are sent as Gemini parts, in block order, next to its text parts. The media blocks of a tool result are sent the same way, in block order, as the `parts` of its `functionResponse`; its text blocks are sent in the `response`:
+**Multimodal input.** The media blocks of a user message are sent as Gemini parts, in block order, next to its text parts. A tool result can carry PNG, JPEG or WebP images and PDF or plain-text documents, which needs a Gemini 3 or later model; they are sent the same way, in block order:
 
 | Block | Sent as |
 |---|---|
 | `TextBlock` | a `text` part |
 | `ImageBlock`, `AudioBlock`, `VideoBlock`, `DocumentBlock` | Base64 data as an `inlineData` part, or a URL as a `fileData` part with `fileUri`; both carry the block's media type as `mimeType` |
 
-The integration does not restrict media types or URLs: the model must accept the media type, and the endpoint must be able to fetch the URL, which differs between the Gemini Developer API and Vertex AI. Media in assistant messages raises `UnsupportedContentBlockException` before the request is sent.
+The integration does not restrict URLs, or media types in user messages: the model must accept the media type, and the endpoint must be able to fetch the URL, which differs between the Gemini Developer API and Vertex AI. Audio, video and other media types in tool results, and media in assistant messages, raise `UnsupportedContentBlockException` before the request is sent.
 
 #### Available Models
 

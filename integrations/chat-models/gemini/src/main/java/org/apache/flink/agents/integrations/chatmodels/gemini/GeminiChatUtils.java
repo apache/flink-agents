@@ -28,10 +28,13 @@ import com.google.genai.types.FunctionResponsePart;
 import com.google.genai.types.GenerateContentResponse;
 import com.google.genai.types.Part;
 import com.google.genai.types.Tool;
+import org.apache.flink.agents.api.chat.messages.AudioBlock;
 import org.apache.flink.agents.api.chat.messages.Base64Source;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ContentBlock;
 import org.apache.flink.agents.api.chat.messages.DataContentBlock;
+import org.apache.flink.agents.api.chat.messages.DocumentBlock;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MediaBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
@@ -40,6 +43,7 @@ import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.messages.UrlSource;
+import org.apache.flink.agents.api.chat.messages.VideoBlock;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 
 import java.util.ArrayList;
@@ -47,8 +51,10 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiFunction;
 
@@ -59,6 +65,14 @@ final class GeminiChatUtils {
 
     private static final String THOUGHT_SIGNATURE = "thought_signature";
     private static final String SYNTHETIC_ID = "synthetic_id";
+
+    /** The media types a tool result can carry, by block kind. */
+    private static final Map<Class<? extends MediaBlock>, Set<String>> TOOL_RESULT_MEDIA_TYPES =
+            Map.of(
+                    ImageBlock.class,
+                    Set.of("image/png", "image/jpeg", "image/webp"),
+                    DocumentBlock.class,
+                    Set.of("application/pdf", "text/plain"));
 
     private GeminiChatUtils() {}
 
@@ -167,11 +181,13 @@ final class GeminiChatUtils {
     }
 
     /**
-     * Converts a message to a Gemini turn. Only user messages and tool results can carry media:
-     * image, audio, video and document blocks become inline data (Base64) or file data (URL) with
-     * the block's media type. A tool result's media become the parts of its function response, in
-     * block order, and its text stays in the response's {@code result}. Media in an assistant
-     * message throws {@link UnsupportedContentBlockException}.
+     * Converts a message to a Gemini turn. Only user messages and tool results can carry media,
+     * which become inline data (Base64) or file data (URL) with the block's media type. A user
+     * message can carry image, audio, video and document blocks. A tool result can carry PNG, JPEG
+     * or WebP images and PDF or plain-text documents, which become the parts of its function
+     * response, in block order, and its text stays in the response's {@code result}. Other media in
+     * a tool result, and media in an assistant message, throw {@link
+     * UnsupportedContentBlockException}.
      */
     // Package-visible for unit testing of the message conversion.
     static Content convertToContent(ChatMessage message, Map<String, String> toolCallIdToName) {
@@ -180,6 +196,7 @@ final class GeminiChatUtils {
             List<FunctionResponsePart> media = new ArrayList<>();
             for (DataContentBlock block : result.getBlocks()) {
                 if (block instanceof MediaBlock) {
+                    requireToolResultMedia((MediaBlock) block);
                     media.add(
                             convertMedia(
                                     (MediaBlock) block,
@@ -235,6 +252,32 @@ final class GeminiChatUtils {
                 .role(message.getRole() == MessageRole.ASSISTANT ? "model" : "user")
                 .parts(parts)
                 .build();
+    }
+
+    /**
+     * Throws {@link UnsupportedContentBlockException} for media a tool result cannot carry, before
+     * its data is decoded. Media types are compared without parameters.
+     */
+    private static void requireToolResultMedia(MediaBlock block) {
+        if (block instanceof AudioBlock || block instanceof VideoBlock) {
+            throw UnsupportedContentBlockException.forBlock(
+                    "Gemini",
+                    block,
+                    "audio and video are accepted in user messages, not in tool results");
+        }
+        Set<String> accepted = TOOL_RESULT_MEDIA_TYPES.getOrDefault(block.getClass(), Set.of());
+        if (!accepted.contains(essence(block.getMediaType()))) {
+            throw UnsupportedContentBlockException.forBlock(
+                    "Gemini",
+                    block,
+                    "tool results accept only PNG, JPEG or WebP images and PDF or plain-text"
+                            + " documents");
+        }
+    }
+
+    /** The media type without parameters, lower-cased. */
+    private static String essence(String mediaType) {
+        return mediaType.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
     }
 
     /**

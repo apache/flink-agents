@@ -58,6 +58,11 @@ class GeminiMultimodalTest {
     private static final String BASE64 = "aGVsbG8="; // "hello"
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    private static final String AUDIO_VIDEO =
+            ": audio and video are accepted in user messages, not in tool results.";
+    private static final String OTHER_TYPE =
+            ": tool results accept only PNG, JPEG or WebP images and PDF or plain-text documents.";
+
     private static List<Part> parts(ChatMessage message) {
         Content content = GeminiChatUtils.convertToContent(message, Map.of());
         assertThat(content.role()).hasValue("user");
@@ -107,6 +112,12 @@ class GeminiMultimodalTest {
 
     private static Map<String, Object> fileData(String uri, String mimeType) {
         return Map.of("fileData", Map.of("fileUri", uri, "mimeType", mimeType));
+    }
+
+    private static void assertRejectedInToolResult(MediaBlock block, String message) {
+        assertThatThrownBy(() -> toolTurn(toolResult(false, TextBlock.of("see"), block)))
+                .isExactlyInstanceOf(UnsupportedContentBlockException.class)
+                .hasMessage(message);
     }
 
     @Test
@@ -208,26 +219,28 @@ class GeminiMultimodalTest {
     }
 
     @Test
-    @DisplayName("Media in a tool result goes into the function response's parts, in block order")
+    @DisplayName(
+            "Images and documents in a tool result go into the function response's parts, in block"
+                    + " order")
     void testToolResultMediaIsSentInOrder() {
         MediaBlock[] media = {
             ImageBlock.fromBase64("image/png", BASE64),
-            ImageBlock.fromUrl("image/png", URL),
-            AudioBlock.fromBase64("audio/wav", BASE64),
-            VideoBlock.fromUrl("video/mp4", "https://example.com/v"),
+            ImageBlock.fromUrl("image/jpeg", URL),
+            ImageBlock.fromBase64("image/webp", BASE64),
             DocumentBlock.fromBase64("application/pdf", BASE64),
-            DocumentBlock.fromUrl("application/pdf", "https://example.com/a.pdf")
+            DocumentBlock.fromUrl("application/pdf", "https://example.com/a.pdf"),
+            DocumentBlock.fromBase64("text/plain", BASE64)
         };
 
         Content content =
                 toolTurn(
                         toolResult(
                                 false,
-                                TextBlock.of("Chart:"),
+                                TextBlock.of("Charts:"),
                                 media[0],
                                 media[1],
                                 media[2],
-                                TextBlock.of("Clip:"),
+                                TextBlock.of("Reports:"),
                                 media[3],
                                 media[4],
                                 media[5],
@@ -237,14 +250,14 @@ class GeminiMultimodalTest {
                 .isEqualTo(
                         functionResponseTurn(
                                 "lookup",
-                                "Chart:Clip:Done.",
+                                "Charts:Reports:Done.",
                                 List.of(
                                         inlineData("image/png"),
-                                        fileData(URL, "image/png"),
-                                        inlineData("audio/wav"),
-                                        fileData("https://example.com/v", "video/mp4"),
+                                        fileData(URL, "image/jpeg"),
+                                        inlineData("image/webp"),
                                         inlineData("application/pdf"),
-                                        fileData("https://example.com/a.pdf", "application/pdf"))));
+                                        fileData("https://example.com/a.pdf", "application/pdf"),
+                                        inlineData("text/plain"))));
         // Each block is sent with the same values as in a user message.
         List<FunctionResponsePart> toolParts =
                 content.parts()
@@ -259,6 +272,99 @@ class GeminiMultimodalTest {
         for (int i = 0; i < media.length; i++) {
             assertThat(json(toolParts.get(i))).isEqualTo(json(userParts.get(i)));
         }
+    }
+
+    @Test
+    @DisplayName("Audio and video in a tool result fail, and still convert in a user message")
+    void testAudioAndVideoInToolResultFail() {
+        assertRejectedInToolResult(
+                AudioBlock.fromBase64("audio/wav", BASE64),
+                "Gemini cannot send an audio block (audio/wav, base64 source)" + AUDIO_VIDEO);
+        assertRejectedInToolResult(
+                AudioBlock.fromUrl("audio/mpeg", URL),
+                "Gemini cannot send an audio block (audio/mpeg, url source)" + AUDIO_VIDEO);
+        assertRejectedInToolResult(
+                VideoBlock.fromBase64("video/mp4", BASE64),
+                "Gemini cannot send a video block (video/mp4, base64 source)" + AUDIO_VIDEO);
+        assertRejectedInToolResult(
+                VideoBlock.fromUrl("video/mp4", URL),
+                "Gemini cannot send a video block (video/mp4, url source)" + AUDIO_VIDEO);
+
+        List<Part> userParts =
+                parts(
+                        ChatMessage.user(
+                                List.of(
+                                        AudioBlock.fromBase64("audio/wav", BASE64),
+                                        AudioBlock.fromUrl("audio/mpeg", URL),
+                                        VideoBlock.fromBase64("video/mp4", BASE64),
+                                        VideoBlock.fromUrl("video/mp4", URL))));
+        assertThat(userParts.stream().map(GeminiMultimodalTest::json))
+                .containsExactly(
+                        MAPPER.valueToTree(inlineData("audio/wav")),
+                        MAPPER.valueToTree(fileData(URL, "audio/mpeg")),
+                        MAPPER.valueToTree(inlineData("video/mp4")),
+                        MAPPER.valueToTree(fileData(URL, "video/mp4")));
+    }
+
+    @Test
+    @DisplayName("Other media types in a tool result fail, whatever the block kind")
+    void testOtherMediaTypesInToolResultFail() {
+        assertRejectedInToolResult(
+                ImageBlock.fromUrl("image/gif", URL),
+                "Gemini cannot send an image block (image/gif, url source)" + OTHER_TYPE);
+        assertRejectedInToolResult(
+                DocumentBlock.fromBase64("text/csv", BASE64),
+                "Gemini cannot send a document block (text/csv, base64 source)" + OTHER_TYPE);
+        assertRejectedInToolResult(
+                ImageBlock.fromBase64("application/pdf", BASE64),
+                "Gemini cannot send an image block (application/pdf, base64 source)" + OTHER_TYPE);
+        assertRejectedInToolResult(
+                DocumentBlock.fromUrl("image/png", URL),
+                "Gemini cannot send a document block (image/png, url source)" + OTHER_TYPE);
+    }
+
+    @Test
+    @DisplayName("Tool-result media types ignore parameters and case, and are sent as given")
+    void testToolResultMediaTypeParametersAreAccepted() {
+        assertThat(
+                        json(
+                                toolTurn(
+                                        toolResult(
+                                                false,
+                                                DocumentBlock.fromBase64(
+                                                        "text/plain; charset=utf-8", BASE64),
+                                                ImageBlock.fromUrl("IMAGE/PNG", URL)))))
+                .isEqualTo(
+                        functionResponseTurn(
+                                "lookup",
+                                "",
+                                List.of(
+                                        inlineData("text/plain; charset=utf-8"),
+                                        fileData(URL, "IMAGE/PNG"))));
+    }
+
+    @Test
+    @DisplayName("A rejected tool-result block fails before its data is decoded")
+    void testRejectedToolResultBlockIsNotDecoded() {
+        assertRejectedInToolResult(
+                AudioBlock.fromBase64("audio/wav", "not base64!"),
+                "Gemini cannot send an audio block (audio/wav, base64 source)" + AUDIO_VIDEO);
+    }
+
+    @Test
+    @DisplayName("One rejected block fails the whole tool result")
+    void testOneRejectedBlockFailsTheWholeToolResult() {
+        assertThatThrownBy(
+                        () ->
+                                toolTurn(
+                                        toolResult(
+                                                false,
+                                                ImageBlock.fromBase64("image/png", BASE64),
+                                                TextBlock.of("and"),
+                                                AudioBlock.fromUrl("audio/wav", URL))))
+                .isExactlyInstanceOf(UnsupportedContentBlockException.class)
+                .hasMessage(
+                        "Gemini cannot send an audio block (audio/wav, url source)" + AUDIO_VIDEO);
     }
 
     @Test
@@ -357,6 +463,11 @@ class GeminiMultimodalTest {
                         ChatMessage.assistant(
                                 List.of(new ToolCallBlock("call-1", "lookup", Map.of()))),
                         toolResult(false, ImageBlock.fromBase64("image/png", "not base64!")));
+        List<ChatMessage> audioToolResult =
+                List.of(
+                        ChatMessage.assistant(
+                                List.of(new ToolCallBlock("call-1", "lookup", Map.of()))),
+                        toolResult(false, AudioBlock.fromBase64("audio/wav", BASE64)));
 
         assertThatThrownBy(() -> connection.chat(List.of(assistant), List.of(), Map.of()))
                 .isExactlyInstanceOf(UnsupportedContentBlockException.class);
@@ -364,5 +475,7 @@ class GeminiMultimodalTest {
                 .isExactlyInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> connection.chat(malformedToolResult, List.of(), Map.of()))
                 .isExactlyInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> connection.chat(audioToolResult, List.of(), Map.of()))
+                .isExactlyInstanceOf(UnsupportedContentBlockException.class);
     }
 }
