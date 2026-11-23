@@ -21,6 +21,7 @@ import multiprocessing
 import runpy
 import time
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from pathlib import Path
 from typing import AsyncIterator
 from unittest.mock import patch
@@ -132,7 +133,7 @@ def test_serialize_mcp_server() -> None:
     mcp_server = MCPServer(
         endpoint="http://localhost:8080",
         auth=oauth_auth,
-        timeout=5,
+        timeout=timedelta(seconds=5),
     )
     data = mcp_server.model_dump_json(serialize_as_any=True)
 
@@ -297,3 +298,27 @@ def test_mcp_resource_result_converts_to_tool_response(
     else:
         expected = content_item.model_dump(mode="json")
     assert result == [expected]
+
+
+@pytest.mark.parametrize(
+    "value", [timedelta(microseconds=1500), "1500 us", "PT0.0015S", 1500]
+)
+def test_duration_timeouts(value: object) -> None:
+    server = MCPServer(
+        endpoint="https://example.com/mcp", timeout=value, sse_read_timeout=value
+    )
+    restored = MCPServer.model_validate_json(server.model_dump_json())
+    expected = (
+        timedelta(milliseconds=1500)
+        if isinstance(value, int)
+        else timedelta(microseconds=1500)
+    )
+    assert restored.timeout == expected
+    assert restored.sse_read_timeout == expected
+
+
+@pytest.mark.parametrize("value", [0, "-1 ms", "1 ns", "invalid", None])
+@pytest.mark.parametrize("name", ["timeout", "sse_read_timeout"])
+def test_invalid_duration_timeout(name: str, value: object) -> None:
+    with pytest.raises(ValueError, match=name):
+        MCPServer(endpoint="https://example.com/mcp", **{name: value})

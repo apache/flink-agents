@@ -67,7 +67,7 @@ class MCPSerializationTest {
         MCPServer deserialized = mapper.readValue(json, MCPServer.class);
 
         assertThat(deserialized.getEndpoint()).isEqualTo(original.getEndpoint());
-        assertThat(deserialized.getTimeoutSeconds()).isEqualTo(original.getTimeoutSeconds());
+        assertThat(deserialized.getTimeout()).isEqualTo(original.getTimeout());
         assertThat(deserialized.getHeaders()).isEqualTo(original.getHeaders());
     }
 

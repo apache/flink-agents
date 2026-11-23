@@ -45,6 +45,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -631,7 +632,7 @@ public class AgentPlanTest {
         public static ResourceDescriptor testMcpServer() {
             return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                     .addInitialArgument("endpoint", "http://127.0.0.1:8000/mcp")
-                    .addInitialArgument("timeout", 30)
+                    .addInitialArgument("timeout", Duration.ofSeconds(30))
                     .build();
         }
     }

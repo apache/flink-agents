@@ -40,6 +40,7 @@ import org.junit.jupiter.api.condition.JRE;
 import java.io.File;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -77,7 +78,7 @@ class AgentPlanDeclareMCPServerTest {
         public static ResourceDescriptor testMcpServer() {
             return ResourceDescriptor.Builder.newBuilder(ResourceName.MCP_SERVER)
                     .addInitialArgument("endpoint", MCP_ENDPOINT)
-                    .addInitialArgument("timeout", 30)
+                    .addInitialArgument("timeout", Duration.ofSeconds(30))
                     .build();
         }
 

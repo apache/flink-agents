@@ -22,6 +22,7 @@ calls and check what happens at startup: discovery and registration, closing,
 name checks, and a failed start when the server cannot be reached.
 """
 
+from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
@@ -316,10 +317,15 @@ def test_real_startup_timeout_without_a_json_rpc_response() -> None:
     thread.start()
     try:
         agent = Agent()
-        agent.add_resource("remote", ResourceType.MCP_SERVER, ResourceDescriptor(
-            clazz="flink_agents.integrations.mcp.mcp.MCPServer",
-            endpoint=f"http://127.0.0.1:{server.server_port}/mcp", timeout=1,
-        ))
+        agent.add_resource(
+            "remote",
+            ResourceType.MCP_SERVER,
+            ResourceDescriptor(
+                clazz="flink_agents.integrations.mcp.mcp.MCPServer",
+                endpoint=f"http://127.0.0.1:{server.server_port}/mcp",
+                timeout=timedelta(seconds=1),
+            ),
+        )
         plan = AgentPlan.from_agent(agent, AgentConfiguration())
         start = monotonic()
         with pytest.raises(RuntimeError, match="MCP server 'remote'"):
