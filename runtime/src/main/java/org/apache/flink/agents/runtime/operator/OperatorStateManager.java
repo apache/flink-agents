@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.api.common.serialization.SerializerConfig;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapState;
@@ -34,6 +35,7 @@ import org.apache.flink.api.common.state.StateTtlConfig;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.state.KeyGroupRange;
 import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
 import org.apache.flink.runtime.state.KeyedStateBackend;
@@ -207,16 +209,27 @@ class OperatorStateManager {
      * method (after {@code super.open()} and after the keyed-state setup).
      *
      * @param operatorStateBackend the operator state backend used to obtain operator state.
+     * @param serializerConfig the job's serializer configuration.
+     * @param keySerializer the serializer used by the keyed state backend for input keys.
      */
-    void initializeOperatorStates(OperatorStateBackend operatorStateBackend) throws Exception {
+    void initializeOperatorStates(
+            OperatorStateBackend operatorStateBackend,
+            SerializerConfig serializerConfig,
+            TypeSerializer<Object> keySerializer)
+            throws Exception {
         // We use UnionList here to ensure that the task can access all keys after parallelism
         // modifications.
         // Subsequent steps {@link #tryResumeProcessActionTasks} will then filter out keys that do
         // not belong to the key range of current task.
+        // Keep the legacy state representation for jobs with generic types enabled.
+        ListStateDescriptor<Object> processingKeysDescriptor =
+                serializerConfig.hasGenericTypesDisabled()
+                        ? new ListStateDescriptor<>(
+                                "currentProcessingKeys", keySerializer.duplicate())
+                        : new ListStateDescriptor<>(
+                                "currentProcessingKeys", TypeInformation.of(Object.class));
         currentProcessingKeysOpState =
-                operatorStateBackend.getUnionListState(
-                        new ListStateDescriptor<>(
-                                "currentProcessingKeys", TypeInformation.of(Object.class)));
+                operatorStateBackend.getUnionListState(processingKeysDescriptor);
     }
 
     /**
