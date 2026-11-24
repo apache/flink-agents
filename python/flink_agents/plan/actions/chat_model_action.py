@@ -836,7 +836,7 @@ async def chat(
     The extra call belongs to the same attempt, so its failures, and a failure to
     parse its response, consume the same retry budget.
     """
-    reason = budget_utils.try_start_turn(ctx.sensory_memory, initial_request_id)
+    reason = budget_utils.try_start_turn(ctx, initial_request_id)
     if _handle_hard_limit_exceeded(initial_request_id, reason, ctx, user_context):
         return
     try:
@@ -998,7 +998,7 @@ async def _process_tool_response(event: ToolResponseEvent, ctx: RunnerContext) -
         ],
     )
 
-    reason = budget_utils.try_start_turn(sensory_memory, initial_request_id)
+    reason = budget_utils.try_start_turn(ctx, initial_request_id)
     if _handle_hard_limit_exceeded(
         initial_request_id, reason, ctx, tool_request_event_context.get(_USER_CONTEXT)
     ):

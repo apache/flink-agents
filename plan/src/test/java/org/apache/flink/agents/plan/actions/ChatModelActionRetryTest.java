@@ -350,7 +350,9 @@ class ChatModelActionRetryTest {
                     .thenAnswer(
                             inv ->
                                     ReActLoopBudgetUtils.tryStartTurn(
-                                            inv.getArgument(0), inv.getArgument(1), now.get()));
+                                            ((RunnerContext) inv.getArgument(0)).getSensoryMemory(),
+                                            inv.getArgument(1),
+                                            now.get()));
             ChatModelAction.chat(
                     id,
                     "test-model",

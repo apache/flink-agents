@@ -34,6 +34,9 @@ _TURN_BUDGET_EXCEEDED = "TURN_BUDGET_EXCEEDED"
 _TIME_BUDGET_EXCEEDED = "TIME_BUDGET_EXCEEDED"
 _TOKEN_BUDGET_EXCEEDED = "TOKEN_BUDGET_EXCEEDED"
 
+_BUDGET_START_CALL_ID = "react-loop:budget-start"
+_BUDGET_ADMISSION_CALL_ID = "react-loop:budget-admission"
+
 _TURNS_LEFT = "turns_left"
 _TOKENS_LEFT = "tokens_left"
 _MAX_TIME_MS = "max_time_ms"
@@ -42,8 +45,8 @@ _MODE = "mode"
 _logger = logging.getLogger(__name__)
 
 
-def _budget_start_time_ms() -> int:
-    """Return a replayable loop start time before the first model call."""
+def _current_time_ms() -> int:
+    """Return the wall-clock time to record in the durable call log."""
     return time.time_ns() // 1_000_000
 
 
@@ -60,7 +63,7 @@ def initialize(ctx: RunnerContext, event: ChatRequestEvent) -> None:
     if limits.max_time is not None:
         budget_state[_MAX_TIME_MS] = limits.max_time // timedelta(milliseconds=1)
         budget_state[_STARTED_AT_MS] = ctx.durable_execute(
-            _budget_start_time_ms, durable_id="react-loop:budget-start"
+            _current_time_ms, durable_id=_BUDGET_START_CALL_ID
         )
     if budget_state:
         budget_state[_MODE] = limits.mode.value
@@ -106,10 +109,23 @@ def is_soft_limit(memory: MemoryObject, request_id: UUID) -> bool:
     return budget_state is not None and budget_state[_MODE] == BudgetMode.SOFT.value
 
 
-def try_start_turn(
+def try_start_turn(ctx: RunnerContext, request_id: UUID) -> str | None:
+    """Replay the same time-budget admission when resuming an unfinished turn."""
+    state = get_budget_state(ctx.sensory_memory, request_id)
+    if state is None:
+        return None
+    now = (
+        ctx.durable_execute(_current_time_ms, durable_id=_BUDGET_ADMISSION_CALL_ID)
+        if _MAX_TIME_MS in state
+        else 0
+    )
+    return _try_start_turn(ctx.sensory_memory, request_id, now)
+
+
+def _try_start_turn(
     memory: MemoryObject,
     request_id: UUID,
-    now_millis: int | None = None,
+    now_millis: int,
 ) -> str | None:
     """Check all limits and consume one turn when ordinary inference may start."""
     budget_state = get_budget_state(memory, request_id)
@@ -117,8 +133,6 @@ def try_start_turn(
         return None
     max_time_ms = budget_state.get(_MAX_TIME_MS)
     if max_time_ms is not None:
-        if now_millis is None:
-            now_millis = time.time_ns() // 1_000_000
         elapsed = max(0, now_millis - budget_state[_STARTED_AT_MS])
         if elapsed >= max_time_ms:
             return _TIME_BUDGET_EXCEEDED

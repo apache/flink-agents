@@ -1717,7 +1717,9 @@ public class ChatModelActionRoutingTest {
         ChatModelAction.processChatRequestOrToolResponse(request, ctx);
         assertThat(judge.callCount).isZero();
         assertThat(target.callCount).isZero();
-        assertThat(ctx.durableCallIds).isEmpty();
+        if (limit.equals("TIME"))
+            assertThat(ctx.durableCallIds).containsExactly("react-loop:budget-admission");
+        else assertThat(ctx.durableCallIds).isEmpty();
         assertThat(ctx.sentEvents).hasSize(1);
         assertThat(ctx.chatResponse().getError()).contains(limit + "_BUDGET_EXCEEDED");
         assertThat(ReActLoopBudgetUtils.getBudgetState(ctx.getSensoryMemory(), request.getId()))

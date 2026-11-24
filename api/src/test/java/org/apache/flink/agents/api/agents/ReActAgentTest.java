@@ -71,6 +71,56 @@ import static org.mockito.Mockito.when;
 
 public class ReActAgentTest {
     @Test
+    void builderConfiguresBudgetAndOptionalArgumentsWithoutAmbiguousNulls() {
+        var budget = ReActLoopBudget.builder().maxTurns(2).build();
+        var agent =
+                ReActAgent.builder()
+                        .chatModel(chatModelDescriptor())
+                        .prompt(Prompt.fromText("Task: {input}"))
+                        .outputSchema(WithCount.class)
+                        .skillNames(null)
+                        .skills(null)
+                        .budget(budget)
+                        .build();
+        assertThat(agent.getActions().get("startAction").f2)
+                .containsEntry("budget", budget)
+                .containsEntry("has_user_prompt", true)
+                .containsEntry("output_schema", WithCount.class);
+        assertThat(
+                        ReActAgent.builder()
+                                .chatModel(chatModelDescriptor())
+                                .build()
+                                .getActions()
+                                .get("startAction")
+                                .f2)
+                .isEmpty();
+        assertThatThrownBy(() -> ReActAgent.builder().build())
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("chatModel");
+    }
+
+    @Test
+    void builderCombinesSkillNamesAndSourcesWithoutChangingTheDescriptor() {
+        var model = descriptor(Map.of("skills", List.of("a")));
+        var names = new ArrayList<>(List.of("b"));
+        var skills = Skills.fromLocalDir("/tmp/builder-skills");
+        var builder = ReActAgent.builder().chatModel(model).skillNames(names).skills(skills);
+        names.add("not-copied");
+        var agent = builder.build();
+        var configured =
+                (ResourceDescriptor)
+                        agent.getResources()
+                                .get(ResourceType.CHAT_MODEL)
+                                .get("_default_chat_model");
+        assertThat(configured.getInitialArguments().get("skills")).isEqualTo(List.of("a", "b"));
+        assertThat(model.getInitialArguments().get("skills")).isEqualTo(List.of("a"));
+        assertThat(configured.getInitialArguments().get("skills_sources"))
+                .isEqualTo(skills.getSources());
+        assertThat(agent.getResources().get(ResourceType.SKILLS).get("_react_agent_skills"))
+                .isSameAs(skills);
+    }
+
+    @Test
     public void testOutputSchemaSerialization() throws JsonProcessingException {
         ObjectMapper mapper = new ObjectMapper();
         RowTypeInfo typeInfo =

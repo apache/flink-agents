@@ -517,7 +517,14 @@ def test_hard_budget_stops_before_routing(reason, state):
     budget_utils.save_budget_state(memory, request_id, dict(state, mode="HARD"))
     run(ctx, request_id=request_id)
     assert Select.calls == 0
-    ctx.durable_execute.assert_not_called()
+    if reason == "TIME_BUDGET_EXCEEDED":
+        assert ctx.durable_execute.call_count == 1
+        assert (
+            ctx.durable_execute.call_args.kwargs["durable_id"]
+            == "react-loop:budget-admission"
+        )
+    else:
+        ctx.durable_execute.assert_not_called()
     assert len(events) == 1
     assert reason in events[0].error
     assert not memory.get("_LOOP_BUDGET_CONTEXT")

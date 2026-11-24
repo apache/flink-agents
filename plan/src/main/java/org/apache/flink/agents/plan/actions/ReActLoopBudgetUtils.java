@@ -44,6 +44,9 @@ final class ReActLoopBudgetUtils {
     private static final String TIME_BUDGET_EXCEEDED = "TIME_BUDGET_EXCEEDED";
     private static final String TOKEN_BUDGET_EXCEEDED = "TOKEN_BUDGET_EXCEEDED";
 
+    private static final String BUDGET_START_CALL_ID = "react-loop:budget-start";
+    private static final String BUDGET_ADMISSION_CALL_ID = "react-loop:budget-admission";
+
     private static final String TURNS_LEFT = "turns_left";
     private static final String TOKENS_LEFT = "tokens_left";
     private static final String MAX_TIME_MS = "max_time_ms";
@@ -59,7 +62,7 @@ final class ReActLoopBudgetUtils {
         if (limits.getMaxTokens() != null) budgetState.put(TOKENS_LEFT, limits.getMaxTokens());
         if (limits.getMaxTime() != null) {
             budgetState.put(MAX_TIME_MS, limits.getMaxTime().toMillis());
-            budgetState.put(STARTED_AT_MS, initializeStartTime(ctx));
+            budgetState.put(STARTED_AT_MS, durableCurrentTimeMillis(ctx, BUDGET_START_CALL_ID));
         }
         if (budgetState.isEmpty()) return;
         budgetState.put(MODE, limits.getMode().name());
@@ -78,13 +81,18 @@ final class ReActLoopBudgetUtils {
                 .build();
     }
 
-    private static long initializeStartTime(RunnerContext ctx) throws Exception {
+    static long currentTimeMillis() {
+        return System.currentTimeMillis();
+    }
+
+    private static long durableCurrentTimeMillis(RunnerContext ctx, String callId)
+            throws Exception {
         // Persist before any routing or model call, independently of action completion.
         return ctx.durableExecute(
                 new DurableCallable<Long>() {
                     @Override
                     public String getId() {
-                        return "react-loop:budget-start";
+                        return callId;
                     }
 
                     @Override
@@ -94,7 +102,7 @@ final class ReActLoopBudgetUtils {
 
                     @Override
                     public Long call() {
-                        return System.currentTimeMillis();
+                        return currentTimeMillis();
                     }
                 });
     }
@@ -125,8 +133,15 @@ final class ReActLoopBudgetUtils {
     }
 
     /** Checks all limits and consumes one turn only when ordinary inference may start. */
-    static String tryStartTurn(MemoryObject memory, UUID requestId) throws Exception {
-        return tryStartTurn(memory, requestId, System.currentTimeMillis());
+    static String tryStartTurn(RunnerContext ctx, UUID requestId) throws Exception {
+        MemoryObject memory = ctx.getSensoryMemory();
+        Map<String, Object> state = getBudgetState(memory, requestId);
+        if (state == null) return null;
+        long now =
+                state.containsKey(MAX_TIME_MS)
+                        ? durableCurrentTimeMillis(ctx, BUDGET_ADMISSION_CALL_ID)
+                        : 0L;
+        return tryStartTurn(memory, requestId, now);
     }
 
     static String tryStartTurn(MemoryObject memory, UUID requestId, long nowMillis)

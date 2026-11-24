@@ -35,12 +35,17 @@ import org.apache.flink.agents.plan.routing.ModelRouter;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
+import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
+import org.apache.flink.agents.runtime.async.ContinuationContext;
+import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.IsolatedCachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.MockedStatic;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -48,16 +53,22 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -70,10 +81,18 @@ class ReActLoopBudgetRecoveryTest {
     private final List<Event> events = new ArrayList<>();
     private final List<Map<String, Object>> chargedStates = new ArrayList<>();
     private byte[] persisted;
+    private ContinuationActionExecutor executor;
+
+    @AfterEach
+    void closeExecutor() {
+        if (executor != null) {
+            Thread.interrupted();
+            executor.close();
+        }
+    }
 
     private static final class Crash extends Error {}
 
-    @SuppressWarnings("unchecked")
     private RunnerContextImpl context(
             ActionState journal, Map<String, Object> state, boolean crashAfterPersistence)
             throws Exception {
@@ -81,6 +100,17 @@ class ReActLoopBudgetRecoveryTest {
         plan.getConfig().set(AgentExecutionOptions.CHAT_ASYNC, false);
         plan.getConfig().set(AgentExecutionOptions.MAX_RETRIES, 0);
         RunnerContextImpl ctx = spy(new RunnerContextImpl(null, () -> {}, plan, null, "test"));
+        configureContext(ctx, journal, state, crashAfterPersistence);
+        return ctx;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void configureContext(
+            RunnerContextImpl ctx,
+            ActionState journal,
+            Map<String, Object> state,
+            boolean crashAfterPersistence)
+            throws Exception {
         MemoryObject memory =
                 spy(
                         new MemoryObjectImpl(
@@ -122,9 +152,12 @@ class ReActLoopBudgetRecoveryTest {
                         journal,
                         (key, seq, action, event, saved) -> {
                             persisted = ActionStateSerde.serialize(saved);
-                            if (crashAfterPersistence) throw new Crash();
+                            if (crashAfterPersistence
+                                    && !saved.getCallResult(saved.getCallResultCount() - 1)
+                                            .getFunctionId()
+                                            .equals("react-loop:budget-admission"))
+                                throw new Crash();
                         }));
-        return ctx;
     }
 
     private void run(RunnerContextImpl ctx) throws Exception {
@@ -152,47 +185,51 @@ class ReActLoopBudgetRecoveryTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"SOFT", "HARD"})
-    void ordinaryResultIsNotReusedAfterTimeExpires(String mode) throws Exception {
+    void admittedResultIsReplayedAfterDeadline(String mode) throws Exception {
         when(model.chat(any(), any(), any()))
                 .thenReturn(new ChatResult(ChatMessage.assistant("ordinary")));
-        when(model.chat(any(), eq(List.of()), any(), any()))
-                .thenReturn(new ChatResult(ChatMessage.assistant("closing")));
-        assertThatThrownBy(() -> run(context(new ActionState(null), state(false, mode), true)))
-                .isInstanceOf(Crash.class);
-        ActionState recovered = ActionStateSerde.deserialize(persisted);
-        // A later conversion result must also be discarded on a branch mismatch.
-        recovered.addCallResult(new CallResult("stale:final", new byte[] {1}));
-        run(context(recovered, state(true, mode), false));
-        verify(model, times(1)).chat(any(), any(), any());
-        verify(model, times(mode.equals("SOFT") ? 1 : 0)).chat(any(), eq(List.of()), any(), any());
-        assertThat(events).hasSize(1);
-        ChatResponseEvent response = ChatResponseEvent.fromEvent(events.get(0));
-        assertThat(response.isFailed()).isEqualTo(mode.equals("HARD"));
-        if (mode.equals("SOFT")) {
-            assertThat(response.getResponse().getText()).isEqualTo("closing");
-            assertThat(recovered.getCallResults()).hasSize(1);
-            assertThat(recovered.getCallResult(0).getFunctionId()).endsWith(":final");
-        } else assertThat(response.getError()).contains("TIME_BUDGET_EXCEEDED");
+        AtomicLong now = new AtomicLong(1500L);
+        try (MockedStatic<ReActLoopBudgetUtils> mocked =
+                mockStatic(ReActLoopBudgetUtils.class, CALLS_REAL_METHODS)) {
+            mocked.when(ReActLoopBudgetUtils::currentTimeMillis).thenAnswer(inv -> now.get());
+            Map<String, Object> initial = state(false, mode);
+            initial.put("max_time_ms", 1000L);
+            initial.put("started_at_ms", 1000L);
+            RunnerContextImpl original = context(new ActionState(null), initial, true);
+            assertThatThrownBy(() -> run(original)).isInstanceOf(Crash.class);
+            now.set(2500L);
+            ActionState journal = ActionStateSerde.deserialize(persisted);
+            RunnerContextImpl restored = context(journal, initial, false);
+            run(restored);
+            verify(model, times(1)).chat(any(), any(), any());
+            assertThat(ChatResponseEvent.fromEvent(events.get(0)).getResponse().getText())
+                    .isEqualTo("ordinary");
+            assertThat(journal.getCallResults())
+                    .extracting(CallResult::getFunctionId)
+                    .containsExactly("react-loop:budget-admission", "chat");
+            // A new action has no recorded admission and must observe the elapsed deadline.
+            assertThat(
+                            ReActLoopBudgetUtils.tryStartTurn(
+                                    context(new ActionState(null), initial, false), requestId))
+                    .isEqualTo("TIME_BUDGET_EXCEEDED");
+        }
     }
 
     @Test
-    void closingResultIsNotReusedWhenRecoveredStateAdmitsOrdinaryInference() throws Exception {
+    void closingResultIsReplayedWithItsAdmission() throws Exception {
         when(model.chat(any(), eq(List.of()), any(), any()))
                 .thenReturn(new ChatResult(ChatMessage.assistant("closing")));
-        when(model.chat(any(), any(), any()))
-                .thenReturn(new ChatResult(ChatMessage.assistant("ordinary")));
-        assertThatThrownBy(() -> run(context(new ActionState(null), state(true, "SOFT"), true)))
+        Map<String, Object> initial = state(true, "SOFT");
+        assertThatThrownBy(() -> run(context(new ActionState(null), initial, true)))
                 .isInstanceOf(Crash.class);
-        ActionState recovered = ActionStateSerde.deserialize(persisted);
-        recovered.addCallResult(new CallResult("stale:final", new byte[] {1}));
-        run(context(recovered, state(false, "SOFT"), false));
+        ActionState journal = ActionStateSerde.deserialize(persisted);
+        run(context(journal, initial, false));
         verify(model, times(1)).chat(any(), eq(List.of()), any(), any());
-        verify(model, times(1)).chat(any(), any(), any());
-        assertThat(events).hasSize(1);
         assertThat(ChatResponseEvent.fromEvent(events.get(0)).getResponse().getText())
-                .isEqualTo("ordinary");
-        assertThat(recovered.getCallResults()).hasSize(1);
-        assertThat(recovered.getCallResult(0).getFunctionId()).doesNotContain("budget-final");
+                .isEqualTo("closing");
+        assertThat(journal.getCallResults())
+                .extracting(CallResult::getFunctionId)
+                .containsExactly("react-loop:budget-admission", "chat:final");
     }
 
     @Test
@@ -218,7 +255,7 @@ class ReActLoopBudgetRecoveryTest {
     }
 
     @ParameterizedTest
-    @ValueSource(ints = {1, 2, 3})
+    @ValueSource(ints = {1, 2, 3, 4})
     void routedRecoveryRebuildsJudgeAndTargetUsageOnce(int crashAt) throws Exception {
         BaseChatModelSetup judge = mock(BaseChatModelSetup.class);
         when(judge.chat(any(), any(), any()))
@@ -296,7 +333,11 @@ class ReActLoopBudgetRecoveryTest {
         assertThat(balance.get("tokens_left")).isEqualTo(3L);
         assertThat(recoveredJournal.getCallResults())
                 .extracting(CallResult::getFunctionId)
-                .containsExactly("judge:router", "route:router", "chat:router:target");
+                .containsExactly(
+                        "react-loop:budget-admission",
+                        "judge:router",
+                        "route:router",
+                        "chat:router:target");
         assertThat(events.stream().filter(ChatResponseEvent.class::isInstance)).hasSize(1);
         ChatResponseEvent response =
                 (ChatResponseEvent)
@@ -315,7 +356,7 @@ class ReActLoopBudgetRecoveryTest {
     }
 
     @ParameterizedTest
-    @ValueSource(ints = {1, 2})
+    @ValueSource(ints = {1, 2, 3})
     void firstActionRestoresStartBeforeAdmission(int crashAfter) throws Exception {
         when(model.chat(any(), any(), any()))
                 .thenReturn(new ChatResult(ChatMessage.assistant("done")));
@@ -354,8 +395,10 @@ class ReActLoopBudgetRecoveryTest {
         ChatModelAction.processChatRequestOrToolResponse(request, recovered);
         assertThat(events).hasSize(1);
         assertThat(events.get(0)).isInstanceOf(ChatResponseEvent.class);
-        assertThat(((ChatResponseEvent) events.get(0)).getError()).contains("TIME_BUDGET_EXCEEDED");
-        verify(model, times(crashAfter - 1)).chat(any(), any(), any());
+        ChatResponseEvent response = (ChatResponseEvent) events.get(0);
+        if (crashAfter == 1) assertThat(response.getError()).contains("TIME_BUDGET_EXCEEDED");
+        else assertThat(response.getResponse().getText()).isEqualTo("done");
+        verify(model, times(crashAfter == 1 ? 0 : 1)).chat(any(), any(), any());
     }
 
     @Test
@@ -417,5 +460,78 @@ class ReActLoopBudgetRecoveryTest {
         else
             assertThat(((Number) restored.get("started_at_ms")).longValue())
                     .isBetween(before, System.currentTimeMillis());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"SOFT", "HARD"})
+    void admittedAsyncResultIsReplayedAfterDeadline(String mode) throws Exception {
+        assumeTrue(Runtime.version().feature() >= 21, "async recovery needs JDK 21+");
+        assertThat(ContinuationActionExecutor.isContinuationSupported()).isTrue();
+        executor = new ContinuationActionExecutor(1);
+        AtomicReference<Thread> providerThread = new AtomicReference<>();
+        when(model.chat(any(), any(), any()))
+                .thenAnswer(
+                        inv -> {
+                            providerThread.set(Thread.currentThread());
+                            return new ChatResult(ChatMessage.assistant("ordinary"));
+                        });
+        Map<String, Object> initial =
+                Map.of("max_time_ms", 1000L, "started_at_ms", 1000L, "mode", mode);
+        AtomicLong now = new AtomicLong(1500L);
+        try (MockedStatic<ReActLoopBudgetUtils> mocked =
+                mockStatic(ReActLoopBudgetUtils.class, CALLS_REAL_METHODS)) {
+            mocked.when(ReActLoopBudgetUtils::currentTimeMillis).thenAnswer(inv -> now.get());
+            JavaRunnerContextImpl original = asyncContext(new ActionState(null), initial, true);
+            assertThatThrownBy(() -> runAsync(original)).isInstanceOf(Crash.class);
+            assertThat(providerThread.get()).isNotNull().isNotSameAs(Thread.currentThread());
+            assertThat(events).isEmpty();
+
+            now.set(2500L);
+            ActionState journal = ActionStateSerde.deserialize(persisted);
+            runAsync(asyncContext(journal, initial, false));
+            verify(model, times(1)).chat(any(), any(), any());
+            assertThat(events).hasSize(1);
+            assertThat(ChatResponseEvent.fromEvent(events.get(0)).getResponse().getText())
+                    .isEqualTo("ordinary");
+            assertThat(journal.getCallResults())
+                    .extracting(CallResult::getFunctionId)
+                    .containsExactly("react-loop:budget-admission", "chat");
+            assertThat(
+                            ReActLoopBudgetUtils.tryStartTurn(
+                                    asyncContext(new ActionState(null), initial, false), requestId))
+                    .isEqualTo("TIME_BUDGET_EXCEEDED");
+        }
+    }
+
+    private JavaRunnerContextImpl asyncContext(
+            ActionState journal, Map<String, Object> state, boolean crashAfterPersistence)
+            throws Exception {
+        AgentPlan plan = new AgentPlan(new Agent());
+        plan.getConfig().set(AgentExecutionOptions.CHAT_ASYNC, true);
+        plan.getConfig().set(AgentExecutionOptions.MAX_RETRIES, 0);
+        JavaRunnerContextImpl ctx =
+                spy(new JavaRunnerContextImpl(null, () -> {}, plan, null, "test", executor));
+        ctx.setContinuationContext(new ContinuationContext());
+        configureContext(ctx, journal, state, crashAfterPersistence);
+        return ctx;
+    }
+
+    private void runAsync(JavaRunnerContextImpl ctx) throws Exception {
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Runnable action =
+                () -> {
+                    try {
+                        run(ctx);
+                    } catch (Exception | Error error) {
+                        failure.set(error);
+                    }
+                };
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!executor.executeAction(ctx.getContinuationContext(), action)) {
+            assertThat(System.nanoTime()).isLessThan(deadline);
+            Thread.yield();
+        }
+        if (failure.get() instanceof Error) throw (Error) failure.get();
+        if (failure.get() != null) throw (Exception) failure.get();
     }
 }

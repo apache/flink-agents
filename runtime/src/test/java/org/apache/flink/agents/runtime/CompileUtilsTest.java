@@ -54,6 +54,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -215,6 +216,55 @@ public class CompileUtilsTest {
         KeyedStream<Row, Row> input = pickledPythonInput();
 
         assertThat(CompileUtils.connectToAgent(input, json)).isNotNull();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "max-turns,0", "max-turns,-1", "max-tokens,0", "max-tokens,-1",
+        "max-time,0 ms", "max-time,-1 ms", "max-time,1 us", "mode,unknown"
+    })
+    void rejectsInvalidBudgetDefaultsBeforeConnectingJavaOrPython(String option, String value)
+            throws Exception {
+        AgentConfiguration config =
+                new AgentConfiguration(Map.of("react-loop.budget." + option, value));
+        AgentPlan plan =
+                new AgentPlan(
+                        TEST_AGENT_PLAN.getActions(),
+                        TEST_AGENT_PLAN.getResourceProviders(),
+                        config);
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        assertThatThrownBy(() -> CompileUtils.connectToAgent(env.fromData(1L).keyBy(v -> v), plan))
+                .isInstanceOf(IllegalArgumentException.class);
+        String json = new ObjectMapper().writeValueAsString(plan);
+        KeyedStream<Row, Row> input = pickledPythonInput();
+        assertThatThrownBy(() -> CompileUtils.connectToAgent(input, json))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void acceptsBudgetDefaultsBeforeConnectingJavaOrPython() throws Exception {
+        AgentConfiguration config =
+                new AgentConfiguration(
+                        Map.of(
+                                "react-loop.budget.max-turns",
+                                "2",
+                                "react-loop.budget.max-tokens",
+                                "20",
+                                "react-loop.budget.max-time",
+                                "60 s",
+                                "react-loop.budget.mode",
+                                "hard"));
+        AgentPlan plan =
+                new AgentPlan(
+                        TEST_AGENT_PLAN.getActions(),
+                        TEST_AGENT_PLAN.getResourceProviders(),
+                        config);
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        assertThat(CompileUtils.connectToAgent(env.fromData(1L).keyBy(v -> v), plan)).isNotNull();
+        assertThat(
+                        CompileUtils.connectToAgent(
+                                pickledPythonInput(), new ObjectMapper().writeValueAsString(plan)))
+                .isNotNull();
     }
 
     /**

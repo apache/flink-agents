@@ -1973,7 +1973,7 @@ def test_exhausted_budget_does_not_consume_turn(reason: str) -> None:
     budget_utils.save_budget_state(memory, request_id, budget_state)
     original = dict(budget_state)
     now = 60 if reason == "TIME_BUDGET_EXCEEDED" else 20
-    assert budget_utils.try_start_turn(memory, request_id, now) == reason
+    assert budget_utils._try_start_turn(memory, request_id, now) == reason
     assert budget_state == original
     assert budget_utils.get_budget_state(memory, request_id) == original
 
@@ -1984,7 +1984,7 @@ def test_admitted_turn_and_token_consumption_persist_independent_state() -> None
     budget_state = {"turns_left": 2, "tokens_left": 5, "mode": "SOFT"}
     budget_utils.save_budget_state(memory, other_id, budget_state)
     budget_utils.save_budget_state(memory, request_id, budget_state)
-    assert budget_utils.try_start_turn(memory, request_id, 0) is None
+    assert budget_utils._try_start_turn(memory, request_id, 0) is None
     assert budget_utils.get_budget_state(memory, request_id) == {
         "turns_left": 1,
         "tokens_left": 5,
@@ -2005,13 +2005,15 @@ def test_admitted_turn_and_token_consumption_persist_independent_state() -> None
         "tokens_left": 5,
         "mode": "SOFT",
     }
-    assert budget_utils.try_start_turn(memory, request_id, 0) == "TOKEN_BUDGET_EXCEEDED"
+    assert (
+        budget_utils._try_start_turn(memory, request_id, 0) == "TOKEN_BUDGET_EXCEEDED"
+    )
 
 
 def test_unlimited_turn_does_not_create_state() -> None:
     memory = _MockMemoryObject()
     request_id = uuid4()
-    assert budget_utils.try_start_turn(memory, request_id, 0) is None
+    assert budget_utils._try_start_turn(memory, request_id, 0) is None
     assert budget_utils.get_budget_state(memory, request_id) is None
 
 
@@ -2084,7 +2086,10 @@ def test_recovered_budget_branch_uses_distinct_durable_identity(
         if expired and mode == "HARD":
             assert events[0].is_failed
             assert "TIME_BUDGET_EXCEEDED" in events[0].error
-            ctx.durable_execute.assert_not_called()
+            assert (
+                ctx.durable_execute.call_args.kwargs["durable_id"]
+                == "react-loop:budget-admission"
+            )
         else:
             assert events[0].response.text == ("closing" if expired else "ordinary")
             identities.append(ctx.durable_execute.call_args.kwargs["durable_id"])
@@ -2149,7 +2154,7 @@ def test_budget_updates_read_latest_state_and_preserve_memory_snapshots() -> Non
         memory, other_id, {"tokens_left": 50, "mode": "SOFT"}
     )
     before = memory.get("_LOOP_BUDGET_CONTEXT")
-    assert budget_utils.try_start_turn(memory, request_id, 0) is None
+    assert budget_utils._try_start_turn(memory, request_id, 0) is None
     budget_utils.update_token_budget_state(
         memory,
         request_id,
@@ -2181,11 +2186,12 @@ def test_budget_updates_read_latest_state_and_preserve_memory_snapshots() -> Non
     assert budget_utils.get_budget_state(memory, other_id)["tokens_left"] == 50
 
 
-@pytest.mark.parametrize("crash_after", [1, 2])
+@pytest.mark.parametrize("crash_after", [1, 2, 3])
 @pytest.mark.parametrize("mode", ["hard", "soft"])
 @pytest.mark.parametrize("expired", [False, True])
+@pytest.mark.parametrize("chat_async", [False, True])
 def test_first_action_restores_durable_start_time(
-    monkeypatch, crash_after, mode, expired
+    monkeypatch, crash_after, mode, expired, chat_async
 ):
     model = _budget_model()
     model.inference.return_value = ChatResult(message=ChatMessage.assistant("done"))
@@ -2200,7 +2206,7 @@ def test_first_action_restores_durable_start_time(
         [ChatMessage.user("hi")],
         budget=ReActLoopBudget(max_time="300 ms", mode=mode),
     )
-    ctx, events, _, _ = _create_mock_runner_context(model)
+    ctx, events, _, _ = _create_mock_runner_context(model, chat_async=chat_async)
     journal = []
 
     class Crash(BaseException):
@@ -2215,13 +2221,17 @@ def test_first_action_restores_durable_start_time(
             raise Crash
         return result
 
+    async def persist_async(fn: Callable, *args: Any, **kwargs: Any) -> Any:
+        return persist(fn, *args, **kwargs)
+
+    ctx.durable_execute_async.side_effect = persist_async
     ctx.durable_execute.side_effect = persist
     with pytest.raises(Crash):
         asyncio.run(process_chat_request_or_tool_response(request, ctx))
     assert events == []
     assert journal[0] == ("react-loop:budget-start", 1000)
     now = 1400 if expired else 1100
-    restored, events, _, _ = _create_mock_runner_context(model)
+    restored, events, _, _ = _create_mock_runner_context(model, chat_async=chat_async)
 
     def replay(
         fn: Callable, *args: Any, durable_id: str | None = None, **kwargs: Any
@@ -2231,11 +2241,16 @@ def test_first_action_restores_durable_start_time(
         journal.clear()
         return fn(*args, **kwargs)
 
+    async def replay_async(fn: Callable, *args: Any, **kwargs: Any) -> Any:
+        return replay(fn, *args, **kwargs)
+
+    restored.durable_execute_async.side_effect = replay_async
     restored.durable_execute.side_effect = replay
     asyncio.run(process_chat_request_or_tool_response(request, restored))
-    assert model.inference.call_count == (crash_after - 1 if expired else 1)
+    timed_out = expired and crash_after == 1
+    assert model.inference.call_count == (0 if timed_out else 1)
     assert len(events) == 1
-    if not expired:
+    if not timed_out:
         assert not events[0].is_failed
         model.final_chat.assert_not_called()
     elif mode == "hard":

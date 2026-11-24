@@ -586,16 +586,18 @@ public class ReActAgentSubagentTest {
             List<String> tools,
             ReActLoopBudget budget) {
         ReActAgent parent =
-                new ReActAgent(
-                        ResourceDescriptor.Builder.newBuilder(ScriptedModelSetup.class.getName())
-                                .addInitialArgument("connection", "parent_conn")
-                                .addInitialArgument("subagents", List.of("child"))
-                                .addInitialArgument("tools", tools)
-                                .build(),
-                        prompt,
-                        outputSchema,
-                        List.of(),
-                        budget);
+                ReActAgent.builder()
+                        .chatModel(
+                                ResourceDescriptor.Builder.newBuilder(
+                                                ScriptedModelSetup.class.getName())
+                                        .addInitialArgument("connection", "parent_conn")
+                                        .addInitialArgument("subagents", List.of("child"))
+                                        .addInitialArgument("tools", tools)
+                                        .build())
+                        .prompt(prompt)
+                        .outputSchema(outputSchema)
+                        .budget(budget)
+                        .build();
         registerConnections(parent);
         parent.addResource("child", ResourceType.AGENT, declaredChild(child));
         return parent;
@@ -622,15 +624,15 @@ public class ReActAgentSubagentTest {
     private static ReActAgent toolCallingReactAgent(boolean registerTool, ReActLoopBudget budget)
             throws Exception {
         ReActAgent child =
-                new ReActAgent(
-                        ResourceDescriptor.Builder.newBuilder(ScriptedModelSetup.class.getName())
-                                .addInitialArgument("connection", "child_conn")
-                                .addInitialArgument("tools", List.of("shout"))
-                                .build(),
-                        null,
-                        null,
-                        List.of(),
-                        budget);
+                ReActAgent.builder()
+                        .chatModel(
+                                ResourceDescriptor.Builder.newBuilder(
+                                                ScriptedModelSetup.class.getName())
+                                        .addInitialArgument("connection", "child_conn")
+                                        .addInitialArgument("tools", List.of("shout"))
+                                        .build())
+                        .budget(budget)
+                        .build();
         if (registerTool) {
             child.addResource(
                     "shout",

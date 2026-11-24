@@ -425,7 +425,10 @@ ReActLoopBudget budget = ReActLoopBudget.builder()
         .maxTurns(2)
         .maxTime(Duration.ofSeconds(60))
         .build();
-ReActAgent agent = new ReActAgent(chatModelDescriptor, null, null, null, budget);
+ReActAgent agent = ReActAgent.builder()
+        .chatModel(chatModelDescriptor)
+        .budget(budget)
+        .build();
 ```
 {{< /tab >}}
 {{< /tabs >}}

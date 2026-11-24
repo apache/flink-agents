@@ -92,6 +92,11 @@ public class ReActAgent extends Agent {
 
     private static final ObjectMapper mapper = new ObjectMapper();
 
+    /** Creates a builder for a ReAct agent. */
+    public static Builder builder() {
+        return new Builder();
+    }
+
     public ReActAgent(
             ResourceDescriptor descriptor, @Nullable Prompt prompt, @Nullable Object outputSchema) {
         this(descriptor, prompt, outputSchema, (List<String>) null);
@@ -122,7 +127,7 @@ public class ReActAgent extends Agent {
         this(descriptor, prompt, outputSchema, skills, null);
     }
 
-    public ReActAgent(
+    private ReActAgent(
             ResourceDescriptor descriptor,
             @Nullable Prompt prompt,
             @Nullable Object outputSchema,
@@ -235,7 +240,7 @@ public class ReActAgent extends Agent {
         this(descriptor, prompt, outputSchema, skills, null);
     }
 
-    public ReActAgent(
+    private ReActAgent(
             ResourceDescriptor descriptor,
             @Nullable Prompt prompt,
             @Nullable Object outputSchema,
@@ -471,5 +476,58 @@ public class ReActAgent extends Agent {
         }
 
         ctx.sendEvent(new OutputEvent(output));
+    }
+
+    /** Named configuration for a ReAct agent and the budget of each loop it starts. */
+    public static final class Builder {
+        private ResourceDescriptor chatModel;
+        @Nullable private Prompt prompt;
+        @Nullable private Object outputSchema;
+        @Nullable private List<String> skillNames;
+        @Nullable private Skills skills;
+        @Nullable private ReActLoopBudget budget;
+
+        private Builder() {}
+
+        public Builder chatModel(ResourceDescriptor chatModel) {
+            this.chatModel = Objects.requireNonNull(chatModel, "chatModel");
+            return this;
+        }
+
+        public Builder prompt(@Nullable Prompt prompt) {
+            this.prompt = prompt;
+            return this;
+        }
+
+        public Builder outputSchema(@Nullable Object outputSchema) {
+            this.outputSchema = outputSchema;
+            return this;
+        }
+
+        /** Adds skill names to those already declared by the model descriptor. */
+        public Builder skillNames(@Nullable List<String> skillNames) {
+            this.skillNames = skillNames == null ? null : new ArrayList<>(skillNames);
+            return this;
+        }
+
+        /** Exposes skills from the supplied sources. */
+        public Builder skills(@Nullable Skills skills) {
+            this.skills = skills;
+            return this;
+        }
+
+        public Builder budget(@Nullable ReActLoopBudget budget) {
+            this.budget = budget;
+            return this;
+        }
+
+        public ReActAgent build() {
+            return new ReActAgent(
+                    withSkills(Objects.requireNonNull(chatModel, "chatModel"), skillNames),
+                    prompt,
+                    outputSchema,
+                    skills,
+                    budget);
+        }
     }
 }

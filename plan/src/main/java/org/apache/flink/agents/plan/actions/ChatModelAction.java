@@ -318,7 +318,7 @@ public class ChatModelAction {
             @Nullable Object outputSchema,
             RunnerContext ctx)
             throws Exception {
-        String reason = ReActLoopBudgetUtils.tryStartTurn(ctx.getSensoryMemory(), initialRequestId);
+        String reason = ReActLoopBudgetUtils.tryStartTurn(ctx, initialRequestId);
         if (handleHardLimitExceeded(initialRequestId, reason, null, ctx)) return;
         chat(
                 initialRequestId,
@@ -505,7 +505,7 @@ public class ChatModelAction {
     private static void processChatRequest(ChatRequestEvent event, RunnerContext ctx)
             throws Exception {
         ReActLoopBudgetUtils.initialize(ctx, event);
-        String reason = ReActLoopBudgetUtils.tryStartTurn(ctx.getSensoryMemory(), event.getId());
+        String reason = ReActLoopBudgetUtils.tryStartTurn(ctx, event.getId());
         if (handleHardLimitExceeded(event.getId(), reason, event.getUserContext(), ctx)) return;
         ResolvedModelRoute selection;
         try {
@@ -563,7 +563,7 @@ public class ChatModelAction {
                         Collections.emptyList(),
                         toolResponseMessages);
 
-        String reason = ReActLoopBudgetUtils.tryStartTurn(sensoryMem, initialRequestId);
+        String reason = ReActLoopBudgetUtils.tryStartTurn(ctx, initialRequestId);
         if (handleHardLimitExceeded(initialRequestId, reason, userContext, ctx)) return;
         // Tool rounds reuse the already-selected concrete model (no re-routing). If the initial
         // request was routed, its metadata block waits where the routing layer saved it and is

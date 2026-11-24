@@ -481,7 +481,7 @@ public class ReActLoopBudgetCrossLanguageTest {
             // With two turns / ten tokens, one cached five-token result and one fresh
             // result exhaust the budget. Missing or double charging changes this count.
             assertThat(NORMAL_CALLS.get()).isEqualTo(limit.equals("time") ? 1 : 2);
-            assertThat(TOOL_CALLS.get()).isEqualTo(limit.equals("time") ? 0 : 2);
+            assertThat(TOOL_CALLS.get()).isEqualTo(limit.equals("time") ? 1 : 2);
             assertResult(restored, mode, limit);
             // Completed actions compact their durable call records. Check the record as
             // the restored runtime reads it, before completion clears the journal.
