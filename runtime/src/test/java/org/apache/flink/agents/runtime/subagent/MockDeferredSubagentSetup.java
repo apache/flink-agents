@@ -18,10 +18,10 @@
 
 package org.apache.flink.agents.runtime.subagent;
 
-import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.subagent.SubagentCall;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 
 import java.util.ArrayList;
@@ -100,25 +100,12 @@ public class MockDeferredSubagentSetup extends BaseDeferredSubagentSetup {
     }
 
     @Override
-    protected DurableCallable<SubagentResult> prepare(
+    protected SubagentCall prepare(
             RunnerContext ctx, Object prompt, String sessionId, String callId) {
         CAPTURES.add(new Capture(sessionId, callId, prompt));
-        return new DurableCallable<SubagentResult>() {
-            @Override
-            public String getId() {
-                return sessionId + "#" + callId;
-            }
-
-            @Override
-            public Class<SubagentResult> getResultClass() {
-                return SubagentResult.class;
-            }
-
-            @Override
-            public SubagentResult call() {
-                EXECUTION_COUNT.incrementAndGet();
-                return SubagentResult.ok(sessionId + "|" + callId + "|" + prompt);
-            }
+        return () -> {
+            EXECUTION_COUNT.incrementAndGet();
+            return SubagentResult.ok(sessionId + "|" + callId + "|" + prompt);
         };
     }
 }

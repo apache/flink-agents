@@ -24,8 +24,6 @@ import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
 
 import javax.annotation.Nullable;
 
-import java.time.Duration;
-import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
@@ -36,8 +34,9 @@ import java.util.function.Supplier;
  *
  * <p>On the parallel path a {@link ParallelExecutionLock} and {@link
  * ParallelExecutionContextLifecycle} are wired in: async calls suspend the task context before
- * releasing the lock, then resume it after re-acquiring worker ownership. Blocking single calls run
- * inline; batches run on managed workers. Without a lock no lifecycle callbacks run.
+ * releasing the lock, then resume it after re-acquiring worker ownership. Submitted calls and
+ * batches run on managed workers; the {@link #executeAsync} hook runs inline. Without a lock no
+ * lifecycle callbacks run.
  */
 public class ContinuationActionExecutor {
 
@@ -82,6 +81,10 @@ public class ContinuationActionExecutor {
         return true;
     }
 
+    public <T> CompletableFuture<T> submitAsync(ContinuationContext context, Callable<T> callable) {
+        return batchExecutor.submit(callable);
+    }
+
     /**
      * Executes the supplier inline, releasing the shared execution lock when running on the
      * parallel engine's action worker. Other actions and the mailbox can progress while this worker
@@ -99,31 +102,6 @@ public class ContinuationActionExecutor {
         }
 
         return executeWithLockHandoff(context, supplier::get);
-    }
-
-    /**
-     * Executes a batch concurrently on managed workers. The calling action waits without the shared
-     * operator lock; its context is restored after worker ownership is re-acquired.
-     *
-     * @param context the continuation context
-     * @param suppliers the suppliers to execute
-     * @param timeout whole-batch timeout, or null/negative for no timeout
-     * @param maxParallelism maximum in-flight calls in this batch
-     * @param <T> the result type
-     * @return outcomes in supplier order
-     */
-    public <T> BatchExecutionResult<T> executeAllAsync(
-            ContinuationContext context,
-            List<Callable<T>> suppliers,
-            Duration timeout,
-            int maxParallelism)
-            throws Exception {
-        if (parallelExecutionLock == null || suppliers.isEmpty()) {
-            return batchExecutor.execute(suppliers, timeout, maxParallelism);
-        }
-
-        return executeWithLockHandoff(
-                context, () -> batchExecutor.execute(suppliers, timeout, maxParallelism));
     }
 
     /**
@@ -186,7 +164,9 @@ public class ContinuationActionExecutor {
      */
     public <T> T awaitFuture(ContinuationContext context, CompletableFuture<T> future)
             throws Exception {
-        return future.get();
+        return parallelExecutionLock == null
+                ? future.get()
+                : executeWithLockHandoff(context, future::get);
     }
 
     /** Stops async work without waiting for worker exit cleanup. */

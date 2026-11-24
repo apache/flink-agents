@@ -18,11 +18,13 @@
 
 package org.apache.flink.agents.api.subagent;
 
+import org.apache.flink.agents.api.context.AsyncFuture;
+
 /**
  * Handle for one sub-agent invocation, identified by the {@code (sessionId, callId)} pair that keys
  * the invocation.
  */
-public abstract class SubagentFuture {
+public abstract class SubagentFuture implements AsyncFuture<SubagentResult> {
 
     private final String sessionId;
     private final String callId;

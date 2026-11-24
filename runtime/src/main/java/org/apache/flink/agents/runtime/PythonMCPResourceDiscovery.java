@@ -19,13 +19,13 @@
 package org.apache.flink.agents.runtime;
 
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.plan.resource.python.PythonMCPPrompt;
 import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
 import org.apache.flink.agents.plan.resource.python.PythonMCPTool;
 import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.subagent.SubagentConstants;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -79,12 +79,12 @@ public class PythonMCPResourceDiscovery {
             cache.put(provider.getName(), MCP_SERVER, server);
 
             for (PythonMCPTool tool : server.listTools(provider.getName())) {
-                if (tool.getName().startsWith(SubagentSetup.CALLABLE_NAME_PREFIX)) {
+                if (tool.getName().startsWith(SubagentConstants.TOOL_NAME_PREFIX)) {
                     throw new IllegalArgumentException(
                             "MCP server '"
                                     + provider.getName()
                                     + "' advertised a tool with reserved prefix '"
-                                    + SubagentSetup.CALLABLE_NAME_PREFIX
+                                    + SubagentConstants.TOOL_NAME_PREFIX
                                     + "': "
                                     + tool.getName());
                 }

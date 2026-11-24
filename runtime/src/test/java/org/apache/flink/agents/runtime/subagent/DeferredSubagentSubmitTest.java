@@ -22,11 +22,11 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
-import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.SubagentCall;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.plan.AgentConfiguration;
@@ -303,23 +303,10 @@ public class DeferredSubagentSubmitTest {
         }
 
         @Override
-        protected DurableCallable<SubagentResult> prepare(
+        protected SubagentCall prepare(
                 RunnerContext ctx, Object prompt, String sessionId, String callId) {
-            return new DurableCallable<SubagentResult>() {
-                @Override
-                public String getId() {
-                    return sessionId + "#" + callId;
-                }
-
-                @Override
-                public Class<SubagentResult> getResultClass() {
-                    return SubagentResult.class;
-                }
-
-                @Override
-                public SubagentResult call() {
-                    throw new IllegalStateException("durable execution crashed");
-                }
+            return () -> {
+                throw new IllegalStateException("durable execution crashed");
             };
         }
     }

@@ -16,17 +16,13 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.runtime.subagent;
+package org.apache.flink.agents.plan.subagent;
 
-/**
- * A handle with separate preparation and execution phases. {@link SubagentFutureGroup} prepares
- * every member before executing any; preparation need not issue the call.
- */
-interface PhasedSubagentFuture {
+/** Internal naming convention shared by plan validation and runtime subagent tool lookup. */
+public final class SubagentConstants {
 
-    /** Prepares the call without waiting for it. Idempotent. */
-    void prepare() throws Exception;
+    /** Reserved prefix for subagent tools exposed to chat models. */
+    public static final String TOOL_NAME_PREFIX = "_subagent_";
 
-    /** Waits for the prepared call, preparing it first if this handle was awaited on its own. */
-    void execute() throws Exception;
+    private SubagentConstants() {}
 }

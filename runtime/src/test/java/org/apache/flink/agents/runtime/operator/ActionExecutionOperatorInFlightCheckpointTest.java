@@ -81,7 +81,7 @@ class ActionExecutionOperatorInFlightCheckpointTest {
                     (ActionExecutionOperator<?, ?>) original.getOperator();
             original.processElement(new StreamRecord<>(0L));
             assertThat(
-                            CheckpointAgent.BLOCKING_IN_ASYNC.await(
+                            CheckpointAgent.BLOCKING_AWAITING.await(
                                     SETUP_TIMEOUT_SECONDS, TimeUnit.SECONDS))
                     .isTrue();
             assertThat(CheckpointAgent.QUEUED_STARTED.getCount()).isEqualTo(1);
@@ -131,7 +131,7 @@ class ActionExecutionOperatorInFlightCheckpointTest {
             restored.open();
             // Restored in-flight tasks precede the unstarted tail, again saturating the pool.
             assertThat(
-                            CheckpointAgent.BLOCKING_IN_ASYNC.await(
+                            CheckpointAgent.BLOCKING_AWAITING.await(
                                     SETUP_TIMEOUT_SECONDS, TimeUnit.SECONDS))
                     .isTrue();
             assertThat(CheckpointAgent.QUEUED_STARTED.getCount()).isEqualTo(1);
@@ -186,13 +186,13 @@ class ActionExecutionOperatorInFlightCheckpointTest {
 
         private static final String QUEUED = "checkpointActionQueued";
 
-        private static volatile CountDownLatch BLOCKING_IN_ASYNC = new CountDownLatch(0);
+        private static volatile CountDownLatch BLOCKING_AWAITING = new CountDownLatch(0);
         private static volatile CountDownLatch QUEUED_STARTED = new CountDownLatch(0);
         private static volatile CountDownLatch RELEASE_FIRST = new CountDownLatch(0);
         private static volatile CountDownLatch RELEASE_REST = new CountDownLatch(0);
 
         private static void reset() {
-            BLOCKING_IN_ASYNC = new CountDownLatch(BLOCKING.length);
+            BLOCKING_AWAITING = new CountDownLatch(BLOCKING.length);
             QUEUED_STARTED = new CountDownLatch(1);
             RELEASE_FIRST = new CountDownLatch(1);
             RELEASE_REST = new CountDownLatch(1);
@@ -267,7 +267,7 @@ class ActionExecutionOperatorInFlightCheckpointTest {
                     event,
                     context,
                     blockingActionId(index),
-                    BLOCKING_IN_ASYNC,
+                    BLOCKING_AWAITING,
                     index == 0 ? RELEASE_FIRST : RELEASE_REST);
         }
 
@@ -279,6 +279,8 @@ class ActionExecutionOperatorInFlightCheckpointTest {
                 CountDownLatch release)
                 throws Exception {
             Long input = (Long) InputEvent.fromEvent(event).getInput();
+            // Saturate action workers even when their callables queue in the smaller async pool.
+            started.countDown();
             context.durableExecuteAsync(
                             new DurableCallable<String>() {
                                 @Override
@@ -293,7 +295,6 @@ class ActionExecutionOperatorInFlightCheckpointTest {
 
                                 @Override
                                 public String call() throws Exception {
-                                    started.countDown();
                                     if (release != null
                                             && !release.await(
                                                     SETUP_TIMEOUT_SECONDS * 6, TimeUnit.SECONDS)) {

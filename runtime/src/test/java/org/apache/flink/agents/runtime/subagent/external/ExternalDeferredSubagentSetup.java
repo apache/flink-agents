@@ -18,10 +18,10 @@
 
 package org.apache.flink.agents.runtime.subagent.external;
 
-import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.subagent.SubagentCall;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.runtime.subagent.BaseDeferredSubagentSetup;
 import org.slf4j.Logger;
@@ -89,63 +89,50 @@ public class ExternalDeferredSubagentSetup extends BaseDeferredSubagentSetup {
     }
 
     @Override
-    protected DurableCallable<SubagentResult> prepare(
+    protected SubagentCall prepare(
             RunnerContext ctx, Object prompt, String sessionId, String callId) {
-        return new DurableCallable<SubagentResult>() {
-            @Override
-            public String getId() {
-                return sessionId + "#" + callId;
-            }
-
-            @Override
-            public Class<SubagentResult> getResultClass() {
-                return SubagentResult.class;
-            }
-
-            @Override
-            public SubagentResult call() {
-                try {
-                    LOG.info("[deferred] resolve {}#{} prompt={}", sessionId, callId, prompt);
-                    String taskId =
-                            client().submit(
-                                            String.valueOf(prompt),
-                                            sessionId,
-                                            ExternalAgentClient.taskIdFor(sessionId, callId));
+        return () -> {
+            try {
+                LOG.info("[deferred] resolve {}#{} prompt={}", sessionId, callId, prompt);
+                String taskId =
+                        client().submit(
+                                        String.valueOf(prompt),
+                                        sessionId,
+                                        ExternalAgentClient.taskIdFor(sessionId, callId));
+                LOG.info(
+                        "[deferred] {}#{} submitted as {}; polling once per second",
+                        sessionId,
+                        callId,
+                        taskId);
+                while (true) {
+                    int check = POLL_COUNT.incrementAndGet();
+                    ExternalAgentClient.TaskStatus probe = client().status(taskId);
                     LOG.info(
-                            "[deferred] {}#{} submitted as {}; polling once per second",
+                            "[deferred] {}#{} check #{} -> {}",
                             sessionId,
                             callId,
-                            taskId);
-                    while (true) {
-                        int check = POLL_COUNT.incrementAndGet();
-                        ExternalAgentClient.TaskStatus probe = client().status(taskId);
+                            check,
+                            probe == null ? "404" : probe.getStatus());
+                    if (probe == null) {
+                        return SubagentResult.error("remote task disappeared: " + taskId);
+                    }
+                    String status = probe.getStatus();
+                    if (ExternalAgentClient.SUCCEEDED.equals(status)
+                            || ExternalAgentClient.FAILED.equals(status)) {
+                        SubagentResult result = client().fetchResult(taskId);
                         LOG.info(
-                                "[deferred] {}#{} check #{} -> {}",
+                                "[deferred] {}#{} finished: success={}, result={}, error={}",
                                 sessionId,
                                 callId,
-                                check,
-                                probe == null ? "404" : probe.getStatus());
-                        if (probe == null) {
-                            return SubagentResult.error("remote task disappeared: " + taskId);
-                        }
-                        String status = probe.getStatus();
-                        if (ExternalAgentClient.SUCCEEDED.equals(status)
-                                || ExternalAgentClient.FAILED.equals(status)) {
-                            SubagentResult result = client().fetchResult(taskId);
-                            LOG.info(
-                                    "[deferred] {}#{} finished: success={}, result={}, error={}",
-                                    sessionId,
-                                    callId,
-                                    result.isSuccess(),
-                                    result.getResult(),
-                                    result.getErrorMessage());
-                            return result;
-                        }
-                        Thread.sleep(pollIntervalMillis);
+                                result.isSuccess(),
+                                result.getResult(),
+                                result.getErrorMessage());
+                        return result;
                     }
-                } catch (Exception e) {
-                    return SubagentResult.error(e);
+                    Thread.sleep(pollIntervalMillis);
                 }
+            } catch (Exception e) {
+                return SubagentResult.error(e);
             }
         };
     }

@@ -27,36 +27,58 @@ import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.Outcome;
+import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.subagent.SubagentCall;
+import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.exceptions.UncapturableException;
+import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
-import org.apache.flink.agents.runtime.async.BatchExecutionResult;
+import org.apache.flink.agents.runtime.async.AsyncExecutorThreadFactory;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.subagent.BaseDeferredSubagentSetup;
 import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
+import java.net.SocketTimeoutException;
+import java.nio.channels.ClosedByInterruptException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicIntegerArray;
-import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 
@@ -78,10 +100,212 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         lastPersistedState = null;
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void deferredSubagentUsesFrameworkMetadataAndReplaysTerminalResult(boolean pending)
+            throws Exception {
+        ActionState state = new ActionState(null);
+        if (pending) {
+            state.addCallResult(CallResult.pending("session#call"));
+        }
+        RecoveryDeferredSetup setup = new RecoveryDeferredSetup();
+        try (var executor = new InspectingContinuationActionExecutor()) {
+            JavaRunnerContextImpl context = createContext(state, executor);
+            var future = setup.submit(context, "prompt", "session", "call");
+            assertEquals(0, setup.preparations);
+            SubagentResult result = future.await();
+            assertEquals(pending ? "reconciled" : "called", result.getResult());
+            assertEquals(1, setup.preparations);
+            assertEquals(pending ? 0 : 1, setup.calls);
+            assertEquals(pending ? 1 : 0, setup.reconciliations);
+            assertEquals(1, state.getCallResultCount());
+            assertEquals("session#call", state.getCallResult(0).getFunctionId());
+            assertTrue(state.getCallResult(0).isSuccess());
+
+            ActionState restored = ActionStateSerde.deserialize(ActionStateSerde.serialize(state));
+            JavaRunnerContextImpl recovered = createContext(restored, executor);
+            SubagentResult replayed = setup.submit(recovered, "prompt", "session", "call").await();
+            assertTrue(replayed.isSuccess());
+            assertEquals(result.getResult(), replayed.getResult());
+            assertEquals(1, setup.preparations);
+            assertEquals(pending ? 0 : 1, setup.calls);
+            assertEquals(pending ? 1 : 0, setup.reconciliations);
+        }
+    }
+
+    private static final class RecoveryDeferredSetup extends BaseDeferredSubagentSetup {
+        private int preparations;
+        private int calls;
+        private int reconciliations;
+
+        private RecoveryDeferredSetup() {
+            super(
+                    ResourceDescriptor.Builder.newBuilder(RecoveryDeferredSetup.class.getName())
+                            .build(),
+                    null);
+        }
+
+        @Override
+        protected SubagentCall prepare(
+                RunnerContext ctx, Object prompt, String sessionId, String callId) {
+            preparations++;
+            return new SubagentCall() {
+                @Override
+                public SubagentResult call() {
+                    calls++;
+                    return SubagentResult.ok("called");
+                }
+
+                @Override
+                public Callable<SubagentResult> reconciler() {
+                    return () -> {
+                        reconciliations++;
+                        return SubagentResult.ok("reconciled");
+                    };
+                }
+            };
+        }
+    }
+
+    @Test
+    void pendingCallPreparesOnMailboxAndReconcilesBeforeTerminalReplay() throws Exception {
+        ActionState state = new ActionState(null);
+        state.getCallResults().add(CallResult.pending("prepared"));
+        Thread mailbox = Thread.currentThread();
+        AtomicInteger preparations = new AtomicInteger();
+        try (var executor = new InspectingContinuationActionExecutor()) {
+            JavaRunnerContextImpl context = createContext(state, executor);
+            var future =
+                    context.durableExecuteAsync(
+                            "prepared",
+                            String.class,
+                            () -> {
+                                assertSame(mailbox, Thread.currentThread());
+                                assertEquals(1, context.getCurrentCallIndex());
+                                assertTrue(state.getCallResults().get(0).isPending());
+                                preparations.incrementAndGet();
+                                return new TestReconcilableCallable<>(
+                                        "prepared",
+                                        String.class,
+                                        () ->
+                                                fail(
+                                                        "A pending call must reconcile instead of submitting again"),
+                                        () -> "reconciled");
+                            });
+            var batch = context.gather(List.of(future));
+            assertEquals(0, preparations.get());
+            assertEquals("reconciled", batch.await().get(0).getValue());
+            assertTrue(state.getCallResults().get(0).isSuccess());
+            assertEquals(1, preparations.get());
+            JavaRunnerContextImpl recovered = createContext(state, executor);
+            assertEquals(
+                    "reconciled",
+                    recovered
+                            .durableExecuteAsync(
+                                    "prepared",
+                                    String.class,
+                                    () -> fail("Terminal replay must skip preparation"))
+                            .await());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"framework", "cancel", "interrupt", "error"})
+    void preparationFatalFailureLeavesPendingSlot(String kind) throws Exception {
+        Throwable failure;
+        switch (kind) {
+            case "framework":
+                failure = UncapturableException.wrap(new IOException("framework failed"));
+                break;
+            case "cancel":
+                failure = new CancellationException("cancelled");
+                break;
+            case "interrupt":
+                failure = new InterruptedException("interrupted");
+                break;
+            default:
+                failure = new AssertionError("fatal");
+        }
+        ActionState state = new ActionState(null);
+        try (var executor = new InspectingContinuationActionExecutor()) {
+            JavaRunnerContextImpl context = createContext(state, executor);
+            var future =
+                    context.durableExecuteAsync(
+                            "prepared",
+                            String.class,
+                            () -> {
+                                if (failure instanceof Error) {
+                                    throw (Error) failure;
+                                }
+                                throw (Exception) failure;
+                            });
+            Throwable thrown = assertThrows(failure.getClass(), future::await);
+            assertSame(failure, thrown);
+            assertThat(state.getCallResults())
+                    .singleElement()
+                    .satisfies(
+                            result -> {
+                                assertTrue(result.isPending());
+                                assertNull(result.getExceptionPayload());
+                            });
+            assertEquals(kind.equals("interrupt"), Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void terminalPersistenceFailureDoesNotCompleteFuture(boolean preparationFails)
+            throws Exception {
+        ActionState state = new ActionState(null);
+        try (var executor = new InspectingContinuationActionExecutor()) {
+            JavaRunnerContextImpl context = createContext(state, executor);
+            context.setDurableExecutionContext(
+                    new RunnerContextImpl.DurableExecutionContext(
+                            "test-key",
+                            1L,
+                            mock(Action.class),
+                            mock(Event.class),
+                            state,
+                            (key, sequence, action, event, saved) -> {
+                                if (!saved.getCallResults().get(0).isPending()) {
+                                    // DurableExecutionManager marks store failures at this
+                                    // boundary.
+                                    throw UncapturableException.wrap(
+                                            new IOException("terminal persistence failed"));
+                                }
+                            }));
+            var future =
+                    context.durableExecuteAsync(
+                            "prepared",
+                            String.class,
+                            () -> {
+                                if (preparationFails) {
+                                    throw new IllegalStateException("preparation failed");
+                                }
+                                return new TestDurableCallable<>(
+                                        "prepared", String.class, () -> "ok");
+                            });
+            assertThrows(UncapturableException.class, future::await);
+            assertFalse(((AsyncFutureImpl<?>) future).isDone());
+        }
+    }
+
     @Test
     void testDurableExecuteAsyncLegacyCall() throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+        executor.setBeforeSubmit(
+                () -> {
+                    assertTrue(
+                            context.getDurableExecutionContext()
+                                    .getActionState()
+                                    .getCallResults()
+                                    .get(0)
+                                    .isPending());
+                    assertEquals(1, context.getCurrentCallIndex());
+                });
         TestDurableCallable<String> callable =
                 new TestDurableCallable<>("legacy-async", String.class, () -> "ok");
 
@@ -89,8 +313,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
         assertEquals("ok", result);
         assertEquals(1, callable.getCallCount());
-        assertEquals(1, executor.getExecuteAsyncCallCount());
-        assertEquals(1, persistCallCount.get());
+        assertEquals(2, persistCallCount.get());
         CallResult persisted =
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
         assertTrue(persisted.isSuccess());
@@ -101,13 +324,16 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     void testDurableExecuteAsyncReconcilableSuccessCall() throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
-        executor.setBeforeExecute(
+        executor.setBeforeSubmit(
                 () -> {
                     CallResult current =
-                            context.getDurableExecutionContext().getCurrentCallResult();
+                            context.getDurableExecutionContext()
+                                    .getActionState()
+                                    .getCallResults()
+                                    .get(0);
                     assertNotNull(current);
                     assertTrue(current.isPending());
-                    assertEquals(0, context.getDurableExecutionContext().getCurrentCallIndex());
+                    assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
                     assertEquals(1, persistCallCount.get());
                 });
         TestReconcilableCallable<String> callable =
@@ -122,30 +348,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals("ok", result);
         assertEquals(1, callable.getCallCount());
         assertEquals(0, callable.getReconcileCount());
-        assertEquals(1, executor.getExecuteAsyncCallCount());
-        assertEquals(2, persistCallCount.get());
-        CallResult persisted =
-                context.getDurableExecutionContext().getActionState().getCallResults().get(0);
-        assertTrue(persisted.isSuccess());
-    }
-
-    @Test
-    void testDurableExecuteAsyncContinuationNativeReconcilableRunsInline() throws Exception {
-        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
-        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
-        TestContinuationNativeReconcilableCallable<String> callable =
-                new TestContinuationNativeReconcilableCallable<>(
-                        "recon-inline",
-                        String.class,
-                        () -> "ok",
-                        () -> fail("reconcile should not be called on initial async execution"));
-
-        String result = context.durableExecuteAsync(callable).await();
-
-        assertEquals("ok", result);
-        assertEquals(1, callable.getCallCount());
-        assertEquals(0, callable.getReconcileCount());
-        assertEquals(0, executor.getExecuteAsyncCallCount());
         assertEquals(2, persistCallCount.get());
         CallResult persisted =
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
@@ -171,7 +373,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals("cached", result);
         assertEquals(0, callable.getCallCount());
         assertEquals(0, callable.getReconcileCount());
-        assertEquals(0, executor.getExecuteAsyncCallCount());
         assertEquals(0, persistCallCount.get());
     }
 
@@ -191,7 +392,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertNull(context.durableExecuteAsync(callable).await());
         assertEquals(0, callable.getCallCount());
         assertEquals(0, callable.getReconcileCount());
-        assertEquals(0, executor.getExecuteAsyncCallCount());
         assertEquals(0, persistCallCount.get());
         assertEquals(1, context.getDurableExecutionContext().getActionState().getCallResultCount());
     }
@@ -214,7 +414,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals("recovered", result);
         assertEquals(0, callable.getCallCount());
         assertEquals(1, callable.getReconcileCount());
-        assertEquals(0, executor.getExecuteAsyncCallCount());
         assertEquals(1, persistCallCount.get());
         CallResult persisted =
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
@@ -227,10 +426,13 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         ActionState actionState = new ActionState(null);
         actionState.addCallResult(CallResult.pending("recon-async"));
         JavaRunnerContextImpl context = createContext(actionState, executor);
-        executor.setBeforeExecute(
+        executor.setBeforeSubmit(
                 () -> {
                     CallResult current =
-                            context.getDurableExecutionContext().getCurrentCallResult();
+                            context.getDurableExecutionContext()
+                                    .getActionState()
+                                    .getCallResults()
+                                    .get(0);
                     assertNotNull(current);
                     assertTrue(current.isPending());
                     assertEquals(0, persistCallCount.get());
@@ -253,7 +455,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertSame(failure, thrown);
         assertEquals(0, callable.getCallCount());
         assertEquals(1, callable.getReconcileCount());
-        assertEquals(0, executor.getExecuteAsyncCallCount());
         assertEquals(1, persistCallCount.get());
         CallResult persisted =
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
@@ -274,7 +475,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
         assertEquals("recovered", result);
         assertEquals(1, callable.getCallCount());
-        assertEquals(1, executor.getExecuteAsyncCallCount());
         assertEquals(1, persistCallCount.get());
         assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
         CallResult persisted =
@@ -292,7 +492,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         DurableFuture<String> future = context.durableExecuteAsync(callable);
 
         assertEquals(0, callable.getCallCount());
-        assertEquals(0, executor.getExecuteAsyncCallCount());
         assertEquals(0, persistCallCount.get());
         assertTrue(
                 context.getDurableExecutionContext().getActionState().getCallResults().isEmpty());
@@ -300,8 +499,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals("value", future.await());
         assertEquals("value", future.await());
         assertEquals(1, callable.getCallCount());
-        assertEquals(1, executor.getExecuteAsyncCallCount());
-        assertEquals(1, persistCallCount.get());
+        assertEquals(2, persistCallCount.get());
         assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
     }
 
@@ -309,14 +507,14 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     void testGatherReservesBatchBeforeExecutionAndCompletesChildren() throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
-        executor.setBeforeBatchExecute(
+        executor.setBeforeSubmit(
                 () -> {
                     List<CallResult> slots =
                             context.getDurableExecutionContext().getActionState().getCallResults();
                     assertEquals(2, slots.size());
                     assertTrue(slots.get(0).isPending());
                     assertTrue(slots.get(1).isPending());
-                    assertEquals(1, persistCallCount.get());
+                    assertEquals(2, persistCallCount.get());
                 });
         TestDurableCallable<String> first =
                 new TestDurableCallable<>("gather-1", String.class, () -> "one");
@@ -339,9 +537,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals("two", secondFuture.await());
         assertEquals(1, first.getCallCount());
         assertEquals(1, second.getCallCount());
-        assertEquals(0, executor.getExecuteAsyncCallCount());
-        assertEquals(1, executor.getExecuteAllAsyncCallCount());
-        assertEquals(3, persistCallCount.get());
+        assertEquals(4, persistCallCount.get());
         assertEquals(2, context.getDurableExecutionContext().getCurrentCallIndex());
     }
 
@@ -392,8 +588,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
         assertEquals("value", outcomes.get(0).getValue());
         assertEquals(1, callable.getCallCount());
-        assertEquals(1, executor.getExecuteAsyncCallCount());
-        assertEquals(0, executor.getExecuteAllAsyncCallCount());
         assertEquals(persistCountAfterChild, persistCallCount.get());
         assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
     }
@@ -418,9 +612,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals("two", outcomes.get(1).getValue());
         assertEquals(1, first.getCallCount());
         assertEquals(1, second.getCallCount());
-        assertEquals(1, executor.getExecuteAsyncCallCount());
-        assertEquals(1, executor.getExecuteAllAsyncCallCount());
-        assertEquals(List.of(1), executor.getExecuteAllAsyncBatchSizes());
         assertEquals(2, context.getDurableExecutionContext().getCurrentCallIndex());
     }
 
@@ -444,8 +635,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
         assertSame(failure, outcomes.get(0).getError());
         assertEquals(1, callable.getCallCount());
-        assertEquals(1, executor.getExecuteAsyncCallCount());
-        assertEquals(0, executor.getExecuteAllAsyncCallCount());
         assertEquals(persistCountAfterChild, persistCallCount.get());
         assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
     }
@@ -471,9 +660,14 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         InterruptedException thrown = assertThrows(InterruptedException.class, future::await);
         assertEquals("cancelled", thrown.getMessage());
         assertTrue(Thread.interrupted(), "the interrupted resolution must restore the flag");
+        assertEquals(1, context.getDurableExecutionContext().getActionState().getCallResultCount());
         assertTrue(
-                context.getDurableExecutionContext().getActionState().getCallResults().isEmpty(),
-                "an interrupted resolution must not create a terminal durable slot");
+                context.getDurableExecutionContext()
+                        .getActionState()
+                        .getCallResults()
+                        .get(0)
+                        .isPending(),
+                "an interrupted resolution must leave its reserved slot pending");
 
         List<Outcome<String>> outcomes = context.gather(List.of(future)).await();
 
@@ -495,11 +689,9 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
         assertEquals("one", outcomes.get(0).getValue());
         assertEquals("two", outcomes.get(1).getValue());
-        assertEquals(1, executor.getExecuteAllAsyncCallCount());
-        assertEquals(List.of(2), executor.getExecuteAllAsyncBatchSizes());
         assertEquals(1, first.getCallCount());
         assertEquals(1, second.getCallCount());
-        assertEquals(3, persistCallCount.get());
+        assertEquals(4, persistCallCount.get());
         assertEquals(2, context.getDurableExecutionContext().getCurrentCallIndex());
         List<CallResult> persisted =
                 context.getDurableExecutionContext().getActionState().getCallResults();
@@ -528,7 +720,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals("recovered", outcomes.get(0).getValue());
         assertEquals(0, callable.getCallCount());
         assertEquals(1, callable.getReconcileCount());
-        assertEquals(1, executor.getExecuteAllAsyncCallCount());
         assertEquals(1, persistCallCount.get());
         assertTrue(actionState.getCallResults().get(0).isSuccess());
         assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
@@ -561,8 +752,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals(0, first.getCallCount());
         assertEquals(0, second.getCallCount());
         assertEquals(1, third.getCallCount());
-        assertEquals(1, executor.getExecuteAllAsyncCallCount());
-        assertEquals(List.of(1), executor.getExecuteAllAsyncBatchSizes());
         assertEquals("batch-3", actionState.getCallResults().get(2).getFunctionId());
         assertTrue(actionState.getCallResults().get(2).isSuccess());
         assertEquals(1, persistCallCount.get());
@@ -591,7 +780,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertInstanceOf(IllegalStateException.class, outcomes.get(0).getError());
         assertTrue(outcomes.get(0).getError().getMessage().contains("cached failure"));
         assertEquals(0, callable.getCallCount());
-        assertEquals(0, executor.getExecuteAllAsyncCallCount());
         assertEquals(0, persistCallCount.get());
         assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
     }
@@ -601,10 +789,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
         ActionState actionState = new ActionState(null);
         actionState.addCallResult(
-                new CallResult(
-                        "batch-1",
-                        "not-valid-json".getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                        null));
+                new CallResult("batch-1", "not-valid-json".getBytes(StandardCharsets.UTF_8), null));
         JavaRunnerContextImpl context = createContext(actionState, executor);
         TestDurableCallable<String> callable =
                 new TestDurableCallable<>(
@@ -619,6 +804,35 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     }
 
     @Test
+    void singleAwaitDoesNotApplyBatchTimeout() throws Exception {
+        try (InspectingContinuationActionExecutor executor =
+                new InspectingContinuationActionExecutor()) {
+            executor.setUseTimeoutCollection(true);
+            JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+            ((Configuration) context.getConfig())
+                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(1));
+            TestDurableCallable<String> callable =
+                    new TestDurableCallable<>(
+                            "slow-single",
+                            String.class,
+                            () -> {
+                                Thread.sleep(50);
+                                return "done";
+                            });
+            DurableFuture<String> future = context.durableExecuteAsync(callable);
+            assertEquals("done", future.await());
+            assertEquals("done", future.await());
+            assertEquals(1, callable.getCallCount());
+            assertTrue(
+                    context.getDurableExecutionContext()
+                            .getActionState()
+                            .getCallResults()
+                            .get(0)
+                            .isSuccess());
+        }
+    }
+
+    @Test
     void testGatherPassesParallelismFromConfig() throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
@@ -629,87 +843,130 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         List<Outcome<String>> outcomes = gather(context, List.of(callable));
 
         assertEquals("ok", outcomes.get(0).getValue());
-        assertEquals(4, executor.getLastExecuteAllAsyncMaxParallelism());
+        assertEquals(1, callable.getCallCount());
         executor.close();
     }
 
     @Test
     void testGatherTimeoutKeepsCompletedOutcomes() throws Exception {
-        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
-        executor.setUseTimeoutCollection(true);
-        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
-        ((Configuration) context.getConfig())
-                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(100));
-        TestDurableCallable<String> first =
-                new TestDurableCallable<>("batch-1", String.class, () -> "fast");
-        TestDurableCallable<String> second =
-                new TestDurableCallable<>(
-                        "batch-2",
-                        String.class,
-                        () -> {
-                            Thread.sleep(200);
-                            return "slow";
-                        });
+        CountDownLatch release = new CountDownLatch(1);
+        // Keep unfinished calls blocked even if the scheduler resumes after the deadline.
+        try (InspectingContinuationActionExecutor executor =
+                new InspectingContinuationActionExecutor()) {
+            executor.setUseTimeoutCollection(true);
+            JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+            ((Configuration) context.getConfig())
+                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(500));
+            TestDurableCallable<String> first =
+                    new TestDurableCallable<>("batch-1", String.class, () -> "fast");
+            TestDurableCallable<String> second =
+                    new TestDurableCallable<>(
+                            "batch-2",
+                            String.class,
+                            () -> {
+                                release.await();
+                                return "slow";
+                            });
 
-        List<Outcome<String>> outcomes = gather(context, List.of(first, second));
+            List<Outcome<String>> outcomes = gather(context, List.of(first, second));
 
-        assertEquals("fast", outcomes.get(0).getValue());
-        assertTrue(outcomes.get(1).isFailure());
-        assertInstanceOf(TimeoutException.class, outcomes.get(1).getError());
-        assertEquals(Duration.ofMillis(100), executor.getLastExecuteAllAsyncTimeout());
-        assertEquals(1, first.getCallCount());
-        assertEquals(1, second.getCallCount());
-        List<CallResult> persisted =
-                context.getDurableExecutionContext().getActionState().getCallResults();
-        assertTrue(persisted.get(0).isSuccess());
-        assertTrue(persisted.get(1).isFailure());
-        assertEquals(2, context.getDurableExecutionContext().getCurrentCallIndex());
-        executor.close();
+            assertEquals("fast", outcomes.get(0).getValue());
+            assertTrue(outcomes.get(1).isFailure());
+            assertInstanceOf(TimeoutException.class, outcomes.get(1).getError());
+
+            assertEquals(1, first.getCallCount());
+            assertEquals(1, second.getCallCount());
+            List<CallResult> persisted =
+                    context.getDurableExecutionContext().getActionState().getCallResults();
+            assertTrue(persisted.get(0).isSuccess());
+            assertTrue(persisted.get(1).isFailure());
+            assertEquals(2, context.getDurableExecutionContext().getCurrentCallIndex());
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void explicitCompletionExceptionPreservesBusinessFailure(boolean gathered) throws Exception {
+        for (boolean durable : List.of(false, true)) {
+            ActionState state = new ActionState(null);
+            JavaRunnerContextImpl context = createContext(state, null);
+            CompletionException failure = new CompletionException(new AssertionError("cause"));
+            TestDurableCallable<String> callable =
+                    new TestDurableCallable<>(
+                            "wrapped-error",
+                            String.class,
+                            () -> {
+                                throw failure;
+                            });
+            AsyncFuture<String> future =
+                    durable
+                            ? context.durableExecuteAsync(callable)
+                            : context.executeAsync(callable::call);
+            if (gathered) {
+                assertSame(failure, context.gather(List.of(future)).await().get(0).getError());
+            } else {
+                assertSame(failure, assertThrows(CompletionException.class, future::await));
+            }
+            assertEquals(1, callable.getCallCount());
+            if (durable) {
+                assertTrue(state.getCallResults().get(0).isFailure());
+            } else {
+                assertEquals(0, state.getCallResultCount());
+            }
+        }
     }
 
     @Test
     void testGatherTimeoutLeavesUnsubmittedSlotsPending() throws Exception {
-        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
-        executor.setUseTimeoutCollection(true);
-        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
-        ((Configuration) context.getConfig())
-                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(100));
-        ((Configuration) context.getConfig()).set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
-        TestDurableCallable<String> first =
-                new TestDurableCallable<>(
-                        "batch-1",
-                        String.class,
-                        () -> {
-                            Thread.sleep(200);
-                            return "one";
-                        });
-        TestDurableCallable<String> second =
-                new TestDurableCallable<>(
-                        "batch-2",
-                        String.class,
-                        () -> {
-                            Thread.sleep(200);
-                            return "two";
-                        });
-        TestDurableCallable<String> third =
-                new TestDurableCallable<>("batch-3", String.class, () -> "three");
-        TestDurableCallable<String> fourth =
-                new TestDurableCallable<>("batch-4", String.class, () -> "four");
+        CountDownLatch release = new CountDownLatch(1);
+        // Keep unfinished calls blocked even if the scheduler resumes after the deadline.
+        try (InspectingContinuationActionExecutor executor =
+                new InspectingContinuationActionExecutor()) {
+            executor.setUseTimeoutCollection(true);
+            JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+            ((Configuration) context.getConfig())
+                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(500));
+            ((Configuration) context.getConfig())
+                    .set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
+            TestDurableCallable<String> first =
+                    new TestDurableCallable<>(
+                            "batch-1",
+                            String.class,
+                            () -> {
+                                release.await();
+                                return "one";
+                            });
+            TestDurableCallable<String> second =
+                    new TestDurableCallable<>(
+                            "batch-2",
+                            String.class,
+                            () -> {
+                                release.await();
+                                return "two";
+                            });
+            TestDurableCallable<String> third =
+                    new TestDurableCallable<>("batch-3", String.class, () -> "three");
+            TestDurableCallable<String> fourth =
+                    new TestDurableCallable<>("batch-4", String.class, () -> "four");
 
-        List<Outcome<String>> outcomes = gather(context, List.of(first, second, third, fourth));
+            List<Outcome<String>> outcomes = gather(context, List.of(first, second, third, fourth));
 
-        assertTrue(outcomes.get(0).isFailure());
-        assertTrue(outcomes.get(1).isFailure());
-        assertTrue(outcomes.get(2).isFailure());
-        assertTrue(outcomes.get(3).isFailure());
-        List<CallResult> persisted =
-                context.getDurableExecutionContext().getActionState().getCallResults();
-        assertTrue(persisted.get(0).isFailure());
-        assertTrue(persisted.get(1).isFailure());
-        assertTrue(persisted.get(2).isPending());
-        assertTrue(persisted.get(3).isPending());
-        assertEquals(4, context.getDurableExecutionContext().getCurrentCallIndex());
-        executor.close();
+            assertTrue(outcomes.get(0).isFailure());
+            assertTrue(outcomes.get(1).isFailure());
+            assertTrue(outcomes.get(2).isFailure());
+            assertTrue(outcomes.get(3).isFailure());
+            List<CallResult> persisted =
+                    context.getDurableExecutionContext().getActionState().getCallResults();
+            assertTrue(persisted.get(0).isFailure());
+            assertTrue(persisted.get(1).isFailure());
+            assertTrue(persisted.get(2).isPending());
+            assertTrue(persisted.get(3).isPending());
+            assertEquals(4, context.getDurableExecutionContext().getCurrentCallIndex());
+        } finally {
+            release.countDown();
+        }
     }
 
     @Test
@@ -721,11 +978,12 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         executor.setBatchThreads(2);
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
         ((Configuration) context.getConfig())
-                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(100));
+                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(500));
         ((Configuration) context.getConfig()).set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 4);
+        CountDownLatch release = new CountDownLatch(1);
         Callable<String> slow =
                 () -> {
-                    Thread.sleep(150);
+                    release.await();
                     return "slow";
                 };
         TestDurableCallable<String> first =
@@ -737,42 +995,45 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         TestDurableCallable<String> fourth =
                 new TestDurableCallable<>("batch-4", String.class, slow);
 
-        List<Outcome<String>> outcomes = gather(context, List.of(first, second, third, fourth));
+        try {
+            List<Outcome<String>> outcomes = gather(context, List.of(first, second, third, fourth));
 
-        assertTrue(outcomes.get(0).isFailure());
-        assertTrue(outcomes.get(1).isFailure());
-        assertTrue(outcomes.get(2).isFailure());
-        assertTrue(outcomes.get(3).isFailure());
-        // Only the two workers that actually began executing count as started, so exactly two
-        // suppliers were invoked while the queued pair never ran.
-        int totalCalls =
-                first.getCallCount()
-                        + second.getCallCount()
-                        + third.getCallCount()
-                        + fourth.getCallCount();
-        assertEquals(2, totalCalls);
-        // The queued-but-unstarted slots were cancelled, so even after the two running
-        // workers finish and free their pool threads, the queued tool bodies never
-        // execute and get discarded before recovery re-runs them. Relies on the JVM
-        // skipping suppliers of cancelled CompletableFuture.supplyAsync tasks, which
-        // holds on OpenJDK but is not a spec guarantee.
-        Thread.sleep(200);
-        assertEquals(
-                2,
-                first.getCallCount()
-                        + second.getCallCount()
-                        + third.getCallCount()
-                        + fourth.getCallCount());
-        List<CallResult> persisted =
-                context.getDurableExecutionContext().getActionState().getCallResults();
-        // Started slots are persisted as timeout failures; the queued-but-never-started slots stay
-        // pending so recovery re-executes them instead of replaying a false failure.
-        long failed = persisted.stream().filter(CallResult::isFailure).count();
-        long pending = persisted.stream().filter(CallResult::isPending).count();
-        assertEquals(2, failed);
-        assertEquals(2, pending);
-        assertEquals(4, context.getDurableExecutionContext().getCurrentCallIndex());
-        executor.close();
+            assertTrue(outcomes.get(0).isFailure());
+            assertTrue(outcomes.get(1).isFailure());
+            assertTrue(outcomes.get(2).isFailure());
+            assertTrue(outcomes.get(3).isFailure());
+            // Only the two workers that actually began executing count as started, so exactly two
+            // suppliers were invoked while the queued pair never ran.
+            int totalCalls =
+                    first.getCallCount()
+                            + second.getCallCount()
+                            + third.getCallCount()
+                            + fourth.getCallCount();
+            assertEquals(2, totalCalls);
+            // The queued-but-unstarted slots were cancelled, so even after the two running
+            // workers finish and free their pool threads, the queued tool bodies never execute.
+            release.countDown();
+            executor.batchExecutor.shutdown();
+            assertTrue(executor.batchExecutor.awaitTermination(5, TimeUnit.SECONDS));
+            assertEquals(
+                    2,
+                    first.getCallCount()
+                            + second.getCallCount()
+                            + third.getCallCount()
+                            + fourth.getCallCount());
+            List<CallResult> persisted =
+                    context.getDurableExecutionContext().getActionState().getCallResults();
+            // Started slots are persisted as timeout failures. Queued slots remain pending so
+            // recovery re-executes them instead of replaying a false failure.
+            long failed = persisted.stream().filter(CallResult::isFailure).count();
+            long pending = persisted.stream().filter(CallResult::isPending).count();
+            assertEquals(2, failed);
+            assertEquals(2, pending);
+            assertEquals(4, context.getDurableExecutionContext().getCurrentCallIndex());
+        } finally {
+            release.countDown();
+            executor.close();
+        }
     }
 
     @Test
@@ -814,10 +1075,9 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                 persisted.get(2).isPending(),
                 "slots after the interrupted one must stay pending, not be finalized");
         assertEquals(
-                0,
+                3,
                 context.getDurableExecutionContext().getCurrentCallIndex(),
-                "the call index must not advance past an interrupted batch, so recovery re-reads"
-                        + " the pending slots instead of skipping them");
+                "each future owns its reserved slot; a restored action starts its cursor at zero");
     }
 
     @Test
@@ -860,7 +1120,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                 context.getDurableExecutionContext().getActionState().getCallResults();
         assertTrue(persisted.get(0).isSuccess());
         assertTrue(persisted.get(1).isPending());
-        assertEquals(0, context.getDurableExecutionContext().getCurrentCallIndex());
+        assertEquals(2, context.getDurableExecutionContext().getCurrentCallIndex());
 
         List<Outcome<String>> outcomes = gathered.await();
 
@@ -893,7 +1153,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
         assertSame(fault, assertThrows(UncapturableException.class, () -> gather(context, calls)));
 
-        assertEquals(0, context.getCurrentCallIndex());
+        assertEquals(3, context.getCurrentCallIndex());
         assertEquals(3, state.getCallResultCount());
         assertTrue(state.getCallResults().get(0).isSuccess());
         assertTrue(state.getCallResults().subList(1, 3).stream().allMatch(CallResult::isPending));
@@ -992,12 +1252,10 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                         });
         assertFalse(future instanceof DurableFuture);
         assertEquals(0, calls.get());
-        assertEquals(0, executor.getExecuteAsyncCallCount());
         assertSame(value, future.await());
         assertSame(value, future.await());
         assertSame(value, context.gather(List.of(future)).await().get(0).getValue());
         assertEquals(1, calls.get());
-        assertEquals(1, executor.getExecuteAsyncCallCount());
         assertEquals(0, context.getCurrentCallIndex());
         assertTrue(
                 context.getDurableExecutionContext().getActionState().getCallResults().isEmpty());
@@ -1043,10 +1301,10 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                     new InspectingContinuationActionExecutor();
             JavaRunnerContextImpl context = createContext(state, executor);
             assertEquals("before", context.durableExecute(before));
-            executor.setBeforeBatchExecute(
+            executor.setBeforeSubmit(
                     () -> {
                         assertEquals("durable", state.getCallResults().get(1).getFunctionId());
-                        assertEquals(1, context.getCurrentCallIndex());
+                        assertEquals(2, context.getCurrentCallIndex());
                     });
             AsyncFuture<String> ordinary =
                     context.executeAsync(() -> "ordinary-" + ordinaryCalls.incrementAndGet());
@@ -1098,7 +1356,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                 List.of("ordinary-1", "cached", "ordinary-2", "reconciled"),
                 outcomes.subList(0, 4).stream()
                         .map(Outcome::getValue)
-                        .collect(java.util.stream.Collectors.toList()));
+                        .collect(Collectors.toList()));
         assertEquals("durable failure", outcomes.get(4).getError().getMessage());
         assertEquals("ordinary-3", outcomes.get(5).getValue());
         assertEquals(3, state.getCallResults().size());
@@ -1106,8 +1364,8 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         assertEquals(3, context.getCurrentCallIndex());
     }
 
-    @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.MethodSource("cancellationFailures")
+    @ParameterizedTest
+    @MethodSource("cancellationFailures")
     void testOrdinaryInterruptionIsNotCachedInSingleOrGatheredHandles(
             Exception failure, boolean interrupts) throws Exception {
         for (boolean gathered : List.of(false, true)) {
@@ -1155,8 +1413,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
     @Test
     void realFallbackBatchTimeoutKeepsUnstartedDurableCallsReplayable() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeFalse(
-                ContinuationActionExecutor.isContinuationSupported());
+        Assumptions.assumeFalse(ContinuationActionExecutor.isContinuationSupported());
         ContinuationActionExecutor executor = new ContinuationActionExecutor(1);
         CountDownLatch release = new CountDownLatch(1);
         AtomicInteger ordinaryCalls = new AtomicInteger();
@@ -1194,7 +1451,8 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
             assertEquals(0, second.getCallCount());
             release.countDown();
             // Queue barrier: cancelled calls cannot sneak in after timeout.
-            executor.executeAllAsync(new ContinuationContext(), List.of(() -> "drained"), null, 1);
+            executor.submitAsync(new ContinuationContext(), () -> "drained")
+                    .get(5, TimeUnit.SECONDS);
             JavaRunnerContextImpl recovered = createContext(state, executor);
             List<Outcome<String>> replay =
                     recovered
@@ -1225,8 +1483,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     void networkTimeoutRemainsACachedAndPersistedBusinessFailure() throws Exception {
         for (boolean gathered : List.of(false, true)) {
             JavaRunnerContextImpl context = createContext(new ActionState(null), null);
-            java.net.SocketTimeoutException failure =
-                    new java.net.SocketTimeoutException("timeout");
+            SocketTimeoutException failure = new SocketTimeoutException("timeout");
             AtomicInteger calls = new AtomicInteger();
             AsyncFuture<String> ordinary =
                     context.executeAsync(
@@ -1263,26 +1520,18 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         }
     }
 
-    static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
-            cancellationFailures() {
-        return java.util.stream.Stream.of(
-                org.junit.jupiter.params.provider.Arguments.of(new InterruptedException(), true),
-                org.junit.jupiter.params.provider.Arguments.of(
-                        new java.nio.channels.ClosedByInterruptException(), true),
-                org.junit.jupiter.params.provider.Arguments.of(
-                        new RuntimeException(new InterruptedException()), true),
-                org.junit.jupiter.params.provider.Arguments.of(
-                        new RuntimeException(new java.nio.channels.ClosedByInterruptException()),
-                        true),
-                org.junit.jupiter.params.provider.Arguments.of(
-                        new java.util.concurrent.CancellationException(), false),
-                org.junit.jupiter.params.provider.Arguments.of(
-                        new RuntimeException(new java.util.concurrent.CancellationException()),
-                        false));
+    static Stream<Arguments> cancellationFailures() {
+        return Stream.of(
+                Arguments.of(new InterruptedException(), true),
+                Arguments.of(new ClosedByInterruptException(), true),
+                Arguments.of(new RuntimeException(new InterruptedException()), true),
+                Arguments.of(new RuntimeException(new ClosedByInterruptException()), true),
+                Arguments.of(new CancellationException(), false),
+                Arguments.of(new RuntimeException(new CancellationException()), false));
     }
 
-    @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.MethodSource("cancellationFailures")
+    @ParameterizedTest
+    @MethodSource("cancellationFailures")
     void cancellationNeverBecomesADurableOutcome(Exception failure, boolean interrupts)
             throws Exception {
         for (String mode : List.of("sync", "async", "pending", "batch", "mixed")) {
@@ -1330,15 +1579,153 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                                 });
                 assertSame(failure, raised);
                 assertEquals(interrupts, Thread.interrupted());
-                assertEquals(0, context.getCurrentCallIndex());
+                assertEquals(mode.equals("sync") ? 0 : 1, context.getCurrentCallIndex());
                 assertTrue(state.getCallResults().stream().allMatch(CallResult::isPending));
-                assertEquals(
-                        mode.equals("sync") || mode.equals("async") ? 0 : 1,
-                        state.getCallResultCount());
+                assertEquals(mode.equals("sync") ? 0 : 1, state.getCallResultCount());
             } finally {
                 Thread.interrupted();
             }
         }
+    }
+
+    @Test
+    void slidingWindowMakesProgressPastSlowFirstCallAndPreservesOrder() throws Exception {
+        ContinuationActionExecutor executor = new ContinuationActionExecutor(3);
+        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+        CountDownLatch thirdStarted = new CountDownLatch(1);
+        CyclicBarrier firstPair = new CyclicBarrier(2);
+        AtomicInteger inFlight = new AtomicInteger();
+        AtomicInteger peak = new AtomicInteger();
+        try {
+            List<Callable<String>> calls =
+                    List.of(
+                            () -> {
+                                peak.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+                                try {
+                                    firstPair.await(5, TimeUnit.SECONDS);
+                                    assertThat(thirdStarted.await(5, TimeUnit.SECONDS)).isTrue();
+                                    return "first";
+                                } finally {
+                                    inFlight.decrementAndGet();
+                                }
+                            },
+                            () -> {
+                                peak.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+                                try {
+                                    firstPair.await(5, TimeUnit.SECONDS);
+                                    throw new IllegalArgumentException("second failed");
+                                } finally {
+                                    inFlight.decrementAndGet();
+                                }
+                            },
+                            () -> {
+                                peak.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+                                try {
+                                    assertThat(AsyncExecutorThreadFactory.isAsyncExecutorThread())
+                                            .isTrue();
+                                    thirdStarted.countDown();
+                                    return "third";
+                                } finally {
+                                    inFlight.decrementAndGet();
+                                }
+                            });
+            ((Configuration) context.getConfig())
+                    .set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
+            List<Outcome<String>> result = runGather(context, calls);
+            assertThat(peak.get()).isEqualTo(2);
+            assertThat(result.get(0).getValue()).isEqualTo("first");
+            assertThat(result.get(1).getError()).hasMessage("second failed");
+            assertThat(result.get(2).getValue()).isEqualTo("third");
+        } finally {
+            executor.close();
+        }
+    }
+
+    @Test
+    void parallelismOneSerializesCallsEvenWithMultipleWorkers() throws Exception {
+        ContinuationActionExecutor executor = new ContinuationActionExecutor(3);
+        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+        AtomicInteger sequence = new AtomicInteger();
+        try {
+            ((Configuration) context.getConfig())
+                    .set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 1);
+            List<Outcome<Integer>> result =
+                    runGather(
+                            context,
+                            List.of(
+                                    sequence::incrementAndGet,
+                                    sequence::incrementAndGet,
+                                    sequence::incrementAndGet));
+            assertThat(result).extracting(Outcome::getValue).containsExactly(1, 2, 3);
+        } finally {
+            executor.close();
+        }
+    }
+
+    @Test
+    void callerInterruptionCancelsRunningAndQueuedCalls() throws Exception {
+        Assumptions.assumeFalse(ContinuationActionExecutor.isContinuationSupported());
+        ContinuationActionExecutor executor = new ContinuationActionExecutor(1);
+        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+        ((Configuration) context.getConfig()).set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
+        ExecutorService driver = Executors.newSingleThreadExecutor();
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch interrupted = new CountDownLatch(1);
+        AtomicInteger unwantedCalls = new AtomicInteger();
+        try {
+            Future<?> batch =
+                    driver.submit(
+                            () ->
+                                    runGather(
+                                            context,
+                                            List.of(
+                                                    () -> {
+                                                        started.countDown();
+                                                        try {
+                                                            new CountDownLatch(1).await();
+                                                            return 0;
+                                                        } catch (InterruptedException e) {
+                                                            interrupted.countDown();
+                                                            throw e;
+                                                        }
+                                                    },
+                                                    unwantedCalls::incrementAndGet)));
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            batch.cancel(true);
+            assertThat(interrupted.await(5, TimeUnit.SECONDS)).isTrue();
+            driver.submit(() -> {}).get(5, TimeUnit.SECONDS);
+            executor.submitAsync(new ContinuationContext(), () -> "sentinel")
+                    .get(5, TimeUnit.SECONDS);
+            assertThat(unwantedCalls.get()).isZero();
+        } finally {
+            driver.shutdownNow();
+            executor.close();
+        }
+    }
+
+    /** Runs the production scheduler on both fallback workers and JDK 21 continuations. */
+    private static <T> List<Outcome<T>> runGather(
+            JavaRunnerContextImpl context, List<Callable<T>> calls) throws Exception {
+        CompletableFuture<List<Outcome<T>>> result = new CompletableFuture<>();
+        Runnable action =
+                () -> {
+                    try {
+                        List<AsyncFuture<T>> futures = new ArrayList<>();
+                        for (Callable<T> call : calls) {
+                            futures.add(context.executeAsync(call));
+                        }
+                        result.complete(context.gather(futures).await());
+                    } catch (Exception | Error failure) {
+                        result.completeExceptionally(failure);
+                    }
+                };
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!context.getContinuationExecutor()
+                .executeAction(context.getContinuationContext(), action)) {
+            assertTrue(System.nanoTime() < deadline, "Gather did not finish");
+            Thread.sleep(1);
+        }
+        return result.get(5, TimeUnit.SECONDS);
     }
 
     private JavaRunnerContextImpl createContext(
@@ -1381,15 +1768,10 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     }
 
     private static final class InspectingContinuationActionExecutor
-            extends ContinuationActionExecutor {
-        private Runnable beforeExecute;
-        private Runnable beforeBatchExecute;
+            extends ContinuationActionExecutor implements AutoCloseable {
+        private Runnable beforeSubmit;
         private boolean useTimeoutCollection;
-        private Duration lastExecuteAllAsyncTimeout;
-        private int lastExecuteAllAsyncMaxParallelism;
-        private int executeAsyncCallCount;
-        private int executeAllAsyncCallCount;
-        private final List<Integer> executeAllAsyncBatchSizes = new java.util.ArrayList<>();
+        private int submittedCalls;
         private ExecutorService batchExecutor = Executors.newFixedThreadPool(4);
 
         private InspectingContinuationActionExecutor() {
@@ -1397,170 +1779,51 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         }
 
         @Override
-        public <T> T executeAsync(ContinuationContext context, Supplier<T> supplier) {
-            executeAsyncCallCount++;
-            if (beforeExecute != null) {
-                beforeExecute.run();
+        public <T> CompletableFuture<T> submitAsync(
+                ContinuationContext context, Callable<T> callable) {
+            if (submittedCalls++ == 0 && beforeSubmit != null) {
+                beforeSubmit.run();
             }
-            return supplier.get();
+            if (useTimeoutCollection) {
+                CompletableFuture<T> result = new CompletableFuture<>();
+                var task =
+                        batchExecutor.submit(
+                                () -> {
+                                    try {
+                                        result.complete(callable.call());
+                                    } catch (Throwable e) {
+                                        result.completeExceptionally(e);
+                                    }
+                                });
+                result.whenComplete(
+                        (value, error) -> {
+                            if (result.isCancelled()) {
+                                task.cancel(true);
+                            }
+                        });
+                return result;
+            }
+            CompletableFuture<T> result = new CompletableFuture<>();
+            try {
+                result.complete(callable.call());
+            } catch (Throwable error) {
+                result.completeExceptionally(error);
+            }
+            return result;
         }
 
         @Override
-        public <T> BatchExecutionResult<T> executeAllAsync(
-                ContinuationContext context,
-                List<Callable<T>> suppliers,
-                Duration timeout,
-                int maxParallelism) {
-            executeAllAsyncCallCount++;
-            executeAllAsyncBatchSizes.add(suppliers.size());
-            lastExecuteAllAsyncTimeout = timeout;
-            lastExecuteAllAsyncMaxParallelism = maxParallelism;
-            if (beforeBatchExecute != null) {
-                beforeBatchExecute.run();
+        public <T> T awaitFuture(ContinuationContext context, CompletableFuture<T> future)
+                throws Exception {
+            try {
+                return future.get();
+            } catch (ExecutionException error) {
+                throw (Exception) error.getCause();
             }
-            if (useTimeoutCollection) {
-                return executeAllAsyncWithDeadline(suppliers, timeout, maxParallelism);
-            }
-            List<Outcome<T>> outcomes = new java.util.ArrayList<>(suppliers.size());
-            boolean[] started = new boolean[suppliers.size()];
-            java.util.Arrays.fill(started, true);
-            for (Callable<T> supplier : suppliers) {
-                try {
-                    outcomes.add(Outcome.success(supplier.call()));
-                } catch (Exception e) {
-                    outcomes.add(Outcome.failure(e));
-                }
-            }
-            return new BatchExecutionResult<>(outcomes, started);
         }
 
-        private <T> BatchExecutionResult<T> executeAllAsyncWithDeadline(
-                List<Callable<T>> suppliers, Duration timeout, int maxParallelism) {
-            int batchSize = suppliers.size();
-            List<CompletableFuture<Outcome<T>>> futures = new java.util.ArrayList<>(batchSize);
-            AtomicIntegerArray started = new AtomicIntegerArray(batchSize);
-            boolean[] counted = new boolean[batchSize];
-            for (int i = 0; i < batchSize; i++) {
-                futures.add(null);
-            }
-
-            int completed = 0;
-            int nextToSubmit = 0;
-            int parallelismLimit = Math.min(Math.max(maxParallelism, 1), batchSize);
-            long deadlineNanos = getDeadlineNanos(timeout);
-
-            while (completed < batchSize) {
-                if (System.nanoTime() >= deadlineNanos) {
-                    TimeoutException exception =
-                            new TimeoutException(
-                                    "Async durable batch execution timed out after " + timeout);
-                    return collectBatchOutcomesOnTimeout(futures, started, exception);
-                }
-
-                while (nextToSubmit < batchSize
-                        && countInFlight(futures, nextToSubmit) < parallelismLimit) {
-                    int index = nextToSubmit++;
-                    Callable<T> supplier = suppliers.get(index);
-                    futures.set(
-                            index,
-                            CompletableFuture.supplyAsync(
-                                    () -> {
-                                        started.set(index, 1);
-                                        try {
-                                            return Outcome.success(supplier.call());
-                                        } catch (Exception e) {
-                                            return Outcome.<T>failure(e);
-                                        }
-                                    },
-                                    batchExecutor));
-                }
-
-                for (int i = 0; i < nextToSubmit; i++) {
-                    CompletableFuture<Outcome<T>> future = futures.get(i);
-                    if (future != null && future.isDone() && !counted[i]) {
-                        counted[i] = true;
-                        completed++;
-                    }
-                }
-
-                if (completed < batchSize) {
-                    try {
-                        Thread.sleep(1);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        TimeoutException exception =
-                                new TimeoutException("Async durable batch execution interrupted");
-                        return collectBatchOutcomesOnTimeout(futures, started, exception);
-                    }
-                }
-            }
-            return collectBatchOutcomes(futures, started);
-        }
-
-        private static long getDeadlineNanos(Duration timeout) {
-            return timeout == null || timeout.isZero() || timeout.isNegative()
-                    ? Long.MAX_VALUE
-                    : System.nanoTime() + timeout.toNanos();
-        }
-
-        private static <T> BatchExecutionResult<T> collectBatchOutcomes(
-                List<CompletableFuture<Outcome<T>>> futures, AtomicIntegerArray started) {
-            List<Outcome<T>> results = new java.util.ArrayList<>(futures.size());
-            for (CompletableFuture<Outcome<T>> future : futures) {
-                results.add(future.join());
-            }
-            return new BatchExecutionResult<>(results, toStartedFlags(started));
-        }
-
-        private static <T> BatchExecutionResult<T> collectBatchOutcomesOnTimeout(
-                List<CompletableFuture<Outcome<T>>> futures,
-                AtomicIntegerArray started,
-                TimeoutException timeoutException) {
-            List<Outcome<T>> results = new java.util.ArrayList<>(futures.size());
-            for (int i = 0; i < futures.size(); i++) {
-                CompletableFuture<Outcome<T>> future = futures.get(i);
-                if (future == null) {
-                    results.add(Outcome.failure(timeoutException));
-                    continue;
-                }
-                if (!future.isDone()) {
-                    future.cancel(true);
-                }
-                if (future.isDone() && !future.isCancelled()) {
-                    results.add(future.join());
-                } else {
-                    results.add(Outcome.failure(timeoutException));
-                }
-            }
-            return new BatchExecutionResult<>(results, toStartedFlags(started));
-        }
-
-        private static boolean[] toStartedFlags(AtomicIntegerArray started) {
-            boolean[] flags = new boolean[started.length()];
-            for (int i = 0; i < flags.length; i++) {
-                flags[i] = started.get(i) == 1;
-            }
-            return flags;
-        }
-
-        private static <T> int countInFlight(
-                List<CompletableFuture<Outcome<T>>> futures, int submittedCount) {
-            int inFlight = 0;
-            for (int i = 0; i < submittedCount; i++) {
-                CompletableFuture<Outcome<T>> future = futures.get(i);
-                if (future != null && !future.isDone()) {
-                    inFlight++;
-                }
-            }
-            return inFlight;
-        }
-
-        private void setBeforeExecute(Runnable beforeExecute) {
-            this.beforeExecute = beforeExecute;
-        }
-
-        private void setBeforeBatchExecute(Runnable beforeBatchExecute) {
-            this.beforeBatchExecute = beforeBatchExecute;
+        private void setBeforeSubmit(Runnable beforeSubmit) {
+            this.beforeSubmit = beforeSubmit;
         }
 
         private void setUseTimeoutCollection(boolean useTimeoutCollection) {
@@ -1570,26 +1833,6 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         private void setBatchThreads(int threads) {
             batchExecutor.shutdownNow();
             batchExecutor = Executors.newFixedThreadPool(threads);
-        }
-
-        private int getExecuteAsyncCallCount() {
-            return executeAsyncCallCount;
-        }
-
-        private int getExecuteAllAsyncCallCount() {
-            return executeAllAsyncCallCount;
-        }
-
-        private List<Integer> getExecuteAllAsyncBatchSizes() {
-            return executeAllAsyncBatchSizes;
-        }
-
-        private Duration getLastExecuteAllAsyncTimeout() {
-            return lastExecuteAllAsyncTimeout;
-        }
-
-        private int getLastExecuteAllAsyncMaxParallelism() {
-            return lastExecuteAllAsyncMaxParallelism;
         }
 
         @Override
@@ -1606,7 +1849,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                 FlinkAgentsMetricGroupImpl agentMetricGroup,
                 Runnable mailboxThreadChecker,
                 AgentPlan agentPlan,
-                org.apache.flink.agents.runtime.ResourceCache resourceCache,
+                ResourceCache resourceCache,
                 String jobIdentifier,
                 ContinuationActionExecutor continuationExecutor,
                 String failOnResult) {

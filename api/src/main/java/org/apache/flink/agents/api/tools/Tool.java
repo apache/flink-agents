@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 
 import java.lang.reflect.Method;
+import java.util.Objects;
 
 /**
  * Simplified base class for all tools. Focus on essential tool functionality without
@@ -33,7 +34,7 @@ public abstract class Tool extends SerializableResource {
     protected ToolMetadata metadata;
 
     protected Tool(ToolMetadata metadata) {
-        this.metadata = java.util.Objects.requireNonNull(metadata, "metadata cannot be null");
+        this.metadata = Objects.requireNonNull(metadata, "metadata cannot be null");
     }
 
     /**
@@ -42,7 +43,7 @@ public abstract class Tool extends SerializableResource {
      * PythonFunction} refreshing placeholder metadata via the JVM&rarr;Python adapter).
      */
     protected void setMetadata(ToolMetadata metadata) {
-        this.metadata = java.util.Objects.requireNonNull(metadata, "metadata cannot be null");
+        this.metadata = Objects.requireNonNull(metadata, "metadata cannot be null");
     }
 
     /** Get the metadata of this tool. */
