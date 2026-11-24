@@ -277,7 +277,7 @@ cross-language runtime requirements.
 **Resources configured by implementation class** — `chat_model_connections`,
 `chat_model_setups`, `decision_model_connections`, `decision_model_setups`,
 `embedding_model_connections`, `embedding_model_setups`, `vector_stores`,
-`mcp_servers`, and `model_routers`, plus `subagents` for external sub-agents.
+`media_model_connections`, `media_model_setups`, `rerank_models`, `mcp_servers`, and `model_routers`, plus `subagents` for external sub-agents.
 Declare the implementation and its configuration using the fields below.
 This corresponds to a `ResourceDescriptor` in Java or Python; the framework creates the
 Resource instance at runtime.
@@ -327,6 +327,7 @@ shared Resources from the execution environment. In the [single-agent example](#
 | `chat_model_setups[].subagents` | a list of `subagents[]` resource names | `subagents: [reviewer]` |
 | `decision_model_setups[].connection` | a `decision_model_connections[]` name | `connection: decision_connection` |
 | `embedding_model_setups[].connection` | an `embedding_model_connections[]` name | `connection: my_embedding_server` |
+| `media_model_setups[].connection` | a `media_model_connections[]` name | `connection: dashscope` |
 
 The referenced Resource must be registered on the Agent or its execution environment.
 The setup's `name: review_analysis_model` identifies the Resource in your application;
@@ -771,6 +772,27 @@ Embedding-model aliases (apply to both `embedding_model_connections` and `embedd
 | `dashscope` | Alibaba Cloud Model Studio (DashScope) | —              |
 | `bedrock` | —              | Bedrock (Java) |
 
+Media-model-connection aliases (apply to `media_model_connections`):
+
+| Alias | `type: python` | `type: java` |
+| ----- | -------------- | ------------ |
+| `dashscope` | Alibaba Cloud Model Studio (DashScope) | — |
+
+Media-model-setup aliases (apply to `media_model_setups`):
+
+| Alias | `type: python` | `type: java` |
+| ----- | -------------- | ------------ |
+| `dashscope_tts` | `DashScopeSpeechSynthesisModelSetup` | — |
+| `dashscope_asr` | `DashScopeTranscriptionModelSetup` | — |
+| `dashscope_image` | `DashScopeImageGenerationModelSetup` | — |
+| `dashscope_video` | `DashScopeVideoGenerationModelSetup` | — |
+
+Rerank-model aliases (apply to `rerank_models`):
+
+| Alias | `type: python` | `type: java` |
+| ----- | -------------- | ------------ |
+| `dashscope` | Alibaba Cloud Model Studio (DashScope) | — |
+
 Vector-store aliases:
 
 | Alias           | `type: python` | `type: java`    |
@@ -860,7 +882,7 @@ Application payloads must use the supported
 Cross-language support varies by component:
 
 - `actions`, `tools`, `chat_model_connections`, `chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, and `vector_stores` support both directions: `type: python` when loaded from Java, and `type: java` when loaded from Python.
-- `decision_model_connections`, `decision_model_setups`, and `mcp_servers` support only Java-to-Python cross-language use: Java-loaded YAML can use Python implementations, but Python-loaded YAML cannot use Java implementations.
+- `decision_model_connections`, `decision_model_setups`, `media_model_connections`, `media_model_setups`, `rerank_models`, and `mcp_servers` support only Java-to-Python cross-language use: Java-loaded YAML can use Python implementations, but Python-loaded YAML cannot use Java implementations.
 - `model_routers` do not support cross-language use. Java YAML sets `type: java`. Python YAML uses the default Python implementation. Declaring the other language fails when the file is loaded.
 - Other components, including external `subagents`, do not support cross-language use.
 
