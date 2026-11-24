@@ -236,12 +236,6 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
         except TypeError as e:  # pydantic only converts ValueError
             raise ValueError(str(e)) from e
 
-    # A YAML null means the default, as parseRequestTimeout(null) does in Java.
-    @field_validator("request_timeout", mode="before")
-    @classmethod
-    def _default_request_timeout(cls, value: Any) -> Any:
-        return DEFAULT_REQUEST_TIMEOUT if value is None else value
-
     @field_validator("max_retries", mode="before")
     @classmethod
     def _default_max_retries(cls, value: Any) -> Any:

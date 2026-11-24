@@ -269,10 +269,10 @@ def test_openai_embedding_setup_validates_encoding_format_and_dimensions() -> No
             name="openai", api_key="k", base_url=absent
         )
         assert conn.base_url == "https://api.openai.com/v1"
-    null_defaults = OpenAIEmbeddingModelConnection(
-        name="openai", api_key="k", request_timeout=None, max_retries=None
+    null_retries = OpenAIEmbeddingModelConnection(
+        name="openai", api_key="k", max_retries=None
     )
-    assert (null_defaults.request_timeout, null_defaults.max_retries) == (30.0, 3)
+    assert null_retries.max_retries == 3
     with pytest.raises(ValidationError, match="base_url must be a string"):
         OpenAIEmbeddingModelConnection(name="openai", api_key="k", base_url=8080)
     with pytest.raises(TypeError, match="got: None"):
