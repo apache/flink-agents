@@ -356,12 +356,35 @@ class DurableExecutionContextTest {
     }
 
     @Test
-    void testDurableExecutionExceptionFallbackPreservesMessageWhenStringConstructorMissing()
-            throws Exception {
+    void testDurableExecutionExceptionRestoresTypeWhenStringConstructorMissing() throws Exception {
         NoPublicStringConstructorException original =
                 NoPublicStringConstructorException.withMessage("durable failure");
+        byte[] serialized =
+                new ObjectMapper()
+                        .writeValueAsBytes(
+                                RunnerContextImpl.DurableExecutionException.fromException(
+                                        original));
+
+        Exception recovered =
+                new ObjectMapper()
+                        .readValue(serialized, RunnerContextImpl.DurableExecutionException.class)
+                        .toException();
+
+        assertInstanceOf(NoPublicStringConstructorException.class, recovered);
+        assertEquals("durable failure", recovered.getMessage());
+    }
+
+    @Test
+    void testDurableExecutionExceptionFallbackPreservesMessageWhenStringConstructorMissing()
+            throws Exception {
+        // A record written before the serialized form existed carries only class and message.
+        String legacyRecord =
+                "{\"exceptionClass\":\""
+                        + NoPublicStringConstructorException.class.getName()
+                        + "\",\"message\":\"durable failure\"}";
         RunnerContextImpl.DurableExecutionException durableException =
-                RunnerContextImpl.DurableExecutionException.fromException(original);
+                new ObjectMapper()
+                        .readValue(legacyRecord, RunnerContextImpl.DurableExecutionException.class);
 
         Exception recovered = durableException.toException();
 

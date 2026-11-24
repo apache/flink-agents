@@ -787,6 +787,59 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     }
 
     @Test
+    void testDurableExecuteAsyncStructuredFailureReplaysWithItsTypeAndFields() throws Exception {
+        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
+        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+        TestDurableCallable<String> callable =
+                new TestDurableCallable<>(
+                        "task-async",
+                        String.class,
+                        () -> {
+                            throw new TaskFailure("task-1", "timed out");
+                        });
+        assertThrows(TaskFailure.class, () -> context.durableExecuteAsync(callable).await());
+
+        ActionState restored =
+                org.apache.flink.agents.runtime.actionstate.ActionStateSerde.deserialize(
+                        org.apache.flink.agents.runtime.actionstate.ActionStateSerde.serialize(
+                                lastPersistedState));
+        InspectingContinuationActionExecutor replayExecutor =
+                new InspectingContinuationActionExecutor();
+        JavaRunnerContextImpl replay = createContext(restored, replayExecutor);
+        TaskFailure replayed =
+                assertThrows(TaskFailure.class, () -> replay.durableExecuteAsync(callable).await());
+
+        assertEquals("task-1", replayed.getTaskId());
+        assertEquals("timed out", replayed.getMessage());
+        assertEquals(1, callable.getCallCount());
+        assertEquals(0, replayExecutor.getSubmittedCallCount());
+    }
+
+    @Test
+    void testGatherReturnsStructuredCachedFailureOutcome() throws Exception {
+        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
+        ActionState actionState = new ActionState(null);
+        actionState.addCallResult(
+                new CallResult(
+                        "batch-1",
+                        null,
+                        OBJECT_MAPPER.writeValueAsBytes(
+                                RunnerContextImpl.DurableExecutionException.fromException(
+                                        new TaskFailure("task-1", "timed out")))));
+        JavaRunnerContextImpl context = createContext(actionState, executor);
+        TestDurableCallable<String> callable =
+                new TestDurableCallable<>(
+                        "batch-1", String.class, () -> fail("cached slot should not execute"));
+
+        List<Outcome<String>> outcomes = gather(context, List.of(callable));
+
+        TaskFailure replayed = assertInstanceOf(TaskFailure.class, outcomes.get(0).getError());
+        assertEquals("task-1", replayed.getTaskId());
+        assertEquals(0, callable.getCallCount());
+        assertEquals(0, executor.getSubmittedCallCount());
+    }
+
+    @Test
     void testGatherReturnsDeserializeFailureAsOutcome() throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
         ActionState actionState = new ActionState(null);
@@ -1831,6 +1884,10 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
 
         private InspectingContinuationActionExecutor() {
             super(1, () -> {}, null, null);
+        }
+
+        private int getSubmittedCallCount() {
+            return submittedCalls;
         }
 
         @Override

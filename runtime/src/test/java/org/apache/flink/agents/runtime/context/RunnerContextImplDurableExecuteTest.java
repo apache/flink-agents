@@ -111,6 +111,71 @@ class RunnerContextImplDurableExecuteTest {
     }
 
     @Test
+    void structuredFailureReplaysWithItsTypeAndFields() throws Exception {
+        RunnerContextImpl context = createContext(new ActionState(new Event("test")));
+        TestDurableCallable<String> callable =
+                new TestDurableCallable<>(
+                        "task-call",
+                        String.class,
+                        () -> {
+                            throw new TaskFailure("task-1", "timed out");
+                        });
+        assertThrows(TaskFailure.class, () -> context.durableExecute(callable));
+
+        RunnerContextImpl replay = createContext(restoreLastPersistedState());
+        TaskFailure replayed =
+                assertThrows(TaskFailure.class, () -> replay.durableExecute(callable));
+
+        assertEquals("task-1", replayed.getTaskId());
+        assertEquals("timed out", replayed.getMessage());
+        assertEquals(1, callable.getCallCount());
+    }
+
+    @Test
+    void unserializableFailureReplaysFromItsClassAndMessage() throws Exception {
+        RunnerContextImpl context = createContext(new ActionState(new Event("test")));
+        TestDurableCallable<String> callable =
+                new TestDurableCallable<>(
+                        "unserializable-call",
+                        String.class,
+                        () -> {
+                            throw new UnserializableFailure("no handle");
+                        });
+        assertThrows(UnserializableFailure.class, () -> context.durableExecute(callable));
+
+        RunnerContextImpl replay = createContext(restoreLastPersistedState());
+        UnserializableFailure replayed =
+                assertThrows(UnserializableFailure.class, () -> replay.durableExecute(callable));
+
+        assertEquals("no handle", replayed.getMessage());
+        assertEquals(1, callable.getCallCount());
+    }
+
+    @Test
+    void unreadableSerializedFailureReplaysFromItsClassAndMessage() throws Exception {
+        ActionState actionState = new ActionState(null);
+        actionState.addCallResult(
+                new CallResult(
+                        "corrupt-call",
+                        null,
+                        OBJECT_MAPPER.writeValueAsBytes(
+                                new RunnerContextImpl.DurableExecutionException(
+                                        IllegalStateException.class.getName(),
+                                        "recorded",
+                                        new byte[] {1, 2, 3}))));
+        RunnerContextImpl replay = createContext(actionState);
+        TestDurableCallable<String> callable =
+                new TestDurableCallable<>(
+                        "corrupt-call", String.class, () -> fail("replay should not execute"));
+
+        IllegalStateException replayed =
+                assertThrows(IllegalStateException.class, () -> replay.durableExecute(callable));
+
+        assertEquals("recorded", replayed.getMessage());
+        assertEquals(0, callable.getCallCount());
+    }
+
+    @Test
     void nullResultReplaysThroughRuntimeStateWithoutReExecution() throws Exception {
         RunnerContextImpl context = createContext(new ActionState(new Event("test")));
         TestDurableCallable<Void> callable =
@@ -580,6 +645,12 @@ class RunnerContextImplDurableExecuteTest {
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
         assertEquals("recon-call", persisted.getFunctionId());
         assertTrue(persisted.isSuccess());
+    }
+
+    private ActionState restoreLastPersistedState() throws Exception {
+        return org.apache.flink.agents.runtime.actionstate.ActionStateSerde.deserialize(
+                org.apache.flink.agents.runtime.actionstate.ActionStateSerde.serialize(
+                        lastPersistedState));
     }
 
     private RunnerContextImpl createContext(ActionState actionState) {
