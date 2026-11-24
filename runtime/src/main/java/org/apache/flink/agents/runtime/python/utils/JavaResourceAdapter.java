@@ -63,6 +63,10 @@ public class JavaResourceAdapter {
         this.userCodeClassLoader = userCodeClassLoader;
     }
 
+    JavaResourceAdapter withResourceContext(ResourceContext resourceContext) {
+        return new JavaResourceAdapter(resourceContext, userCodeClassLoader);
+    }
+
     /** Materialize JAR resources for a Python-owned repository using the job's class loader. */
     public void extractClasspathSkills(
             String resource,

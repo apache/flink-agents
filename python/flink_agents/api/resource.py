@@ -32,7 +32,8 @@ class ResourceType(Enum):
     """Type enum of resource.
 
     Currently, support chat_model, decision_model, tool, embedding_model,
-    vector_store, prompt, mcp_server, skills, model_router, agent.
+    vector_store, media_model, media_model_connection, rerank_model, prompt,
+    mcp_server, skills, model_router, agent.
     """
 
     CHAT_MODEL = "chat_model"
@@ -43,6 +44,9 @@ class ResourceType(Enum):
     EMBEDDING_MODEL = "embedding_model"
     EMBEDDING_MODEL_CONNECTION = "embedding_model_connection"
     VECTOR_STORE = "vector_store"
+    MEDIA_MODEL = "media_model"
+    MEDIA_MODEL_CONNECTION = "media_model_connection"
+    RERANK_MODEL = "rerank_model"
     PROMPT = "prompt"
     MCP_SERVER = "mcp_server"
     SKILLS = "skills"

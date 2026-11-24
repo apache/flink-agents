@@ -133,6 +133,9 @@ public final class YamlLoader {
                             ResourceType.EMBEDDING_MODEL,
                             ResourceType.EMBEDDING_MODEL_CONNECTION,
                             ResourceType.VECTOR_STORE,
+                            ResourceType.MEDIA_MODEL,
+                            ResourceType.MEDIA_MODEL_CONNECTION,
+                            ResourceType.RERANK_MODEL,
                             ResourceType.MCP_SERVER)
                     .contains(resourceType)) {
                 throw new IllegalArgumentException(
@@ -361,6 +364,15 @@ public final class YamlLoader {
                 sharedResources, ResourceType.EMBEDDING_MODEL, doc.getEmbeddingModelSetups(), path);
         addSharedDescriptors(
                 sharedResources, ResourceType.VECTOR_STORE, doc.getVectorStores(), path);
+        addSharedDescriptors(
+                sharedResources,
+                ResourceType.MEDIA_MODEL_CONNECTION,
+                doc.getMediaModelConnections(),
+                path);
+        addSharedDescriptors(
+                sharedResources, ResourceType.MEDIA_MODEL, doc.getMediaModelSetups(), path);
+        addSharedDescriptors(
+                sharedResources, ResourceType.RERANK_MODEL, doc.getRerankModels(), path);
         addSharedDescriptors(sharedResources, ResourceType.MCP_SERVER, doc.getMcpServers(), path);
         addSharedDescriptors(
                 sharedResources, ResourceType.MODEL_ROUTER, doc.getModelRouters(), path);
@@ -498,6 +510,10 @@ public final class YamlLoader {
                 spec.getEmbeddingModelConnections());
         addAgentDescriptors(agent, ResourceType.EMBEDDING_MODEL, spec.getEmbeddingModelSetups());
         addAgentDescriptors(agent, ResourceType.VECTOR_STORE, spec.getVectorStores());
+        addAgentDescriptors(
+                agent, ResourceType.MEDIA_MODEL_CONNECTION, spec.getMediaModelConnections());
+        addAgentDescriptors(agent, ResourceType.MEDIA_MODEL, spec.getMediaModelSetups());
+        addAgentDescriptors(agent, ResourceType.RERANK_MODEL, spec.getRerankModels());
         addAgentDescriptors(agent, ResourceType.MCP_SERVER, spec.getMcpServers());
         addAgentDescriptors(agent, ResourceType.MODEL_ROUTER, spec.getModelRouters());
 

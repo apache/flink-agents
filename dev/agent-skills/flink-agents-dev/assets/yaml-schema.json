@@ -145,6 +145,20 @@
           "title": "Mcp Servers",
           "type": "array"
         },
+        "media_model_connections": {
+          "items": {
+            "$ref": "#/$defs/DescriptorSpec"
+          },
+          "title": "Media Model Connections",
+          "type": "array"
+        },
+        "media_model_setups": {
+          "items": {
+            "$ref": "#/$defs/DescriptorSpec"
+          },
+          "title": "Media Model Setups",
+          "type": "array"
+        },
         "model_routers": {
           "items": {
             "$ref": "#/$defs/DescriptorSpec"
@@ -161,6 +175,13 @@
             "$ref": "#/$defs/PromptSpec"
           },
           "title": "Prompts",
+          "type": "array"
+        },
+        "rerank_models": {
+          "items": {
+            "$ref": "#/$defs/DescriptorSpec"
+          },
+          "title": "Rerank Models",
           "type": "array"
         },
         "skills": {
@@ -1059,6 +1080,20 @@
       "title": "Mcp Servers",
       "type": "array"
     },
+    "media_model_connections": {
+      "items": {
+        "$ref": "#/$defs/DescriptorSpec"
+      },
+      "title": "Media Model Connections",
+      "type": "array"
+    },
+    "media_model_setups": {
+      "items": {
+        "$ref": "#/$defs/DescriptorSpec"
+      },
+      "title": "Media Model Setups",
+      "type": "array"
+    },
     "model_routers": {
       "items": {
         "$ref": "#/$defs/DescriptorSpec"
@@ -1071,6 +1106,13 @@
         "$ref": "#/$defs/PromptSpec"
       },
       "title": "Prompts",
+      "type": "array"
+    },
+    "rerank_models": {
+      "items": {
+        "$ref": "#/$defs/DescriptorSpec"
+      },
+      "title": "Rerank Models",
       "type": "array"
     },
     "skills": {

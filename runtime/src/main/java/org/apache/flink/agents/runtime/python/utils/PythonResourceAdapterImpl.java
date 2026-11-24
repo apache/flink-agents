@@ -31,12 +31,16 @@ import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.apache.flink.agents.plan.resource.python.PythonObjectScope;
 import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resource.python.PythonResourceWrapper;
+import org.apache.flink.util.ExceptionUtils;
 import pemja.core.object.PyObject;
+
+import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoCloseable {
 
@@ -81,6 +85,8 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
     private final ResourceContext resourceContext;
     private final PythonInterpreterManager interpreterManager;
     private final JavaResourceAdapter javaResourceAdapter;
+    private final Map<ResourceContext, PythonResourceAdapterImpl> scopedAdapters =
+            new ConcurrentHashMap<>();
     private PyObject pythonResourceContext;
 
     public PythonResourceAdapterImpl(
@@ -96,13 +102,34 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
         pythonResourceContext = (PyObject) interpreterManager.invoke(GET_RESOURCE_CONTEXT, this);
     }
 
+    private void openOnOwner() {
+        pythonResourceContext =
+                (PyObject) interpreterManager.invokeOnOwner(GET_RESOURCE_CONTEXT, this);
+    }
+
     @Override
     public void close() throws Exception {
+        Throwable firstFailure = null;
+        for (PythonResourceAdapterImpl scoped : scopedAdapters.values()) {
+            try {
+                scoped.close();
+            } catch (Throwable t) {
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+            }
+        }
+        scopedAdapters.clear();
         // Clear first because Pemja's close performs an unguarded native decRef.
         PyObject resourceContext = pythonResourceContext;
         pythonResourceContext = null;
         if (resourceContext != null) {
-            resourceContext.close();
+            try {
+                resourceContext.close();
+            } catch (Throwable t) {
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+            }
+        }
+        if (firstFailure != null) {
+            ExceptionUtils.rethrowException(firstFailure);
         }
     }
 
@@ -160,6 +187,32 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
         // that observes the cache miss. Bind their root handles to the owner interpreter instead of
         // that worker's disposable interpreter.
         return (PyObject) interpreterManager.invokeOnOwner(CREATE_RESOURCE, module, clazz, kwargs);
+    }
+
+    @Override
+    public PyObject initPythonResource(
+            String module,
+            String clazz,
+            Map<String, Object> kwargs,
+            @Nullable ResourceContext targetResourceContext) {
+        if (targetResourceContext == null || targetResourceContext == this.resourceContext) {
+            return initPythonResource(module, clazz, kwargs);
+        }
+        PythonResourceAdapterImpl scoped =
+                scopedAdapters.computeIfAbsent(
+                        targetResourceContext,
+                        ctx -> {
+                            JavaResourceAdapter scopedJavaAdapter =
+                                    javaResourceAdapter != null
+                                            ? javaResourceAdapter.withResourceContext(ctx)
+                                            : null;
+                            PythonResourceAdapterImpl child =
+                                    new PythonResourceAdapterImpl(
+                                            ctx, interpreterManager, scopedJavaAdapter);
+                            child.openOnOwner();
+                            return child;
+                        });
+        return scoped.initPythonResource(module, clazz, kwargs);
     }
 
     @Override
