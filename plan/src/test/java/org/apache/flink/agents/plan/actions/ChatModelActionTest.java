@@ -32,6 +32,7 @@ import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.types.Row;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -42,7 +43,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.withSettings;
 
 /** Tests for {@link ChatModelAction}. */
@@ -98,16 +103,25 @@ class ChatModelActionTest {
     }
 
     @Test
-    void rowSchemaOutputRejectsMissingField() {
-        IllegalArgumentException error =
+    void rowSchemaOutputRejectsMissingField() throws Exception {
+        RunnerContext ctx = reportingContext();
+        MismatchedInputException error =
                 assertThrows(
-                        IllegalArgumentException.class,
+                        MismatchedInputException.class,
                         () ->
                                 ChatModelAction.generateStructuredOutputWithReport(
-                                        reportingContext(),
+                                        ctx,
                                         ChatFixtures.response("{\"name\":\"Ada\"}"),
                                         rowSchema()));
         assertTrue(error.getMessage().contains("'age'"));
+        verify((ExecutionReporter) ctx)
+                .reportExecutionFailed(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.PARSER),
+                        eq(Agent.STRUCTURED_OUTPUT),
+                        eq(Map.of()),
+                        same(error),
+                        eq(ExecutionReporter.ProblemCategories.MODEL_OUTPUT_PARSE_ERROR));
     }
 
     private static RunnerContext reportingContext() {

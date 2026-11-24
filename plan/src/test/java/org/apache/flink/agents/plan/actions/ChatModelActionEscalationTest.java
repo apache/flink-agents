@@ -614,6 +614,35 @@ class ChatModelActionEscalationTest {
     }
 
     @Test
+    void anAnswerMissingARowSchemaFieldIsRejectedAndEscalates() throws Exception {
+        OutputSchema schema =
+                new OutputSchema(
+                        new RowTypeInfo(
+                                new TypeInformation<?>[] {Types.STRING, Types.STRING},
+                                new String[] {"answer", "reason"}));
+        FakeChatModel small = new FakeChatModel(ChatFixtures.response("{\"answer\":\"41\"}"));
+        FakeChatModel big =
+                new FakeChatModel(
+                        ChatFixtures.response("{\"answer\":\"42\",\"reason\":\"math\"}"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register("big", big);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("hello")), Map.of(), schema),
+                ctx);
+
+        ChatResponseEvent response = ctx.chatResponse();
+        assertThat(response.isFailed()).isFalse();
+        assertThat(((Row) response.getStructuredOutput()).getField("answer")).isEqualTo("42");
+        assertThat(hops(response)).hasSize(1);
+        assertThat((String) hops(response).get(0).get("reason")).contains("output schema");
+        assertThat(big.callCount).isEqualTo(1);
+    }
+
+    @Test
     void aSchemaClassJacksonCannotBuildFailsTheRequestInsteadOfEscalating() throws Exception {
         FakeChatModel small = new FakeChatModel(ChatFixtures.response("{\"answer\":\"42\"}"));
         FakeChatModel big = new FakeChatModel(ChatFixtures.response("unused"));

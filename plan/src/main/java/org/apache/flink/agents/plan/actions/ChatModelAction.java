@@ -283,7 +283,10 @@ public class ChatModelAction {
             structuredOutput = Row.withNames();
             for (String name : info.getFieldNames()) {
                 if (!fields.containsKey(name)) {
-                    throw new IllegalArgumentException(
+                    // A missing field is a parse failure, so a tiered route can escalate on it.
+                    throw MismatchedInputException.from(
+                            (JsonParser) null,
+                            Map.class,
                             String.format(
                                     "Model output is missing field '%s' required by the output schema.",
                                     name));
