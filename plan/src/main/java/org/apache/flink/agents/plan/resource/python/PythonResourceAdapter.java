@@ -21,11 +21,14 @@ package org.apache.flink.agents.plan.resource.python;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import pemja.core.object.PyObject;
+
+import javax.annotation.Nullable;
 
 import java.util.List;
 import java.util.Map;
@@ -55,6 +58,21 @@ public interface PythonResourceAdapter {
      * @return a PyObject representing the initialized Python resource
      */
     PyObject initPythonResource(String module, String clazz, Map<String, Object> kwargs);
+
+    /**
+     * Initializes a Python resource instance bound to the given owning {@link ResourceContext}.
+     *
+     * <p>When {@code resourceContext} differs from the adapter's default context (for example, a
+     * child sub-agent scope), Python-side {@code resource_context} lookups resolve against {@code
+     * resourceContext}.
+     */
+    default PyObject initPythonResource(
+            String module,
+            String clazz,
+            Map<String, Object> kwargs,
+            @Nullable ResourceContext resourceContext) {
+        return initPythonResource(module, clazz, kwargs);
+    }
 
     /**
      * Converts a Java ChatMessage object to its Python equivalent.

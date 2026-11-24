@@ -25,6 +25,9 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.MCPServer;
+import org.apache.flink.agents.api.annotation.MediaModelConnection;
+import org.apache.flink.agents.api.annotation.MediaModelSetup;
+import org.apache.flink.agents.api.annotation.RerankModel;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.function.PythonFunction;
@@ -624,6 +627,80 @@ public class AgentPlanTest {
         assertThat(provider).isInstanceOf(PythonResourceProvider.class);
         assertThat(((PythonResourceProvider) provider).getDescriptor().getClazz())
                 .isEqualTo("TestClazz");
+    }
+
+    /** Test agent declaring Python media and rerank resources. */
+    public static class TestAgentWithMediaAndRerank extends Agent {
+        @MediaModelConnection
+        public static ResourceDescriptor mediaModelConnection() {
+            return PythonResourceDescriptor.Builder.newBuilder("example.media.CustomConnection")
+                    .build();
+        }
+
+        @MediaModelSetup
+        public static ResourceDescriptor javaPoster() {
+            return ResourceDescriptor.Builder.newBuilder("com.example.CustomImageSetup")
+                    .addInitialArgument("connection", "mediaModelConnection")
+                    .addInitialArgument("model", "img-m")
+                    .build();
+        }
+
+        @MediaModelSetup
+        public static ResourceDescriptor pythonNarrator() {
+            return PythonResourceDescriptor.Builder.newBuilder("example.media.CustomSpeechSetup")
+                    .addInitialArgument("connection", "mediaModelConnection")
+                    .addInitialArgument("model", "tts-m")
+                    .build();
+        }
+
+        @RerankModel
+        public static ResourceDescriptor ranker() {
+            return PythonResourceDescriptor.Builder.newBuilder("example.rerank.CustomRerankModel")
+                    .build();
+        }
+    }
+
+    @Test
+    public void testMediaAndRerankAnnotationsUsePythonResourceProvider() throws Exception {
+        Agent agent = new TestAgentWithMediaAndRerank();
+        agent.addResource(
+                "addedVideo",
+                ResourceType.MEDIA_MODEL,
+                ResourceDescriptor.Builder.newBuilder("com.example.CustomVideoSetup")
+                        .addInitialArgument("connection", "mediaModelConnection")
+                        .addInitialArgument("model", "video-m")
+                        .build());
+        AgentPlan plan = new AgentPlan(agent);
+
+        ResourceProvider media =
+                plan.getResourceProviders()
+                        .get(ResourceType.MEDIA_MODEL_CONNECTION)
+                        .get("mediaModelConnection");
+        assertThat(media).isInstanceOf(PythonResourceProvider.class);
+        assertThat(((PythonResourceProvider) media).getDescriptor().getClazz())
+                .isEqualTo("CustomConnection");
+
+        ResourceProvider javaPoster =
+                plan.getResourceProviders().get(ResourceType.MEDIA_MODEL).get("javaPoster");
+        assertThat(javaPoster).isInstanceOf(JavaResourceProvider.class);
+        assertThat(((JavaResourceProvider) javaPoster).getDescriptor().getClazz())
+                .isEqualTo("com.example.CustomImageSetup");
+
+        ResourceProvider addedVideo =
+                plan.getResourceProviders().get(ResourceType.MEDIA_MODEL).get("addedVideo");
+        assertThat(addedVideo).isInstanceOf(JavaResourceProvider.class);
+
+        ResourceProvider pythonNarrator =
+                plan.getResourceProviders().get(ResourceType.MEDIA_MODEL).get("pythonNarrator");
+        assertThat(pythonNarrator).isInstanceOf(PythonResourceProvider.class);
+        assertThat(((PythonResourceProvider) pythonNarrator).getDescriptor().getClazz())
+                .isEqualTo("CustomSpeechSetup");
+
+        ResourceProvider rerank =
+                plan.getResourceProviders().get(ResourceType.RERANK_MODEL).get("ranker");
+        assertThat(rerank).isInstanceOf(PythonResourceProvider.class);
+        assertThat(((PythonResourceProvider) rerank).getDescriptor().getClazz())
+                .isEqualTo("CustomRerankModel");
     }
 
     /** Test agent with explicit Python MCP server declaration. */

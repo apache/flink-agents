@@ -30,11 +30,13 @@ import org.apache.flink.agents.plan.resource.python.PythonDecisionModelSetup;
 import org.apache.flink.agents.plan.resource.python.PythonEmbeddingModelConnection;
 import org.apache.flink.agents.plan.resource.python.PythonEmbeddingModelSetup;
 import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
+import org.apache.flink.agents.plan.resource.python.PythonMediaModelConnection;
+import org.apache.flink.agents.plan.resource.python.PythonMediaModelSetup;
+import org.apache.flink.agents.plan.resource.python.PythonRerankModel;
 import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.util.ExceptionUtils;
 import pemja.core.object.PyObject;
 
-import java.lang.reflect.Constructor;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -50,16 +52,42 @@ import static org.apache.flink.util.Preconditions.checkState;
 public class PythonResourceProvider extends ResourceProvider {
     private final ResourceDescriptor descriptor;
 
-    private static final Map<ResourceType, Class<?>> RESOURCE_TYPE_TO_CLASS =
-            Map.of(
-                    ResourceType.CHAT_MODEL, PythonChatModelSetup.class,
-                    ResourceType.CHAT_MODEL_CONNECTION, PythonChatModelConnection.class,
-                    ResourceType.DECISION_MODEL, PythonDecisionModelSetup.class,
-                    ResourceType.DECISION_MODEL_CONNECTION, PythonDecisionModelConnection.class,
-                    ResourceType.EMBEDDING_MODEL, PythonEmbeddingModelSetup.class,
-                    ResourceType.EMBEDDING_MODEL_CONNECTION, PythonEmbeddingModelConnection.class,
-                    ResourceType.VECTOR_STORE, PythonCollectionManageableVectorStore.class,
-                    ResourceType.MCP_SERVER, PythonMCPServer.class);
+    @FunctionalInterface
+    private interface WrapperFactory {
+        Resource create(
+                PythonResourceAdapter adapter,
+                PyObject pyResource,
+                ResourceDescriptor descriptor,
+                ResourceContext resourceContext)
+                throws Exception;
+    }
+
+    // Lazy holder so constructing or deserializing PythonResourceProvider without Pemja on the
+    // classpath does not resolve method-reference signatures referencing PyObject.
+    private static final class WrapperFactories {
+        private static final Map<ResourceType, WrapperFactory> BY_TYPE =
+                Map.ofEntries(
+                        Map.entry(ResourceType.CHAT_MODEL, PythonChatModelSetup::new),
+                        Map.entry(
+                                ResourceType.CHAT_MODEL_CONNECTION, PythonChatModelConnection::new),
+                        Map.entry(ResourceType.DECISION_MODEL, PythonDecisionModelSetup::new),
+                        Map.entry(
+                                ResourceType.DECISION_MODEL_CONNECTION,
+                                PythonDecisionModelConnection::new),
+                        Map.entry(ResourceType.EMBEDDING_MODEL, PythonEmbeddingModelSetup::new),
+                        Map.entry(
+                                ResourceType.EMBEDDING_MODEL_CONNECTION,
+                                PythonEmbeddingModelConnection::new),
+                        Map.entry(
+                                ResourceType.VECTOR_STORE,
+                                PythonCollectionManageableVectorStore::new),
+                        Map.entry(ResourceType.MCP_SERVER, PythonMCPServer::new),
+                        Map.entry(ResourceType.MEDIA_MODEL, PythonMediaModelSetup::create),
+                        Map.entry(
+                                ResourceType.MEDIA_MODEL_CONNECTION,
+                                PythonMediaModelConnection::new),
+                        Map.entry(ResourceType.RERANK_MODEL, PythonRerankModel::new));
+    }
 
     protected PythonResourceAdapter pythonResourceAdapter;
 
@@ -84,8 +112,8 @@ public class PythonResourceProvider extends ResourceProvider {
     public Resource provide(ResourceContext resourceContext) throws Exception {
         checkState(pythonResourceAdapter != null, "PythonResourceAdapter is not set");
 
-        Class<?> clazz = RESOURCE_TYPE_TO_CLASS.get(getType());
-        if (clazz == null) {
+        WrapperFactory factory = WrapperFactories.BY_TYPE.get(getType());
+        if (factory == null) {
             throw new UnsupportedOperationException(
                     "Unsupported python resource type: " + getType());
         }
@@ -94,17 +122,11 @@ public class PythonResourceProvider extends ResourceProvider {
         String pyModule = descriptor.getModule();
         String pyClazz = descriptor.getClazz();
 
-        PyObject pyResource = pythonResourceAdapter.initPythonResource(pyModule, pyClazz, kwargs);
+        PyObject pyResource =
+                pythonResourceAdapter.initPythonResource(
+                        pyModule, pyClazz, kwargs, resourceContext);
         try {
-            Constructor<?> constructor =
-                    clazz.getConstructor(
-                            PythonResourceAdapter.class,
-                            PyObject.class,
-                            ResourceDescriptor.class,
-                            ResourceContext.class);
-            return (Resource)
-                    constructor.newInstance(
-                            pythonResourceAdapter, pyResource, descriptor, resourceContext);
+            return factory.create(pythonResourceAdapter, pyResource, descriptor, resourceContext);
         } catch (Throwable constructionFailure) {
             try {
                 pyResource.close();

@@ -101,6 +101,72 @@ class YamlLoaderBuildAgentsTest {
     }
 
     @Test
+    void mediaAndRerankSupportAgentSharedPythonAndJavaResources(@TempDir Path tmp)
+            throws Exception {
+        Path file = tmp.resolve("media_and_rerank.yaml");
+        Files.writeString(
+                file,
+                "media_model_connections:\n"
+                        + "  - name: shared_media\n"
+                        + "    clazz: example.media.CustomConnection\n"
+                        + "media_model_setups:\n"
+                        + "  - name: shared_narrator\n"
+                        + "    clazz: example.media.CustomSpeechSetup\n"
+                        + "    connection: shared_media\n"
+                        + "    model: tts-m\n"
+                        + "rerank_models:\n"
+                        + "  - name: shared_ranker\n"
+                        + "    clazz: example.rerank.CustomRerankModel\n"
+                        + "    model: rerank-m\n"
+                        + "agents:\n"
+                        + "  - name: media_agent\n"
+                        + "    media_model_setups:\n"
+                        + "      - name: java_video\n"
+                        + "        clazz: com.example.CustomVideoSetup\n"
+                        + "        type: java\n"
+                        + "        connection: shared_media\n"
+                        + "        model: video-m\n");
+
+        LoadedFile out = YamlLoader.buildAgents(file);
+        ResourceDescriptor sharedConnection =
+                (ResourceDescriptor)
+                        out.getSharedResources()
+                                .get(ResourceType.MEDIA_MODEL_CONNECTION)
+                                .get("shared_media");
+        assertThat(sharedConnection).isInstanceOf(PythonResourceDescriptor.class);
+        assertThat(sharedConnection.getClazz()).isEqualTo("CustomConnection");
+
+        ResourceDescriptor sharedNarrator =
+                (ResourceDescriptor)
+                        out.getSharedResources()
+                                .get(ResourceType.MEDIA_MODEL)
+                                .get("shared_narrator");
+        assertThat(sharedNarrator).isInstanceOf(PythonResourceDescriptor.class);
+        assertThat(sharedNarrator.getClazz()).isEqualTo("CustomSpeechSetup");
+        assertThat(sharedNarrator.getInitialArguments())
+                .containsEntry("connection", "shared_media");
+
+        ResourceDescriptor sharedRanker =
+                (ResourceDescriptor)
+                        out.getSharedResources()
+                                .get(ResourceType.RERANK_MODEL)
+                                .get("shared_ranker");
+        assertThat(sharedRanker).isInstanceOf(PythonResourceDescriptor.class);
+        assertThat(sharedRanker.getClazz()).isEqualTo("CustomRerankModel");
+
+        ResourceDescriptor javaVideo =
+                (ResourceDescriptor)
+                        out.getAgents()
+                                .get("media_agent")
+                                .getResources()
+                                .get(ResourceType.MEDIA_MODEL)
+                                .get("java_video");
+        assertThat(javaVideo).isNotInstanceOf(PythonResourceDescriptor.class);
+        assertThat(javaVideo.getLanguage()).isEqualTo("java");
+        assertThat(javaVideo.getClazz()).isEqualTo("com.example.CustomVideoSetup");
+    }
+
+    @Test
     void decisionModelsSupportAgentAndSharedPythonResources() {
         LoadedFile out = YamlLoader.buildAgents(FIXTURES.resolve("with_decision_models.yaml"));
         Agent agent = out.getAgents().get("decision_agent");

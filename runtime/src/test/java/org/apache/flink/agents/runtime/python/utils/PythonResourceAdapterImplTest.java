@@ -97,6 +97,96 @@ public class PythonResourceAdapterImplTest {
     }
 
     @Test
+    void testInitPythonResourcePropagatesAndClosesScopedResourceContext() throws Exception {
+        PyObject rootPyContext = mock(PyObject.class);
+        PyObject childPyContext = mock(PyObject.class);
+        when(mockInterpreter.invoke(
+                        PythonResourceAdapterImpl.GET_RESOURCE_CONTEXT, pythonResourceAdapter))
+                .thenReturn(rootPyContext);
+        pythonResourceAdapter.open();
+
+        // Same or null context reuses the root Python resource context.
+        Map<String, Object> rootKwargs = new HashMap<>();
+        PyObject rootResource = mock(PyObject.class);
+        when(mockInterpreter.invoke(
+                        PythonResourceAdapterImpl.CREATE_RESOURCE,
+                        "test_module",
+                        "RootClass",
+                        rootKwargs))
+                .thenReturn(rootResource);
+        assertThat(
+                        pythonResourceAdapter.initPythonResource(
+                                "test_module", "RootClass", rootKwargs, resourceContext))
+                .isSameAs(rootResource);
+        assertThat(rootKwargs.get(PythonResourceAdapterImpl.RESOURCE_CONTEXT_KEY))
+                .isSameAs(rootPyContext);
+
+        // Distinct child ResourceContext binds a cached scoped adapter using invokeOnOwner.
+        ResourceContext childContext = mock(ResourceContext.class);
+        ArgumentCaptor<Object> adapterCaptor = ArgumentCaptor.forClass(Object.class);
+        when(mockInterpreter.invoke(
+                        eq(PythonResourceAdapterImpl.GET_RESOURCE_CONTEXT),
+                        adapterCaptor.capture()))
+                .thenReturn(childPyContext);
+        Map<String, Object> childKwargs1 = new HashMap<>();
+        PyObject childResource1 = mock(PyObject.class);
+        when(mockInterpreter.invoke(
+                        PythonResourceAdapterImpl.CREATE_RESOURCE,
+                        "test_module",
+                        "ChildClass1",
+                        childKwargs1))
+                .thenReturn(childResource1);
+
+        assertThat(
+                        pythonResourceAdapter.initPythonResource(
+                                "test_module", "ChildClass1", childKwargs1, childContext))
+                .isSameAs(childResource1);
+        assertThat(childKwargs1.get(PythonResourceAdapterImpl.RESOURCE_CONTEXT_KEY))
+                .isSameAs(childPyContext);
+
+        // Scoped Python context resolves resources against childContext, not root resourceContext.
+        Resource childConn = mock(Resource.class);
+        when(childContext.getResource("scoped_conn", ResourceType.MEDIA_MODEL_CONNECTION))
+                .thenReturn(childConn);
+        when(mockInterpreter.invoke(
+                        eq(PythonResourceAdapterImpl.FROM_JAVA_RESOURCE),
+                        eq("media_model_connection"),
+                        any(Map.class)))
+                .thenReturn("py-scoped-conn");
+        PythonResourceAdapterImpl scopedAdapter =
+                (PythonResourceAdapterImpl) adapterCaptor.getValue();
+        assertThat(scopedAdapter.getResource("scoped_conn", "media_model_connection"))
+                .isEqualTo("py-scoped-conn");
+        verify(childContext).getResource("scoped_conn", ResourceType.MEDIA_MODEL_CONNECTION);
+        verify(resourceContext, never())
+                .getResource("scoped_conn", ResourceType.MEDIA_MODEL_CONNECTION);
+
+        // Second lookup for the same childContext reuses the cached scoped adapter.
+        Map<String, Object> childKwargs2 = new HashMap<>();
+        PyObject childResource2 = mock(PyObject.class);
+        when(mockInterpreter.invoke(
+                        PythonResourceAdapterImpl.CREATE_RESOURCE,
+                        "test_module",
+                        "ChildClass2",
+                        childKwargs2))
+                .thenReturn(childResource2);
+        assertThat(
+                        pythonResourceAdapter.initPythonResource(
+                                "test_module", "ChildClass2", childKwargs2, childContext))
+                .isSameAs(childResource2);
+        assertThat(childKwargs2.get(PythonResourceAdapterImpl.RESOURCE_CONTEXT_KEY))
+                .isSameAs(childPyContext);
+        verify(mockInterpreter, times(2))
+                .invoke(
+                        eq(PythonResourceAdapterImpl.GET_RESOURCE_CONTEXT),
+                        any(PythonResourceAdapterImpl.class));
+
+        pythonResourceAdapter.close();
+        verify(childPyContext).close();
+        verify(rootPyContext).close();
+    }
+
+    @Test
     void testOpen() {
 
         pythonResourceAdapter.open();

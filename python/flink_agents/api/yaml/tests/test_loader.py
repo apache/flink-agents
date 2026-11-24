@@ -1098,6 +1098,71 @@ def test_model_router_name_collision_matches_programmatic_registration(
     assert str(yaml_error.value) == str(programmatic.value)
 
 
+def test_media_and_rerank_yaml_sections_and_java_rejection(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "media_and_rerank.yaml"
+    source.write_text(
+        "media_model_connections:\n"
+        "  - name: shared_media\n"
+        "    clazz: example.media.CustomConnection\n"
+        "    request_timeout: 12\n"
+        "media_model_setups:\n"
+        "  - name: shared_narrator\n"
+        "    clazz: example.media.CustomSpeechSetup\n"
+        "    connection: shared_media\n"
+        "    model: tts-m\n"
+        "rerank_models:\n"
+        "  - name: shared_ranker\n"
+        "    clazz: example.rerank.CustomRerankModel\n"
+        "    model: rerank-m\n"
+        "agents:\n"
+        "  - name: media_agent\n"
+        "    media_model_setups:\n"
+        "      - name: poster_image\n"
+        "        clazz: example.media.CustomImageSetup\n"
+        "        connection: shared_media\n"
+        "        model: img-m\n"
+    )
+    agents, shared, _ = build_agents(source)
+    connection_desc = shared[ResourceType.MEDIA_MODEL_CONNECTION]["shared_media"]
+    assert (connection_desc.target_module, connection_desc.target_clazz) == (
+        "example.media",
+        "CustomConnection",
+    )
+    narrator_desc = shared[ResourceType.MEDIA_MODEL]["shared_narrator"]
+    assert (narrator_desc.target_module, narrator_desc.target_clazz) == (
+        "example.media",
+        "CustomSpeechSetup",
+    )
+    ranker_desc = shared[ResourceType.RERANK_MODEL]["shared_ranker"]
+    assert (ranker_desc.target_module, ranker_desc.target_clazz) == (
+        "example.rerank",
+        "CustomRerankModel",
+    )
+    poster_desc = agents["media_agent"].resources[ResourceType.MEDIA_MODEL][
+        "poster_image"
+    ]
+    assert (poster_desc.target_module, poster_desc.target_clazz) == (
+        "example.media",
+        "CustomImageSetup",
+    )
+
+    bad = tmp_path / "java_media_setup.yaml"
+    bad.write_text(
+        "media_model_setups:\n"
+        "  - name: poster_image\n"
+        "    clazz: example.media.CustomImageSetup\n"
+        "    type: java\n"
+        "    connection: shared_media\n"
+        "    model: img-m\n"
+    )
+    with pytest.raises(
+        ValueError, match="type='java' is not supported for media_model"
+    ):
+        build_agents(bad)
+
+
 def test_load_yaml_chat_model_clashing_with_registered_router_registers_nothing(
     tmp_path: Path,
 ) -> None:

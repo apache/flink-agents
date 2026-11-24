@@ -28,13 +28,14 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import pemja.core.object.PyObject;
 
-import java.lang.reflect.InvocationTargetException;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -47,8 +48,14 @@ class PythonResourceProviderTest {
     @EnumSource(
             value = ResourceType.class,
             names = {
-                "CHAT_MODEL", "CHAT_MODEL_CONNECTION", "EMBEDDING_MODEL",
-                "EMBEDDING_MODEL_CONNECTION", "VECTOR_STORE", "MCP_SERVER"
+                "CHAT_MODEL",
+                "CHAT_MODEL_CONNECTION",
+                "EMBEDDING_MODEL",
+                "EMBEDDING_MODEL_CONNECTION",
+                "MEDIA_MODEL_CONNECTION",
+                "RERANK_MODEL",
+                "VECTOR_STORE",
+                "MCP_SERVER"
             })
     void providedResourceOwnsAndClosesPythonHandleOnce(ResourceType type) throws Exception {
         PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
@@ -57,11 +64,13 @@ class PythonResourceProviderTest {
                 new PythonResourceDescriptor("example.module", "ExampleModel", Map.of());
         PythonResourceProvider provider = new PythonResourceProvider("model", type, descriptor);
         provider.setPythonResourceAdapter(adapter);
-        when(adapter.initPythonResource(anyString(), anyString(), anyMap()))
+        ResourceContext context = mock(ResourceContext.class);
+        when(adapter.initPythonResource(anyString(), anyString(), anyMap(), any()))
                 .thenReturn(pythonResource);
 
-        Resource resource = provider.provide(mock(ResourceContext.class));
+        Resource resource = provider.provide(context);
 
+        verify(adapter).initPythonResource(anyString(), anyString(), anyMap(), eq(context));
         verify(pythonResource, never()).close();
         resource.close();
         resource.close();
@@ -79,15 +88,16 @@ class PythonResourceProviderTest {
         PythonResourceProvider provider =
                 new PythonResourceProvider("server", ResourceType.MCP_SERVER, descriptor);
         provider.setPythonResourceAdapter(adapter);
+        ResourceContext context = mock(ResourceContext.class);
         when(adapter.initPythonResource(
-                        "custom.mcp", "CustomMCPServer", Map.of("endpoint", "http://mcp")))
+                        "custom.mcp", "CustomMCPServer", Map.of("endpoint", "http://mcp"), context))
                 .thenReturn(pythonResource);
 
-        Resource resource = provider.provide(mock(ResourceContext.class));
+        Resource resource = provider.provide(context);
 
         verify(adapter)
                 .initPythonResource(
-                        "custom.mcp", "CustomMCPServer", Map.of("endpoint", "http://mcp"));
+                        "custom.mcp", "CustomMCPServer", Map.of("endpoint", "http://mcp"), context);
         resource.close();
     }
 
@@ -96,15 +106,14 @@ class PythonResourceProviderTest {
         PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
         PyObject pythonResource = mock(PyObject.class);
         PythonResourceProvider provider = createProviderWithInvalidWrapperArgument(adapter);
-        when(adapter.initPythonResource(anyString(), anyString(), anyMap()))
+        ResourceContext context = mock(ResourceContext.class);
+        when(adapter.initPythonResource(anyString(), anyString(), anyMap(), eq(context)))
                 .thenReturn(pythonResource);
 
-        Throwable failure = catchThrowable(() -> provider.provide(mock(ResourceContext.class)));
+        Throwable failure = catchThrowable(() -> provider.provide(context));
 
         assertThat(failure)
-                .isInstanceOf(InvocationTargetException.class)
-                .hasCauseInstanceOf(IllegalArgumentException.class);
-        assertThat(failure.getCause())
+                .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(
                         "Unknown structured output strategy 'invalid'. Expected one of: AUTO, NATIVE, PROMPT.");
         verify(pythonResource).close();
@@ -116,16 +125,15 @@ class PythonResourceProviderTest {
         PyObject pythonResource = mock(PyObject.class);
         RuntimeException closeFailure = new RuntimeException("close failed");
         PythonResourceProvider provider = createProviderWithInvalidWrapperArgument(adapter);
-        when(adapter.initPythonResource(anyString(), anyString(), anyMap()))
+        ResourceContext context = mock(ResourceContext.class);
+        when(adapter.initPythonResource(anyString(), anyString(), anyMap(), eq(context)))
                 .thenReturn(pythonResource);
         doThrow(closeFailure).when(pythonResource).close();
 
-        Throwable failure = catchThrowable(() -> provider.provide(mock(ResourceContext.class)));
+        Throwable failure = catchThrowable(() -> provider.provide(context));
 
         assertThat(failure)
-                .isInstanceOf(InvocationTargetException.class)
-                .hasCauseInstanceOf(IllegalArgumentException.class);
-        assertThat(failure.getCause())
+                .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(
                         "Unknown structured output strategy 'invalid'. Expected one of: AUTO, NATIVE, PROMPT.");
         assertThat(failure.getSuppressed()).containsExactly(closeFailure);
