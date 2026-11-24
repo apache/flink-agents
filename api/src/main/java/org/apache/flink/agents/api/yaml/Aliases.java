@@ -177,6 +177,31 @@ public final class Aliases {
         vsPython.put("mem0", ResourceName.VectorStore.Python.MEM0_VECTOR_STORE);
         ca.put(ResourceType.VECTOR_STORE, buildLangBuckets(vsJava, vsPython));
 
+        // MEDIA_MODEL
+        Map<String, String> mediaPython = new HashMap<>();
+        mediaPython.put(
+                "dashscope_tts", ResourceName.MediaModel.Python.DASHSCOPE_SPEECH_SYNTHESIS_SETUP);
+        mediaPython.put(
+                "dashscope_asr", ResourceName.MediaModel.Python.DASHSCOPE_TRANSCRIPTION_SETUP);
+        mediaPython.put(
+                "dashscope_image", ResourceName.MediaModel.Python.DASHSCOPE_IMAGE_GENERATION_SETUP);
+        mediaPython.put(
+                "dashscope_video", ResourceName.MediaModel.Python.DASHSCOPE_VIDEO_GENERATION_SETUP);
+        ca.put(ResourceType.MEDIA_MODEL, buildLangBuckets(Map.of(), mediaPython));
+
+        // MEDIA_MODEL_CONNECTION
+        ca.put(
+                ResourceType.MEDIA_MODEL_CONNECTION,
+                buildLangBuckets(
+                        Map.of(),
+                        Map.of("dashscope", ResourceName.MediaModel.Python.DASHSCOPE_CONNECTION)));
+
+        // RERANK_MODEL
+        ca.put(
+                ResourceType.RERANK_MODEL,
+                buildLangBuckets(
+                        Map.of(), Map.of("dashscope", ResourceName.RerankModel.Python.DASHSCOPE)));
+
         // MCP_SERVER
         ca.put(
                 ResourceType.MCP_SERVER,

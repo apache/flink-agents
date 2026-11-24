@@ -1098,69 +1098,100 @@ def test_model_router_name_collision_matches_programmatic_registration(
     assert str(yaml_error.value) == str(programmatic.value)
 
 
-def test_media_and_rerank_yaml_sections_and_java_rejection(
+def test_media_model_connections_support_agent_and_shared_resources() -> None:
+    agents, shared, _ = build_agents(_FIXTURES / "with_media_model_connections.yaml")
+    own = agents["media_agent"].resources[ResourceType.MEDIA_MODEL_CONNECTION][
+        "own_media"
+    ]
+    shared_connection = shared[ResourceType.MEDIA_MODEL_CONNECTION]["shared_media"]
+    for descriptor in (own, shared_connection):
+        assert isinstance(descriptor, ResourceDescriptor)
+        assert descriptor.clazz.__module__ == (
+            "flink_agents.integrations.media_models.dashscope_media_model"
+        )
+        assert descriptor.clazz.__name__ == "DashScopeMediaModelConnection"
+        assert descriptor.arguments == {"request_timeout": 12}
+
+
+def test_media_model_setups_support_agent_and_shared_resources(
     tmp_path: Path,
 ) -> None:
-    source = tmp_path / "media_and_rerank.yaml"
+    source = tmp_path / "media_setups.yaml"
     source.write_text(
         "media_model_connections:\n"
         "  - name: shared_media\n"
-        "    clazz: example.media.CustomConnection\n"
-        "    request_timeout: 12\n"
+        "    clazz: dashscope\n"
         "media_model_setups:\n"
         "  - name: shared_narrator\n"
-        "    clazz: example.media.CustomSpeechSetup\n"
+        "    clazz: dashscope_tts\n"
         "    connection: shared_media\n"
-        "    model: tts-m\n"
-        "rerank_models:\n"
-        "  - name: shared_ranker\n"
-        "    clazz: example.rerank.CustomRerankModel\n"
-        "    model: rerank-m\n"
+        "    model: cosyvoice-v3-plus\n"
+        "    voice: longanyang\n"
         "agents:\n"
         "  - name: media_agent\n"
         "    media_model_setups:\n"
         "      - name: poster_image\n"
-        "        clazz: example.media.CustomImageSetup\n"
+        "        clazz: dashscope_image\n"
         "        connection: shared_media\n"
-        "        model: img-m\n"
+        "        model: qwen-image-3.0\n"
+        '        size: "512*512"\n'
     )
     agents, shared, _ = build_agents(source)
-    connection_desc = shared[ResourceType.MEDIA_MODEL_CONNECTION]["shared_media"]
-    assert (connection_desc.target_module, connection_desc.target_clazz) == (
-        "example.media",
-        "CustomConnection",
-    )
-    narrator_desc = shared[ResourceType.MEDIA_MODEL]["shared_narrator"]
-    assert (narrator_desc.target_module, narrator_desc.target_clazz) == (
-        "example.media",
-        "CustomSpeechSetup",
-    )
-    ranker_desc = shared[ResourceType.RERANK_MODEL]["shared_ranker"]
-    assert (ranker_desc.target_module, ranker_desc.target_clazz) == (
-        "example.rerank",
-        "CustomRerankModel",
-    )
-    poster_desc = agents["media_agent"].resources[ResourceType.MEDIA_MODEL][
-        "poster_image"
-    ]
-    assert (poster_desc.target_module, poster_desc.target_clazz) == (
-        "example.media",
-        "CustomImageSetup",
-    )
+    narrator = shared[ResourceType.MEDIA_MODEL]["shared_narrator"]
+    poster = agents["media_agent"].resources[ResourceType.MEDIA_MODEL]["poster_image"]
+    assert narrator.clazz.__name__ == "DashScopeSpeechSynthesisModelSetup"
+    assert narrator.arguments == {
+        "connection": "shared_media",
+        "model": "cosyvoice-v3-plus",
+        "voice": "longanyang",
+    }
+    assert poster.clazz.__name__ == "DashScopeImageGenerationModelSetup"
+    assert poster.arguments == {
+        "connection": "shared_media",
+        "model": "qwen-image-3.0",
+        "size": "512*512",
+    }
 
-    bad = tmp_path / "java_media_setup.yaml"
-    bad.write_text(
-        "media_model_setups:\n"
-        "  - name: poster_image\n"
-        "    clazz: example.media.CustomImageSetup\n"
+
+@pytest.mark.parametrize(
+    ("section", "expected_resource_type"),
+    [
+        ("media_model_connections", "media_model_connection"),
+        ("media_model_setups", "media_model"),
+        ("rerank_models", "rerank_model"),
+    ],
+)
+def test_media_and_rerank_yaml_reject_java_implementations(
+    tmp_path: Path, section: str, expected_resource_type: str
+) -> None:
+    source = tmp_path / f"java_{section}.yaml"
+    source.write_text(
+        f"{section}:\n"
+        "  - name: unsupported\n"
+        "    clazz: example.Unsupported\n"
         "    type: java\n"
-        "    connection: shared_media\n"
-        "    model: img-m\n"
     )
     with pytest.raises(
-        ValueError, match="type='java' is not supported for media_model"
+        ValueError,
+        match=f"type='java' is not supported for {expected_resource_type}$",
     ):
-        build_agents(bad)
+        build_agents(source)
+
+
+def test_rerank_models_support_agent_and_shared_resources() -> None:
+    agents, shared, _ = build_agents(_FIXTURES / "with_rerank_models.yaml")
+    own = agents["rerank_agent"].resources[ResourceType.RERANK_MODEL]["own_ranker"]
+    shared_ranker = shared[ResourceType.RERANK_MODEL]["shared_ranker"]
+    for descriptor in (own, shared_ranker):
+        assert isinstance(descriptor, ResourceDescriptor)
+        assert descriptor.clazz.__module__ == (
+            "flink_agents.integrations.rerank_models.dashscope_rerank_model"
+        )
+        assert descriptor.clazz.__name__ == "DashScopeRerankModel"
+        assert descriptor.arguments == {
+            "model": "qwen3-rerank",
+            "request_timeout": 12,
+        }
 
 
 def test_load_yaml_chat_model_clashing_with_registered_router_registers_nothing(

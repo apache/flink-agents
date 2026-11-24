@@ -101,69 +101,107 @@ class YamlLoaderBuildAgentsTest {
     }
 
     @Test
-    void mediaAndRerankSupportAgentSharedPythonAndJavaResources(@TempDir Path tmp)
+    void mediaModelConnectionsSupportAgentAndSharedPythonResources() {
+        LoadedFile out =
+                YamlLoader.buildAgents(FIXTURES.resolve("with_media_model_connections.yaml"));
+        Object own =
+                out.getAgents()
+                        .get("media_agent")
+                        .getResources()
+                        .get(ResourceType.MEDIA_MODEL_CONNECTION)
+                        .get("own_media");
+        Object shared =
+                out.getSharedResources()
+                        .get(ResourceType.MEDIA_MODEL_CONNECTION)
+                        .get("shared_media");
+
+        for (Object resource : new Object[] {own, shared}) {
+            assertThat(resource).isInstanceOf(PythonResourceDescriptor.class);
+            ResourceDescriptor descriptor = (ResourceDescriptor) resource;
+            assertThat(descriptor.getModule())
+                    .isEqualTo("flink_agents.integrations.media_models.dashscope_media_model");
+            assertThat(descriptor.getClazz()).isEqualTo("DashScopeMediaModelConnection");
+            assertThat(descriptor.getInitialArguments())
+                    .containsExactlyEntriesOf(Map.of("request_timeout", 12));
+        }
+    }
+
+    @Test
+    void mediaModelSetupsSupportAgentSharedPythonAndJavaResources(@TempDir Path tmp)
             throws Exception {
-        Path file = tmp.resolve("media_and_rerank.yaml");
+        Path file = tmp.resolve("media_setups.yaml");
         Files.writeString(
                 file,
                 "media_model_connections:\n"
                         + "  - name: shared_media\n"
-                        + "    clazz: example.media.CustomConnection\n"
+                        + "    clazz: dashscope\n"
                         + "media_model_setups:\n"
                         + "  - name: shared_narrator\n"
-                        + "    clazz: example.media.CustomSpeechSetup\n"
+                        + "    clazz: dashscope_tts\n"
                         + "    connection: shared_media\n"
-                        + "    model: tts-m\n"
-                        + "rerank_models:\n"
-                        + "  - name: shared_ranker\n"
-                        + "    clazz: example.rerank.CustomRerankModel\n"
-                        + "    model: rerank-m\n"
+                        + "    model: cosyvoice-v3-plus\n"
+                        + "    voice: longanyang\n"
                         + "agents:\n"
                         + "  - name: media_agent\n"
                         + "    media_model_setups:\n"
+                        + "      - name: poster_image\n"
+                        + "        clazz: dashscope_image\n"
+                        + "        connection: shared_media\n"
+                        + "        model: qwen-image-3.0\n"
                         + "      - name: java_video\n"
                         + "        clazz: com.example.CustomVideoSetup\n"
                         + "        type: java\n"
                         + "        connection: shared_media\n"
-                        + "        model: video-m\n");
+                        + "        model: wan2.7-i2v\n");
 
         LoadedFile out = YamlLoader.buildAgents(file);
-        ResourceDescriptor sharedConnection =
-                (ResourceDescriptor)
-                        out.getSharedResources()
-                                .get(ResourceType.MEDIA_MODEL_CONNECTION)
-                                .get("shared_media");
-        assertThat(sharedConnection).isInstanceOf(PythonResourceDescriptor.class);
-        assertThat(sharedConnection.getClazz()).isEqualTo("CustomConnection");
-
         ResourceDescriptor sharedNarrator =
                 (ResourceDescriptor)
                         out.getSharedResources()
                                 .get(ResourceType.MEDIA_MODEL)
                                 .get("shared_narrator");
         assertThat(sharedNarrator).isInstanceOf(PythonResourceDescriptor.class);
-        assertThat(sharedNarrator.getClazz()).isEqualTo("CustomSpeechSetup");
+        assertThat(sharedNarrator.getModule())
+                .isEqualTo("flink_agents.integrations.media_models.dashscope_media_model");
+        assertThat(sharedNarrator.getClazz()).isEqualTo("DashScopeSpeechSynthesisModelSetup");
         assertThat(sharedNarrator.getInitialArguments())
-                .containsEntry("connection", "shared_media");
+                .containsEntry("connection", "shared_media")
+                .containsEntry("voice", "longanyang");
 
-        ResourceDescriptor sharedRanker =
-                (ResourceDescriptor)
-                        out.getSharedResources()
-                                .get(ResourceType.RERANK_MODEL)
-                                .get("shared_ranker");
-        assertThat(sharedRanker).isInstanceOf(PythonResourceDescriptor.class);
-        assertThat(sharedRanker.getClazz()).isEqualTo("CustomRerankModel");
+        Map<String, Object> agentSetups =
+                out.getAgents().get("media_agent").getResources().get(ResourceType.MEDIA_MODEL);
+        ResourceDescriptor poster = (ResourceDescriptor) agentSetups.get("poster_image");
+        assertThat(poster).isInstanceOf(PythonResourceDescriptor.class);
+        assertThat(poster.getClazz()).isEqualTo("DashScopeImageGenerationModelSetup");
 
-        ResourceDescriptor javaVideo =
-                (ResourceDescriptor)
-                        out.getAgents()
-                                .get("media_agent")
-                                .getResources()
-                                .get(ResourceType.MEDIA_MODEL)
-                                .get("java_video");
+        ResourceDescriptor javaVideo = (ResourceDescriptor) agentSetups.get("java_video");
         assertThat(javaVideo).isNotInstanceOf(PythonResourceDescriptor.class);
         assertThat(javaVideo.getLanguage()).isEqualTo("java");
         assertThat(javaVideo.getClazz()).isEqualTo("com.example.CustomVideoSetup");
+    }
+
+    @Test
+    void rerankModelsSupportAgentAndSharedPythonResources() {
+        LoadedFile out = YamlLoader.buildAgents(FIXTURES.resolve("with_rerank_models.yaml"));
+        Object own =
+                out.getAgents()
+                        .get("rerank_agent")
+                        .getResources()
+                        .get(ResourceType.RERANK_MODEL)
+                        .get("own_ranker");
+        Object shared =
+                out.getSharedResources().get(ResourceType.RERANK_MODEL).get("shared_ranker");
+
+        for (Object resource : new Object[] {own, shared}) {
+            assertThat(resource).isInstanceOf(PythonResourceDescriptor.class);
+            ResourceDescriptor descriptor = (ResourceDescriptor) resource;
+            assertThat(descriptor.getModule())
+                    .isEqualTo("flink_agents.integrations.rerank_models.dashscope_rerank_model");
+            assertThat(descriptor.getClazz()).isEqualTo("DashScopeRerankModel");
+            assertThat(descriptor.getInitialArguments())
+                    .containsExactlyInAnyOrderEntriesOf(
+                            Map.of("model", "qwen3-rerank", "request_timeout", 12));
+        }
     }
 
     @Test

@@ -175,6 +175,24 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "router": ResourceName.ModelRouter.Java.MODEL_ROUTER,
         },
     },
+    ResourceType.MEDIA_MODEL: {
+        "python": {
+            "dashscope_tts": ResourceName.MediaModel.DASHSCOPE_SPEECH_SYNTHESIS_SETUP,
+            "dashscope_asr": ResourceName.MediaModel.DASHSCOPE_TRANSCRIPTION_SETUP,
+            "dashscope_image": ResourceName.MediaModel.DASHSCOPE_IMAGE_GENERATION_SETUP,
+            "dashscope_video": ResourceName.MediaModel.DASHSCOPE_VIDEO_GENERATION_SETUP,
+        },
+    },
+    ResourceType.MEDIA_MODEL_CONNECTION: {
+        "python": {
+            "dashscope": ResourceName.MediaModel.DASHSCOPE_CONNECTION,
+        },
+    },
+    ResourceType.RERANK_MODEL: {
+        "python": {
+            "dashscope": ResourceName.RerankModel.DASHSCOPE,
+        },
+    },
 }
 
 

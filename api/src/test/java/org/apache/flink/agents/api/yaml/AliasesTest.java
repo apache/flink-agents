@@ -66,6 +66,40 @@ class AliasesTest {
     }
 
     @Test
+    void clazzAliasCoversPythonMediaAndRerank() {
+        assertThat(
+                        Aliases.resolveClazz(
+                                "dashscope", ResourceType.MEDIA_MODEL_CONNECTION, Language.PYTHON))
+                .isEqualTo(ResourceName.MediaModel.Python.DASHSCOPE_CONNECTION);
+        assertThat(Aliases.resolveClazz("dashscope", ResourceType.RERANK_MODEL, Language.PYTHON))
+                .isEqualTo(ResourceName.RerankModel.Python.DASHSCOPE);
+
+        for (String alias :
+                new String[] {
+                    "dashscope_tts", "dashscope_asr", "dashscope_image", "dashscope_video"
+                }) {
+            assertThat(Aliases.resolveClazz(alias, ResourceType.MEDIA_MODEL, Language.JAVA))
+                    .isEqualTo(alias);
+            assertThat(Aliases.resolveClazz(alias, ResourceType.MEDIA_MODEL, Language.PYTHON))
+                    .startsWith(
+                            "flink_agents.integrations.media_models.dashscope_media_model.DashScope")
+                    .endsWith("ModelSetup");
+        }
+        assertThat(Aliases.resolveClazz("dashscope_tts", ResourceType.MEDIA_MODEL, Language.PYTHON))
+                .isEqualTo(ResourceName.MediaModel.Python.DASHSCOPE_SPEECH_SYNTHESIS_SETUP);
+        assertThat(Aliases.resolveClazz("dashscope_asr", ResourceType.MEDIA_MODEL, Language.PYTHON))
+                .isEqualTo(ResourceName.MediaModel.Python.DASHSCOPE_TRANSCRIPTION_SETUP);
+        assertThat(
+                        Aliases.resolveClazz(
+                                "dashscope_image", ResourceType.MEDIA_MODEL, Language.PYTHON))
+                .isEqualTo(ResourceName.MediaModel.Python.DASHSCOPE_IMAGE_GENERATION_SETUP);
+        assertThat(
+                        Aliases.resolveClazz(
+                                "dashscope_video", ResourceType.MEDIA_MODEL, Language.PYTHON))
+                .isEqualTo(ResourceName.MediaModel.Python.DASHSCOPE_VIDEO_GENERATION_SETUP);
+    }
+
+    @Test
     void clazzAliasCoversPythonMCPServer() {
         String fqn = Aliases.resolveClazz("mcp", ResourceType.MCP_SERVER, Language.PYTHON);
         assertThat(fqn).isEqualTo("flink_agents.integrations.mcp.mcp.MCPServer");

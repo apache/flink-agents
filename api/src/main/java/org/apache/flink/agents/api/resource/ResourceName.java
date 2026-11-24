@@ -282,6 +282,41 @@ public final class ResourceName {
         private ModelRouter() {}
     }
 
+    // ==================== MediaModel ====================
+    public static final class MediaModel {
+        /** Python implementations of MediaModel and MediaModelConnection. */
+        public static final class Python {
+            // DashScope
+            public static final String DASHSCOPE_CONNECTION =
+                    "flink_agents.integrations.media_models.dashscope_media_model.DashScopeMediaModelConnection";
+            public static final String DASHSCOPE_SPEECH_SYNTHESIS_SETUP =
+                    "flink_agents.integrations.media_models.dashscope_media_model.DashScopeSpeechSynthesisModelSetup";
+            public static final String DASHSCOPE_TRANSCRIPTION_SETUP =
+                    "flink_agents.integrations.media_models.dashscope_media_model.DashScopeTranscriptionModelSetup";
+            public static final String DASHSCOPE_IMAGE_GENERATION_SETUP =
+                    "flink_agents.integrations.media_models.dashscope_media_model.DashScopeImageGenerationModelSetup";
+            public static final String DASHSCOPE_VIDEO_GENERATION_SETUP =
+                    "flink_agents.integrations.media_models.dashscope_media_model.DashScopeVideoGenerationModelSetup";
+
+            private Python() {}
+        }
+
+        private MediaModel() {}
+    }
+
+    // ==================== RerankModel ====================
+    public static final class RerankModel {
+        /** Python implementations of RerankModel. */
+        public static final class Python {
+            public static final String DASHSCOPE =
+                    "flink_agents.integrations.rerank_models.dashscope_rerank_model.DashScopeRerankModel";
+
+            private Python() {}
+        }
+
+        private RerankModel() {}
+    }
+
     // ==================== MCP ====================
     public static final String MCP_SERVER = "DECIDE_IN_RUNTIME_MCPServer";
 }

@@ -633,7 +633,8 @@ public class AgentPlanTest {
     public static class TestAgentWithMediaAndRerank extends Agent {
         @MediaModelConnection
         public static ResourceDescriptor mediaModelConnection() {
-            return PythonResourceDescriptor.Builder.newBuilder("example.media.CustomConnection")
+            return PythonResourceDescriptor.Builder.newBuilder(
+                            ResourceName.MediaModel.Python.DASHSCOPE_CONNECTION)
                     .build();
         }
 
@@ -641,21 +642,23 @@ public class AgentPlanTest {
         public static ResourceDescriptor javaPoster() {
             return ResourceDescriptor.Builder.newBuilder("com.example.CustomImageSetup")
                     .addInitialArgument("connection", "mediaModelConnection")
-                    .addInitialArgument("model", "img-m")
+                    .addInitialArgument("model", "qwen-image-3.0")
                     .build();
         }
 
         @MediaModelSetup
         public static ResourceDescriptor pythonNarrator() {
-            return PythonResourceDescriptor.Builder.newBuilder("example.media.CustomSpeechSetup")
+            return PythonResourceDescriptor.Builder.newBuilder(
+                            ResourceName.MediaModel.Python.DASHSCOPE_SPEECH_SYNTHESIS_SETUP)
                     .addInitialArgument("connection", "mediaModelConnection")
-                    .addInitialArgument("model", "tts-m")
+                    .addInitialArgument("model", "cosyvoice-v3-plus")
                     .build();
         }
 
         @RerankModel
         public static ResourceDescriptor ranker() {
-            return PythonResourceDescriptor.Builder.newBuilder("example.rerank.CustomRerankModel")
+            return PythonResourceDescriptor.Builder.newBuilder(
+                            ResourceName.RerankModel.Python.DASHSCOPE)
                     .build();
         }
     }
@@ -668,7 +671,7 @@ public class AgentPlanTest {
                 ResourceType.MEDIA_MODEL,
                 ResourceDescriptor.Builder.newBuilder("com.example.CustomVideoSetup")
                         .addInitialArgument("connection", "mediaModelConnection")
-                        .addInitialArgument("model", "video-m")
+                        .addInitialArgument("model", "wan2.7-i2v")
                         .build());
         AgentPlan plan = new AgentPlan(agent);
 
@@ -678,7 +681,7 @@ public class AgentPlanTest {
                         .get("mediaModelConnection");
         assertThat(media).isInstanceOf(PythonResourceProvider.class);
         assertThat(((PythonResourceProvider) media).getDescriptor().getClazz())
-                .isEqualTo("CustomConnection");
+                .isEqualTo("DashScopeMediaModelConnection");
 
         ResourceProvider javaPoster =
                 plan.getResourceProviders().get(ResourceType.MEDIA_MODEL).get("javaPoster");
@@ -694,13 +697,13 @@ public class AgentPlanTest {
                 plan.getResourceProviders().get(ResourceType.MEDIA_MODEL).get("pythonNarrator");
         assertThat(pythonNarrator).isInstanceOf(PythonResourceProvider.class);
         assertThat(((PythonResourceProvider) pythonNarrator).getDescriptor().getClazz())
-                .isEqualTo("CustomSpeechSetup");
+                .isEqualTo("DashScopeSpeechSynthesisModelSetup");
 
         ResourceProvider rerank =
                 plan.getResourceProviders().get(ResourceType.RERANK_MODEL).get("ranker");
         assertThat(rerank).isInstanceOf(PythonResourceProvider.class);
         assertThat(((PythonResourceProvider) rerank).getDescriptor().getClazz())
-                .isEqualTo("CustomRerankModel");
+                .isEqualTo("DashScopeRerankModel");
     }
 
     /** Test agent with explicit Python MCP server declaration. */

@@ -36,6 +36,8 @@ def _collect_python_class_paths() -> list[tuple[str, str]]:
         "DecisionModel",
         "EmbeddingModel",
         "VectorStore",
+        "MediaModel",
+        "RerankModel",
     ]:
         if not hasattr(ResourceName, resource_name):
             continue
