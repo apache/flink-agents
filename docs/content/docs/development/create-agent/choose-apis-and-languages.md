@@ -57,6 +57,8 @@ Cross-language support is available for the following component APIs:
 | Function Tools | [YAML cross-language example]({{< ref "docs/development/create-agent/yaml#cross-language-agents" >}}) and [Tool Use]({{< ref "docs/development/calling-llms/tool_use" >}}) |
 | Chat models, embedding models, and vector stores | [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}) |
 | Decision models | [Decision Models]({{< ref "docs/development/decision_models" >}}) and [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}) |
+| Media models | [Media Models]({{< ref "docs/development/media_models" >}}) and [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}) |
+| Rerank models | [Rerank Models]({{< ref "docs/development/rerank_models" >}}) and [Cross-Language Resources]({{< ref "docs/development/create-agent/resources#cross-language-resources" >}}) |
 
 For YAML examples, see
 [Cross-language agents]({{< ref "docs/development/create-agent/yaml#cross-language-agents" >}}).
@@ -158,6 +160,18 @@ where supported and install its dependencies.
 |---|---|---|
 | [OpenAI]({{< ref "docs/development/decision_models" >}}) | ✅ | ❌ |
 | [TypeSafe]({{< ref "docs/development/decision_models" >}}) | ✅ | ❌ |
+
+**Media Models**
+
+| Provider | Python | Java |
+|---|---|---|
+| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/media_models/providers#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
+
+**Rerank Models**
+
+| Provider | Python | Java |
+|---|---|---|
+| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/rerank_models/providers#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
 
 **MCP Server**
 
