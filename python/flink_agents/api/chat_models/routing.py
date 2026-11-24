@@ -26,10 +26,10 @@ from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 from uuid import UUID
 
-from pydantic import Field, PrivateAttr, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.resource import Resource, ResourceDescriptor, ResourceType
+from flink_agents.api.resource import ResourceDescriptor, ResourceName
 
 RULE_PATTERN_FLAGS = re.IGNORECASE | re.ASCII
 
@@ -192,10 +192,16 @@ class CustomRoutingExecutor(ABC):
         """Return a selection or abstention."""
 
 
-class ModelRouter(Resource):
-    """Router resource using the same descriptor argument keys as Java."""
+class RouterDeclaration(BaseModel):
+    """Model router descriptor arguments, checked against the declaration rules.
 
-    _routing_executor: Any = PrivateAttr(default=None)
+    The rules live here so that ``ModelRouter.of(...).build()`` can fail at the
+    registration call site and the plan can apply the same rules to descriptors that
+    did not pass through the builder (YAML, hand-written descriptors, restored plans).
+    The resource the engine instantiates is
+    ``flink_agents.plan.routing.model_router.ModelRouter``; it only decodes arguments
+    that already passed these checks.
+    """
 
     candidates: list[str]
     candidate_descriptions: dict[str, str] = Field(default_factory=dict)
@@ -205,11 +211,6 @@ class ModelRouter(Resource):
     strategy_args: dict[str, Any] = Field(default_factory=dict)
     strategy_executor_class: str | None = None
 
-    @classmethod
-    def resource_type(cls) -> ResourceType:
-        """Return the router resource type."""
-        return ResourceType.MODEL_ROUTER
-
     @property
     def strategy(self) -> RoutingStrategy:
         """Return the validated strategy declaration."""
@@ -218,7 +219,7 @@ class ModelRouter(Resource):
         )
 
     @model_validator(mode="after")
-    def _validate_router(self) -> "ModelRouter":
+    def _validate_router(self) -> "RouterDeclaration":
         if not self.candidates or any(not name for name in self.candidates):
             msg = "A model router requires non-empty candidate names."
             raise ValueError(msg)
@@ -235,6 +236,24 @@ class ModelRouter(Resource):
                     msg = f"Rule model '{name}' is not a candidate."
                     raise ValueError(msg)
         return self
+
+
+class ModelRouter:
+    """Declares a model router; ``of(...)`` starts the descriptor builder.
+
+    The declaration is data only, so it serializes with the agent plan. The descriptor
+    names ``ResourceName.ModelRouter.MODEL_ROUTER`` as its class, and the plan replaces
+    it with the router resource in ``flink_agents.plan.routing`` when it builds the
+    agent plan, as the Java declaration does.
+    """
+
+    def __init__(self) -> None:
+        """Not instantiable; use ``ModelRouter.of(...)``."""
+        msg = (
+            "ModelRouter is a declaration; build a descriptor with "
+            "ModelRouter.of(...).build()."
+        )
+        raise TypeError(msg)
 
     @staticmethod
     def of(*candidates: str) -> "ModelRouterBuilder":
@@ -278,8 +297,8 @@ class ModelRouterBuilder:
 
     def build(self) -> ResourceDescriptor:
         """Validate and return a Python resource descriptor."""
-        ModelRouter(**self._args)
+        RouterDeclaration(**self._args)
         return ResourceDescriptor(
-            clazz=f"{ModelRouter.__module__}.ModelRouter",
+            clazz=ResourceName.ModelRouter.MODEL_ROUTER,
             arguments=copy.deepcopy(self._args),
         )

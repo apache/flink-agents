@@ -1,0 +1,86 @@
+################################################################################
+#  Licensed to the Apache Software Foundation (ASF) under one
+#  or more contributor license agreements.  See the NOTICE file
+#  distributed with this work for additional information
+#  regarding copyright ownership.  The ASF licenses this file
+#  to you under the Apache License, Version 2.0 (the
+#  "License"); you may not use this file except in compliance
+#  with the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+# limitations under the License.
+#################################################################################
+"""The model router resource the engine instantiates for a router declaration."""
+
+from typing import Any
+
+from pydantic import Field, PrivateAttr
+
+from flink_agents.api.chat_models.routing import RoutingStrategy
+from flink_agents.api.resource import (
+    Resource,
+    ResourceDescriptor,
+    ResourceName,
+    ResourceType,
+)
+
+# The class path a declaration names: the placeholder the builder and the YAML
+# ``router`` alias write, which is also the path of the api declaration class that
+# descriptors named while the declaration was the resource.
+_DECLARATION_CLASS = ResourceName.ModelRouter.MODEL_ROUTER
+
+
+class ModelRouter(Resource):
+    """The ``MODEL_ROUTER`` resource: a router declaration decoded for the engine.
+
+    It selects nothing by itself; ``flink_agents.plan.routing.resolver`` asks the
+    strategy for the first model. Construction only decodes the descriptor. The
+    declaration rules run when the agent plan is built or restored
+    (``validate_routing``), so every descriptor meets them before a request reaches
+    this class.
+    """
+
+    _routing_executor: Any = PrivateAttr(default=None)
+
+    candidates: list[str]
+    candidate_descriptions: dict[str, str] = Field(default_factory=dict)
+    default_model: str | None = None
+    fallback: bool = False
+    strategy_type: str
+    strategy_args: dict[str, Any] = Field(default_factory=dict)
+    strategy_executor_class: str | None = None
+
+    @classmethod
+    def resource_type(cls) -> ResourceType:
+        """Return the router resource type."""
+        return ResourceType.MODEL_ROUTER
+
+    @property
+    def strategy(self) -> RoutingStrategy:
+        """Return the strategy declaration."""
+        return RoutingStrategy(
+            self.strategy_type, self.strategy_args, self.strategy_executor_class
+        )
+
+    @staticmethod
+    def resource_descriptor(declaration: ResourceDescriptor) -> ResourceDescriptor:
+        """Return ``declaration`` with this class named as the resource to provide.
+
+        A Python descriptor that names the declaration is provided as this resource.
+        Any other descriptor, including a Java one, is returned unchanged.
+        """
+        if declaration.language != "python" or (
+            f"{declaration.target_module}.{declaration.target_clazz}"
+            != _DECLARATION_CLASS
+        ):
+            return declaration
+        return ResourceDescriptor(
+            target_module=ModelRouter.__module__,
+            target_clazz=ModelRouter.__name__,
+            arguments=declaration.arguments,
+        )

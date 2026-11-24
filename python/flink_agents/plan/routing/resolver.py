@@ -28,7 +28,6 @@ from uuid import UUID
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.routing import (
     RULE_PATTERN_FLAGS,
-    ModelRouter,
     RoutingCandidate,
     RoutingContext,
     RoutingDecision,
@@ -37,6 +36,7 @@ from flink_agents.api.chat_models.routing import (
 from flink_agents.api.events.model_routing_event import ModelRoutingEvent
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.plan.routing.model_router import ModelRouter
 from flink_agents.plan.routing.resolved_route import ResolvedModelRoute
 from flink_agents.plan.routing.validation import custom_executor_class
 

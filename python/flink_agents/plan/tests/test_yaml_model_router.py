@@ -28,7 +28,6 @@ from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.routing import (
     CustomRoutingExecutor,
-    ModelRouter,
     RoutingDecision,
 )
 from flink_agents.api.events.model_routing_event import ModelRoutingEvent
@@ -36,6 +35,7 @@ from flink_agents.api.resource import ResourceType
 from flink_agents.api.yaml.loader import build_agents
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.plan.routing.model_router import ModelRouter
 from flink_agents.plan.routing.resolved_route import ResolvedModelRoute
 from flink_agents.plan.routing.resolver import resolve
 

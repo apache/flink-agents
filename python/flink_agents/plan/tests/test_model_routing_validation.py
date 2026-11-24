@@ -26,11 +26,16 @@ from flink_agents.api.chat_models.routing import ModelRouter, Strategies
 from flink_agents.api.resource import (
     JavaResourceDescriptor,
     ResourceDescriptor,
+    ResourceName,
     ResourceType,
 )
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
-from flink_agents.plan.resource_provider import PythonResourceProvider
+from flink_agents.plan.resource_provider import (
+    JavaResourceProvider,
+    PythonResourceProvider,
+)
+from flink_agents.plan.routing.model_router import ModelRouter as RouterResource
 from flink_agents.plan.routing.validation import validate_routing
 from flink_agents.plan.tests.actions.test_model_routing import NoArgs, Select
 
@@ -117,3 +122,62 @@ def test_python_rules_router_matches_snapshot():
     )
     plan = compile_router(descriptor())
     assert json.loads(plan.model_dump_json()) == json.loads(snapshot.read_text())
+
+
+def test_plan_provides_declarations_as_the_plan_resource():
+    plan = compile_router(
+        ModelRouter.of("small").strategy(Strategies.rules({})).build()
+    )
+    provider = plan.resource_providers[ResourceType.MODEL_ROUTER]["router"]
+    assert provider.descriptor.clazz is RouterResource
+    assert isinstance(provider.provide(None, AgentConfiguration()), RouterResource)
+
+
+def test_restored_plan_naming_the_declaration_is_provided_as_the_resource():
+    plan = json.loads(compile_router(descriptor()).model_dump_json())
+    router = plan["resource_providers"]["model_router"]["router"]["descriptor"]
+    router["target_module"] = "flink_agents.api.chat_models.routing"
+    restored = AgentPlan.model_validate(plan)
+    provider = restored.resource_providers[ResourceType.MODEL_ROUTER]["router"]
+    assert provider.descriptor.clazz is RouterResource
+    assert provider.descriptor.arguments == descriptor().arguments
+
+
+def test_restored_plan_with_an_invalid_router_fails():
+    plan = json.loads(compile_router(descriptor()).model_dump_json())
+    router = plan["resource_providers"]["model_router"]["router"]["descriptor"]
+    router["arguments"]["default_model"] = "absent"
+    with pytest.raises(ValueError, match="default model"):
+        AgentPlan.model_validate(plan)
+
+
+def test_resource_decodes_without_repeating_declaration_checks():
+    router = RouterResource(
+        candidates=["small"], strategy_type="rule_based", default_model="absent"
+    )
+    assert router.default_model == "absent"
+
+
+def test_declaration_is_not_a_resource():
+    with pytest.raises(TypeError, match=r"ModelRouter\.of"):
+        ModelRouter()
+
+
+def test_restored_plan_keeps_a_java_router():
+    provider = JavaResourceProvider(
+        name="router",
+        type=ResourceType.MODEL_ROUTER,
+        descriptor=JavaResourceDescriptor(
+            clazz=ResourceName.ModelRouter.Java.MODEL_ROUTER,
+            candidates=["small"],
+            strategy_type="rule_based",
+        ),
+    )
+    plan = AgentPlan(
+        actions={}, resource_providers={ResourceType.MODEL_ROUTER: {"router": provider}}
+    )
+    restored = AgentPlan.model_validate_json(plan.model_dump_json())
+    assert isinstance(
+        restored.resource_providers[ResourceType.MODEL_ROUTER]["router"],
+        JavaResourceProvider,
+    )

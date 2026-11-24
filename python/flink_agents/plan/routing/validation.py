@@ -22,11 +22,12 @@ import inspect
 
 from flink_agents.api.chat_models.routing import (
     CustomRoutingExecutor,
-    ModelRouter,
+    RouterDeclaration,
     RoutingStrategyType,
 )
 from flink_agents.api.resource import ResourceType, check_model_name_collision
 from flink_agents.plan.resource_provider import PythonResourceProvider, ResourceProvider
+from flink_agents.plan.routing.model_router import ModelRouter
 
 
 def custom_executor_class(path: str) -> tuple[type[CustomRoutingExecutor], bool]:
@@ -55,15 +56,33 @@ def custom_executor_class(path: str) -> tuple[type[CustomRoutingExecutor], bool]
 
 def validate_routing(
     providers: dict[ResourceType, dict[str, ResourceProvider]],
+    *,
+    allow_java: bool = False,
 ) -> None:
-    """Validate native Python routers after local and shared resources merge."""
-    for name, provider in providers.get(ResourceType.MODEL_ROUTER, {}).items():
+    """Validate native Python routers and name the router resource they provide.
+
+    Runs when a plan is built and when one is restored, so a descriptor written by
+    hand, loaded from YAML or read from a serialized plan meets the same checks as
+    one built with ``ModelRouter.of(...)``. Each declaration is then provided as
+    ``flink_agents.plan.routing.model_router.ModelRouter``, which only decodes it.
+    ``allow_java`` keeps the Java routers of a restored Java plan, which the Java
+    plan validates and Python never provides.
+    """
+    routers = providers.get(ResourceType.MODEL_ROUTER, {})
+    for name, provider in list(routers.items()):
         check_model_name_collision(name, ResourceType.MODEL_ROUTER, providers)
         if not isinstance(provider, PythonResourceProvider):
+            if allow_java:
+                continue
             msg = (
                 f"Model router '{name}' must use a Python descriptor in a Python agent."
             )
             raise TypeError(msg)
-        router = ModelRouter(**provider.descriptor.arguments)
-        if router.strategy.type == RoutingStrategyType.CUSTOM:
-            custom_executor_class(router.strategy.executor_class)
+        declaration = RouterDeclaration(**provider.descriptor.arguments)
+        if declaration.strategy.type == RoutingStrategyType.CUSTOM:
+            custom_executor_class(declaration.strategy.executor_class)
+        descriptor = ModelRouter.resource_descriptor(provider.descriptor)
+        if descriptor is not provider.descriptor:
+            routers[name] = PythonResourceProvider.get(
+                name, descriptor, ResourceType.MODEL_ROUTER
+            )
