@@ -22,6 +22,7 @@ Check the consistency of resource class name constants between ResourceName.java
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -124,6 +125,8 @@ def get_python_resource_name_map(python_path: Path) -> dict:
             "EmbeddingModel",
             "VectorStore",
             "ModelRouter",
+            "MediaModel",
+            "RerankModel",
         ]:
             if not hasattr(ResourceName, resource_name):
                 continue
@@ -152,61 +155,61 @@ def get_python_resource_name_map(python_path: Path) -> dict:
         return _parse_python_resource_name(python_path)
 
 
+def _extract_str_constants(class_node: ast.ClassDef) -> dict[str, str]:
+    constants: dict[str, str] = {}
+    for stmt in class_node.body:
+        if isinstance(stmt, ast.Assign):
+            if (
+                isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, str)
+                and stmt.value.value
+            ):
+                for target in stmt.targets:
+                    if isinstance(target, ast.Name):
+                        constants[target.id] = stmt.value.value
+        elif isinstance(stmt, ast.AnnAssign):
+            if (
+                isinstance(stmt.target, ast.Name)
+                and stmt.value is not None
+                and isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, str)
+                and stmt.value.value
+            ):
+                constants[stmt.target.id] = stmt.value.value
+    return constants
+
+
 def _parse_python_resource_name(python_path: Path) -> dict:
-    content = python_path.read_text(encoding="utf-8")
-    string_const_re = re.compile(r'^\s+([A-Za-z0-9_]+)\s*=\s*"([^"]+)"\s*$')
-    class_re = re.compile(r"class\s+(\w+)\s*:")
+    tree = ast.parse(python_path.read_text(encoding="utf-8"), filename=str(python_path))
+    resource_name_node = next(
+        (
+            stmt
+            for stmt in tree.body
+            if isinstance(stmt, ast.ClassDef) and stmt.name == "ResourceName"
+        ),
+        None,
+    )
+    if resource_name_node is None:
+        return {}
 
-    result = {}
-    indent_stack = []  # [(indent, ["ResourceName", "ChatModel", ...])]
-    base_indent = -1
+    python_map: dict[tuple[str, str], dict[str, str]] = {}
+    top_consts = _extract_str_constants(resource_name_node)
+    if "MCP_SERVER" in top_consts:
+        python_map[("MCP", "Python")] = {"MCP_SERVER": top_consts["MCP_SERVER"]}
 
-    for line in content.split("\n"):
-        if "class ResourceName:" in line:
-            base_indent = len(line) - len(line.lstrip())
-            indent_stack = [(base_indent, ["ResourceName"])]
+    for stmt in resource_name_node.body:
+        if not isinstance(stmt, ast.ClassDef):
             continue
-        if base_indent < 0:
-            continue
+        rt = stmt.name
+        py_consts = _extract_str_constants(stmt)
+        if py_consts:
+            python_map[(rt, "Python")] = py_consts
+        for nested in stmt.body:
+            if isinstance(nested, ast.ClassDef) and nested.name == "Java":
+                java_consts = _extract_str_constants(nested)
+                if java_consts:
+                    python_map[(rt, "Java")] = java_consts
 
-        indent = len(line) - len(line.lstrip())
-        stripped = line.strip()
-
-        while len(indent_stack) > 1 and indent <= indent_stack[-1][0] and stripped:
-            indent_stack.pop()
-
-        if stripped.startswith("class ") and class_re.match(stripped):
-            name = class_re.match(stripped).group(1)
-            if indent == base_indent + 4:
-                indent_stack = [(base_indent, ["ResourceName"])]
-                indent_stack.append((indent, ["ResourceName", name]))
-            elif indent == base_indent + 8 and len(indent_stack) >= 2:
-                parent_path = indent_stack[-1][1]
-                indent_stack.append((indent, parent_path + [name]))
-
-        path = indent_stack[-1][1] if indent_stack else []
-        m = string_const_re.match(line)
-        if m and path:
-            const_name, value = m.group(1), m.group(2)
-            if value:
-                key = ".".join(path)
-                if key not in result:
-                    result[key] = {}
-                result[key][const_name] = value
-
-    python_map = {}
-    for key, consts in result.items():
-        parts = key.split(".")
-        if len(parts) >= 2 and parts[0] == "ResourceName":
-            rt = parts[1]
-            if len(parts) == 2:
-                python_map[(rt, "Python")] = consts
-            elif len(parts) == 3 and parts[2] == "Java":
-                python_map[(rt, "Java")] = consts
-    if "ResourceName" in result and "MCP_SERVER" in result["ResourceName"]:
-        python_map[("MCP", "Python")] = {
-            "MCP_SERVER": result["ResourceName"]["MCP_SERVER"]
-        }
     return python_map
 
 

@@ -455,5 +455,36 @@ class ResourceName:
 
             MODEL_ROUTER = "DECIDE_IN_RUNTIME_ModelRouter"
 
+    class MediaModel:
+        """MediaModel resource names."""
+
+        # DashScope
+        DASHSCOPE_CONNECTION = (
+            "flink_agents.integrations.media_models."
+            "dashscope_media_model.DashScopeMediaModelConnection"
+        )
+        DASHSCOPE_SPEECH_SYNTHESIS_SETUP = (
+            "flink_agents.integrations.media_models."
+            "dashscope_media_model.DashScopeSpeechSynthesisModelSetup"
+        )
+        DASHSCOPE_TRANSCRIPTION_SETUP = (
+            "flink_agents.integrations.media_models."
+            "dashscope_media_model.DashScopeTranscriptionModelSetup"
+        )
+        DASHSCOPE_IMAGE_GENERATION_SETUP = (
+            "flink_agents.integrations.media_models."
+            "dashscope_media_model.DashScopeImageGenerationModelSetup"
+        )
+        DASHSCOPE_VIDEO_GENERATION_SETUP = (
+            "flink_agents.integrations.media_models."
+            "dashscope_media_model.DashScopeVideoGenerationModelSetup"
+        )
+
+    class RerankModel:
+        """RerankModel resource names."""
+
+        # DashScope
+        DASHSCOPE = "flink_agents.integrations.rerank_models.dashscope_rerank_model.DashScopeRerankModel"
+
     # MCP resource names
     MCP_SERVER = "flink_agents.integrations.mcp.mcp.MCPServer"

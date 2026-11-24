@@ -231,6 +231,38 @@ def test_resolve_clazz_covers_vector_store_java_and_python() -> None:
     )
 
 
+def test_resolve_clazz_covers_media_and_rerank_dashscope() -> None:
+    assert resolve_clazz("dashscope", ResourceType.MEDIA_MODEL_CONNECTION).endswith(
+        "dashscope_media_model.DashScopeMediaModelConnection"
+    )
+    assert resolve_clazz("dashscope", ResourceType.RERANK_MODEL).endswith(
+        "dashscope_rerank_model.DashScopeRerankModel"
+    )
+    assert (
+        resolve_clazz("dashscope_tts", ResourceType.MEDIA_MODEL, "python")
+        == ResourceName.MediaModel.DASHSCOPE_SPEECH_SYNTHESIS_SETUP
+    )
+    assert (
+        resolve_clazz("dashscope_asr", ResourceType.MEDIA_MODEL, "python")
+        == ResourceName.MediaModel.DASHSCOPE_TRANSCRIPTION_SETUP
+    )
+    assert (
+        resolve_clazz("dashscope_image", ResourceType.MEDIA_MODEL, "python")
+        == ResourceName.MediaModel.DASHSCOPE_IMAGE_GENERATION_SETUP
+    )
+    assert (
+        resolve_clazz("dashscope_video", ResourceType.MEDIA_MODEL, "python")
+        == ResourceName.MediaModel.DASHSCOPE_VIDEO_GENERATION_SETUP
+    )
+    for alias in (
+        "dashscope_tts",
+        "dashscope_asr",
+        "dashscope_image",
+        "dashscope_video",
+    ):
+        assert resolve_clazz(alias, ResourceType.MEDIA_MODEL, "java") == alias
+
+
 def test_resolve_clazz_covers_embedding_model_openai_in_both_languages() -> None:
     assert resolve_clazz("openai", ResourceType.EMBEDDING_MODEL_CONNECTION).endswith(
         "openai_embedding_model.OpenAIEmbeddingModelConnection"
