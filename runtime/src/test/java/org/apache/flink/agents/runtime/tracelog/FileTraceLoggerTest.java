@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.DocumentBlock;
@@ -59,6 +60,7 @@ import org.mockito.MockitoAnnotations;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -134,6 +136,28 @@ class FileTraceLoggerTest {
         if (logger != null) {
             logger.close();
         }
+    }
+
+    @Test
+    void timeBudgetSurvivesSerialization() throws Exception {
+        var budget = ReActLoopBudget.builder().maxTime(Duration.ofMillis(60001)).build();
+        var request =
+                new ChatRequestEvent(
+                        "model", List.of(ChatMessage.user("hi")), null, null, null, budget);
+        logger.open(openParams);
+        logger.append(
+                TraceRecord.create(
+                        TraceContext.forEvent(
+                                null, request.getType(), request.getId().toString(), null, null),
+                        null,
+                        null,
+                        request.getAttributes()),
+                TraceLogLevel.STANDARD);
+        logger.flush();
+        var json = objectMapper.readTree(Files.readAllLines(getExpectedLogFilePath()).get(0));
+        assertEquals(
+                budget.getMaxTime(),
+                Duration.parse(json.at("/attributes/budget/max_time").asText()));
     }
 
     @Test

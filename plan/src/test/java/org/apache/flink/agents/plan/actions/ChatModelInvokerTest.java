@@ -127,6 +127,84 @@ class ChatModelInvokerTest {
         verify(ctx, times(1)).durableExecute(any());
     }
 
+    @ParameterizedTest
+    @CsvSource({"false", "true"})
+    void budgetStateWriteFailureIsNotRetriedOrConverted(boolean finalTurn) throws Exception {
+        RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getSensoryMemory()).thenReturn(mock(MemoryObject.class));
+        BaseChatModelSetup model = mock(BaseChatModelSetup.class);
+        ReadableConfiguration config = mock(ReadableConfiguration.class);
+        when(ctx.getConfig()).thenReturn(config);
+        when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
+        when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(model);
+        when(ctx.durableExecute(any()))
+                .thenReturn(
+                        new ChatModelInvoker.InvocationOutcome(
+                                ChatFixtures.response("done"), null));
+        IllegalStateException failure = new IllegalStateException("budget state write failed");
+        try (var budgets = org.mockito.Mockito.mockStatic(ReActLoopBudgetUtils.class)) {
+            budgets.when(() -> ReActLoopBudgetUtils.updateTokenBudgetState(any(), any(), any()))
+                    .thenThrow(failure);
+            assertSame(
+                    failure,
+                    assertThrows(
+                            IllegalStateException.class,
+                            () ->
+                                    ChatModelInvoker.chatWithRetries(
+                                            UUID.randomUUID(),
+                                            "test-model",
+                                            "chat",
+                                            List.of(),
+                                            Map.of(),
+                                            null,
+                                            false,
+                                            ctx,
+                                            3,
+                                            0L,
+                                            finalTurn)));
+            verify(ctx).durableExecute(any());
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false", "true"})
+    void truncatedSoftFinalizationStillUsesConfiguredRetries(boolean nativeSchema)
+            throws Exception {
+        RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getSensoryMemory()).thenReturn(mock(MemoryObject.class));
+        BaseChatModelSetup model = mock(BaseChatModelSetup.class);
+        ReadableConfiguration config = mock(ReadableConfiguration.class);
+        when(ctx.getConfig()).thenReturn(config);
+        when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
+        when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(model);
+        when(model.willApplyNativeStructuredOutput(any())).thenReturn(nativeSchema);
+        when(ctx.durableExecute(any()))
+                .thenReturn(
+                        new ChatModelInvoker.InvocationOutcome(
+                                ChatFixtures.response(
+                                        "unfinished", Map.of("finish_reason", "length")),
+                                null));
+        ChatModelInvoker.ChatAttemptFailed failure =
+                assertThrows(
+                        ChatModelInvoker.ChatAttemptFailed.class,
+                        () ->
+                                ChatModelInvoker.chatWithRetries(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        "chat",
+                                        List.of(),
+                                        Map.of(),
+                                        nativeSchema ? Map.class : null,
+                                        false,
+                                        ctx,
+                                        1,
+                                        0L,
+                                        true));
+        assertTrue(failure.error.getMessage().contains("truncated"));
+        assertEquals(1, failure.retryCount);
+        verify(ctx, times(2)).durableExecute(any());
+    }
+
     @Test
     void providerFailureReplaysFromSerializedOutcome() throws Exception {
         RunnerContext ctx = mock(RunnerContext.class);

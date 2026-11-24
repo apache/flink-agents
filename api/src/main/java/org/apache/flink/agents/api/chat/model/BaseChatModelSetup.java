@@ -269,15 +269,6 @@ public abstract class BaseChatModelSetup extends Resource {
         return messages;
     }
 
-    /** Applies the setup prompt and calls the model without tools or tool-only parameters. */
-    public ChatResult chatWithoutTools(
-            List<ChatMessage> messages,
-            Map<String, Object> promptArgs,
-            Map<String, Object> modelParams) {
-        return callConnection(
-                prepareRequestMessages(messages, promptArgs), List.of(), modelParams, null, true);
-    }
-
     public ChatResult chat(List<ChatMessage> messages) {
         return this.chat(messages, Collections.emptyMap(), Collections.emptyMap());
     }
@@ -289,17 +280,17 @@ public abstract class BaseChatModelSetup extends Resource {
         Preconditions.checkNotNull(
                 connection,
                 "Connection is not initialized. Ensure open() is called before chat().");
-        return chat(prepareRequestMessages(messages, promptArgs), tools, modelParams, null);
+        return callConnection(
+                prepareRequestMessages(messages, promptArgs), tools, modelParams, null, false);
     }
 
     /**
      * Sends the messages and tools exactly as given: the bound prompt, the skill-discovery message
-     * and the bound tools are not added. {@link #chat(List, Map, Map)} prepares the request and
-     * sends it through this method.
+     * and the bound tools are not added.
      *
-     * <p>When {@code outputSchema} is non-null and {@code tools} is empty, the parameters sent to
-     * the connection omit {@code tool_choice}, {@code tool_choice_option} and {@code
-     * parallel_tool_calls}, at the top level and inside a nested {@code additional_kwargs} map.
+     * <p>When {@code tools} is empty, the parameters sent to the connection omit {@code
+     * tool_choice}, {@code tool_choice_option} and {@code parallel_tool_calls}, at the top level
+     * and inside a nested {@code additional_kwargs} map.
      *
      * @param messages the messages to send
      * @param tools the tools to bind to the request
@@ -315,7 +306,7 @@ public abstract class BaseChatModelSetup extends Resource {
             List<Tool> tools,
             @Nullable Map<String, Object> modelParams,
             @Nullable Object outputSchema) {
-        return callConnection(messages, tools, modelParams, outputSchema, false);
+        return callConnection(messages, tools, modelParams, outputSchema, tools.isEmpty());
     }
 
     private ChatResult callConnection(
@@ -323,7 +314,7 @@ public abstract class BaseChatModelSetup extends Resource {
             List<Tool> tools,
             @Nullable Map<String, Object> modelParams,
             @Nullable Object outputSchema,
-            boolean withoutTools) {
+            boolean disableTools) {
         Preconditions.checkNotNull(
                 connection,
                 "Connection is not initialized. Ensure open() is called before chat().");
@@ -331,7 +322,7 @@ public abstract class BaseChatModelSetup extends Resource {
         if (modelParams != null) {
             params.putAll(modelParams);
         }
-        if (withoutTools || (outputSchema != null && tools.isEmpty())) {
+        if (disableTools) {
             params = withoutToolOnlyParams(params);
         }
         if (outputSchema == null) {

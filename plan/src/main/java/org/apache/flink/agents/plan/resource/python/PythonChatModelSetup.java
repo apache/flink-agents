@@ -86,22 +86,6 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
             List<ChatMessage> messages,
             Map<String, Object> promptArgs,
             Map<String, Object> modelParams) {
-        return invokePythonChat("chat", messages, promptArgs, modelParams);
-    }
-
-    @Override
-    public ChatResult chatWithoutTools(
-            List<ChatMessage> messages,
-            Map<String, Object> promptArgs,
-            Map<String, Object> modelParams) {
-        return invokePythonChat("_chat_without_tools", messages, promptArgs, modelParams);
-    }
-
-    private ChatResult invokePythonChat(
-            String method,
-            List<ChatMessage> messages,
-            Map<String, Object> promptArgs,
-            Map<String, Object> modelParams) {
         checkState(
                 chatModelSetup != null,
                 "ChatModelSetup is not initialized. Cannot perform chat operation.");
@@ -118,8 +102,34 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
             kwargs.put("prompt_args", promptArgs != null ? promptArgs : Collections.emptyMap());
 
             Object pythonMessageResponse =
-                    scope.own(adapter.callMethod(chatModelSetup, method, kwargs));
+                    scope.own(adapter.callMethod(chatModelSetup, "chat", kwargs));
             return adapter.fromPythonChatResult(pythonMessageResponse);
+        }
+    }
+
+    @Override
+    public List<ChatMessage> prepareRequestMessages(
+            List<ChatMessage> messages, Map<String, Object> promptArgs) {
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            List<Object> pythonMessages = new ArrayList<>();
+            for (ChatMessage message : messages) {
+                pythonMessages.add(scope.own(adapter.toPythonChatMessage(message)));
+            }
+            Object prepared =
+                    scope.own(
+                            adapter.callMethod(
+                                    chatModelSetup,
+                                    "prepare_request_messages",
+                                    Map.of(
+                                            "messages",
+                                            pythonMessages,
+                                            "prompt_args",
+                                            promptArgs == null ? Map.of() : promptArgs)));
+            List<ChatMessage> result = new ArrayList<>();
+            for (Object message : (List<?>) prepared) {
+                result.add(adapter.fromPythonChatMessage(message));
+            }
+            return result;
         }
     }
 
@@ -147,24 +157,29 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
         return false;
     }
 
-    /**
-     * Always refuses rather than dropping the tools or the schema, or adding the Python setup's
-     * bound prompt and tools: the bridge reaches only the Python setup's {@code chat}, which
-     * prepares the request itself.
-     *
-     * @throws UnsupportedOperationException always
-     */
+    /** Send a prepared, tool-free request across the bridge. Native schemas remain unsupported. */
     @Override
     public ChatResult chat(
             List<ChatMessage> messages,
             List<Tool> tools,
             @Nullable Map<String, Object> modelParams,
             @Nullable Object outputSchema) {
-        throw new UnsupportedOperationException(
-                "A Python chat model setup cannot be sent explicit messages, tools or an output"
-                        + " schema from Java: the bridge carries only messages, prompt arguments and"
-                        + " model parameters to the Python setup's chat, which adds its own bound"
-                        + " prompt and tools. Apply the schema on the Python side instead.");
+        if (!tools.isEmpty() || outputSchema != null) {
+            throw new UnsupportedOperationException(
+                    "Explicit non-empty tools or an output schema cannot cross the Python setup bridge.");
+        }
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            List<Object> pythonMessages = new ArrayList<>();
+            for (ChatMessage message : messages) {
+                pythonMessages.add(scope.own(adapter.toPythonChatMessage(message)));
+            }
+            Map<String, Object> kwargs =
+                    new HashMap<>(modelParams == null ? Map.of() : modelParams);
+            kwargs.put("messages", pythonMessages);
+            kwargs.put("tools", List.of());
+            return adapter.fromPythonChatResult(
+                    scope.own(adapter.callMethod(chatModelSetup, "chat", kwargs)));
+        }
     }
 
     @Override

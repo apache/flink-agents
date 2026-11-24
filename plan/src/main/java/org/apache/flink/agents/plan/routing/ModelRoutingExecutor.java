@@ -123,9 +123,9 @@ public final class ModelRoutingExecutor {
             RunnerContext ctx,
             @Nullable String budgetReason)
             throws Exception {
-        boolean closing = budgetReason != null;
+        boolean budgetExhausted = budgetReason != null;
         List<ChatMessage> invocationMessages = new ArrayList<>(messages);
-        if (closing)
+        if (budgetExhausted)
             invocationMessages.add(
                     ChatMessage.user(
                             "Give your final answer now using the information already available. Do not call tools."));
@@ -169,8 +169,7 @@ public final class ModelRoutingExecutor {
                         ChatModelInvoker.chatWithRetries(
                                 requestId,
                                 candidate,
-                                route.durableChatCallId(candidate)
-                                        + (closing ? ":budget-final" : ""),
+                                route.durableChatCallId(candidate),
                                 invocationMessages,
                                 promptArgs,
                                 outputSchema,
@@ -178,12 +177,11 @@ public final class ModelRoutingExecutor {
                                 ctx,
                                 numRetries,
                                 retryWaitMillis,
-                                closing);
+                                budgetExhausted);
                 ChatRetryStats.recordAttempt(
                         ctx, requestId, result.model, result.retryCount, result.totalRetryWaitMs);
 
-                if (closing && !result.response.getToolCalls().isEmpty()) {
-                    RoutingMetadata.take(ctx.getSensoryMemory(), requestId);
+                if (budgetExhausted && !result.response.getToolCalls().isEmpty()) {
                     throw new ModelRoutingExecutionException(
                             new IllegalStateException(
                                     "Soft finalization returned tool calls (budget reason: "
@@ -211,7 +209,6 @@ public final class ModelRoutingExecutor {
                     } catch (ModelRoutingResolver.RoutingFailure e) {
                         // A signal that cannot judge the round (verifier out of retries, custom
                         // signal threw) fails the logical request, like a failed routing decision.
-                        RoutingMetadata.take(ctx.getSensoryMemory(), requestId);
                         throw new ModelRoutingExecutionException(e);
                     }
                 }
@@ -221,8 +218,7 @@ public final class ModelRoutingExecutor {
                                 ChatModelInvoker.applyOutputSchema(
                                         result,
                                         outputSchema,
-                                        route.durableChatCallId(candidate)
-                                                + (closing ? ":budget-final" : ""),
+                                        route.durableChatCallId(candidate),
                                         ctx,
                                         requestId);
                     } catch (ChatModelInvoker.DurableExecutionFailure e) {
@@ -247,7 +243,6 @@ public final class ModelRoutingExecutor {
                         // would recur on every tier, so the request fails, as it does when a
                         // signal cannot judge the round.
                         CancellationUtils.rethrowIfCancellation(e);
-                        RoutingMetadata.take(ctx.getSensoryMemory(), requestId);
                         throw new ModelRoutingExecutionException(e);
                     }
                 }
@@ -359,9 +354,6 @@ public final class ModelRoutingExecutor {
                     route.getRequestedModel(),
                     lastError == null ? null : lastError.toString());
         }
-        // The reasoning loop is over; a routed loop that dies mid-way must not leak its
-        // saved block before the failed logical request completes.
-        RoutingMetadata.take(ctx.getSensoryMemory(), requestId);
         throw new ModelRoutingExecutionException(
                 lastError != null
                         ? lastError
@@ -372,7 +364,7 @@ public final class ModelRoutingExecutor {
                                         + " and no candidate is left to answer."));
     }
 
-    /** Clears routing state when a request ends before another attempt starts. */
+    /** Clears routing state when a request ends. */
     public static void clearRoutingMetadata(MemoryObject memory, UUID requestId) throws Exception {
         RoutingMetadata.take(memory, requestId);
     }

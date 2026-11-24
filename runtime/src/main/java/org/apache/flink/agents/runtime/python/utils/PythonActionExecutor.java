@@ -19,6 +19,7 @@ package org.apache.flink.agents.runtime.python.utils;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.resource.Resource;
@@ -228,7 +229,9 @@ public class PythonActionExecutor implements AutoCloseable {
                         interpreterManager.invoke(
                                 CREATE_FLINK_RUNNER_CONTEXT,
                                 runnerContext,
-                                new ObjectMapper().writeValueAsString(agentPlan),
+                                new ObjectMapper()
+                                        .registerModule(new JavaTimeModule())
+                                        .writeValueAsString(agentPlan),
                                 pythonAsyncThreadPool,
                                 javaResourceAdapter,
                                 jobIdentifier);
@@ -246,7 +249,8 @@ public class PythonActionExecutor implements AutoCloseable {
      */
     public String executePythonFunction(PythonFunction function, Event event) throws Exception {
         runnerContext.checkNoPendingEvents();
-        String eventJson = new ObjectMapper().writeValueAsString(event);
+        String eventJson =
+                new ObjectMapper().registerModule(new JavaTimeModule()).writeValueAsString(event);
         try {
             return interpreterManager.withInterpreter(
                     interpreter -> {

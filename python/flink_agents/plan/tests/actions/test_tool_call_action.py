@@ -1697,12 +1697,11 @@ def test_time_expires_while_parallel_tools_are_running(mode: str, monkeypatch) -
     model.get_tool_names.return_value = [
         call.name for call in tool_request("a", "b").tool_calls
     ]
-    model.chat.return_value = ChatResult(
-        message=ChatMessage.assistant(tool_request("a", "b").tool_calls)
-    )
-    model._chat_without_tools.return_value = ChatResult(
-        message=ChatMessage.assistant("done")
-    )
+    model.prepare_request_messages.side_effect = lambda messages, args: messages
+    model.chat.side_effect = [
+        ChatResult(message=ChatMessage.assistant(tool_request("a", "b").tool_calls)),
+        ChatResult(message=ChatMessage.assistant("done")),
+    ]
     now = 0
     monkeypatch.setattr(
         "flink_agents.plan.actions.react_loop_budget_utils.time.time_ns",
@@ -1749,10 +1748,10 @@ def test_time_expires_while_parallel_tools_are_running(mode: str, monkeypatch) -
     assert tools.success == {"a": True, "b": True}
     asyncio.run(process_chat_request_or_tool_response(tools, ctx))
     if mode == "soft":
-        model._chat_without_tools.assert_called_once()
+        assert model.chat.call_count == 2
+        assert model.chat.call_args.kwargs["tools"] == []
         assert not ctx.sent_events[-1].is_failed
     else:
         assert "TIME_BUDGET_EXCEEDED" in ctx.sent_events[-1].error
-        model._chat_without_tools.assert_not_called()
     assert ctx.sent_events[-1].request_id == request.id
-    model.chat.assert_called_once()
+    assert model.chat.call_count == (2 if mode == "soft" else 1)

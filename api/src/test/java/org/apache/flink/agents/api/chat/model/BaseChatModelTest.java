@@ -598,14 +598,15 @@ class BaseChatModelTest {
     }
 
     @Test
-    void chatWithoutToolsDropsToolOnlyParamsWithoutSchema() {
+    void explicitEmptyToolsDropToolOnlyParamsWithoutSchema() {
         RecordingConnection connection = new RecordingConnection();
         RecordingChatModelSetup setup =
                 new RecordingChatModelSetup(connection, null, null, paramsWithToolChoice());
-        setup.chatWithoutTools(
+        setup.chat(
                 List.of(ChatMessage.user("finish")),
-                Map.of(),
-                Map.of("temperature", 0.2, "tool_choice", "required"));
+                List.of(),
+                Map.of("temperature", 0.2, "tool_choice", "required"),
+                null);
         assertEquals(
                 Map.of(
                         "model",
@@ -662,9 +663,15 @@ class BaseChatModelTest {
                 new RecordingChatModelSetup(
                         connection, null, StructuredOutputStrategy.AUTO, paramsWithToolChoice());
 
-        setup.chat(List.of(new ChatMessage(MessageRole.USER, "hi")));
+        setup.chat(
+                List.of(ChatMessage.user("hi")),
+                Map.of(),
+                Map.of("temperature", 0.2, "tool_choice", "required"));
 
-        assertEquals(paramsWithToolChoice(), connection.capturedModelParams);
+        Map<String, Object> expected = new HashMap<>(paramsWithToolChoice());
+        expected.put("temperature", 0.2);
+        expected.put("tool_choice", "required");
+        assertEquals(expected, connection.capturedModelParams);
     }
 
     @Test
@@ -705,29 +712,29 @@ class BaseChatModelTest {
     @Test
     @DisplayName(
             "chat(messages, promptArgs, modelParams) sends the prepared request and the bound tools"
-                    + " through the explicit chat()")
-    void testChatDelegatesPreparedRequestToExplicitChat() {
-        List<Object[]> explicitCalls = new ArrayList<>();
+                    + " to the connection")
+    void testChatSendsPreparedRequestAndBoundToolsToConnection() {
+        List<Tool> sentTools = new ArrayList<>();
+        RecordingConnection connection =
+                new RecordingConnection() {
+                    @Override
+                    public ChatResult chat(
+                            List<ChatMessage> messages,
+                            List<Tool> tools,
+                            Map<String, Object> modelParams) {
+                        sentTools.addAll(tools);
+                        return super.chat(messages, tools, modelParams);
+                    }
+                };
         RecordingChatModelSetup setup =
                 new RecordingChatModelSetup(
-                        new RecordingConnection(),
+                        connection,
                         Prompt.fromMessages(
                                 List.of(
                                         new ChatMessage(MessageRole.SYSTEM, "You are terse."),
                                         new ChatMessage(MessageRole.USER, "Task: {task}"))),
                         StructuredOutputStrategy.AUTO,
-                        SETUP_PARAMS) {
-                    @Override
-                    public ChatResult chat(
-                            List<ChatMessage> messages,
-                            List<Tool> tools,
-                            @Nullable Map<String, Object> modelParams,
-                            @Nullable Object outputSchema) {
-                        explicitCalls.add(
-                                new Object[] {messages, tools, modelParams, outputSchema});
-                        return new ChatResult(ChatMessage.assistant(List.of(new TextBlock("ok"))));
-                    }
-                };
+                        SETUP_PARAMS);
         setup.skillDiscoveryPrompt = "Available skills";
         Tool bound = new StubTool("bound", "help", "{\"type\":\"object\"}");
         setup.getTools().add(bound);
@@ -735,17 +742,16 @@ class BaseChatModelTest {
 
         setup.chat(List.of(new ChatMessage(MessageRole.USER, "")), Map.of("task", 7), modelParams);
 
-        assertEquals(1, explicitCalls.size());
-        Object[] call = explicitCalls.get(0);
         assertEquals(
                 List.of(
                         new ChatMessage(MessageRole.SYSTEM, "You are terse."),
                         new ChatMessage(MessageRole.SYSTEM, "Available skills"),
                         new ChatMessage(MessageRole.USER, "Task: 7")),
-                call[0]);
-        assertEquals(List.of(bound), call[1]);
-        assertSame(modelParams, call[2]);
-        assertNull(call[3]);
+                connection.capturedMessages);
+        assertEquals(List.of(bound), sentTools);
+        Map<String, Object> expected = new HashMap<>(SETUP_PARAMS);
+        expected.putAll(modelParams);
+        assertEquals(expected, connection.capturedModelParams);
     }
 
     @Test

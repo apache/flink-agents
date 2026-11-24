@@ -19,6 +19,7 @@
 package org.apache.flink.agents.runtime.condition;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import dev.cel.common.values.NullValue;
 import dev.cel.runtime.CelEvaluationException;
 import org.apache.flink.agents.api.Event;
@@ -39,7 +40,8 @@ import java.util.Set;
 final class ConditionEvaluator {
 
     private static final Logger LOG = LoggerFactory.getLogger(ConditionEvaluator.class);
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final ObjectMapper OBJECT_MAPPER =
+            new ObjectMapper().registerModule(new JavaTimeModule());
 
     private final ConditionEvaluationFailureStrategy failureStrategy;
 

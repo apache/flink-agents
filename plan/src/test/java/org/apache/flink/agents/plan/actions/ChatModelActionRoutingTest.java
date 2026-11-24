@@ -18,6 +18,7 @@
 package org.apache.flink.agents.plan.actions;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.ReActLoopBudget;
@@ -81,6 +82,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CancellationException;
 
 import static org.apache.flink.agents.api.chat.model.routing.ModelRouter.of;
@@ -176,6 +178,7 @@ public class ChatModelActionRoutingTest {
                 List<Tool> tools,
                 Map<String, Object> modelParams,
                 Object outputSchema) {
+            if (outputSchema == null) return chat(messages, Map.of(), modelParams);
             structuredRequests.add(List.copyOf(messages));
             Object next = nativeOutcomes.poll();
             if (next instanceof RuntimeException) {
@@ -185,14 +188,6 @@ public class ChatModelActionRoutingTest {
                 return (ChatResult) next;
             }
             return ChatFixtures.response("{\"answer\":\"42\"}");
-        }
-
-        @Override
-        public ChatResult chatWithoutTools(
-                List<ChatMessage> messages,
-                Map<String, Object> promptArgs,
-                Map<String, Object> modelParams) {
-            return chat(messages, promptArgs, modelParams);
         }
 
         @Override
@@ -583,6 +578,7 @@ public class ChatModelActionRoutingTest {
     void restoredChatRequestReachesActionAsConcreteType() throws Exception {
         String wireJson =
                 new ObjectMapper()
+                        .registerModule(new JavaTimeModule())
                         .writeValueAsString(
                                 new ChatRequestEvent("small", List.of(ChatMessage.user("hi"))));
 
@@ -1055,9 +1051,7 @@ public class ChatModelActionRoutingTest {
         assertThat(ctx.resolvedChatModels).containsExactly("big", "small");
         assertThat(ctx.durableCallIds)
                 .containsExactly(
-                        "route:router",
-                        "chat:router:big:budget-final",
-                        "chat:router:small:budget-final");
+                        "route:router", "chat:router:big:final", "chat:router:small:final");
         assertThat(ctx.chatResponse().isFailed()).isFalse();
         assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("final answer");
         assertThat(ReActLoopBudgetUtils.getBudgetState(ctx.getSensoryMemory(), request.getId()))
@@ -1730,6 +1724,66 @@ public class ChatModelActionRoutingTest {
                 .isNull();
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"hard", "soft-model", "soft-tools", "route"})
+    void requestFailureClearsOnlyItsRoutingMetadata(String failure) throws Exception {
+        FakeChatModel judge =
+                new FakeChatModel(
+                        failure.equals("route")
+                                ? new IllegalStateException("judge failed")
+                                : ChatFixtures.response("big"));
+        FakeChatModel target =
+                new FakeChatModel(
+                        failure.equals("soft-tools")
+                                ? ChatFixtures.response(
+                                        "",
+                                        List.of(
+                                                Map.of(
+                                                        "id",
+                                                        "unexpected",
+                                                        "type",
+                                                        "function",
+                                                        "function",
+                                                        Map.of(
+                                                                "name",
+                                                                "lookup",
+                                                                "arguments",
+                                                                Map.of()))))
+                                : new IllegalStateException("model failed"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(judgeRouter())
+                        .register("judge", judge)
+                        .register("big", target);
+        ChatRequestEvent request = new ChatRequestEvent("router", List.of(ChatMessage.user("hi")));
+        UUID otherId = UUID.randomUUID();
+        ctx.getSensoryMemory()
+                .set(
+                        "_ROUTING_METADATA_CONTEXT",
+                        new HashMap<>(
+                                Map.of(
+                                        request.getId(),
+                                        Map.of("router", "router"),
+                                        otherId,
+                                        Map.of("router", "other"))));
+        ReActLoopBudgetUtils.saveBudgetState(
+                ctx.getSensoryMemory(),
+                request.getId(),
+                Map.of(
+                        "mode",
+                        failure.startsWith("soft") ? "SOFT" : "HARD",
+                        "turns_left",
+                        failure.equals("route") ? 1L : 0L));
+
+        ChatModelAction.processChatRequestOrToolResponse(request, ctx);
+
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
+        assertThat(ctx.getSensoryMemory().get("_ROUTING_METADATA_CONTEXT").getValue())
+                .isEqualTo(Map.of(otherId, Map.of("router", "other")));
+        assertThat(ReActLoopBudgetUtils.getBudgetState(ctx.getSensoryMemory(), request.getId()))
+                .isNull();
+        if (failure.equals("hard")) assertThat(judge.callCount).isZero();
+    }
+
     private static ChatResult judgeAnswer(long tokens, String text, String finishReason) {
         return new ChatResult(
                 ChatMessage.assistant(text),
@@ -1843,7 +1897,7 @@ public class ChatModelActionRoutingTest {
                 Map.of("turns_left", 0L, "tokens_left", 20L, "mode", "SOFT"));
         ChatModelAction.processChatRequestOrToolResponse(request, ctx);
         assertThat(ctx.durableCallIds)
-                .containsExactly("judge:router", "route:router", "chat:router:big:budget-final");
+                .containsExactly("judge:router", "route:router", "chat:router:big:final");
         assertThat(judge.callCount).isEqualTo(1);
         assertThat(target.callCount).isEqualTo(1);
         assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("final");

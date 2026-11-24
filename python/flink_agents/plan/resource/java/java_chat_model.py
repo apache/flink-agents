@@ -31,6 +31,7 @@ from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.tools.tool import Tool
 from flink_agents.plan.resource.java.conversions import (
+    from_java_chat_message,
     from_java_chat_result,
 )
 from flink_agents.plan.resource.java.java_resource_adapter import JavaResourceAdapter
@@ -200,7 +201,8 @@ class JavaChatModelSetup(BaseChatModelSetup):
         Args:
             messages: Input message sequence.
             prompt_args: Prompt-template variables forwarded to the Java setup.
-            tools: Not supported. Must be ``None``.
+            tools: ``None`` uses the setup tools; an empty list disables tools.
+                Non-empty explicit lists are not supported.
             output_schema: Not supported. Must be ``None``.
             **kwargs: Additional parameters passed to the model service.
 
@@ -208,46 +210,51 @@ class JavaChatModelSetup(BaseChatModelSetup):
             Model response result.
 
         Raises:
-            NotImplementedError: If ``tools`` or ``output_schema`` is given. They
-                are refused rather than dropped, or sent with the Java setup's bound
-                prompt and tools, since the bridge reaches only the Java setup's
-                three-argument ``chat``, which prepares the request itself.
+            NotImplementedError: If explicit tools are non-empty or a schema is given.
         """
-        if tools is not None or output_schema is not None:
-            msg = (
-                "A Java chat model setup cannot be sent explicit tools or an output "
-                "schema from Python: the bridge carries only messages, prompt "
-                "arguments and keyword arguments to the Java setup's three-argument "
-                "chat, which adds its own bound prompt and tools. Bind tools and "
-                "apply the schema on the Java side instead."
-            )
+        if output_schema is not None or tools:
+            msg = "Explicit non-empty tools or an output schema cannot cross the Java setup bridge."
             raise NotImplementedError(msg)
-        return self._invoke_java_chat("chat", messages, prompt_args, kwargs)
-
-    @override
-    def _chat_without_tools(
-        self,
-        messages: Sequence[ChatMessage],
-        prompt_args: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> ChatResult:
-        return self._invoke_java_chat("chatWithoutTools", messages, prompt_args, kwargs)
-
-    def _invoke_java_chat(
-        self,
-        method: str,
-        messages: Sequence[ChatMessage],
-        prompt_args: Mapping[str, Any] | None,
-        model_params: Mapping[str, Any],
-    ) -> ChatResult:
+        if tools is not None:
+            if prompt_args is not None:
+                msg = "prompt_args cannot be combined with tools"
+                raise ValueError(msg)
+            java_messages = [
+                _to_java_chat_message(self._j_resource_adapter, message)
+                for message in messages
+            ]
+            return from_java_chat_result(
+                self._j_resource_adapter.chatWithExplicitTools(
+                    self._j_resource, java_messages, [], kwargs
+                )
+            )
+        # Convert Python messages to Java format
         java_messages = [
             _to_java_chat_message(self._j_resource_adapter, message)
             for message in messages
         ]
-        response = getattr(self._j_resource, method)(
-            java_messages, prompt_args or {}, model_params
+        j_response_message = self._j_resource.chat(
+            java_messages, prompt_args or {}, kwargs
         )
-        return from_java_chat_result(response)
+
+        return from_java_chat_result(j_response_message)
+
+    @override
+    def prepare_request_messages(
+        self,
+        messages: Sequence[ChatMessage],
+        prompt_args: Mapping[str, Any] | None = None,
+    ) -> List[ChatMessage]:
+        java_messages = [
+            _to_java_chat_message(self._j_resource_adapter, message)
+            for message in messages
+        ]
+        return [
+            from_java_chat_message(message)
+            for message in self._j_resource.prepareRequestMessages(
+                java_messages, prompt_args or {}
+            )
+        ]
 
     @override
     def will_apply_native_structured_output(

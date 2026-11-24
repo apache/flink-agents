@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.agents.ReActLoopBudget.BudgetMode;
 import org.junit.jupiter.api.Test;
@@ -31,6 +32,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Tests for budget construction and defaults. */
 class ReActLoopBudgetTest {
+    private static final ObjectMapper MAPPER =
+            new ObjectMapper().registerModule(new JavaTimeModule());
+
     @Test
     void defaultsAndExplicitNullsProduceUnlimitedSoftBudget() {
         var defaults = ReActLoopBudget.builder().build();
@@ -41,8 +45,9 @@ class ReActLoopBudgetTest {
                         .maxTokens(null)
                         .mode(null)
                         .build();
-        assertThat(defaults.toMap()).isEqualTo(Map.of("mode", "SOFT"));
-        assertThat(explicitNull.toMap()).isEqualTo(defaults.toMap());
+        assertThat(MAPPER.convertValue(defaults, Map.class)).isEqualTo(Map.of("mode", "SOFT"));
+        assertThat(MAPPER.convertValue(explicitNull, Map.class))
+                .isEqualTo(MAPPER.convertValue(defaults, Map.class));
     }
 
     @Test
@@ -59,11 +64,9 @@ class ReActLoopBudgetTest {
         assertThat(first.getMode()).isEqualTo(BudgetMode.HARD);
         assertThat(second.getMaxTurns()).isEqualTo(3);
         assertThat(second.getMode()).isEqualTo(BudgetMode.SOFT);
-        var mapper = new ObjectMapper();
-        assertThat(
-                        mapper.readValue(mapper.writeValueAsString(first), ReActLoopBudget.class)
-                                .toMap())
-                .isEqualTo(first.toMap());
+        var restored = MAPPER.readValue(MAPPER.writeValueAsString(first), ReActLoopBudget.class);
+        assertThat(MAPPER.convertValue(restored, Map.class))
+                .isEqualTo(MAPPER.convertValue(first, Map.class));
     }
 
     @Test
@@ -89,8 +92,8 @@ class ReActLoopBudgetTest {
 
     @Test
     void nullSerializedModeUsesSoftDefault() throws Exception {
-        var budget = new ObjectMapper().readValue("{\"mode\":null}", ReActLoopBudget.class);
+        var budget = MAPPER.readValue("{\"mode\":null}", ReActLoopBudget.class);
         assertThat(budget.getMode()).isEqualTo(BudgetMode.SOFT);
-        assertThat(budget.toMap()).isEqualTo(Map.of("mode", "SOFT"));
+        assertThat(MAPPER.convertValue(budget, Map.class)).isEqualTo(Map.of("mode", "SOFT"));
     }
 }

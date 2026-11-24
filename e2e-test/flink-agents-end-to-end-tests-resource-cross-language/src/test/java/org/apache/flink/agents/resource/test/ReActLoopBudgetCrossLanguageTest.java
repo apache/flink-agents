@@ -17,6 +17,9 @@
  */
 package org.apache.flink.agents.resource.test;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
@@ -48,18 +51,23 @@ import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
+import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Timeout;
-import org.junit.jupiter.api.condition.EnabledForJreRange;
-import org.junit.jupiter.api.condition.JRE;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import pemja.core.PythonInterpreter;
+import pemja.core.PythonInterpreterConfig;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,7 +77,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Runs real Python actions/resources through Pemja and the checkpointable operator. */
-@EnabledForJreRange(min = JRE.JAVA_21)
 @Timeout(60)
 public class ReActLoopBudgetCrossLanguageTest {
     private static final AtomicInteger NORMAL_CALLS = new AtomicInteger();
@@ -81,6 +88,38 @@ public class ReActLoopBudgetCrossLanguageTest {
         NORMAL_CALLS.set(0);
         CLOSING_CALLS.set(0);
         TOOL_CALLS.set(0);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {1L, 60001L, 31536000000L, 34560000001L, 63072000000L, 86399999999999999L})
+    void budgetJsonRoundTripsThroughPython(long millis) throws Exception {
+        var config =
+                PythonInterpreterConfig.newBuilder()
+                        .setPythonExec(System.getenv().getOrDefault("PYTHON_EXECUTABLE", "python3"))
+                        .build();
+        try (var interpreter = new PythonInterpreter(config)) {
+            interpreter.exec("from flink_agents.api.react_loop_budget import ReActLoopBudget");
+            var mapper = new ObjectMapper().registerModule(new JavaTimeModule());
+            for (var mode : ReActLoopBudget.BudgetMode.values()) {
+                var budget =
+                        ReActLoopBudget.builder()
+                                .maxTurns(2)
+                                .maxTokens(100L)
+                                .maxTime(Duration.ofMillis(millis))
+                                .mode(mode)
+                                .build();
+                interpreter.set("budget_json", mapper.writeValueAsString(budget));
+                interpreter.exec(
+                        "wire_json = ReActLoopBudget.model_validate_json(budget_json).model_dump_json()");
+                var restored =
+                        mapper.readValue(
+                                (String) interpreter.get("wire_json"), ReActLoopBudget.class);
+                assertThat(restored.getMaxTime()).isEqualTo(budget.getMaxTime());
+                assertThat(restored.getMaxTurns()).isEqualTo(budget.getMaxTurns());
+                assertThat(restored.getMaxTokens()).isEqualTo(budget.getMaxTokens());
+                assertThat(restored.getMode()).isEqualTo(budget.getMode());
+            }
+        }
     }
 
     public static class Connection extends BaseChatModelConnection {
@@ -99,6 +138,14 @@ public class ReActLoopBudgetCrossLanguageTest {
                 return new ChatResult(ChatMessage.assistant("closed"));
             }
             NORMAL_CALLS.incrementAndGet();
+            if (messages.stream().anyMatch(message -> "hello:time-job".equals(message.getText()))) {
+                try {
+                    Thread.sleep(11000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException(e);
+                }
+            }
             assertThat(params).containsEntry("tool_choice", "required");
             return new ChatResult(
                     ChatMessage.assistant(List.of(new ToolCallBlock("call", "echo", Map.of()))),
@@ -132,11 +179,15 @@ public class ReActLoopBudgetCrossLanguageTest {
                 ReActLoopBudget.builder().mode(ReActLoopBudget.BudgetMode.valueOf(args[0]));
         if (args[1].startsWith("turn")) builder.maxTurns(args[1].endsWith("-replay") ? 2 : 1);
         if (args[1].startsWith("token")) builder.maxTokens(args[1].endsWith("-replay") ? 10L : 5L);
-        builder.maxTime(Duration.ofMillis(args[1].equals("time") ? 1000 : 60000));
+        builder.maxTime(
+                Duration.ofMillis(
+                        args[1].equals("time")
+                                ? 1000
+                                : args[1].equals("time-job") ? 10000 : 60000));
         ctx.sendEvent(
                 new ChatRequestEvent(
                         "model",
-                        List.of(ChatMessage.user("hello")),
+                        List.of(ChatMessage.user("hello:" + args[1])),
                         null,
                         null,
                         null,
@@ -152,7 +203,7 @@ public class ReActLoopBudgetCrossLanguageTest {
                                 : response.getError()));
     }
 
-    private static AgentPlan plan(boolean python) throws Exception {
+    private static Agent agent(boolean javaModel) throws Exception {
         Agent agent = new Agent();
         agent.addResource(
                 "connection",
@@ -163,7 +214,7 @@ public class ReActLoopBudgetCrossLanguageTest {
                 ResourceType.TOOL,
                 Tool.fromMethod(ReActLoopBudgetCrossLanguageTest.class.getMethod("echo")));
         ResourceDescriptor descriptor =
-                python
+                javaModel
                         ? ResourceDescriptor.Builder.newBuilder(Setup.class.getName())
                                 .addInitialArgument("connection", "connection")
                                 .addInitialArgument("model", "local")
@@ -184,7 +235,11 @@ public class ReActLoopBudgetCrossLanguageTest {
                 new String[] {ChatResponseEvent.EVENT_TYPE},
                 ReActLoopBudgetCrossLanguageTest.class.getMethod(
                         "receive", Event.class, RunnerContext.class));
-        AgentPlan plan = new AgentPlan(agent);
+        return agent;
+    }
+
+    private static AgentPlan plan(boolean python) throws Exception {
+        AgentPlan plan = new AgentPlan(agent(python));
         if (python) {
             Map<String, Action> actions = new HashMap<>(plan.getActions());
             actions.put(
@@ -201,6 +256,51 @@ public class ReActLoopBudgetCrossLanguageTest {
         plan.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, false);
         plan.getConfig().set(AgentExecutionOptions.MAX_RETRIES, 0);
         return plan;
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "true,HARD,turn", "true,SOFT,turn", "false,HARD,turn", "false,SOFT,turn",
+        "true,HARD,token", "true,SOFT,token", "false,HARD,token", "false,SOFT,token",
+        "true,HARD,time", "true,SOFT,time", "false,HARD,time", "false,SOFT,time"
+    })
+    void budgetsRunThroughPublicApiInFlinkJob(boolean javaModel, String mode, String limit)
+            throws Exception {
+        Configuration config = new Configuration();
+        config.setString("restart-strategy.type", "disable");
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(config);
+        env.setParallelism(1);
+        AgentsExecutionEnvironment agents = AgentsExecutionEnvironment.getExecutionEnvironment(env);
+        agents.getConfig().set(AgentExecutionOptions.CHAT_ASYNC, false);
+        agents.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, false);
+        agents.getConfig().set(AgentExecutionOptions.MAX_RETRIES, 0);
+        var output =
+                agents.fromDataStream(
+                                env.fromElements(
+                                        mode + ":" + (limit.equals("time") ? "time-job" : limit)),
+                                new InputKey())
+                        .apply(agent(javaModel))
+                        .toDataStream();
+        List<Object> results = new ArrayList<>();
+        try (CloseableIterator<Object> iterator = output.collectAsync()) {
+            agents.execute();
+            iterator.forEachRemaining(results::add);
+        }
+        assertThat(results).hasSize(1);
+        if (mode.equals("SOFT")) assertThat(results.get(0)).isEqualTo("closed");
+        else
+            assertThat(results.get(0).toString())
+                    .contains(limit.toUpperCase() + "_BUDGET_EXCEEDED");
+        assertThat(NORMAL_CALLS.get()).isEqualTo(1);
+        assertThat(TOOL_CALLS.get()).isEqualTo(1);
+        assertThat(CLOSING_CALLS.get()).isEqualTo(mode.equals("SOFT") ? 1 : 0);
+    }
+
+    public static class InputKey implements KeySelector<String, String> {
+        @Override
+        public String getKey(String value) {
+            return value;
+        }
     }
 
     private static KeyedOneInputStreamOperatorTestHarness<String, String, Object> harness(

@@ -305,13 +305,34 @@ def test_routing_event_round_trip_preserves_lineage():
 
 
 def test_python_routing_event_matches_committed_cross_language_snapshot():
-    event = ModelRoutingEvent(request_id=UUID("00000000-0000-0000-0000-000000000002"), router="router", candidates=["small", "big"], selected_model="big", decision_source="strategy", fallback_enabled=True, score=0.5, metadata={"tag": "python"}, decision_ms=1.25)
-    event = event.reconstruct_from(Event(id=UUID("00000000-0000-0000-0000-000000000001"), type=event.type, attributes=event.attributes))
-    path = Path(__file__).resolve().parents[5] / "e2e-test/cross-language-event-snapshots/python/model_routing_event.json"
+    event = ModelRoutingEvent(
+        request_id=UUID("00000000-0000-0000-0000-000000000002"),
+        router="router",
+        candidates=["small", "big"],
+        selected_model="big",
+        decision_source="strategy",
+        fallback_enabled=True,
+        score=0.5,
+        metadata={"tag": "python"},
+        decision_ms=1.25,
+    )
+    event = event.reconstruct_from(
+        Event(
+            id=UUID("00000000-0000-0000-0000-000000000001"),
+            type=event.type,
+            attributes=event.attributes,
+        )
+    )
+    path = (
+        Path(__file__).resolve().parents[5]
+        / "e2e-test/cross-language-event-snapshots/python/model_routing_event.json"
+    )
     assert json.loads(event.model_dump_json()) == json.loads(path.read_text())
 
 
-@pytest.mark.parametrize("request_model", ["shared", "child_router", "inherited_router"])
+@pytest.mark.parametrize(
+    "request_model", ["shared", "child_router", "inherited_router"]
+)
 def test_scoped_model_requests_and_tool_followups(request_model, monkeypatch):
     ctx, events, models, memory = setup()
 
@@ -400,7 +421,10 @@ def test_fallback_tool_failure_reports_current_round_without_routing_metadata():
     run(ctx, request_id=request_id)
     tool_request = events[-1]
     assert isinstance(tool_request, ToolRequestEvent)
-    assert memory.get("_ROUTING_METADATA_CONTEXT")[str(request_id)]["final_model"] == "small"
+    assert (
+        memory.get("_ROUTING_METADATA_CONTEXT")[str(request_id)]["final_model"]
+        == "small"
+    )
     asyncio.run(
         process_chat_request_or_tool_response(
             ToolResponseEvent(
@@ -551,18 +575,19 @@ def test_soft_budget_routes_and_falls_back_with_tools_disabled():
     budget_utils.save_budget_state(
         memory, request_id, {"turns_left": 0, "mode": "SOFT"}
     )
-    models["big"]._chat_without_tools.side_effect = RuntimeError("unavailable")
-    models["small"]._chat_without_tools.return_value = result("closed")
+    models["big"].chat.side_effect = RuntimeError("unavailable")
+    models["small"].chat.return_value = result("closed")
     run(ctx, request_id=request_id)
     assert events[-1].is_success
-    models["big"]._chat_without_tools.assert_called_once()
-    models["small"]._chat_without_tools.assert_called_once()
+    models["big"].chat.assert_called_once()
+    models["small"].chat.assert_called_once()
     for model in models.values():
-        model.chat.assert_not_called()
+        for invocation in model.chat.call_args_list:
+            assert invocation.kwargs["tools"] == []
     assert [c.kwargs["durable_id"] for c in ctx.durable_execute.call_args_list] == [
         "route:router",
-        "chat:router:big:budget-final",
-        "chat:router:small:budget-final",
+        "chat:router:big:final",
+        "chat:router:small:final",
     ]
     assert not memory.get("_LOOP_BUDGET_CONTEXT")
 
@@ -574,8 +599,8 @@ def test_soft_fallback_tool_calls_fail_before_routing_event(chat_async):
     budget_utils.save_budget_state(
         memory, request_id, {"turns_left": 0, "mode": "SOFT"}
     )
-    models["big"]._chat_without_tools.side_effect = RuntimeError("unavailable")
-    models["small"]._chat_without_tools.return_value = ChatResult(
+    models["big"].chat.side_effect = RuntimeError("unavailable")
+    models["small"].chat.return_value = ChatResult(
         message=ChatMessage.assistant(
             [ToolCallBlock(call_id="c", name="tool", input={})]
         )
@@ -593,10 +618,55 @@ def test_soft_fallback_tool_calls_fail_before_routing_event(chat_async):
     assert routing[0].selected_model == "big"
     assert routing[0].decision_source != "fallback"
     assert not any(isinstance(event, ToolRequestEvent) for event in events)
-    models["big"]._chat_without_tools.assert_called_once()
-    models["small"]._chat_without_tools.assert_called_once()
-    models["last"]._chat_without_tools.assert_not_called()
+    models["big"].chat.assert_called_once()
+    models["small"].chat.assert_called_once()
+    models["last"].chat.assert_not_called()
     for model in models.values():
-        model.chat.assert_not_called()
+        for invocation in model.chat.call_args_list:
+            assert invocation.kwargs["tools"] == []
     assert not memory.get("_LOOP_BUDGET_CONTEXT")
     assert not memory.get("_ROUTING_METADATA_CONTEXT")
+
+
+@pytest.mark.parametrize("chat_async", [False, True])
+def test_soft_fallback_wraps_failure_and_prepares_closing_messages_once(
+    chat_async, monkeypatch
+):
+    ctx, events, models, memory = setup(fallback=True, retries=1, chat_async=chat_async)
+    request_id = uuid4()
+    other_id = str(uuid4())
+    budget_utils.save_budget_state(
+        memory, request_id, {"turns_left": 0, "mode": "SOFT"}
+    )
+    memory.set(
+        "_ROUTING_METADATA_CONTEXT",
+        {str(request_id): {"router": "router"}, other_id: {"router": "other"}},
+    )
+    closing = MagicMock(wraps=chat_model_action._closing_messages)
+    monkeypatch.setattr(chat_model_action, "_closing_messages", closing)
+    for name, model in models.items():
+        model.prepare_request_messages.side_effect = lambda messages, args: messages
+        model.chat.side_effect = ValueError(f"{name} unavailable")
+
+    run(ctx, request_id=request_id)
+
+    closing.assert_called_once()
+    responses = [event for event in events if isinstance(event, ChatResponseEvent)]
+    assert len(responses) == 1
+    error = responses[0].error
+    assert error.count("Soft finalization failed:") == 1
+    assert error.count("budget reason: TURN_BUDGET_EXCEEDED") == 1
+    for name, model in models.items():
+        assert f"{name} unavailable" in error
+        assert model.chat.call_count == 2
+        for call in model.chat.call_args_list:
+            assert call.kwargs["tools"] == []
+            assert (
+                sum(
+                    "Give your final answer now" in (message.text or "")
+                    for message in call.args[0]
+                )
+                == 1
+            )
+    assert not memory.get("_LOOP_BUDGET_CONTEXT")
+    assert memory.get("_ROUTING_METADATA_CONTEXT") == {other_id: {"router": "other"}}

@@ -36,6 +36,12 @@ class JavaResourceAdapterImpl:
         """Resolve a resource from the Java resource context."""
         return self._bridge.getResource(name, resource_type)
 
+    def chatWithExplicitTools(
+        self, model: Any, messages: list[Any], tools: list[Any], model_params: dict
+    ) -> Any:
+        """Let Java supply the null schema that Pemja cannot match from Python."""
+        return self._bridge.chatWithExplicitTools(model, messages, tools, model_params)
+
     def fromPythonChatMessage(self, message: dict) -> Any:
         """Convert message fields through the Java bridge."""
         return self._bridge.fromPythonChatMessage(message)

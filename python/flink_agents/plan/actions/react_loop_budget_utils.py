@@ -23,13 +23,22 @@ from datetime import timedelta
 from uuid import UUID
 
 from flink_agents.api.chat_result import ChatResult
-from flink_agents.api.core_options import AgentExecutionOptions
+from flink_agents.api.core_options import ReActLoopBudgetOptions
 from flink_agents.api.events.chat_event import ChatRequestEvent
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.react_loop_budget import BudgetMode, ReActLoopBudget
 from flink_agents.api.runner_context import RunnerContext
 
 LOOP_BUDGET_CONTEXT = "_LOOP_BUDGET_CONTEXT"
+_TURN_BUDGET_EXCEEDED = "TURN_BUDGET_EXCEEDED"
+_TIME_BUDGET_EXCEEDED = "TIME_BUDGET_EXCEEDED"
+_TOKEN_BUDGET_EXCEEDED = "TOKEN_BUDGET_EXCEEDED"
+
+_TURNS_LEFT = "turns_left"
+_TOKENS_LEFT = "tokens_left"
+_MAX_TIME_MS = "max_time_ms"
+_STARTED_AT_MS = "started_at_ms"
+_MODE = "mode"
 _logger = logging.getLogger(__name__)
 
 
@@ -42,28 +51,34 @@ def initialize(ctx: RunnerContext, event: ChatRequestEvent) -> None:
     """Initialize configured limits, preserving any existing loop state."""
     if get_budget_state(ctx.sensory_memory, event.id) is not None:
         return
+    limits = _resolve_budget(ctx, event)
+    budget_state = {}
+    if limits.max_turns is not None:
+        budget_state[_TURNS_LEFT] = limits.max_turns
+    if limits.max_tokens is not None:
+        budget_state[_TOKENS_LEFT] = limits.max_tokens
+    if limits.max_time is not None:
+        budget_state[_MAX_TIME_MS] = limits.max_time // timedelta(milliseconds=1)
+        budget_state[_STARTED_AT_MS] = ctx.durable_execute(
+            _budget_start_time_ms, durable_id="react-loop:budget-start"
+        )
+    if budget_state:
+        budget_state[_MODE] = limits.mode.value
+        save_budget_state(ctx.sensory_memory, event.id, budget_state)
+
+
+def _resolve_budget(ctx: RunnerContext, event: ChatRequestEvent) -> ReActLoopBudget:
+    """Use the request budget or resolve the job-level defaults."""
     limits = event.budget
     if limits is None:
         config = ctx.config
         limits = ReActLoopBudget(
-            max_turns=config.get(AgentExecutionOptions.LOOP_MAX_TURNS),
-            max_tokens=config.get(AgentExecutionOptions.LOOP_MAX_TOKENS),
-            max_time=config.get(AgentExecutionOptions.LOOP_MAX_TIME),
-            mode=config.get(AgentExecutionOptions.LOOP_BUDGET_MODE),
+            max_turns=config.get(ReActLoopBudgetOptions.LOOP_MAX_TURNS),
+            max_tokens=config.get(ReActLoopBudgetOptions.LOOP_MAX_TOKENS),
+            max_time=config.get(ReActLoopBudgetOptions.LOOP_MAX_TIME),
+            mode=config.get(ReActLoopBudgetOptions.LOOP_BUDGET_MODE),
         )
-    budget_state = {}
-    if limits.max_turns is not None:
-        budget_state["turns_left"] = limits.max_turns
-    if limits.max_tokens is not None:
-        budget_state["tokens_left"] = limits.max_tokens
-    if limits.max_time is not None:
-        budget_state["max_time_ms"] = limits.max_time // timedelta(milliseconds=1)
-        budget_state["started_at_ms"] = ctx.durable_execute(
-            _budget_start_time_ms, durable_id="react-loop:budget-start"
-        )
-    if budget_state:
-        budget_state["mode"] = limits.mode.value
-        save_budget_state(ctx.sensory_memory, event.id, budget_state)
+    return limits
 
 
 def _get_budget_contexts(memory: MemoryObject) -> dict:
@@ -88,7 +103,7 @@ def save_budget_state(
 def is_soft_limit(memory: MemoryObject, request_id: UUID) -> bool:
     """Return whether the loop uses soft budget enforcement."""
     budget_state = get_budget_state(memory, request_id)
-    return budget_state is not None and budget_state["mode"] == BudgetMode.SOFT.value
+    return budget_state is not None and budget_state[_MODE] == BudgetMode.SOFT.value
 
 
 def try_start_turn(
@@ -100,19 +115,21 @@ def try_start_turn(
     budget_state = get_budget_state(memory, request_id)
     if budget_state is None:
         return None
-    if "max_time_ms" in budget_state:
+    max_time_ms = budget_state.get(_MAX_TIME_MS)
+    if max_time_ms is not None:
         if now_millis is None:
             now_millis = time.time_ns() // 1_000_000
-        elapsed = max(0, now_millis - budget_state["started_at_ms"])
-        if elapsed >= budget_state["max_time_ms"]:
-            return "TIME_BUDGET_EXCEEDED"
-    if budget_state.get("tokens_left") == 0:
-        return "TOKEN_BUDGET_EXCEEDED"
-    if "turns_left" in budget_state:
-        if budget_state["turns_left"] == 0:
-            return "TURN_BUDGET_EXCEEDED"
+        elapsed = max(0, now_millis - budget_state[_STARTED_AT_MS])
+        if elapsed >= max_time_ms:
+            return _TIME_BUDGET_EXCEEDED
+    if budget_state.get(_TOKENS_LEFT) == 0:
+        return _TOKEN_BUDGET_EXCEEDED
+    turns_left = budget_state.get(_TURNS_LEFT)
+    if turns_left is not None:
+        if turns_left == 0:
+            return _TURN_BUDGET_EXCEEDED
         budget_state = dict(budget_state)
-        budget_state["turns_left"] -= 1
+        budget_state[_TURNS_LEFT] = turns_left - 1
         save_budget_state(memory, request_id, budget_state)
     return None
 
@@ -126,7 +143,7 @@ def update_token_budget_state(
     budget_state = get_budget_state(memory, request_id)
     if (
         not budget_state
-        or "tokens_left" not in budget_state
+        or _TOKENS_LEFT not in budget_state
         or not isinstance(response, ChatResult)
     ):
         return
@@ -137,9 +154,9 @@ def update_token_budget_state(
         _logger.warning("Missing token usage for chat request %s", request_id)
         return
     budget_state = dict(budget_state)
-    budget_state["tokens_left"] = max(
+    budget_state[_TOKENS_LEFT] = max(
         0,
-        budget_state["tokens_left"]
+        budget_state[_TOKENS_LEFT]
         - (usage.prompt_tokens or 0)
         - (usage.completion_tokens or 0),
     )

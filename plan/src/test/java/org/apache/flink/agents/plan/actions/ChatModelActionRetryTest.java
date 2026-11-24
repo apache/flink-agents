@@ -18,11 +18,13 @@
 package org.apache.flink.agents.plan.actions;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.agents.ReActLoopBudget;
+import org.apache.flink.agents.api.agents.ReActLoopBudgetOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -75,6 +77,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
@@ -237,8 +240,7 @@ class ChatModelActionRetryTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void closingUsesNormalConversionParsingBeforeActionToolCheck(boolean nativeConversion)
-            throws Exception {
+    void finalTurnToolCallsFailWithoutAnotherConversion(boolean nativeConversion) throws Exception {
         configureRetryStrategy(3, 0);
         UUID id = UUID.randomUUID();
         ReActLoopBudgetUtils.saveBudgetState(
@@ -247,22 +249,18 @@ class ChatModelActionRetryTest {
                 new ChatResult(
                         ChatMessage.assistant(
                                 List.of(new ToolCallBlock("unexpected", "lookup", Map.of()))));
-        when(mockChatModel.willApplyNativeStructuredOutput(Map.class)).thenReturn(true);
-        when(mockChatModel.chatWithoutTools(any(), any(), eq(Map.of())))
-                .thenReturn(nativeConversion ? ChatFixtures.response("answer") : toolReply);
-        when(mockChatModel.chat(any(), any(), any(), eq(Map.class))).thenReturn(toolReply);
+        when(mockChatModel.willApplyNativeStructuredOutput(Map.class)).thenReturn(nativeConversion);
+        when(mockChatModel.chat(any(), eq(List.of()), any(), any())).thenReturn(toolReply);
         ChatModelAction.chat(
                 id, "test-model", List.of(ChatMessage.user("hi")), Map.of(), Map.class, mockCtx);
         assertThat(sentEvents).hasSize(1);
         ChatResponseEvent response = ChatResponseEvent.fromEvent(sentEvents.get(0));
         assertThat(response.isFailed()).isTrue();
         assertThat(response.getError()).contains("TURN_BUDGET_EXCEEDED");
-        assertThat(response.getError())
-                .contains(nativeConversion ? "Soft finalization failed" : "returned tool calls");
-        verify(mockChatModel, times(nativeConversion ? 4 : 1))
-                .chatWithoutTools(any(), any(), eq(Map.of()));
-        verify(mockChatModel, times(nativeConversion ? 4 : 0))
-                .chat(any(), any(), any(), eq(Map.class));
+        assertThat(response.getError()).contains("returned tool calls");
+        verify(mockChatModel)
+                .chat(any(), eq(List.of()), any(), nativeConversion ? eq(Map.class) : isNull());
+        verify(mockChatModel, never()).chat(any(), any(), any());
         assertThat(ReActLoopBudgetUtils.getBudgetState(sensoryMemory, id)).isNull();
     }
 
@@ -366,36 +364,47 @@ class ChatModelActionRetryTest {
                     .isEqualTo(100L);
             verify(mockChatModel, times(2)).chat(any(), any(), any());
             verify(mockChatModel).chat(any(), any(), any(), eq(Map.class));
-            verify(mockChatModel, never()).chatWithoutTools(any(), any(), any());
         }
     }
 
     @Test
     void budgetDurationUsesWholeMilliseconds() {
         var budget = ReActLoopBudget.builder().maxTime(java.time.Duration.ofMillis(1)).build();
-        assertThat(budget.toMap().get("max_time_ms")).isEqualTo(1L);
-        assertThat(ReActLoopBudget.fromMap(budget.toMap()).getMaxTime())
+        assertThat(
+                        new ObjectMapper()
+                                .registerModule(new JavaTimeModule())
+                                .convertValue(budget, Map.class)
+                                .get("max_time"))
+                .isEqualTo("PT0.001S");
+        assertThat(
+                        new ObjectMapper()
+                                .registerModule(new JavaTimeModule())
+                                .convertValue(
+                                        new ObjectMapper()
+                                                .registerModule(new JavaTimeModule())
+                                                .convertValue(budget, Map.class),
+                                        ReActLoopBudget.class)
+                                .getMaxTime())
                 .isEqualTo(java.time.Duration.ofMillis(1));
         var config = new AgentConfiguration();
-        config.set(AgentExecutionOptions.LOOP_MAX_TIME, java.time.Duration.ofMillis(1));
-        assertThat(config.get(AgentExecutionOptions.LOOP_MAX_TIME))
+        config.set(ReActLoopBudgetOptions.LOOP_MAX_TIME, java.time.Duration.ofMillis(1));
+        assertThat(config.get(ReActLoopBudgetOptions.LOOP_MAX_TIME))
                 .isEqualTo(java.time.Duration.ofMillis(1));
         for (Object value : List.of("1 ms", "PT0.001S", "1", 1)) {
             var parsedConfig =
                     new AgentConfiguration(
-                            Map.of(AgentExecutionOptions.LOOP_MAX_TIME.getKey(), value));
+                            Map.of(ReActLoopBudgetOptions.LOOP_MAX_TIME.getKey(), value));
             assertThat(
                             ReActLoopBudget.builder()
-                                    .maxTime(parsedConfig.get(AgentExecutionOptions.LOOP_MAX_TIME))
+                                    .maxTime(parsedConfig.get(ReActLoopBudgetOptions.LOOP_MAX_TIME))
                                     .build()
-                                    .toMap()
-                                    .get("max_time_ms"))
-                    .isEqualTo(1L);
+                                    .getMaxTime())
+                    .isEqualTo(java.time.Duration.ofMillis(1));
         }
         for (long nanos : new long[] {0, -1000, 1000, 1_500_000}) {
             var duration = java.time.Duration.ofNanos(nanos);
-            config.set(AgentExecutionOptions.LOOP_MAX_TIME, duration);
-            assertThat(config.get(AgentExecutionOptions.LOOP_MAX_TIME)).isEqualTo(duration);
+            config.set(ReActLoopBudgetOptions.LOOP_MAX_TIME, duration);
+            assertThat(config.get(ReActLoopBudgetOptions.LOOP_MAX_TIME)).isEqualTo(duration);
             when(mockCtx.getConfig()).thenReturn(config);
             org.assertj.core.api.Assertions.assertThatThrownBy(
                             () ->
@@ -443,7 +452,10 @@ class ChatModelActionRetryTest {
                                 .build());
         ChatRequestEvent restored =
                 ChatRequestEvent.fromEvent(
-                        Event.fromJson(new ObjectMapper().writeValueAsString(request)));
+                        Event.fromJson(
+                                new ObjectMapper()
+                                        .registerModule(new JavaTimeModule())
+                                        .writeValueAsString(request)));
         // Keep the Java class schema while exercising budget/context wire round-tripping.
         restored.setAttr("output_schema", Map.class);
         ChatModelAction.processChatRequestOrToolResponse(restored, mockCtx);
@@ -452,8 +464,7 @@ class ChatModelActionRetryTest {
         assertThat(event.getUserContext()).isEqualTo(context);
         assertThat(event.isSuccess()).isTrue();
         assertThat(event.getStructuredOutput()).isEqualTo(Map.of("answer", "42"));
-        verify(mockChatModel, never()).chatWithoutTools(any(), any(), any());
-        verify(mockChatModel).chat(any(), any(), any(), eq(Map.class));
+        verify(mockChatModel).chat(any(), eq(List.of()), any(), eq(Map.class));
         verify(mockChatModel).chat(any(), any(), any());
     }
 
@@ -472,19 +483,24 @@ class ChatModelActionRetryTest {
                                         new String[] {"answer"}))
                         : Map.class;
         ChatResult response = ChatFixtures.response(rowSchema ? "{}" : "null");
-        Object expected = ChatModelAction.generateStructuredOutput(response, schema);
-        when(mockChatModel.chatWithoutTools(any(), any(), any())).thenReturn(response);
+        when(mockChatModel.chat(any(), eq(List.of()), any(), any())).thenReturn(response);
 
         ChatModelAction.chat(
                 id, "test-model", List.of(ChatMessage.user("finish")), Map.of(), schema, mockCtx);
 
         assertThat(sentEvents).hasSize(1);
         var completed = ChatResponseEvent.fromEvent(sentEvents.get(0));
-        assertThat(completed.isSuccess()).isTrue();
-        assertThat(completed.getStructuredOutput()).isEqualTo(expected);
-        verify(mockChatModel).chatWithoutTools(any(), any(), any());
+        if (rowSchema) {
+            assertThat(completed.isSuccess()).isFalse();
+            assertThat(completed.getError())
+                    .contains("missing field 'answer'", "TURN_BUDGET_EXCEEDED");
+            verify(mockChatModel, times(4)).chat(any(), eq(List.of()), any(), any());
+        } else {
+            assertThat(completed.isSuccess()).isTrue();
+            assertThat(completed.getStructuredOutput()).isNull();
+            verify(mockChatModel).chat(any(), eq(List.of()), any(), any());
+        }
         verify(mockChatModel, never()).chat(any(), any(), any());
-        verify(mockChatModel, never()).chat(any(), any(), any(), any());
     }
 
     @Test
@@ -501,7 +517,7 @@ class ChatModelActionRetryTest {
                         new ChatResult(
                                 ChatMessage.assistant(
                                         List.of(new ToolCallBlock("a", "lookup", Map.of())))));
-        when(mockChatModel.chatWithoutTools(any(), any(), eq(Map.of())))
+        when(mockChatModel.chat(any(), eq(List.of()), any(), any()))
                 .thenReturn(
                         ChatFixtures.response(
                                 "the answer is 42",
@@ -528,7 +544,7 @@ class ChatModelActionRetryTest {
         ChatResponseEvent end = ChatResponseEvent.fromEvent(sentEvents.get(1));
         assertThat(end.getStructuredOutput()).isEqualTo(Map.of("answer", "42"));
         verify(mockChatModel).chat(any(), any(), any());
-        verify(mockChatModel, times(2)).chatWithoutTools(any(), any(), eq(Map.of()));
+        verify(mockChatModel, times(2)).chat(any(), eq(List.of()), any(), any());
         verify(mockChatModel, times(2)).chat(any(), any(), any(), eq(Map.class));
         assertThat(end.getRetryCount()).isEqualTo(1);
     }
@@ -1854,8 +1870,10 @@ class ChatModelActionRetryTest {
                         sensoryMemory.get("_TOOL_REQUEST_EVENT_CONTEXT").getValue();
         Object checkpointed =
                 new ObjectMapper()
+                        .registerModule(new JavaTimeModule())
                         .readValue(
                                 new ObjectMapper()
+                                        .registerModule(new JavaTimeModule())
                                         .writeValueAsBytes(
                                                 parked.get(toolB.getId()).get("user_context")),
                                 Object.class);
@@ -1898,7 +1916,10 @@ class ChatModelActionRetryTest {
                         "test-model", List.of(ChatMessage.user("hi")), null, null, context);
         ChatRequestEvent restored =
                 ChatRequestEvent.fromEvent(
-                        Event.fromJson(new ObjectMapper().writeValueAsString(original)));
+                        Event.fromJson(
+                                new ObjectMapper()
+                                        .registerModule(new JavaTimeModule())
+                                        .writeValueAsString(original)));
 
         ChatModelAction.processChatRequestOrToolResponse(restored, mockCtx);
 

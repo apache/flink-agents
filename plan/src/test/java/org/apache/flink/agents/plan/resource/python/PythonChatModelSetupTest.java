@@ -232,7 +232,32 @@ public class PythonChatModelSetupTest {
     }
 
     @Test
-    void chatWithoutToolsForwardsHistoryAndPromptArgsToPython() throws Exception {
+    void preparesMessagesWithPythonPromptArguments() throws Exception {
+        ChatMessage history = ChatMessage.user("finish");
+        PyObject converted = mock(PyObject.class);
+        PyObject prepared = mock(PyObject.class);
+        ChatMessage result = ChatMessage.system("prepared");
+        when(mockAdapter.toPythonChatMessage(history)).thenReturn(converted);
+        when(mockAdapter.callMethod(
+                        mockChatModelSetup,
+                        "prepare_request_messages",
+                        Map.of(
+                                "messages",
+                                List.of(converted),
+                                "prompt_args",
+                                Map.of("task", "answer"))))
+                .thenReturn(List.of(prepared));
+        when(mockAdapter.fromPythonChatMessage(prepared)).thenReturn(result);
+        assertThat(
+                        pythonChatModelSetup.prepareRequestMessages(
+                                List.of(history), Map.of("task", "answer")))
+                .containsExactly(result);
+        verify(converted).close();
+        verify(prepared).close();
+    }
+
+    @Test
+    void explicitEmptyToolsForwardPreparedHistoryToPython() throws Exception {
         ChatMessage history = ChatMessage.user("finish");
         PyObject converted = mock(PyObject.class);
         PyObject answer = mock(PyObject.class);
@@ -240,19 +265,19 @@ public class PythonChatModelSetupTest {
         when(mockAdapter.toPythonChatMessage(history)).thenReturn(converted);
         when(mockAdapter.callMethod(
                         mockChatModelSetup,
-                        "_chat_without_tools",
+                        "chat",
                         Map.of(
                                 "messages",
                                 List.of(converted),
-                                "prompt_args",
-                                Map.of("k", "v"),
+                                "tools",
+                                List.of(),
                                 "temperature",
                                 0.2)))
                 .thenReturn(answer);
         when(mockAdapter.fromPythonChatResult(answer)).thenReturn(result);
         assertThat(
-                        pythonChatModelSetup.chatWithoutTools(
-                                List.of(history), Map.of("k", "v"), Map.of("temperature", 0.2)))
+                        pythonChatModelSetup.chat(
+                                List.of(history), List.of(), Map.of("temperature", 0.2), null))
                 .isSameAs(result);
     }
 
@@ -260,9 +285,11 @@ public class PythonChatModelSetupTest {
     void testExplicitChatIsRefused() {
         List<ChatMessage> messages = Collections.singletonList(mock(ChatMessage.class));
 
-        // Refused even without a schema: the bridge cannot send messages without the Python
-        // setup's bound prompt and tools.
-        assertThatThrownBy(() -> pythonChatModelSetup.chat(messages, List.of(), Map.of(), null))
+        // Native output schemas cannot cross the setup bridge.
+        assertThatThrownBy(
+                        () ->
+                                pythonChatModelSetup.chat(
+                                        messages, List.of(), Map.of(), Map.of("type", "object")))
                 .isInstanceOf(UnsupportedOperationException.class);
         verifyNoInteractions(mockAdapter);
     }

@@ -396,6 +396,10 @@ class AgentExecutionOptions:
         default=ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED,
     )
 
+
+class ReActLoopBudgetOptions:
+    """Job-level defaults for per-chat loop budgets."""
+
     LOOP_MAX_TURNS = ConfigOption(
         key="react-loop.budget.max-turns",
         config_type=int,

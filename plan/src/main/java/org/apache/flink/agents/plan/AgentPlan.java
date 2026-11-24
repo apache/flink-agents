@@ -21,6 +21,7 @@ package org.apache.flink.agents.plan;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelConnection;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
@@ -215,7 +216,8 @@ public class AgentPlan implements Serializable {
     }
 
     private void writeObject(ObjectOutputStream out) throws IOException {
-        String serializedStr = new ObjectMapper().writeValueAsString(this);
+        String serializedStr =
+                new ObjectMapper().registerModule(new JavaTimeModule()).writeValueAsString(this);
         out.writeUTF(serializedStr);
     }
 

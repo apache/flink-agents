@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.actionstate;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
@@ -48,6 +49,7 @@ public final class ActionStateUtil {
 
     private static final JsonMapper MAPPER =
             JsonMapper.builder()
+                    .addModule(new JavaTimeModule())
                     .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
                     .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
                     .build();

@@ -34,6 +34,12 @@ class JavaResourceAdapter(Protocol):
         """Resolve a resource through its owning runtime."""
         ...
 
+    def chatWithExplicitTools(
+        self, model: Any, messages: list[Any], tools: list[Any], model_params: dict
+    ) -> Any:
+        """Forward prepared messages and tools without a native output schema."""
+        ...
+
     def fromPythonChatMessage(self, message: dict) -> Any:
         """Create a Java message from Python values."""
         ...

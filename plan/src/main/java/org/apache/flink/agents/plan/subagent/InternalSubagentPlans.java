@@ -19,6 +19,7 @@
 package org.apache.flink.agents.plan.subagent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -33,7 +34,8 @@ import java.util.Optional;
 
 /** Compilation and traversal of child plans carried by ordinary resource descriptors. */
 public final class InternalSubagentPlans {
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER =
+            new ObjectMapper().registerModule(new JavaTimeModule());
 
     private InternalSubagentPlans() {}
 

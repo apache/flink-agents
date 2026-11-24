@@ -173,6 +173,32 @@ class ChatModelActionEscalationTest {
                 .containsEntry("tokens_left", 57L);
     }
 
+    @Test
+    void softNativeFinalizationIsEvaluatedWithoutAnotherConversion() throws Exception {
+        FakeChatModel small = new FakeChatModel().withNativeStructuredOutput();
+        FakeChatModel big = new FakeChatModel();
+        FakeDecisionModel verifier = new FakeDecisionModel(verdict(0.99));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", verifier)
+                        .register("small", small)
+                        .register("big", big);
+        ChatRequestEvent request =
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("hi")), Map.of(), Map.class);
+        ReActLoopBudgetUtils.saveBudgetState(
+                ctx.getSensoryMemory(), request.getId(), Map.of("turns_left", 0L, "mode", "SOFT"));
+        ChatModelAction.processChatRequestOrToolResponse(request, ctx);
+        assertThat(ctx.chatResponse().isSuccess()).isTrue();
+        assertThat(ctx.chatResponse().getStructuredOutput()).isEqualTo(Map.of("answer", "42"));
+        assertThat(small.callCount).isZero();
+        assertThat(small.structuredRequests).hasSize(1);
+        assertThat(big.callCount).isZero();
+        assertThat(verifier.callCount).isEqualTo(1);
+        assertThat(ctx.durableCallIds)
+                .containsSubsequence("chat:router:small:final", "escalate:router:small");
+    }
+
     /** A tool with a schema requiring {@code q}. */
     static final class LookupTool extends Tool {
         LookupTool() {
@@ -538,6 +564,55 @@ class ChatModelActionEscalationTest {
         assertThat(routing(response)).containsEntry("escalated_tokens", 37L);
         verify(escalationCount).inc();
         verify(escalatedTokens).inc(37L);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void incompleteNativeConversionEscalatesAndPreservesReportedUsage(boolean nullResponse)
+            throws Exception {
+        FakeChatModel small =
+                new FakeChatModel(
+                        ChatFixtures.response(
+                                "draft", Map.of("promptTokens", 20L, "completionTokens", 10L))) {
+                    @Override
+                    public ChatResult chat(
+                            List<ChatMessage> messages,
+                            List<Tool> tools,
+                            Map<String, Object> modelParams,
+                            Object schema) {
+                        structuredRequests.add(List.copyOf(messages));
+                        return nullResponse
+                                ? null
+                                : ChatFixtures.response(
+                                        "{\"answer\":",
+                                        Map.of(
+                                                "finish_reason",
+                                                "length",
+                                                "promptTokens",
+                                                5L,
+                                                "completionTokens",
+                                                2L));
+                    }
+                }.withNativeStructuredOutput();
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(decisionTiers())
+                        .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
+                        .register("small", small)
+                        .register(
+                                "big",
+                                new FakeChatModel(ChatFixtures.response("{\"answer\":\"42\"}")));
+        sendWithSchema(ctx, "hello");
+        ChatResponseEvent response = ctx.chatResponse();
+        assertThat(response.isSuccess()).isTrue();
+        assertThat(response.getStructuredOutput()).isEqualTo(Map.of("answer", "42"));
+        assertThat(small.callCount).isEqualTo(1);
+        assertThat(small.structuredRequests).hasSize(1);
+        assertThat(hops(response)).hasSize(1);
+        assertThat(hops(response).get(0))
+                .containsEntry("signal", "structural")
+                .containsEntry("discarded_tokens", nullResponse ? 30L : 37L);
+        assertThat((String) hops(response).get(0).get("reason"))
+                .contains(nullResponse ? "null response" : "truncated");
     }
 
     @Test

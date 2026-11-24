@@ -155,7 +155,7 @@ class ReActLoopBudgetRecoveryTest {
     void ordinaryResultIsNotReusedAfterTimeExpires(String mode) throws Exception {
         when(model.chat(any(), any(), any()))
                 .thenReturn(new ChatResult(ChatMessage.assistant("ordinary")));
-        when(model.chatWithoutTools(any(), any(), any()))
+        when(model.chat(any(), eq(List.of()), any(), any()))
                 .thenReturn(new ChatResult(ChatMessage.assistant("closing")));
         assertThatThrownBy(() -> run(context(new ActionState(null), state(false, mode), true)))
                 .isInstanceOf(Crash.class);
@@ -164,20 +164,20 @@ class ReActLoopBudgetRecoveryTest {
         recovered.addCallResult(new CallResult("stale:final", new byte[] {1}));
         run(context(recovered, state(true, mode), false));
         verify(model, times(1)).chat(any(), any(), any());
-        verify(model, times(mode.equals("SOFT") ? 1 : 0)).chatWithoutTools(any(), any(), any());
+        verify(model, times(mode.equals("SOFT") ? 1 : 0)).chat(any(), eq(List.of()), any(), any());
         assertThat(events).hasSize(1);
         ChatResponseEvent response = ChatResponseEvent.fromEvent(events.get(0));
         assertThat(response.isFailed()).isEqualTo(mode.equals("HARD"));
         if (mode.equals("SOFT")) {
             assertThat(response.getResponse().getText()).isEqualTo("closing");
             assertThat(recovered.getCallResults()).hasSize(1);
-            assertThat(recovered.getCallResult(0).getFunctionId()).endsWith(":budget-final");
+            assertThat(recovered.getCallResult(0).getFunctionId()).endsWith(":final");
         } else assertThat(response.getError()).contains("TIME_BUDGET_EXCEEDED");
     }
 
     @Test
     void closingResultIsNotReusedWhenRecoveredStateAdmitsOrdinaryInference() throws Exception {
-        when(model.chatWithoutTools(any(), any(), any()))
+        when(model.chat(any(), eq(List.of()), any(), any()))
                 .thenReturn(new ChatResult(ChatMessage.assistant("closing")));
         when(model.chat(any(), any(), any()))
                 .thenReturn(new ChatResult(ChatMessage.assistant("ordinary")));
@@ -186,7 +186,7 @@ class ReActLoopBudgetRecoveryTest {
         ActionState recovered = ActionStateSerde.deserialize(persisted);
         recovered.addCallResult(new CallResult("stale:final", new byte[] {1}));
         run(context(recovered, state(false, "SOFT"), false));
-        verify(model, times(1)).chatWithoutTools(any(), any(), any());
+        verify(model, times(1)).chat(any(), eq(List.of()), any(), any());
         verify(model, times(1)).chat(any(), any(), any());
         assertThat(events).hasSize(1);
         assertThat(ChatResponseEvent.fromEvent(events.get(0)).getResponse().getText())

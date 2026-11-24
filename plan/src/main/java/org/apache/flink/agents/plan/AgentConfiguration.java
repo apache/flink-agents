@@ -107,7 +107,7 @@ public class AgentConfiguration implements Configuration {
             confData.put(option.getKey(), DurationUtils.format(parsed));
             return;
         }
-        confData.put(option.getKey(), value instanceof Enum<?> ? ((Enum<?>) value).name() : value);
+        confData.put(option.getKey(), value);
     }
 
     @Override

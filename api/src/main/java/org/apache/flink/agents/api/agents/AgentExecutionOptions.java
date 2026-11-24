@@ -124,16 +124,4 @@ public class AgentExecutionOptions {
                             "short-term-memory.state-ttl.visibility",
                             ShortTermMemoryTtlVisibility.class,
                             ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED);
-
-    public static final ConfigOption<Integer> LOOP_MAX_TURNS =
-            new ConfigOption<>("react-loop.budget.max-turns", Integer.class, null);
-    public static final ConfigOption<Long> LOOP_MAX_TOKENS =
-            new ConfigOption<>("react-loop.budget.max-tokens", Long.class, null);
-    public static final ConfigOption<Duration> LOOP_MAX_TIME =
-            new ConfigOption<>("react-loop.budget.max-time", Duration.class, null);
-    public static final ConfigOption<ReActLoopBudget.BudgetMode> LOOP_BUDGET_MODE =
-            new ConfigOption<>(
-                    "react-loop.budget.mode",
-                    ReActLoopBudget.BudgetMode.class,
-                    ReActLoopBudget.BudgetMode.SOFT);
 }

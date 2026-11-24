@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.ReActLoopBudget;
+import org.apache.flink.agents.api.agents.ReActLoopBudgetOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.context.DurableCallable;
@@ -141,11 +142,11 @@ public class ChatMemoryIsolationTest {
         AgentPlan plan = new AgentPlan(agent);
         plan.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2);
         if (budgeted) {
-            plan.getConfig().set(AgentExecutionOptions.LOOP_MAX_TURNS, 2);
-            plan.getConfig().set(AgentExecutionOptions.LOOP_MAX_TOKENS, 4L);
-            plan.getConfig().set(AgentExecutionOptions.LOOP_MAX_TIME, Duration.ofMinutes(1));
+            plan.getConfig().set(ReActLoopBudgetOptions.LOOP_MAX_TURNS, 2);
+            plan.getConfig().set(ReActLoopBudgetOptions.LOOP_MAX_TOKENS, 4L);
+            plan.getConfig().set(ReActLoopBudgetOptions.LOOP_MAX_TIME, Duration.ofMinutes(1));
             plan.getConfig()
-                    .set(AgentExecutionOptions.LOOP_BUDGET_MODE, ReActLoopBudget.BudgetMode.HARD);
+                    .set(ReActLoopBudgetOptions.LOOP_BUDGET_MODE, ReActLoopBudget.BudgetMode.HARD);
         }
         InMemoryActionStateStore store = durable ? new InMemoryActionStateStore(false) : null;
         InMemoryActionStateStore saved = durable ? new InMemoryActionStateStore(false) : null;

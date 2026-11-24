@@ -19,7 +19,10 @@
 package org.apache.flink.agents.plan;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -30,8 +33,10 @@ import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.subagent.InternalSubagentPlans;
 import org.apache.flink.agents.plan.tools.bash.BashTool;
+import org.apache.flink.util.InstantiationUtil;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,6 +47,26 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * SubagentSetup} instance (programmatic) and a {@link ResourceDescriptor} (the YAML shape).
  */
 public class AgentPlanSubagentResourceTest {
+
+    @Test
+    void childBudgetSurvivesCompilationAndJavaSerialization() throws Exception {
+        var budget = ReActLoopBudget.builder().maxTime(Duration.ofMillis(60001)).build();
+        Agent child = new Agent();
+        child.addAction(
+                new String[] {"InputEvent"},
+                TestAction.class.getMethod("legal", Event.class, RunnerContext.class),
+                Map.of("budget", budget));
+        Agent root = new Agent();
+        root.addResource("child", ResourceType.AGENT, child);
+        AgentPlan restored = InstantiationUtil.clone(new AgentPlan(root));
+        var provider =
+                (JavaResourceProvider)
+                        restored.getResourceProviders().get(ResourceType.AGENT).get("child");
+        var childPlan = InternalSubagentPlans.decode(provider.getDescriptor());
+        var actual =
+                (ReActLoopBudget) childPlan.getActions().get("legal").getConfig().get("budget");
+        assertThat(actual.getMaxTime()).isEqualTo(budget.getMaxTime());
+    }
 
     @Test
     void externalDescriptorCompilesIntoAgentProvider() throws Exception {

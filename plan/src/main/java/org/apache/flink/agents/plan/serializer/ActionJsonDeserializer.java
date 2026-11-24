@@ -25,6 +25,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.databind.node.NullNode;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.plan.Function;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -146,7 +147,7 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
 
     private Map<String, Object> deserializeJavaConfig(JsonNode node) throws Exception {
 
-        ObjectMapper mapper = new ObjectMapper();
+        ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
         JsonNode configNode = node.get("config");
         Map<String, Object> config = new HashMap<>();
         if (configNode != null && configNode.isObject()) {

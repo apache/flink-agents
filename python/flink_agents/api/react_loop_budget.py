@@ -23,9 +23,8 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_serializer,
     field_validator,
-    model_serializer,
-    model_validator,
 )
 
 from flink_agents.api.duration import parse_duration
@@ -82,37 +81,17 @@ class ReActLoopBudget(BaseModel):
     def _duration(cls, value: object) -> timedelta | None:
         return None if value is None else _parse_budget_duration(value)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _restore_milliseconds(cls, value: object) -> object:
-        if not isinstance(value, dict) or "max_time_ms" not in value:
-            return value
-        data = dict(value)
-        if "max_time" in data:
-            msg = "Specify only one of max_time and max_time_ms"
-            raise ValueError(msg)
-        millis = data.pop("max_time_ms")
-        if millis is not None and (
-            type(millis) is not int or not 0 < millis <= 2**63 - 1
-        ):
-            msg = "max_time_ms must be a positive integer"
-            raise ValueError(msg)
-        try:
-            data["max_time"] = (
-                None if millis is None else timedelta(milliseconds=millis)
-            )
-        except OverflowError as error:
-            msg = "max_time_ms exceeds timedelta range"
-            raise ValueError(msg) from error
-        return data
-
-    @model_serializer(when_used="json")
-    def _serialize_budget(self) -> dict[str, int | str]:
-        data: dict[str, int | str] = {"mode": self.mode.value}
-        if self.max_turns is not None:
-            data["max_turns"] = self.max_turns
-        if self.max_tokens is not None:
-            data["max_tokens"] = self.max_tokens
-        if self.max_time is not None:
-            data["max_time_ms"] = self.max_time // timedelta(milliseconds=1)
-        return data
+    @field_serializer("max_time", when_used="json")
+    def _serialize_duration(self, value: timedelta | None) -> str | None:
+        """Avoid Pydantic's year units, which Java Duration cannot parse."""
+        if value is None:
+            return None
+        days = f"{value.days}D" if value.days else ""
+        if value.seconds == 0 and value.microseconds == 0:
+            return f"P{days}"
+        fraction = (
+            f".{value.microseconds // 1000:03d}".rstrip("0")
+            if value.microseconds
+            else ""
+        )
+        return f"P{days}T{value.seconds}{fraction}S"

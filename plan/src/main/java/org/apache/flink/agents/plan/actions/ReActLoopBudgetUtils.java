@@ -17,8 +17,9 @@
  */
 package org.apache.flink.agents.plan.actions;
 
-import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.ReActLoopBudget;
+import org.apache.flink.agents.api.agents.ReActLoopBudget.BudgetMode;
+import org.apache.flink.agents.api.agents.ReActLoopBudgetOptions;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.context.DurableCallable;
@@ -39,53 +40,63 @@ final class ReActLoopBudgetUtils {
     private static final Logger LOG = LoggerFactory.getLogger(ReActLoopBudgetUtils.class);
     static final String LOOP_BUDGET_CONTEXT = "_LOOP_BUDGET_CONTEXT";
 
+    private static final String TURN_BUDGET_EXCEEDED = "TURN_BUDGET_EXCEEDED";
+    private static final String TIME_BUDGET_EXCEEDED = "TIME_BUDGET_EXCEEDED";
+    private static final String TOKEN_BUDGET_EXCEEDED = "TOKEN_BUDGET_EXCEEDED";
+
+    private static final String TURNS_LEFT = "turns_left";
+    private static final String TOKENS_LEFT = "tokens_left";
+    private static final String MAX_TIME_MS = "max_time_ms";
+    private static final String STARTED_AT_MS = "started_at_ms";
+    private static final String MODE = "mode";
+
     static void initialize(RunnerContext ctx, ChatRequestEvent event) throws Exception {
         if (getBudgetState(ctx.getSensoryMemory(), event.getId()) != null) return;
-        ReActLoopBudget limits = event.getBudget();
-        if (limits == null && ctx.getConfig() != null) {
-            var conf = ctx.getConfig();
-            limits =
-                    ReActLoopBudget.builder()
-                            .maxTurns(conf.get(AgentExecutionOptions.LOOP_MAX_TURNS))
-                            .maxTime(conf.get(AgentExecutionOptions.LOOP_MAX_TIME))
-                            .maxTokens(conf.get(AgentExecutionOptions.LOOP_MAX_TOKENS))
-                            .mode(conf.get(AgentExecutionOptions.LOOP_BUDGET_MODE))
-                            .build();
+        ReActLoopBudget limits = resolveBudget(ctx, event);
+        if (limits == null) return;
+        Map<String, Object> budgetState = new HashMap<>();
+        if (limits.getMaxTurns() != null) budgetState.put(TURNS_LEFT, limits.getMaxTurns());
+        if (limits.getMaxTokens() != null) budgetState.put(TOKENS_LEFT, limits.getMaxTokens());
+        if (limits.getMaxTime() != null) {
+            budgetState.put(MAX_TIME_MS, limits.getMaxTime().toMillis());
+            budgetState.put(STARTED_AT_MS, initializeStartTime(ctx));
         }
-        if (limits != null) {
-            Map<String, Object> budgetState = new HashMap<>();
-            if (limits.getMaxTurns() != null) budgetState.put("turns_left", limits.getMaxTurns());
-            if (limits.getMaxTokens() != null)
-                budgetState.put("tokens_left", limits.getMaxTokens());
-            if (limits.getMaxTime() != null) {
-                budgetState.put("max_time_ms", limits.getMaxTime().toMillis());
-                // Persist before any routing or model call, independently of action completion.
-                long startedAt =
-                        ctx.durableExecute(
-                                new DurableCallable<Long>() {
-                                    @Override
-                                    public String getId() {
-                                        return "react-loop:budget-start";
-                                    }
+        if (budgetState.isEmpty()) return;
+        budgetState.put(MODE, limits.getMode().name());
+        saveBudgetState(ctx.getSensoryMemory(), event.getId(), budgetState);
+    }
 
-                                    @Override
-                                    public Class<Long> getResultClass() {
-                                        return Long.class;
-                                    }
+    private static ReActLoopBudget resolveBudget(RunnerContext ctx, ChatRequestEvent event) {
+        if (event.getBudget() != null) return event.getBudget();
+        var conf = ctx.getConfig();
+        if (conf == null) return null;
+        return ReActLoopBudget.builder()
+                .maxTurns(conf.get(ReActLoopBudgetOptions.LOOP_MAX_TURNS))
+                .maxTime(conf.get(ReActLoopBudgetOptions.LOOP_MAX_TIME))
+                .maxTokens(conf.get(ReActLoopBudgetOptions.LOOP_MAX_TOKENS))
+                .mode(conf.get(ReActLoopBudgetOptions.LOOP_BUDGET_MODE))
+                .build();
+    }
 
-                                    @Override
-                                    public Long call() {
-                                        return System.currentTimeMillis();
-                                    }
-                                });
-                budgetState.put("started_at_ms", startedAt);
-            }
-            if (!budgetState.isEmpty()) {
-                budgetState.put("mode", limits.getMode().name());
-                ReActLoopBudgetUtils.saveBudgetState(
-                        ctx.getSensoryMemory(), event.getId(), budgetState);
-            }
-        }
+    private static long initializeStartTime(RunnerContext ctx) throws Exception {
+        // Persist before any routing or model call, independently of action completion.
+        return ctx.durableExecute(
+                new DurableCallable<Long>() {
+                    @Override
+                    public String getId() {
+                        return "react-loop:budget-start";
+                    }
+
+                    @Override
+                    public Class<Long> getResultClass() {
+                        return Long.class;
+                    }
+
+                    @Override
+                    public Long call() {
+                        return System.currentTimeMillis();
+                    }
+                });
     }
 
     @SuppressWarnings("unchecked")
@@ -110,7 +121,7 @@ final class ReActLoopBudgetUtils {
 
     static boolean isSoftLimit(MemoryObject memory, UUID requestId) throws Exception {
         Map<String, Object> budgetState = getBudgetState(memory, requestId);
-        return budgetState != null && "SOFT".equals(budgetState.get("mode"));
+        return budgetState != null && BudgetMode.SOFT.name().equals(budgetState.get(MODE));
     }
 
     /** Checks all limits and consumes one turn only when ordinary inference may start. */
@@ -122,22 +133,20 @@ final class ReActLoopBudgetUtils {
             throws Exception {
         Map<String, Object> budgetState = getBudgetState(memory, requestId);
         if (budgetState == null) return null;
-        if (budgetState.containsKey("max_time_ms")) {
+        Number maxTime = (Number) budgetState.get(MAX_TIME_MS);
+        if (maxTime != null) {
             long elapsed =
-                    Math.max(
-                            0L,
-                            nowMillis - ((Number) budgetState.get("started_at_ms")).longValue());
-            if (elapsed >= ((Number) budgetState.get("max_time_ms")).longValue())
-                return "TIME_BUDGET_EXCEEDED";
+                    Math.max(0L, nowMillis - ((Number) budgetState.get(STARTED_AT_MS)).longValue());
+            if (elapsed >= maxTime.longValue()) return TIME_BUDGET_EXCEEDED;
         }
-        if (budgetState.containsKey("tokens_left")
-                && ((Number) budgetState.get("tokens_left")).longValue() == 0)
-            return "TOKEN_BUDGET_EXCEEDED";
-        if (budgetState.containsKey("turns_left")) {
-            long remaining = ((Number) budgetState.get("turns_left")).longValue();
-            if (remaining == 0) return "TURN_BUDGET_EXCEEDED";
+        Number tokensLeft = (Number) budgetState.get(TOKENS_LEFT);
+        if (tokensLeft != null && tokensLeft.longValue() == 0) return TOKEN_BUDGET_EXCEEDED;
+        Number turnsLeft = (Number) budgetState.get(TURNS_LEFT);
+        if (turnsLeft != null) {
+            long remaining = turnsLeft.longValue();
+            if (remaining == 0) return TURN_BUDGET_EXCEEDED;
             budgetState = new HashMap<>(budgetState);
-            budgetState.put("turns_left", remaining - 1);
+            budgetState.put(TURNS_LEFT, remaining - 1);
             saveBudgetState(memory, requestId, budgetState);
         }
         return null;
@@ -150,17 +159,17 @@ final class ReActLoopBudgetUtils {
 
     static void updateTokenUsage(MemoryObject memory, UUID id, TokenUsage usage) throws Exception {
         Map<String, Object> budgetState = getBudgetState(memory, id);
-        if (budgetState == null || !budgetState.containsKey("tokens_left")) return;
+        if (budgetState == null || !budgetState.containsKey(TOKENS_LEFT)) return;
         Long input = usage == null ? null : usage.getPromptTokens();
         Long output = usage == null ? null : usage.getCompletionTokens();
         if (input == null && output == null) {
             LOG.warn("Missing token usage for chat request {}", id);
             return;
         }
-        long left = ((Number) budgetState.get("tokens_left")).longValue();
+        long left = ((Number) budgetState.get(TOKENS_LEFT)).longValue();
         left = Math.max(0L, left - (input == null ? 0 : input));
         budgetState = new HashMap<>(budgetState);
-        budgetState.put("tokens_left", Math.max(0L, left - (output == null ? 0 : output)));
+        budgetState.put(TOKENS_LEFT, Math.max(0L, left - (output == null ? 0 : output)));
         saveBudgetState(memory, id, budgetState);
     }
 }

@@ -339,7 +339,6 @@ public class ChatModelAction {
             throws Exception {
         if (reason == null || ReActLoopBudgetUtils.isSoftLimit(ctx.getSensoryMemory(), requestId))
             return false;
-        ModelRoutingExecutor.clearRoutingMetadata(ctx.getSensoryMemory(), requestId);
         sendFailure(requestId, new IllegalStateException(reason), userContext, ctx);
         return true;
     }
@@ -439,7 +438,7 @@ public class ChatModelAction {
                         .withUserContext(userContext));
     }
 
-    /** Removes what the request kept in sensory memory: its tool-call context and retry totals. */
+    /** Clears the request's tool-call, budget, routing and retry state. */
     @SuppressWarnings("unchecked")
     private static void clearRequestContext(MemoryObject memory, UUID requestId) throws Exception {
         for (String key : List.of(TOOL_CALL_CONTEXT, ReActLoopBudgetUtils.LOOP_BUDGET_CONTEXT)) {
@@ -449,6 +448,7 @@ public class ChatModelAction {
                 if (context.remove(requestId) != null) memory.set(key, context);
             }
         }
+        ModelRoutingExecutor.clearRoutingMetadata(memory, requestId);
         ChatRetryStats.clear(memory, requestId);
     }
 

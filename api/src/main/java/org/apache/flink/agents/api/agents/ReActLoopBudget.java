@@ -19,21 +19,25 @@
 package org.apache.flink.agents.api.agents;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonValue;
+import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import javax.annotation.Nullable;
 
 import java.time.Duration;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
 
 /** Independent limits for a single chat request and its tool rounds. */
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public final class ReActLoopBudget {
     public enum BudgetMode {
         SOFT,
-        HARD
+        HARD;
+
+        @JsonCreator
+        public static BudgetMode fromString(String value) {
+            return value == null ? SOFT : valueOf(value.toUpperCase(java.util.Locale.ROOT));
+        }
     }
 
     @Nullable private final Integer maxTurns;
@@ -41,11 +45,12 @@ public final class ReActLoopBudget {
     @Nullable private final Duration maxTime;
     private final BudgetMode mode;
 
+    @JsonCreator
     private ReActLoopBudget(
-            @Nullable Integer maxTurns,
-            @Nullable Duration maxTime,
-            @Nullable Long maxTokens,
-            BudgetMode mode) {
+            @JsonProperty("max_turns") @Nullable Integer maxTurns,
+            @JsonProperty("max_time") @Nullable Duration maxTime,
+            @JsonProperty("max_tokens") @Nullable Long maxTokens,
+            @JsonProperty("mode") @Nullable BudgetMode mode) {
         if (maxTurns != null && maxTurns <= 0 || maxTokens != null && maxTokens <= 0)
             throw new IllegalArgumentException("ReAct loop limits must be positive");
         if (maxTime != null
@@ -56,12 +61,35 @@ public final class ReActLoopBudget {
         this.maxTurns = maxTurns;
         this.maxTokens = maxTokens;
         this.maxTime = maxTime;
-        this.mode = Objects.requireNonNull(mode, "mode");
+        this.mode = mode == null ? BudgetMode.SOFT : mode;
     }
 
     /** Creates a builder with unlimited budgets and soft termination. */
     public static Builder builder() {
         return new Builder();
+    }
+
+    @Nullable
+    @JsonProperty("max_turns")
+    public Integer getMaxTurns() {
+        return maxTurns;
+    }
+
+    @Nullable
+    @JsonProperty("max_tokens")
+    public Long getMaxTokens() {
+        return maxTokens;
+    }
+
+    @Nullable
+    @JsonProperty("max_time")
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    public Duration getMaxTime() {
+        return maxTime;
+    }
+
+    public BudgetMode getMode() {
+        return mode;
     }
 
     /** Builder for an immutable request-scoped budget. */
@@ -108,64 +136,5 @@ public final class ReActLoopBudget {
         public ReActLoopBudget build() {
             return new ReActLoopBudget(maxTurns, maxTime, maxTokens, mode);
         }
-    }
-
-    @Nullable
-    public Integer getMaxTurns() {
-        return maxTurns;
-    }
-
-    @Nullable
-    public Long getMaxTokens() {
-        return maxTokens;
-    }
-
-    @Nullable
-    public Duration getMaxTime() {
-        return maxTime;
-    }
-
-    public BudgetMode getMode() {
-        return mode;
-    }
-
-    @JsonValue
-    public Map<String, Object> toMap() {
-        Map<String, Object> values = new HashMap<>();
-        if (maxTurns != null) values.put("max_turns", maxTurns);
-        if (maxTokens != null) values.put("max_tokens", maxTokens);
-        if (maxTime != null) values.put("max_time_ms", maxTime.toMillis());
-        values.put("mode", mode.name());
-        return values;
-    }
-
-    @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
-    public static ReActLoopBudget fromMap(Map<?, ?> values) {
-        if (!Set.of("max_turns", "max_tokens", "max_time_ms", "mode").containsAll(values.keySet()))
-            throw new IllegalArgumentException("Unknown ReAct loop budget field");
-        Long time = count(values.get("max_time_ms"));
-        Object mode = values.get("mode");
-        Long turns = count(values.get("max_turns"));
-        return builder()
-                .maxTurns(turns == null ? null : Math.toIntExact(turns))
-                .maxTime(time == null ? null : Duration.ofMillis(time))
-                .maxTokens(count(values.get("max_tokens")))
-                .mode(
-                        mode == null
-                                ? null
-                                : BudgetMode.valueOf(
-                                        mode.toString().toUpperCase(java.util.Locale.ROOT)))
-                .build();
-    }
-
-    @Nullable
-    private static Long count(@Nullable Object value) {
-        if (value == null) return null;
-        if (!(value instanceof Integer
-                || value instanceof Long
-                || value instanceof Short
-                || value instanceof Byte))
-            throw new IllegalArgumentException("Expected integer count: " + value);
-        return ((Number) value).longValue();
     }
 }

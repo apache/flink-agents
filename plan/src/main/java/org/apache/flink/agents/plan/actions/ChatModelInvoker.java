@@ -166,7 +166,7 @@ public final class ChatModelInvoker {
         public Object structuredOutput;
         public final int retryCount;
         public final long totalRetryWaitMs;
-        /** Whether the model applies the request's output schema natively; settled per attempt. */
+        /** Whether shaping this answer requires a separate native-schema call. */
         public final boolean nativeSchema;
 
         ChatAttemptResult(
@@ -250,15 +250,17 @@ public final class ChatModelInvoker {
                 false,
                 ctx,
                 numRetries,
-                retryWaitMillis);
+                retryWaitMillis,
+                false);
     }
 
     /**
      * As {@link #chatWithRetries(UUID, String, String, List, Map, Object, RunnerContext, int,
-     * int)}; with {@code deferOutputSchema} the schema's feasibility is still settled before the
+     * long)}; with {@code deferOutputSchema} the schema's feasibility is still settled before the
      * loop call (a schema the candidate can never carry is the candidate failing, as before), but
      * the schema step itself is left to {@link #applyOutputSchema}, so a quality gate can judge the
-     * answer first.
+     * answer first. With {@code finalTurn}, the call uses prepared messages without tools and
+     * applies any native schema directly.
      */
     public static ChatAttemptResult chatWithRetries(
             UUID initialRequestId,
@@ -270,34 +272,8 @@ public final class ChatModelInvoker {
             boolean deferOutputSchema,
             RunnerContext ctx,
             int numRetries,
-            long retryWaitMillis)
-            throws ChatAttemptFailed, Exception {
-        return chatWithRetries(
-                initialRequestId,
-                model,
-                durableCallId,
-                messages,
-                promptArgs,
-                outputSchema,
-                deferOutputSchema,
-                ctx,
-                numRetries,
-                retryWaitMillis,
-                false);
-    }
-
-    public static ChatAttemptResult chatWithRetries(
-            UUID initialRequestId,
-            String model,
-            String durableCallId,
-            List<ChatMessage> messages,
-            Map<String, Object> promptArgs,
-            @Nullable Object outputSchema,
-            boolean deferOutputSchema,
-            RunnerContext ctx,
-            int numRetries,
             long retryWaitMillis,
-            boolean closing)
+            boolean finalTurn)
             throws Exception {
         BaseChatModelSetup chatModel;
         try {
@@ -357,11 +333,7 @@ public final class ChatModelInvoker {
                     public InvocationOutcome call() throws Exception {
                         try {
                             return new InvocationOutcome(
-                                    closing
-                                            ? chatModel.chatWithoutTools(
-                                                    messages, promptArgs, Map.of())
-                                            : chatModel.chat(messages, promptArgs, Map.of()),
-                                    null);
+                                    chatModel.chat(messages, promptArgs, Map.of()), null);
                         } catch (Exception e) {
                             if (Thread.currentThread().isInterrupted()
                                     || CancellationUtils.isCancellation(e)) {
@@ -378,47 +350,65 @@ public final class ChatModelInvoker {
         Map<String, Object> llmMetadata = llmMetadata(chatModel);
 
         for (int attempt = 0; attempt < numRetries + 1; attempt++) {
-            String executionId =
-                    ExecutionReporters.started(
-                            ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
-            // Keep persistence and recovery failures outside the request-failure catch.
-            InvocationOutcome outcome;
-            try {
-                outcome =
-                        chatAsync
-                                ? ctx.durableExecuteAsync(callable).await()
-                                : ctx.durableExecute(callable);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw e;
-            }
-            ReActLoopBudgetUtils.updateTokenBudgetState(
-                    ctx.getSensoryMemory(), initialRequestId, outcome.response);
-            try {
+            String executionId = null;
+            InvocationOutcome outcome = null;
+            if (!finalTurn) {
+                executionId =
+                        ExecutionReporters.started(
+                                ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
+                // Keep persistence and recovery failures outside the request-failure catch.
                 try {
-                    if (outcome.error != null) {
-                        throw new InvocationFailure(outcome.error);
+                    outcome =
+                            chatAsync
+                                    ? ctx.durableExecuteAsync(callable).await()
+                                    : ctx.durableExecute(callable);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+                ReActLoopBudgetUtils.updateTokenBudgetState(
+                        ctx.getSensoryMemory(), initialRequestId, outcome.response);
+            }
+            try {
+                if (finalTurn) {
+                    response =
+                            finalizeResponse(
+                                    chatModel,
+                                    model,
+                                    durableCallId,
+                                    chatModel.prepareRequestMessages(messages, promptArgs),
+                                    nativeSchema ? outputSchema : null,
+                                    llmMetadata,
+                                    ctx,
+                                    chatAsync,
+                                    requestMetricGroup,
+                                    initialRequestId);
+                } else {
+                    try {
+                        if (outcome.error != null) {
+                            throw new InvocationFailure(outcome.error);
+                        }
+                        response = outcome.response;
+                        Objects.requireNonNull(response, "ChatModel returned a null response.");
+                    } catch (Throwable modelError) {
+                        throw ChatModelAction.reportFailedAndPropagate(
+                                ctx,
+                                executionId,
+                                ExecutionReporter.EntityTypes.LLM,
+                                model,
+                                llmMetadata,
+                                modelError,
+                                ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
                     }
-                    response = outcome.response;
-                    Objects.requireNonNull(response, "ChatModel returned a null response.");
-                } catch (Throwable modelError) {
-                    throw ChatModelAction.reportFailedAndPropagate(
+                    reportSuccessfulResponse(
                             ctx,
                             executionId,
-                            ExecutionReporter.EntityTypes.LLM,
                             model,
                             llmMetadata,
-                            modelError,
-                            ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
+                            chatModel,
+                            response,
+                            requestMetricGroup);
                 }
-                reportSuccessfulResponse(
-                        ctx,
-                        executionId,
-                        model,
-                        llmMetadata,
-                        chatModel,
-                        response,
-                        requestMetricGroup);
                 // A truncated response consumed its full token budget, so the token metrics
                 // above are recorded before this rejects and abandons the response.
                 ChatModelAction.rejectIncompleteResponse(response);
@@ -429,7 +419,7 @@ public final class ChatModelInvoker {
                                 response,
                                 actualRetryCount,
                                 totalWaitTimeMs,
-                                nativeSchema);
+                                nativeSchema && !finalTurn);
                 if (outputSchema != null && !deferOutputSchema) {
                     result =
                             withOutputSchema(
@@ -546,12 +536,13 @@ public final class ChatModelInvoker {
         ChatResult finalized = null;
         if (attempt.nativeSchema) {
             try {
+                // Use only the answer text to avoid provider-specific response fields.
                 finalized =
-                        finalizeWithNativeSchema(
+                        finalizeResponse(
                                 attempt.chatModel,
                                 attempt.model,
                                 durableCallId,
-                                response,
+                                List.of(ChatMessage.user(FINALIZE_DIRECTIVE + response.getText())),
                                 outputSchema,
                                 llmMetadata,
                                 ctx,
@@ -607,31 +598,22 @@ public final class ChatModelInvoker {
     }
 
     /**
-     * Issues the tool-free call that carries {@code outputSchema}: the loop call binds tools, and a
-     * provider may drop a native schema from a request that also binds tools. It sends one user
-     * message holding an instruction to convert the answer followed by the loop's final answer
-     * text, and returns the response, which the caller checks for completeness and parses.
-     *
-     * <p>It holds its own durable slot after the loop call's, and reports its own LLM span.
+     * Sends prepared messages without tools, optionally carrying a native schema. Used for soft
+     * finalization and the ordinary turn's structured-output conversion. Each call has its own
+     * durable slot and LLM span.
      */
-    private static ChatResult finalizeWithNativeSchema(
+    private static ChatResult finalizeResponse(
             BaseChatModelSetup chatModel,
             String model,
             String durableCallId,
-            ChatResult loopResponse,
-            Object outputSchema,
+            List<ChatMessage> finalizeMessages,
+            @Nullable Object outputSchema,
             Map<String, Object> llmMetadata,
             RunnerContext ctx,
             boolean chatAsync,
             @Nullable FlinkAgentsMetricGroup requestMetricGroup,
             UUID requestId)
             throws Exception {
-        // A fresh user message rather than resending the response object: it carries no
-        // provider-specific fields of the loop response, and a single user turn avoids provider
-        // rules on turn order and on empty assistant content.
-        List<ChatMessage> finalizeMessages =
-                List.of(ChatMessage.user(FINALIZE_DIRECTIVE + loopResponse.getText()));
-
         DurableCallable<InvocationOutcome> callable =
                 new DurableCallable<>() {
                     @Override
@@ -659,7 +641,7 @@ public final class ChatModelInvoker {
                                 }
                                 throw e;
                             }
-                            LOG.debug("Structured output provider call failed", e);
+                            LOG.debug("Finalization provider call failed", e);
                             return new InvocationOutcome(null, errorText(e));
                         }
                     }
@@ -674,6 +656,8 @@ public final class ChatModelInvoker {
                     chatAsync
                             ? ctx.durableExecuteAsync(callable).await()
                             : ctx.durableExecute(callable);
+            ReActLoopBudgetUtils.updateTokenBudgetState(
+                    ctx.getSensoryMemory(), requestId, outcome.response);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw e;
@@ -681,8 +665,6 @@ public final class ChatModelInvoker {
             // Persistence and recovery failures are not request failures, as for the loop call.
             throw new DurableExecutionFailure(e);
         }
-        ReActLoopBudgetUtils.updateTokenBudgetState(
-                ctx.getSensoryMemory(), requestId, outcome.response);
         ChatResult response;
         try {
             if (outcome.error != null) {

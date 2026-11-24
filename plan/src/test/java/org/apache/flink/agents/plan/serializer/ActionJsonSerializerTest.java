@@ -19,13 +19,17 @@
 package org.apache.flink.agents.plan.serializer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.agents.ReActLoopBudget;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.utils.JsonUtils;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -60,10 +64,14 @@ public class ActionJsonSerializerTest {
                         function,
                         List.of(InputEvent.EVENT_TYPE),
                         Map.of("budget", budget));
-        var mapper = new ObjectMapper();
+        JsonUtils.checkSerializable(
+                new ChatRequestEvent(
+                        "model", List.of(ChatMessage.user("hi")), null, null, null, budget));
+        var mapper = new ObjectMapper().registerModule(new JavaTimeModule());
         var restored = mapper.readValue(mapper.writeValueAsString(action), Action.class);
         var actual = assertInstanceOf(ReActLoopBudget.class, restored.getConfig().get("budget"));
-        assertEquals(budget.toMap(), actual.toMap());
+        assertEquals(
+                mapper.convertValue(budget, Map.class), mapper.convertValue(actual, Map.class));
     }
 
     @Test

@@ -21,6 +21,7 @@ package org.apache.flink.agents.runtime.tracelog;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLogger;
@@ -79,7 +80,9 @@ public class Slf4jTraceLogger implements TraceLogger {
     // Trace-Log-only mapper: content blocks use their sanitized projection
     // (media metadata instead of payload bytes) at every level setting.
     private static final ObjectMapper MAPPER =
-            new ObjectMapper().registerModule(ContentBlockTraceLogSerializer.module());
+            new ObjectMapper()
+                    .registerModule(new JavaTimeModule())
+                    .registerModule(ContentBlockTraceLogSerializer.module());
 
     private final TraceLoggerConfig config;
     private boolean prettyPrint;

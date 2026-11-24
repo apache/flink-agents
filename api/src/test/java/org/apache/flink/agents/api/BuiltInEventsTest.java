@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
@@ -73,12 +74,10 @@ class BuiltInEventsTest {
                         42,
                         List.of(),
                         Map.of("max_turns", 0),
-                        Map.of("max_time_ms", 0),
-                        Map.of("max_time_ms", -1),
-                        Map.of("max_time_ms", 1.5),
-                        Map.of("max_time_ms", true),
-                        Map.of("max_time_ms", "1 ms"),
-                        Map.of("max_tokens", 1.5),
+                        Map.of("max_time", "PT0S"),
+                        Map.of("max_time", "PT-0.001S"),
+                        Map.of("max_time", "PT0.000001S"),
+                        Map.of("max_tokens", 0),
                         Map.of("mode", "unknown"),
                         Map.of("unknown", 1))) {
             var event =
@@ -104,19 +103,14 @@ class BuiltInEventsTest {
     }
 
     @Test
-    void budgetMillisecondsPreserveIntegerPrecision() throws Exception {
-        for (long millis : new long[] {1L, 60001L, 9007199254740993L}) {
-            var budget =
-                    MAPPER.readValue("{\"max_time_ms\":" + millis + "}", ReActLoopBudget.class);
-            assertThat(budget.getMaxTime()).isEqualTo(java.time.Duration.ofMillis(millis));
-            assertThat(
-                            MAPPER.readTree(MAPPER.writeValueAsString(budget))
-                                    .path("max_time_ms")
-                                    .longValue())
-                    .isEqualTo(millis);
+    void budgetDurationRoundTripsAcrossIsoFormats() throws Exception {
+        for (String time : List.of("PT0.001S", "PT1M0.001S", "P365D", "P400DT0.001S", "P730D")) {
+            var budget = MAPPER.readValue("{\"max_time\":\"" + time + "\"}", ReActLoopBudget.class);
+            assertThat(budget.getMaxTime()).isEqualTo(java.time.Duration.parse(time));
+            var restored =
+                    MAPPER.readValue(MAPPER.writeValueAsString(budget), ReActLoopBudget.class);
+            assertThat(restored.getMaxTime()).isEqualTo(budget.getMaxTime());
         }
-        assertThat(MAPPER.readValue("{\"max_time_ms\":null}", ReActLoopBudget.class).getMaxTime())
-                .isNull();
     }
 
     @Test
@@ -137,28 +131,28 @@ class BuiltInEventsTest {
             assertThat(ChatRequestEvent.fromEvent(request).getBudget()).isSameAs(budget);
             String json = MAPPER.writeValueAsString(request);
             var wire = MAPPER.readTree(json).path("attributes").path("budget");
-            assertThat(wire.has("max_time")).isFalse();
             if (budget.getMaxTime() != null) {
-                assertThat(wire.path("max_time_ms").isIntegralNumber()).isTrue();
-                assertThat(wire.path("max_time_ms").longValue()).isEqualTo(60001L);
-            } else {
-                assertThat(wire.has("max_time_ms")).isFalse();
+                assertThat(java.time.Duration.parse(wire.path("max_time").asText()))
+                        .isEqualTo(budget.getMaxTime());
             }
             for (ChatRequestEvent restored :
                     List.of(
                             MAPPER.readValue(json, ChatRequestEvent.class),
                             ChatRequestEvent.fromEvent(Event.fromJson(json)))) {
                 assertThat(restored.getAttr("budget")).isInstanceOf(ReActLoopBudget.class);
-                assertThat(restored.getBudget().toMap()).isEqualTo(budget.toMap());
+                assertThat(MAPPER.convertValue(restored.getBudget(), Map.class))
+                        .isEqualTo(MAPPER.convertValue(budget, Map.class));
                 assertThat(restored.getBudget()).isSameAs(restored.getBudget());
             }
             var restored =
                     MAPPER.readValue(MAPPER.writeValueAsString(budget), ReActLoopBudget.class);
-            assertThat(restored.toMap()).isEqualTo(budget.toMap());
+            assertThat(MAPPER.convertValue(restored, Map.class))
+                    .isEqualTo(MAPPER.convertValue(budget, Map.class));
         }
     }
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER =
+            new ObjectMapper().registerModule(new JavaTimeModule());
     private static final UUID FIXED_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
     private static final UUID REQUEST_ID = UUID.fromString("00000000-0000-0000-0000-000000000002");
 
