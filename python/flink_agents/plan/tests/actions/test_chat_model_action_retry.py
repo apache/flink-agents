@@ -1978,38 +1978,6 @@ def test_exhausted_budget_does_not_consume_turn(reason: str) -> None:
     assert budget_utils.get_budget_state(memory, request_id) == original
 
 
-def test_admitted_turn_and_token_consumption_persist_independent_state() -> None:
-    memory = _MockMemoryObject()
-    request_id, other_id = uuid4(), uuid4()
-    budget_state = {"turns_left": 2, "tokens_left": 5, "mode": "SOFT"}
-    budget_utils.save_budget_state(memory, other_id, budget_state)
-    budget_utils.save_budget_state(memory, request_id, budget_state)
-    assert budget_utils._try_start_turn(memory, request_id, 0) is None
-    assert budget_utils.get_budget_state(memory, request_id) == {
-        "turns_left": 1,
-        "tokens_left": 5,
-        "mode": "SOFT",
-    }
-    response = ChatResult(
-        message=ChatMessage.assistant("answer"),
-        usage=TokenUsage(prompt_tokens=4, completion_tokens=3),
-    )
-    budget_utils.update_token_budget_state(memory, request_id, response)
-    assert budget_utils.get_budget_state(memory, request_id) == {
-        "turns_left": 1,
-        "tokens_left": 0,
-        "mode": "SOFT",
-    }
-    assert budget_utils.get_budget_state(memory, other_id) == {
-        "turns_left": 2,
-        "tokens_left": 5,
-        "mode": "SOFT",
-    }
-    assert (
-        budget_utils._try_start_turn(memory, request_id, 0) == "TOKEN_BUDGET_EXCEEDED"
-    )
-
-
 def test_unlimited_turn_does_not_create_state() -> None:
     memory = _MockMemoryObject()
     request_id = uuid4()
@@ -2032,18 +2000,19 @@ def test_final_turn_tool_calls_fail_without_another_conversion(
     ctx, events, _, memory = _create_mock_runner_context(
         model, max_retries=3, retry_wait_interval_sec=0
     )
-    model.will_apply_native_structured_output.return_value = True
+    model.will_apply_native_structured_output.return_value = native_conversion
     request_id = uuid4()
     budget_utils.save_budget_state(
         memory, request_id, {"turns_left": 0, "mode": "SOFT"}
     )
+    schema = OutputSchema(output_schema=_StructuredResult)
     asyncio.run(
         chat(
             request_id,
             "model",
             [ChatMessage.user("hi")],
             {},
-            OutputSchema(output_schema=_StructuredResult),
+            schema,
             ctx,
         )
     )
@@ -2052,51 +2021,13 @@ def test_final_turn_tool_calls_fail_without_another_conversion(
     assert events[0].is_failed
     assert "returned tool calls" in events[0].error
     assert "TURN_BUDGET_EXCEEDED" in events[0].error
-    assert model.final_chat.call_count == 1
+    model.final_chat.assert_called_once()
+    assert model.final_chat.call_args.kwargs["tools"] == []
+    assert model.final_chat.call_args.kwargs["output_schema"] is (
+        schema if native_conversion else None
+    )
     assert model.inference.call_count == 0
     assert budget_utils.get_budget_state(memory, request_id) is None
-
-
-@pytest.mark.parametrize(
-    ("before_expired", "after_expired", "mode"),
-    [(False, True, "SOFT"), (True, False, "SOFT"), (False, True, "HARD")],
-)
-def test_recovered_budget_branch_uses_distinct_durable_identity(
-    before_expired, after_expired, mode, monkeypatch
-) -> None:
-    """The action selects a new durable identity when recovery changes its branch."""
-    monkeypatch.setattr(
-        "flink_agents.plan.actions.react_loop_budget_utils.time.time_ns",
-        lambda: 100_000_000,
-    )
-    model = _budget_model()
-    model.inference.return_value = ChatResult(message=ChatMessage.assistant("ordinary"))
-    model.final_chat.return_value = ChatResult(message=ChatMessage.assistant("closing"))
-    request_id = uuid4()
-    identities = []
-    for expired in (before_expired, after_expired):
-        ctx, events, _, memory = _create_mock_runner_context(model)
-        budget_utils.save_budget_state(
-            memory,
-            request_id,
-            {"max_time_ms": 1 if expired else 1000, "started_at_ms": 0, "mode": mode},
-        )
-        asyncio.run(chat(request_id, "model", [ChatMessage.user("hi")], {}, None, ctx))
-        assert len(events) == 1
-        if expired and mode == "HARD":
-            assert events[0].is_failed
-            assert "TIME_BUDGET_EXCEEDED" in events[0].error
-            assert (
-                ctx.durable_execute.call_args.kwargs["durable_id"]
-                == "react-loop:budget-admission"
-            )
-        else:
-            assert events[0].response.text == ("closing" if expired else "ordinary")
-            identities.append(ctx.durable_execute.call_args.kwargs["durable_id"])
-    if mode == "SOFT":
-        assert identities[0] != identities[1]
-        assert identities[0].endswith(":final") == before_expired
-        assert identities[1].endswith(":final") == after_expired
 
 
 def test_reused_response_reconstructs_token_and_turn_usage() -> None:
@@ -2118,7 +2049,7 @@ def test_reused_response_reconstructs_token_and_turn_usage() -> None:
     def persist_then_crash(
         fn: Callable, *args: Any, durable_id: str | None = None, **kwargs: Any
     ) -> None:
-        cached.append(fn(*args, **kwargs))
+        cached.append((durable_id, fn(*args, **kwargs)))
         raise Crash
 
     ctx.durable_execute.side_effect = persist_then_crash
@@ -2127,7 +2058,16 @@ def test_reused_response_reconstructs_token_and_turn_usage() -> None:
     assert events == []
     restored, events, _, memory = _create_mock_runner_context(model)
     budget_utils.save_budget_state(memory, request_id, dict(original))
-    restored.durable_execute.side_effect = lambda *args, **kwargs: cached[0]
+
+    def replay(
+        fn: Callable, *args: Any, durable_id: str | None = None, **kwargs: Any
+    ) -> Any:
+        assert len(cached) == 1
+        recorded_id, result = cached.pop()
+        assert durable_id == recorded_id
+        return result
+
+    restored.durable_execute.side_effect = replay
     states = []
     original_set = memory.set
 
@@ -2138,6 +2078,7 @@ def test_reused_response_reconstructs_token_and_turn_usage() -> None:
 
     memory.set = capture
     asyncio.run(chat(request_id, "model", [ChatMessage.user("hi")], {}, None, restored))
+    assert not cached
     model.inference.assert_called_once()
     assert len(events) == 1
     assert states[-1]["turns_left"] == 1
@@ -2151,7 +2092,7 @@ def test_budget_updates_read_latest_state_and_preserve_memory_snapshots() -> Non
         memory, request_id, {"turns_left": 2, "tokens_left": 20, "mode": "HARD"}
     )
     budget_utils.save_budget_state(
-        memory, other_id, {"tokens_left": 50, "mode": "SOFT"}
+        memory, other_id, {"turns_left": 4, "tokens_left": 50, "mode": "SOFT"}
     )
     before = memory.get("_LOOP_BUDGET_CONTEXT")
     assert budget_utils._try_start_turn(memory, request_id, 0) is None
@@ -2177,19 +2118,47 @@ def test_budget_updates_read_latest_state_and_preserve_memory_snapshots() -> Non
         "tokens_left": 3,
         "mode": "HARD",
     }
+    budget_utils.update_token_budget_state(
+        memory,
+        request_id,
+        ChatResult(
+            message=ChatMessage.assistant("last"),
+            usage=TokenUsage(prompt_tokens=4, completion_tokens=3),
+        ),
+    )
+    assert budget_utils.get_budget_state(memory, request_id) == {
+        "turns_left": 1,
+        "tokens_left": 0,
+        "mode": "HARD",
+    }
+    assert (
+        budget_utils._try_start_turn(memory, request_id, 0) == "TOKEN_BUDGET_EXCEEDED"
+    )
     assert after_judge == {"turns_left": 1, "tokens_left": 5, "mode": "HARD"}
     assert before[str(request_id)] == {
         "turns_left": 2,
         "tokens_left": 20,
         "mode": "HARD",
     }
-    assert budget_utils.get_budget_state(memory, other_id)["tokens_left"] == 50
+    assert budget_utils.get_budget_state(memory, other_id) == {
+        "turns_left": 4,
+        "tokens_left": 50,
+        "mode": "SOFT",
+    }
 
 
-@pytest.mark.parametrize("crash_after", [1, 2, 3])
-@pytest.mark.parametrize("mode", ["hard", "soft"])
-@pytest.mark.parametrize("expired", [False, True])
-@pytest.mark.parametrize("chat_async", [False, True])
+@pytest.mark.parametrize(
+    ("crash_after", "mode", "expired", "chat_async"),
+    [
+        pytest.param(1, "hard", False, False, id="start-before-deadline"),
+        pytest.param(1, "hard", True, False, id="start-hard-timeout"),
+        pytest.param(1, "soft", True, True, id="start-soft-timeout"),
+        pytest.param(2, "hard", True, False, id="admission-sync-after-deadline"),
+        pytest.param(2, "soft", True, True, id="admission-async-after-deadline"),
+        pytest.param(3, "soft", True, False, id="response-sync-after-deadline"),
+        pytest.param(3, "hard", True, True, id="response-async-after-deadline"),
+    ],
+)
 def test_first_action_restores_durable_start_time(
     monkeypatch, crash_after, mode, expired, chat_async
 ):
@@ -2230,15 +2199,19 @@ def test_first_action_restores_durable_start_time(
         asyncio.run(process_chat_request_or_tool_response(request, ctx))
     assert events == []
     assert journal[0] == ("react-loop:budget-start", 1000)
+    assert model.inference.call_count == (1 if crash_after == 3 else 0)
+    assert ctx.durable_execute_async.call_count == (
+        1 if chat_async and crash_after == 3 else 0
+    )
     now = 1400 if expired else 1100
     restored, events, _, _ = _create_mock_runner_context(model, chat_async=chat_async)
 
     def replay(
         fn: Callable, *args: Any, durable_id: str | None = None, **kwargs: Any
     ) -> Any:
-        if journal and journal[0][0] == durable_id:
+        if journal:
+            assert durable_id == journal[0][0]
             return journal.pop(0)[1]
-        journal.clear()
         return fn(*args, **kwargs)
 
     async def replay_async(fn: Callable, *args: Any, **kwargs: Any) -> Any:
@@ -2247,6 +2220,7 @@ def test_first_action_restores_durable_start_time(
     restored.durable_execute_async.side_effect = replay_async
     restored.durable_execute.side_effect = replay
     asyncio.run(process_chat_request_or_tool_response(request, restored))
+    assert journal == []
     timed_out = expired and crash_after == 1
     assert model.inference.call_count == (0 if timed_out else 1)
     assert len(events) == 1

@@ -171,39 +171,13 @@ class ChatModelActionRetryTest {
     }
 
     @Test
-    void admittedTurnAndTokenConsumptionPersistIndependentState() throws Exception {
-        UUID id = UUID.randomUUID();
-        UUID otherId = UUID.randomUUID();
-        Map<String, Object> budgetState =
-                new HashMap<>(Map.of("turns_left", 2L, "tokens_left", 5L, "mode", "SOFT"));
-        ReActLoopBudgetUtils.saveBudgetState(sensoryMemory, otherId, budgetState);
-        ReActLoopBudgetUtils.saveBudgetState(sensoryMemory, id, budgetState);
-        assertThat(ReActLoopBudgetUtils.tryStartTurn(sensoryMemory, id, 0L)).isNull();
-        assertThat(ReActLoopBudgetUtils.getBudgetState(sensoryMemory, id))
-                .containsEntry("turns_left", 1L)
-                .containsEntry("mode", "SOFT");
-        ReActLoopBudgetUtils.updateTokenBudgetState(
-                sensoryMemory,
-                id,
-                ChatFixtures.response("answer", Map.of("promptTokens", 4, "completionTokens", 3)));
-        assertThat(ReActLoopBudgetUtils.getBudgetState(sensoryMemory, id))
-                .containsEntry("tokens_left", 0L)
-                .containsEntry("turns_left", 1L);
-        assertThat(ReActLoopBudgetUtils.getBudgetState(sensoryMemory, otherId))
-                .containsEntry("tokens_left", 5L)
-                .containsEntry("turns_left", 2L);
-        assertThat(ReActLoopBudgetUtils.tryStartTurn(sensoryMemory, id, 0L))
-                .isEqualTo("TOKEN_BUDGET_EXCEEDED");
-    }
-
-    @Test
     void budgetUpdatesReadLatestStateAndPreserveEarlierMemoryValues() throws Exception {
         UUID id = UUID.randomUUID();
         UUID other = UUID.randomUUID();
         ReActLoopBudgetUtils.saveBudgetState(
                 sensoryMemory, id, Map.of("turns_left", 2L, "tokens_left", 20L, "mode", "HARD"));
         ReActLoopBudgetUtils.saveBudgetState(
-                sensoryMemory, other, Map.of("tokens_left", 50L, "mode", "SOFT"));
+                sensoryMemory, other, Map.of("turns_left", 4L, "tokens_left", 50L, "mode", "SOFT"));
         Map<?, ?> before =
                 (Map<?, ?>) sensoryMemory.get(ReActLoopBudgetUtils.LOOP_BUDGET_CONTEXT).getValue();
         assertThat(ReActLoopBudgetUtils.tryStartTurn(sensoryMemory, id, 0L)).isNull();
@@ -219,11 +193,21 @@ class ChatModelActionRetryTest {
         assertThat(ReActLoopBudgetUtils.getBudgetState(sensoryMemory, id))
                 .containsEntry("turns_left", 1L)
                 .containsEntry("tokens_left", 3L);
+        ReActLoopBudgetUtils.updateTokenBudgetState(
+                sensoryMemory,
+                id,
+                ChatFixtures.response("last", Map.of("promptTokens", 4, "completionTokens", 3)));
+        assertThat(ReActLoopBudgetUtils.getBudgetState(sensoryMemory, id))
+                .containsEntry("turns_left", 1L)
+                .containsEntry("tokens_left", 0L);
+        assertThat(ReActLoopBudgetUtils.tryStartTurn(sensoryMemory, id, 0L))
+                .isEqualTo("TOKEN_BUDGET_EXCEEDED");
         assertThat(afterJudge).containsEntry("turns_left", 1L).containsEntry("tokens_left", 5L);
         assertThat(((Map<?, ?>) before.get(id)).get("turns_left")).isEqualTo(2L);
         assertThat(((Map<?, ?>) before.get(id)).get("tokens_left")).isEqualTo(20L);
         assertThat(ReActLoopBudgetUtils.getBudgetState(sensoryMemory, other))
-                .containsEntry("tokens_left", 50L);
+                .containsEntry("tokens_left", 50L)
+                .containsEntry("turns_left", 4L);
     }
 
     @Test

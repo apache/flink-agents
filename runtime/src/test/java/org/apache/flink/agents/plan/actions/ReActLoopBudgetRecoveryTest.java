@@ -395,21 +395,27 @@ class ReActLoopBudgetRecoveryTest {
                             persisted = ActionStateSerde.serialize(saved);
                             if (writes.incrementAndGet() == crashAfter) throw new Crash();
                         }));
-        assertThatThrownBy(
-                        () -> ChatModelAction.processChatRequestOrToolResponse(request, original))
-                .isInstanceOf(Crash.class);
-        ActionState recoveredJournal = ActionStateSerde.deserialize(persisted);
-        assertThat(recoveredJournal.getSensoryMemoryUpdates()).isEmpty();
-        // Let the original deadline expire while no action memory has been committed.
-        Thread.sleep(350);
-        RunnerContextImpl recovered = context(recoveredJournal, null, false);
-        ChatModelAction.processChatRequestOrToolResponse(request, recovered);
-        assertThat(events).hasSize(1);
-        assertThat(events.get(0)).isInstanceOf(ChatResponseEvent.class);
-        ChatResponseEvent response = (ChatResponseEvent) events.get(0);
-        if (crashAfter == 1) assertThat(response.getError()).contains("TIME_BUDGET_EXCEEDED");
-        else assertThat(response.getResponse().getText()).isEqualTo("done");
-        verify(model, times(crashAfter == 1 ? 0 : 1)).chat(any(), any(), any());
+        AtomicLong now = new AtomicLong(1000L);
+        try (MockedStatic<ReActLoopBudgetUtils> mocked =
+                mockStatic(ReActLoopBudgetUtils.class, CALLS_REAL_METHODS)) {
+            mocked.when(ReActLoopBudgetUtils::currentTimeMillis).thenAnswer(inv -> now.get());
+            assertThatThrownBy(
+                            () ->
+                                    ChatModelAction.processChatRequestOrToolResponse(
+                                            request, original))
+                    .isInstanceOf(Crash.class);
+            ActionState recoveredJournal = ActionStateSerde.deserialize(persisted);
+            assertThat(recoveredJournal.getSensoryMemoryUpdates()).isEmpty();
+            now.set(1350L);
+            RunnerContextImpl recovered = context(recoveredJournal, null, false);
+            ChatModelAction.processChatRequestOrToolResponse(request, recovered);
+            assertThat(events).hasSize(1);
+            assertThat(events.get(0)).isInstanceOf(ChatResponseEvent.class);
+            ChatResponseEvent response = (ChatResponseEvent) events.get(0);
+            if (crashAfter == 1) assertThat(response.getError()).contains("TIME_BUDGET_EXCEEDED");
+            else assertThat(response.getResponse().getText()).isEqualTo("done");
+            verify(model, times(crashAfter == 1 ? 0 : 1)).chat(any(), any(), any());
+        }
     }
 
     @Test

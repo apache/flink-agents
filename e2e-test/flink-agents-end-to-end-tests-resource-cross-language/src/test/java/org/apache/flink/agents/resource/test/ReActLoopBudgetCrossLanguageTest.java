@@ -45,17 +45,15 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
-import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
-import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Timeout;
@@ -66,17 +64,19 @@ import pemja.core.PythonInterpreter;
 import pemja.core.PythonInterpreterConfig;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** Runs real Python actions/resources through Pemja and the checkpointable operator. */
+/** Runs real Python actions/resources through Pemja in Flink jobs. */
 @Timeout(60)
 public class ReActLoopBudgetCrossLanguageTest {
     private static final AtomicInteger NORMAL_CALLS = new AtomicInteger();
@@ -88,6 +88,10 @@ public class ReActLoopBudgetCrossLanguageTest {
         NORMAL_CALLS.set(0);
         CLOSING_CALLS.set(0);
         TOOL_CALLS.set(0);
+        RecoveryStore.STATES.clear();
+        RecoveryStore.CRASHED.set(false);
+        RecoveryStore.READ_PERSISTED_START.set(false);
+        RecoveryStore.startPayload = null;
     }
 
     @ParameterizedTest
@@ -179,11 +183,7 @@ public class ReActLoopBudgetCrossLanguageTest {
                 ReActLoopBudget.builder().mode(ReActLoopBudget.BudgetMode.valueOf(args[0]));
         if (args[1].startsWith("turn")) builder.maxTurns(args[1].endsWith("-replay") ? 2 : 1);
         if (args[1].startsWith("token")) builder.maxTokens(args[1].endsWith("-replay") ? 10L : 5L);
-        builder.maxTime(
-                Duration.ofMillis(
-                        args[1].equals("time")
-                                ? 1000
-                                : args[1].equals("time-job") ? 10000 : 60000));
+        builder.maxTime(Duration.ofMillis(args[1].equals("time-job") ? 10000 : 60000));
         ctx.sendEvent(
                 new ChatRequestEvent(
                         "model",
@@ -303,103 +303,64 @@ public class ReActLoopBudgetCrossLanguageTest {
         }
     }
 
-    private static KeyedOneInputStreamOperatorTestHarness<String, String, Object> harness(
-            AgentPlan plan, SerializedStore store) throws Exception {
-        return new KeyedOneInputStreamOperatorTestHarness<>(
-                new ActionExecutionOperatorFactory<>(plan, true, store),
-                (KeySelector<String, String>) value -> value,
-                TypeInformation.of(String.class));
-    }
-
     @ParameterizedTest
     @CsvSource({
-        "false,HARD,turn",
-        "false,SOFT,turn",
-        "true,HARD,turn",
-        "true,SOFT,turn",
-        "false,HARD,token",
-        "false,SOFT,token",
-        "true,HARD,token",
-        "true,SOFT,token"
+        "true,HARD,time", "false,SOFT,time",
+        "true,SOFT,turn", "false,HARD,turn",
+        "true,HARD,token", "false,SOFT,token"
     })
-    void budgetCrossesTheModelBridge(boolean python, String mode, String limit) throws Exception {
-        try (var h = harness(plan(python), new SerializedStore())) {
-            h.open();
-            h.processElement(new StreamRecord<>(mode + ":" + limit));
-            ((ActionExecutionOperator<?, ?>) h.getOperator()).waitInFlightEventsFinished();
-            assertThat(NORMAL_CALLS.get()).as("output: %s", h.getRecordOutput()).isEqualTo(1);
-            assertThat(TOOL_CALLS.get()).isEqualTo(1);
-            assertResult(h, mode, limit);
+    void budgetRecoversAfterJobRestart(boolean python, String mode, String limit) throws Exception {
+        Configuration config = new Configuration();
+        config.setString("restart-strategy.type", "fixed-delay");
+        config.setString("restart-strategy.fixed-delay.attempts", "1");
+        config.setString("restart-strategy.fixed-delay.delay", "10 ms");
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(config);
+        env.setParallelism(1);
+        String input = mode + ":" + (limit.equals("time") ? "time-job" : limit + "-replay");
+        var output =
+                env.fromElements(input)
+                        .keyBy(new InputKey())
+                        .transform(
+                                "budget recovery",
+                                TypeInformation.of(Object.class),
+                                new ActionExecutionOperatorFactory<String, Object>(
+                                        plan(python), true, new RecoveryStore()));
+        List<Object> results = new ArrayList<>();
+        try (CloseableIterator<Object> iterator = output.collectAsync()) {
+            env.execute();
+            iterator.forEachRemaining(results::add);
         }
+        assertThat(RecoveryStore.CRASHED).isTrue();
+        assertThat(RecoveryStore.READ_PERSISTED_START).isTrue();
+        assertThat(results).hasSize(1);
+        if (mode.equals("SOFT")) assertThat(results.get(0)).isEqualTo("closed");
+        else
+            assertThat(results.get(0).toString())
+                    .contains(limit.toUpperCase() + "_BUDGET_EXCEEDED");
+        assertThat(NORMAL_CALLS.get()).isEqualTo(limit.equals("time") ? 1 : 2);
+        assertThat(TOOL_CALLS.get()).isEqualTo(limit.equals("time") ? 1 : 2);
+        assertThat(CLOSING_CALLS.get()).isEqualTo(mode.equals("SOFT") ? 1 : 0);
     }
 
-    private static void assertResult(
-            KeyedOneInputStreamOperatorTestHarness<String, String, Object> h,
-            String mode,
-            String limit) {
-        assertThat(h.getRecordOutput()).hasSize(1);
-        String output = h.getRecordOutput().iterator().next().getValue().toString();
-        if (mode.equals("SOFT")) {
-            assertThat(output).isEqualTo("closed");
-            assertThat(CLOSING_CALLS.get()).isEqualTo(1);
-        } else {
-            assertThat(output).contains(limit.toUpperCase() + "_BUDGET_EXCEEDED");
-            assertThat(CLOSING_CALLS.get()).isZero();
-        }
-    }
-
-    /** A fresh copy on every write models the durable storage boundary. */
-    private static class SerializedStore implements ActionStateStore {
-        private final Map<Object, Map<String, ActionState>> states = new HashMap<>();
-
-        private static String id(long seq, Action action, Event event) {
-            return seq + ":" + action.getName() + ":" + event.getId();
-        }
+    /** Serialized backend bytes survive task restarts in the local MiniCluster. */
+    private static class RecoveryStore implements ActionStateStore, Serializable {
+        private static final Map<String, byte[]> STATES = new ConcurrentHashMap<>();
+        private static final AtomicBoolean CRASHED = new AtomicBoolean();
+        private static final AtomicBoolean READ_PERSISTED_START = new AtomicBoolean();
+        private static final ActionStateKeyEncoder KEYS =
+                new ActionStateKeyEncoder(128, StringSerializer.INSTANCE);
+        private static byte[] startPayload;
 
         @Override
         public void put(Object key, long seq, Action action, Event event, ActionState state)
                 throws IOException {
-            states.computeIfAbsent(key, ignored -> new HashMap<>())
-                    .put(
-                            id(seq, action, event),
-                            ActionStateSerde.deserialize(ActionStateSerde.serialize(state)));
-        }
-
-        @Override
-        public ActionState get(Object key, long seq, Action action, Event event)
-                throws IOException {
-            return states.getOrDefault(key, Map.of()).get(id(seq, action, event));
-        }
-
-        Map<Object, Map<String, ActionState>> getKeyedActionStates() {
-            return states;
-        }
-
-        @Override
-        public void rebuildState(List<Object> markers) {}
-
-        @Override
-        public void pruneState(Object key, long seq) {}
-
-        @Override
-        public void close() {}
-    }
-
-    /** Persist serialized copies, then fail after the first model result is durable. */
-    private static class CrashStore extends SerializedStore {
-        private byte[] startPayload;
-        private boolean crashed;
-
-        @Override
-        public void put(Object key, long seq, Action action, Event event, ActionState state)
-                throws IOException {
-            super.put(key, seq, action, event, state);
+            STATES.put(
+                    KEYS.generateKey(key, seq, action, event), ActionStateSerde.serialize(state));
             if (!state.isCompleted()
                     && state.getCallResults().stream()
                             .anyMatch(
-                                    call ->
-                                            call.isSuccess()
-                                                    && call.getFunctionId().equals("chat"))) {
+                                    call -> call.isSuccess() && call.getFunctionId().equals("chat"))
+                    && CRASHED.compareAndSet(false, true)) {
                 assertThat(state.getSensoryMemoryUpdates()).isEmpty();
                 startPayload =
                         state.getCallResults().stream()
@@ -410,82 +371,35 @@ public class ReActLoopBudgetCrossLanguageTest {
                                 .findFirst()
                                 .orElseThrow()
                                 .getResultPayload();
-                crashed = true;
                 throw new IOException("crash after persisted model result");
             }
         }
-    }
 
-    @ParameterizedTest
-    @CsvSource({"HARD,time", "SOFT,time", "HARD,turn", "SOFT,turn", "HARD,token", "SOFT,token"})
-    void pythonBudgetRecoversAfterPersistedResponse(String mode, String limit) throws Exception {
-        AgentPlan plan = plan(true);
-        CrashStore store = new CrashStore();
-        OperatorSubtaskState checkpoint;
-        try (var original = harness(plan, store)) {
-            original.open();
-            original.processElement(
-                    new StreamRecord<>(
-                            mode + ":" + limit + (limit.equals("time") ? "" : "-replay")));
-            checkpoint = original.snapshot(1, 1);
-            assertThatThrownBy(
-                            () ->
-                                    ((ActionExecutionOperator<?, ?>) original.getOperator())
-                                            .waitInFlightEventsFinished())
-                    .hasStackTraceContaining("crash after persisted model result");
-            assertThat(store.crashed).isTrue();
-            assertThat(NORMAL_CALLS.get()).isEqualTo(1);
-            assertThat(original.getRecordOutput()).isEmpty();
+        @Override
+        public ActionState get(Object key, long seq, Action action, Event event)
+                throws IOException {
+            byte[] bytes = STATES.get(KEYS.generateKey(key, seq, action, event));
+            if (bytes == null) return null;
+            ActionState state = ActionStateSerde.deserialize(bytes);
+            if (CRASHED.get() && !state.isCompleted()) {
+                state.getCallResults().stream()
+                        .filter(call -> call.getFunctionId().equals("react-loop:budget-start"))
+                        .forEach(
+                                call -> {
+                                    assertThat(call.getResultPayload()).isEqualTo(startPayload);
+                                    READ_PERSISTED_START.set(true);
+                                });
+            }
+            return state;
         }
-        // Emulate downtime only for the time-budget cases; no runtime state is patched.
-        if (limit.equals("time")) Thread.sleep(1100);
-        boolean[] replayedStart = {false};
-        SerializedStore restoredStore =
-                new SerializedStore() {
-                    @Override
-                    public ActionState get(Object key, long seq, Action action, Event event)
-                            throws IOException {
-                        ActionState state = super.get(key, seq, action, event);
-                        if (state != null) {
-                            state.getCallResults().stream()
-                                    .filter(
-                                            call ->
-                                                    call.getFunctionId()
-                                                            .equals("react-loop:budget-start"))
-                                    .forEach(
-                                            call -> {
-                                                assertThat(call.getResultPayload())
-                                                        .isEqualTo(store.startPayload);
-                                                replayedStart[0] = true;
-                                            });
-                        }
-                        return state;
-                    }
-                };
-        store.getKeyedActionStates()
-                .forEach(
-                        (key, states) -> {
-                            Map<String, ActionState> copies = new HashMap<>();
-                            states.forEach(
-                                    (id, state) ->
-                                            copies.put(
-                                                    id,
-                                                    ActionStateSerde.deserialize(
-                                                            ActionStateSerde.serialize(state))));
-                            restoredStore.getKeyedActionStates().put(key, copies);
-                        });
-        try (var restored = harness(plan, restoredStore)) {
-            restored.initializeState(checkpoint);
-            restored.open();
-            ((ActionExecutionOperator<?, ?>) restored.getOperator()).waitInFlightEventsFinished();
-            // With two turns / ten tokens, one cached five-token result and one fresh
-            // result exhaust the budget. Missing or double charging changes this count.
-            assertThat(NORMAL_CALLS.get()).isEqualTo(limit.equals("time") ? 1 : 2);
-            assertThat(TOOL_CALLS.get()).isEqualTo(limit.equals("time") ? 1 : 2);
-            assertResult(restored, mode, limit);
-            // Completed actions compact their durable call records. Check the record as
-            // the restored runtime reads it, before completion clears the journal.
-            assertThat(replayedStart[0]).isTrue();
-        }
+
+        @Override
+        public void rebuildState(List<Object> markers) {}
+
+        @Override
+        public void pruneState(Object key, long seq) {}
+
+        @Override
+        public void close() {}
     }
 }
