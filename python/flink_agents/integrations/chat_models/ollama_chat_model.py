@@ -51,6 +51,7 @@ from flink_agents.integrations.chat_models.chat_model_utils import to_openai_too
 
 DEFAULT_CONTEXT_WINDOW = 2048
 DEFAULT_REQUEST_TIMEOUT = 30.0
+_NULL_SCHEMA = {"type": "null"}
 
 
 def _native_format(output_schema: Any) -> Dict[str, Any] | None:
@@ -65,6 +66,54 @@ def _native_format(output_schema: Any) -> Dict[str, Any] | None:
     if model is None:
         return None
     return render_output_schema(model, lambda m: m.model_json_schema())
+
+
+def _to_ollama_tool(tool: Tool) -> Dict[str, Any]:
+    """Build the Ollama tool payload for ``tool``, leaving its metadata unchanged.
+
+    The Ollama SDK keeps only ``type``, ``items``, ``description`` and ``enum`` of a
+    tool parameter, so a nullable parameter written as ``anyOf`` would reach the
+    model without a type. Such a parameter is sent with a type list instead.
+    """
+    payload = to_openai_tool(metadata=tool.metadata)
+    parameters = payload["function"]["parameters"]
+    properties = parameters.get("properties")
+    if isinstance(properties, dict):
+        parameters["properties"] = {
+            name: _nullable_as_type_list(schema) for name, schema in properties.items()
+        }
+    return payload
+
+
+def _nullable_as_type_list(schema: Any) -> Any:
+    """Rewrite a nullable ``anyOf`` of one typed schema as a type list.
+
+    ``anyOf: [<schema with a single type>, {"type": "null"}]`` becomes that schema
+    with ``"type": [<type>, "null"]``, and ``None`` is appended to its ``enum`` if it
+    has one. This is how Java's ``FunctionSchema`` writes a nullable parameter.
+
+    The schema is not assumed to come from ``FunctionSchema``, since an MCP tool
+    passes on the schema its server provides. A schema of any other shape is returned
+    unchanged.
+    """
+    branches = schema.get("anyOf") if isinstance(schema, dict) else None
+    if (
+        not isinstance(branches, list)
+        or len(branches) != 2
+        or _NULL_SCHEMA not in branches
+    ):
+        return schema
+    non_null = branches[1] if branches[0] == _NULL_SCHEMA else branches[0]
+    type_name = non_null.get("type") if isinstance(non_null, dict) else None
+    if not isinstance(type_name, str) or type_name == "null":
+        return schema
+
+    rewritten = {**non_null, **schema, "type": [type_name, "null"]}
+    del rewritten["anyOf"]
+    enum = rewritten.get("enum")
+    if isinstance(enum, list) and None not in enum:
+        rewritten["enum"] = [*enum, None]
+    return rewritten
 
 
 class OllamaChatModelConnection(BaseChatModelConnection):
@@ -219,7 +268,7 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         # Convert tool format
         ollama_tools = None
         if tools is not None:
-            ollama_tools = [to_openai_tool(metadata=tool.metadata) for tool in tools]
+            ollama_tools = [_to_ollama_tool(tool) for tool in tools]
 
         # Snapshotted before the pop below, so the feasibility check is asked with the
         # parameters as they arrived rather than with a mapping this path has already
