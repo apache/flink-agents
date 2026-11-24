@@ -41,6 +41,8 @@ import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.IsolatedCachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -99,7 +101,16 @@ class ReActLoopBudgetRecoveryTest {
         AgentPlan plan = new AgentPlan(new Agent());
         plan.getConfig().set(AgentExecutionOptions.CHAT_ASYNC, false);
         plan.getConfig().set(AgentExecutionOptions.MAX_RETRIES, 0);
-        RunnerContextImpl ctx = spy(new RunnerContextImpl(null, () -> {}, plan, null, "test"));
+        RunnerContextImpl ctx =
+                spy(
+                        new RunnerContextImpl(
+                                null,
+                                () -> {},
+                                plan,
+                                null,
+                                "test",
+                                TypeInformation.of(Event.class)
+                                        .createSerializer(new SerializerConfigImpl())));
         configureContext(ctx, journal, state, crashAfterPersistence);
         return ctx;
     }
@@ -510,7 +521,16 @@ class ReActLoopBudgetRecoveryTest {
         plan.getConfig().set(AgentExecutionOptions.CHAT_ASYNC, true);
         plan.getConfig().set(AgentExecutionOptions.MAX_RETRIES, 0);
         JavaRunnerContextImpl ctx =
-                spy(new JavaRunnerContextImpl(null, () -> {}, plan, null, "test", executor));
+                spy(
+                        new JavaRunnerContextImpl(
+                                null,
+                                () -> {},
+                                plan,
+                                null,
+                                "test",
+                                executor,
+                                TypeInformation.of(Event.class)
+                                        .createSerializer(new SerializerConfigImpl())));
         ctx.setContinuationContext(new ContinuationContext());
         configureContext(ctx, journal, state, crashAfterPersistence);
         return ctx;
