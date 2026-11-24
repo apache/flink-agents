@@ -30,7 +30,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Declarative function tool. */
+/**
+ * Declarative function tool.
+ *
+ * <p>{@code parameter_types} is required when {@code type: java} and is forbidden otherwise (Python
+ * tools are reflected from the callable signature).
+ */
 @JsonIgnoreProperties(ignoreUnknown = false)
 public final class ToolSpec {
     private final String name;
