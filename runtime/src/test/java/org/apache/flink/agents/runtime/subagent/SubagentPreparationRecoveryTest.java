@@ -31,6 +31,7 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.InternalSubagentResourceDescriptorBuilder;
+import org.apache.flink.agents.api.subagent.SubagentCall;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.plan.AgentConfiguration;
@@ -39,6 +40,7 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
+import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -98,16 +100,17 @@ public class SubagentPreparationRecoveryTest {
             h.open();
             checkpoint = h.snapshot(1L, 1L);
             Throwable crash = catchThrowable(() -> run(h));
-            assertThat(crash).hasRootCauseMessage("crash after tool result persisted");
+            assertThat(crash).hasRootCauseMessage("crash after batch results persisted");
             assertThat(UncapturableException.isUncapturable(crash)).isTrue();
             assertThat(TOOL_CALLS).hasValue(1);
             recovered = store.copyWithoutFault();
-            assertThat(store.toolSlots())
+            assertThat(recovered.toolSlots())
                     .singleElement()
                     .satisfies(
                             slots -> {
                                 assertThat(slots).hasSize(scenario.equals("async-await") ? 3 : 2);
-                                assertThat(slots.get(slots.size() - 1))
+                                assertThat(slots).allMatch(slot -> !slot.isPending());
+                                assertThat(slots.get(slots.size() - 1).getFunctionId())
                                         .isEqualTo("tool-call:call-2");
                             });
         }
@@ -308,36 +311,26 @@ public class SubagentPreparationRecoveryTest {
         }
 
         @Override
-        protected DurableCallable<SubagentResult> prepare(
+        protected SubagentCall prepare(
                 RunnerContext ctx, Object prompt, String sessionId, String callId) {
             ((RunnerContextImpl) ctx).checkMailboxThread();
             PREPARATIONS.incrementAndGet();
             if (firstAttempt) {
                 throw new IllegalStateException("deferred preparation unavailable");
             }
-            return new DurableCallable<>() {
-                public String getId() {
-                    return sessionId + "#" + callId;
-                }
-
-                public Class<SubagentResult> getResultClass() {
-                    return SubagentResult.class;
-                }
-
-                public SubagentResult call() {
-                    return SubagentResult.ok("child-result");
-                }
+            return () -> {
+                return SubagentResult.ok("child-result");
             };
         }
     }
 
     static class Store extends InMemoryActionStateStore {
-        final boolean failAfterTool;
+        final boolean failAfterBatch;
         final boolean failPending;
 
-        Store(boolean failAfterTool, boolean failPending) {
+        Store(boolean failAfterBatch, boolean failPending) {
             super(false);
-            this.failAfterTool = failAfterTool;
+            this.failAfterBatch = failAfterBatch;
             this.failPending = failPending;
         }
 
@@ -350,14 +343,16 @@ public class SubagentPreparationRecoveryTest {
                 throw new IOException("pending write failed");
             }
             super.put(key, seq, action, event, copy(state));
-            if (failAfterTool
+            if (failAfterBatch
                     && action.getName().equals("tool_call_action")
                     && state.getCallResults().stream()
                             .anyMatch(
                                     r ->
                                             r.getFunctionId().equals("tool-call:call-2")
-                                                    && r.isSuccess())) {
-                throw new IOException("crash after tool result persisted");
+                                                    && r.isSuccess())
+                    // A completed sibling does not imply the parallel child has been persisted.
+                    && state.getCallResults().stream().noneMatch(CallResult::isPending)) {
+                throw new IOException("crash after batch results persisted");
             }
         }
 
@@ -380,15 +375,11 @@ public class SubagentPreparationRecoveryTest {
             return result;
         }
 
-        List<List<String>> toolSlots() {
+        List<List<CallResult>> toolSlots() {
             return getKeyedActionStates().values().stream()
                     .flatMap(m -> m.values().stream())
                     .filter(s -> s.getTaskEvent().getType().equals(ToolRequestEvent.EVENT_TYPE))
-                    .map(
-                            s ->
-                                    s.getCallResults().stream()
-                                            .map(r -> r.getFunctionId())
-                                            .collect(Collectors.toList()))
+                    .map(ActionState::getCallResults)
                     .collect(Collectors.toList());
         }
 

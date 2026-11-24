@@ -22,9 +22,13 @@ import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.subagent.SubagentCall;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+
+import java.util.Objects;
+import java.util.concurrent.Callable;
 
 /**
  * Framework-level deferred execution mode for sub-agent setups: {@code submit} registers the
@@ -53,32 +57,57 @@ public abstract class BaseDeferredSubagentSetup extends BaseSubagentSetup {
                                 .durableExecuteAsync(
                                         sessionId + "#" + callId,
                                         SubagentResult.class,
-                                        () -> prepare(ctx, prompt, sessionId, callId)),
+                                        () -> prepareDurableCall(ctx, prompt, sessionId, callId)),
                 currentTaskRegistry(),
                 () -> false,
                 () -> {});
     }
 
+    private DurableCallable<SubagentResult> prepareDurableCall(
+            RunnerContext ctx, Object prompt, String sessionId, String callId) {
+        SubagentCall call = Objects.requireNonNull(prepare(ctx, prompt, sessionId, callId));
+        return new DurableCallable<SubagentResult>() {
+            @Override
+            public String getId() {
+                return sessionId + "#" + callId;
+            }
+
+            @Override
+            public Class<SubagentResult> getResultClass() {
+                return SubagentResult.class;
+            }
+
+            @Override
+            public SubagentResult call() throws Exception {
+                return call.call();
+            }
+
+            @Override
+            public Callable<SubagentResult> reconciler() {
+                return call.reconciler();
+            }
+        };
+    }
+
     /**
-     * Prepares one invocation and returns the {@link DurableCallable} running it. Both ids are
-     * already assigned; the callable must use {@code sessionId + "#" + callId} as its durable id
-     * and {@code SubagentResult.class} as its result class.
+     * Prepares one invocation and returns its execution and optional recovery logic. Both ids are
+     * already assigned. The framework supplies the durable identity and result serialization type.
      *
      * <p>Called on the mailbox thread when the handle is first resolved, after reserving its
      * durable slot. Terminal replay skips this method; recovery of a pending call may invoke it
      * again. Ordinary preparation exceptions are recorded as the call's failure. Implementations
      * may therefore perform the mailbox-confined part of issuing the request here; the returned
-     * callable's {@link DurableCallable#call()} then carries the wait on an async-pool worker off
-     * the mailbox thread.
+     * callable's {@link SubagentCall#call()} then carries the wait on an async-pool worker off the
+     * mailbox thread.
      *
      * <p>The callable folds its own comprehensible failures into the returned {@link
-     * SubagentResult}; an exception escaping {@link DurableCallable#call()} is a system-level
-     * failure that propagates and fails the action.
+     * SubagentResult}; an exception escaping {@link SubagentCall#call()} is a system-level failure
+     * that propagates and fails the action.
      *
      * <p>Skipping the reconciler on the returned callable has a cost: a crash between the call
      * landing and its result being persisted re-invokes the sub-agent on replay, possibly
      * duplicating external side effects.
      */
-    protected abstract DurableCallable<SubagentResult> prepare(
+    protected abstract SubagentCall prepare(
             RunnerContext ctx, Object prompt, String sessionId, String callId);
 }

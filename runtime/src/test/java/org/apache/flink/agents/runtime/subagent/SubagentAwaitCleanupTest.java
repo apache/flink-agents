@@ -24,7 +24,6 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
-import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
@@ -32,6 +31,7 @@ import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.SubagentCall;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
@@ -48,6 +48,7 @@ import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -56,9 +57,7 @@ import java.util.concurrent.CancellationException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 /** Exercises handled await failures through dispatch and operator action finalization. */
 public class SubagentAwaitCleanupTest {
@@ -118,17 +117,8 @@ public class SubagentAwaitCleanupTest {
     }
 
     @ParameterizedTest
-    @CsvSource({
-        "deferred,error",
-        "deferred,cancel",
-        "deferred,interrupt",
-        "async,error",
-        "async,cancel",
-        "async,interrupt"
-    })
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    void directAwaitPreservesFailureAndReleasesHandle(String mode, String failureKind)
-            throws Exception {
+    @ValueSource(strings = {"error", "cancel", "interrupt"})
+    void directAwaitPreservesFailureAndReleasesHandle(String failureKind) throws Exception {
         Exception failure =
                 failureKind.equals("cancel")
                         ? new CancellationException("await failed")
@@ -136,34 +126,14 @@ public class SubagentAwaitCleanupTest {
                                 ? new InterruptedException("await failed")
                                 : new IllegalStateException("await failed");
         RunnerContext ctx = mock(RunnerContext.class);
-        when(ctx.durableExecuteAsync(any(DurableCallable.class)))
-                .thenReturn(
-                        (DurableFuture)
-                                () -> {
-                                    throw failure;
-                                });
+        DurableFuture<SubagentResult> delegate =
+                () -> {
+                    throw failure;
+                };
         PendingSubagentCallRegistry registry = new PendingSubagentCallRegistry("caller");
-        ResourceDescriptor descriptor =
-                ResourceDescriptor.Builder.newBuilder(
-                                (mode.equals("deferred") ? DeferredSetup.class : AsyncSetup.class)
-                                        .getName())
-                        .addInitialArgument("stage", "result")
-                        .build();
         SubagentFuture future =
                 new SubagentFutureImpl(
-                        "s",
-                        "c",
-                        ctx,
-                        () ->
-                                ctx.durableExecuteAsync(
-                                        mode.equals("deferred")
-                                                ? new DeferredSetup(descriptor, null)
-                                                        .prepare(ctx, "hello", "s", "c")
-                                                : new AsyncSetup(descriptor, null)
-                                                        .awaitResult(ctx, "s", "c")),
-                        registry,
-                        () -> false,
-                        () -> {});
+                        "s", "c", ctx, () -> delegate, registry, () -> false, () -> {});
         assertThatThrownBy(future::await).isSameAs(failure);
         registry.checkEmpty();
     }
@@ -199,29 +169,16 @@ public class SubagentAwaitCleanupTest {
         }
 
         @Override
-        protected DurableCallable<SubagentResult> prepare(
+        protected SubagentCall prepare(
                 RunnerContext ctx, Object prompt, String sessionId, String callId) {
             if (stage.equals("prepare")) {
                 throw new IllegalStateException("remote unavailable");
             }
-            return new DurableCallable<SubagentResult>() {
-                @Override
-                public String getId() {
-                    return sessionId + "#" + callId;
+            return () -> {
+                if (stage.equals("call")) {
+                    throw new IllegalStateException("remote unavailable");
                 }
-
-                @Override
-                public Class<SubagentResult> getResultClass() {
-                    return SubagentResult.class;
-                }
-
-                @Override
-                public SubagentResult call() {
-                    if (stage.equals("call")) {
-                        throw new IllegalStateException("remote unavailable");
-                    }
-                    return SubagentResult.error("remote unavailable");
-                }
+                return SubagentResult.error("remote unavailable");
             };
         }
     }

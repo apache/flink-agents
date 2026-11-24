@@ -27,16 +27,22 @@ import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.Outcome;
+import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.subagent.SubagentCall;
+import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.async.AsyncExecutorThreadFactory;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.subagent.BaseDeferredSubagentSetup;
 import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
@@ -92,6 +98,73 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                         UnregisteredMetricGroups.createUnregisteredOperatorMetricGroup());
         persistCallCount = new AtomicInteger();
         lastPersistedState = null;
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void deferredSubagentUsesFrameworkMetadataAndReplaysTerminalResult(boolean pending)
+            throws Exception {
+        ActionState state = new ActionState(null);
+        if (pending) {
+            state.addCallResult(CallResult.pending("session#call"));
+        }
+        RecoveryDeferredSetup setup = new RecoveryDeferredSetup();
+        try (var executor = new InspectingContinuationActionExecutor()) {
+            JavaRunnerContextImpl context = createContext(state, executor);
+            var future = setup.submit(context, "prompt", "session", "call");
+            assertEquals(0, setup.preparations);
+            SubagentResult result = future.await();
+            assertEquals(pending ? "reconciled" : "called", result.getResult());
+            assertEquals(1, setup.preparations);
+            assertEquals(pending ? 0 : 1, setup.calls);
+            assertEquals(pending ? 1 : 0, setup.reconciliations);
+            assertEquals(1, state.getCallResultCount());
+            assertEquals("session#call", state.getCallResult(0).getFunctionId());
+            assertTrue(state.getCallResult(0).isSuccess());
+
+            ActionState restored = ActionStateSerde.deserialize(ActionStateSerde.serialize(state));
+            JavaRunnerContextImpl recovered = createContext(restored, executor);
+            SubagentResult replayed = setup.submit(recovered, "prompt", "session", "call").await();
+            assertTrue(replayed.isSuccess());
+            assertEquals(result.getResult(), replayed.getResult());
+            assertEquals(1, setup.preparations);
+            assertEquals(pending ? 0 : 1, setup.calls);
+            assertEquals(pending ? 1 : 0, setup.reconciliations);
+        }
+    }
+
+    private static final class RecoveryDeferredSetup extends BaseDeferredSubagentSetup {
+        private int preparations;
+        private int calls;
+        private int reconciliations;
+
+        private RecoveryDeferredSetup() {
+            super(
+                    ResourceDescriptor.Builder.newBuilder(RecoveryDeferredSetup.class.getName())
+                            .build(),
+                    null);
+        }
+
+        @Override
+        protected SubagentCall prepare(
+                RunnerContext ctx, Object prompt, String sessionId, String callId) {
+            preparations++;
+            return new SubagentCall() {
+                @Override
+                public SubagentResult call() {
+                    calls++;
+                    return SubagentResult.ok("called");
+                }
+
+                @Override
+                public Callable<SubagentResult> reconciler() {
+                    return () -> {
+                        reconciliations++;
+                        return SubagentResult.ok("reconciled");
+                    };
+                }
+            };
+        }
     }
 
     @Test
