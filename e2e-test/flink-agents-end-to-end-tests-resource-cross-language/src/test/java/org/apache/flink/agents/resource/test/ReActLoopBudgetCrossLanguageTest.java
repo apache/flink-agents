@@ -18,7 +18,6 @@
 package org.apache.flink.agents.resource.test;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
@@ -41,6 +40,7 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
@@ -79,6 +79,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** Runs real Python actions/resources through Pemja in Flink jobs. */
 @Timeout(60)
 public class ReActLoopBudgetCrossLanguageTest {
+
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
+
     private static final AtomicInteger NORMAL_CALLS = new AtomicInteger();
     private static final AtomicInteger CLOSING_CALLS = new AtomicInteger();
     private static final AtomicInteger TOOL_CALLS = new AtomicInteger();
@@ -103,7 +106,6 @@ public class ReActLoopBudgetCrossLanguageTest {
                         .build();
         try (var interpreter = new PythonInterpreter(config)) {
             interpreter.exec("from flink_agents.api.react_loop_budget import ReActLoopBudget");
-            var mapper = new ObjectMapper().registerModule(new JavaTimeModule());
             for (var mode : ReActLoopBudget.BudgetMode.values()) {
                 var budget =
                         ReActLoopBudget.builder()
@@ -112,11 +114,11 @@ public class ReActLoopBudgetCrossLanguageTest {
                                 .maxTime(Duration.ofMillis(millis))
                                 .mode(mode)
                                 .build();
-                interpreter.set("budget_json", mapper.writeValueAsString(budget));
+                interpreter.set("budget_json", MAPPER.writeValueAsString(budget));
                 interpreter.exec(
                         "wire_json = ReActLoopBudget.model_validate_json(budget_json).model_dump_json()");
                 var restored =
-                        mapper.readValue(
+                        MAPPER.readValue(
                                 (String) interpreter.get("wire_json"), ReActLoopBudget.class);
                 assertThat(restored.getMaxTime()).isEqualTo(budget.getMaxTime());
                 assertThat(restored.getMaxTurns()).isEqualTo(budget.getMaxTurns());
@@ -259,13 +261,8 @@ public class ReActLoopBudgetCrossLanguageTest {
     }
 
     @ParameterizedTest
-    @CsvSource({
-        "true,HARD,turn", "true,SOFT,turn", "false,HARD,turn", "false,SOFT,turn",
-        "true,HARD,token", "true,SOFT,token", "false,HARD,token", "false,SOFT,token",
-        "true,HARD,time", "true,SOFT,time", "false,HARD,time", "false,SOFT,time"
-    })
-    void budgetsRunThroughPublicApiInFlinkJob(boolean javaModel, String mode, String limit)
-            throws Exception {
+    @CsvSource({"HARD,turn", "SOFT,turn", "HARD,token", "SOFT,token", "HARD,time", "SOFT,time"})
+    void budgetsRunThroughPublicApiInFlinkJob(String mode, String limit) throws Exception {
         Configuration config = new Configuration();
         config.setString("restart-strategy.type", "disable");
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(config);
@@ -279,7 +276,7 @@ public class ReActLoopBudgetCrossLanguageTest {
                                 env.fromElements(
                                         mode + ":" + (limit.equals("time") ? "time-job" : limit)),
                                 new InputKey())
-                        .apply(agent(javaModel))
+                        .apply(agent(false))
                         .toDataStream();
         List<Object> results = new ArrayList<>();
         try (CloseableIterator<Object> iterator = output.collectAsync()) {

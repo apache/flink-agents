@@ -20,7 +20,6 @@ package org.apache.flink.agents.runtime.subagent;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -28,6 +27,7 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.subagent.InternalSubagentResourceDescriptorBuilder;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.exceptions.UncapturableException;
@@ -64,7 +64,7 @@ public class InternalSubagentSetup extends BaseSubagentSetup {
      * resolution a child action performs at call time key the Python scope cache by one string.
      */
     private static final ObjectMapper PLAN_MAPPER =
-            new ObjectMapper().registerModule(new JavaTimeModule());
+            JacksonMapperFactory.builderWithJavaTime().build();
 
     private final String scope;
 

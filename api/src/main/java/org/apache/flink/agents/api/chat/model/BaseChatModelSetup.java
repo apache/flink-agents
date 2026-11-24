@@ -280,8 +280,7 @@ public abstract class BaseChatModelSetup extends Resource {
         Preconditions.checkNotNull(
                 connection,
                 "Connection is not initialized. Ensure open() is called before chat().");
-        return callConnection(
-                prepareRequestMessages(messages, promptArgs), tools, modelParams, null, false);
+        return chat(prepareRequestMessages(messages, promptArgs), tools, modelParams, null);
     }
 
     /**
@@ -306,15 +305,6 @@ public abstract class BaseChatModelSetup extends Resource {
             List<Tool> tools,
             @Nullable Map<String, Object> modelParams,
             @Nullable Object outputSchema) {
-        return callConnection(messages, tools, modelParams, outputSchema, tools.isEmpty());
-    }
-
-    private ChatResult callConnection(
-            List<ChatMessage> messages,
-            List<Tool> tools,
-            @Nullable Map<String, Object> modelParams,
-            @Nullable Object outputSchema,
-            boolean disableTools) {
         Preconditions.checkNotNull(
                 connection,
                 "Connection is not initialized. Ensure open() is called before chat().");
@@ -322,7 +312,7 @@ public abstract class BaseChatModelSetup extends Resource {
         if (modelParams != null) {
             params.putAll(modelParams);
         }
-        if (disableTools) {
+        if (tools.isEmpty()) {
             params = withoutToolOnlyParams(params);
         }
         if (outputSchema == null) {

@@ -28,12 +28,16 @@ import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.VideoBlock;
+import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.chat.model.routing.RoutingCandidate;
 import org.apache.flink.agents.api.chat.model.routing.RoutingContext;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.chat.model.routing.Strategies;
+import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,6 +46,11 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /** Unit tests for the judge executor's pure functions (verdict parsing, prompt building). */
 class LlmJudgeRoutingExecutorTest {
@@ -62,7 +71,19 @@ class LlmJudgeRoutingExecutorTest {
     private static List<ChatMessage> judgeMessages(
             RoutingStrategy strategy, RoutingContext context) {
         return LlmJudgeRoutingExecutor.buildJudgeMessages(
-                strategy, context, context.getMessages(), java.util.Set.of(), new boolean[1]);
+                strategy, context, context.getMessages(), true);
+    }
+
+    private static RoutingInput prepare(RoutingStrategy strategy, RoutingContext context)
+            throws Exception {
+        return RoutingInput.prepare(strategy, context, mock(RunnerContext.class), block -> true);
+    }
+
+    private static ChatMessage judgeRequest(
+            RoutingStrategy strategy, RoutingContext context, RoutingInput prepared) {
+        return LlmJudgeRoutingExecutor.buildJudgeMessages(
+                        strategy, context, prepared.messages, prepared.hasRequestContent)
+                .get(1);
     }
 
     @Test
@@ -130,14 +151,16 @@ class LlmJudgeRoutingExecutorTest {
     }
 
     @Test
-    void judgeMessagesFallBackToPromptArgsWhenConversationIsEmpty() {
+    void judgeMessagesFallBackToPromptArgsWhenConversationIsEmpty() throws Exception {
         // With no bound prompt the model ignores promptArgs, but if the conversation carries no
         // text at all the raw args are the only signal available to the judge.
         RoutingContext context =
                 ctx(
                         List.of(new ChatMessage(MessageRole.USER, "")),
                         Map.of("input", "write some sql for active users"));
-        String userMessage = judgeMessages(Strategies.llm("judge"), context).get(1).getText();
+        RoutingStrategy strategy = Strategies.llm("judge");
+        RoutingInput input = prepare(strategy, context);
+        String userMessage = judgeRequest(strategy, context, input).getText();
         assertTrue(userMessage.contains("write some sql for active users"));
     }
 
@@ -157,7 +180,7 @@ class LlmJudgeRoutingExecutorTest {
     }
 
     @Test
-    void contextCapPinsSystemAndNewestAndFlagsTruncation() {
+    void contextCapPinsSystemAndNewestAndFlagsTruncation() throws Exception {
         String oldTurn = "y".repeat(500);
         RoutingContext context =
                 ctx(
@@ -166,33 +189,18 @@ class LlmJudgeRoutingExecutorTest {
                                 new ChatMessage(MessageRole.USER, oldTurn),
                                 new ChatMessage(MessageRole.USER, "current question")),
                         Map.of());
-        boolean[] truncated = new boolean[1];
-        List<ChatMessage> messages =
-                LlmJudgeRoutingExecutor.buildJudgeMessages(
-                        Strategies.llm("judge").withMaxContextChars(80),
-                        context,
-                        context.getMessages(),
-                        java.util.Set.of(),
-                        truncated);
-        String userMessage = messages.get(1).getText();
-        assertTrue(truncated[0]);
-        assertTrue(userMessage.contains("SYSTEM: task framing"));
-        assertTrue(userMessage.contains("USER: current question"));
-        assertFalse(userMessage.contains(oldTurn));
+        RoutingInput input = prepare(Strategies.llm("judge").withMaxContextChars(80), context);
+        assertTrue(input.truncated);
+        assertEquals(
+                List.of(ChatMessage.system("task framing"), ChatMessage.user("current question")),
+                input.messages);
     }
 
     @Test
-    void noCapMeansNoTruncation() {
+    void noCapMeansNoTruncation() throws Exception {
         RoutingContext context =
                 ctx(List.of(new ChatMessage(MessageRole.USER, "z".repeat(100_000))), Map.of());
-        boolean[] truncated = new boolean[1];
-        LlmJudgeRoutingExecutor.buildJudgeMessages(
-                Strategies.llm("judge"),
-                context,
-                context.getMessages(),
-                java.util.Set.of(),
-                truncated);
-        assertFalse(truncated[0]);
+        assertFalse(prepare(Strategies.llm("judge"), context).truncated);
     }
 
     /**
@@ -200,46 +208,63 @@ class LlmJudgeRoutingExecutorTest {
      * empty USER message — the conversation is non-empty, but it carries no request text.
      */
     @Test
-    void judgeMessagesFallBackToPromptArgsWithSystemAndEmptyUser() {
+    void judgeMessagesFallBackToPromptArgsWithSystemAndEmptyUser() throws Exception {
         RoutingContext context =
                 ctx(
                         List.of(
                                 new ChatMessage(MessageRole.SYSTEM, "You are a helpful assistant"),
                                 new ChatMessage(MessageRole.USER, "")),
                         Map.of("input", "write some sql for active users"));
-        String userMessage = judgeMessages(Strategies.llm("judge"), context).get(1).getText();
+        RoutingStrategy strategy = Strategies.llm("judge");
+        RoutingInput input = prepare(strategy, context);
+        String userMessage = judgeRequest(strategy, context, input).getText();
         assertTrue(userMessage.contains("SYSTEM: You are a helpful assistant"));
         assertTrue(userMessage.contains("write some sql for active users"));
     }
 
-    /**
-     * Regression (review): with a cap, messages generated by the anchor's request shaping (the
-     * rendered task template — passed as pinned indices) are always kept, like SYSTEM and the
-     * newest message.
-     */
     @Test
-    void contextCapPinsRenderedTemplateMessages() {
-        String oldTurn = "y".repeat(500);
-        List<ChatMessage> effective =
-                List.of(
-                        new ChatMessage(
-                                MessageRole.USER, "Review this SQL for performance: SELECT 1"),
-                        new ChatMessage(MessageRole.USER, oldTurn),
-                        new ChatMessage(MessageRole.USER, "current question"));
-        RoutingContext context = ctx(effective, Map.of());
-        boolean[] truncated = new boolean[1];
-        List<ChatMessage> messages =
-                LlmJudgeRoutingExecutor.buildJudgeMessages(
-                        Strategies.llm("judge").withMaxContextChars(100),
+    void contextCapAppliesBeforeAnchorCopiesAndAddsMessages() throws Exception {
+        String oldTurn = "y".repeat(200);
+        String prompt = "rendered prompt ".repeat(10);
+        RoutingContext context =
+                ctx(
+                        List.of(
+                                ChatMessage.user(oldTurn),
+                                ChatMessage.user("recent"),
+                                ChatMessage.user("latest")),
+                        Map.of());
+        RunnerContext runner = mock(RunnerContext.class);
+        BaseChatModelSetup anchor = mock(BaseChatModelSetup.class);
+        when(runner.getResource("small", ResourceType.CHAT_MODEL)).thenReturn(anchor);
+        when(anchor.prepareRequestMessages(anyList(), anyMap()))
+                .thenAnswer(
+                        call -> {
+                            List<ChatMessage> selected = call.getArgument(0);
+                            List<ChatMessage> prepared = new ArrayList<>();
+                            prepared.add(ChatMessage.system("available skills"));
+                            prepared.add(ChatMessage.user(prompt));
+                            for (ChatMessage message : selected) {
+                                prepared.add(new ChatMessage(message.getRole(), message.getText()));
+                            }
+                            return prepared;
+                        });
+        RoutingInput input =
+                RoutingInput.prepare(
+                        Strategies.llm("judge").withMaxContextChars(12),
                         context,
-                        effective,
-                        java.util.Set.of(0), // index 0 = rendered template
-                        truncated);
-        String userMessage = messages.get(1).getText();
-        assertTrue(truncated[0]);
-        assertTrue(userMessage.contains("Review this SQL for performance: SELECT 1"));
-        assertTrue(userMessage.contains("current question"));
-        assertFalse(userMessage.contains(oldTurn));
+                        runner,
+                        block -> true);
+        verify(anchor)
+                .prepareRequestMessages(
+                        List.of(ChatMessage.user("recent"), ChatMessage.user("latest")), Map.of());
+        assertEquals(
+                List.of(
+                        ChatMessage.system("available skills"),
+                        ChatMessage.user(prompt),
+                        ChatMessage.user("recent"),
+                        ChatMessage.user("latest")),
+                input.messages);
+        assertTrue(input.truncated);
     }
 
     @Test
@@ -312,7 +337,7 @@ class LlmJudgeRoutingExecutorTest {
     }
 
     @Test
-    void toolResultTextConsumesBudgetAndMediaIsDroppedWithItsMessage() {
+    void toolResultTextConsumesBudgetAndMediaIsDroppedWithItsMessage() throws Exception {
         ImageBlock image = ImageBlock.fromBase64("image/png", "aGk=");
         RoutingContext context =
                 ctx(
@@ -325,22 +350,16 @@ class LlmJudgeRoutingExecutorTest {
                                                 false)),
                                 ChatMessage.user("current question")),
                         Map.of());
-        boolean[] truncated = new boolean[1];
-        ChatMessage input =
-                LlmJudgeRoutingExecutor.buildJudgeMessages(
-                                Strategies.llm("judge").withMaxContextChars(80),
-                                context,
-                                context.getMessages(),
-                                java.util.Set.of(),
-                                truncated)
-                        .get(1);
-        assertTrue(truncated[0]);
+        RoutingStrategy strategy = Strategies.llm("judge").withMaxContextChars(80);
+        RoutingInput prepared = prepare(strategy, context);
+        ChatMessage input = judgeRequest(strategy, context, prepared);
+        assertTrue(prepared.truncated);
         assertEquals("SYSTEM: framing\nUSER: current question", input.getText());
         assertFalse(input.getBlocks().contains(image));
     }
 
     @Test
-    void newestToolResultKeepsTextAndMediaEvenWhenItExceedsBudget() {
+    void newestToolResultKeepsTextAndMediaEvenWhenItExceedsBudget() throws Exception {
         ImageBlock image = ImageBlock.fromBase64("image/png", "aGk=");
         String text = "x".repeat(500);
         RoutingContext context =
@@ -353,36 +372,24 @@ class LlmJudgeRoutingExecutorTest {
                                                 List.of(new TextBlock(text), image),
                                                 false))),
                         Map.of());
-        boolean[] truncated = new boolean[1];
-        ChatMessage input =
-                LlmJudgeRoutingExecutor.buildJudgeMessages(
-                                Strategies.llm("judge").withMaxContextChars(20),
-                                context,
-                                context.getMessages(),
-                                java.util.Set.of(),
-                                truncated)
-                        .get(1);
-        assertTrue(truncated[0]);
+        RoutingStrategy strategy = Strategies.llm("judge").withMaxContextChars(20);
+        RoutingInput prepared = prepare(strategy, context);
+        ChatMessage input = judgeRequest(strategy, context, prepared);
+        assertTrue(prepared.truncated);
         assertTrue(input.getText().contains(text));
         assertFalse(input.getText().contains("old request"));
         assertTrue(input.getBlocks().contains(image));
     }
 
     @Test
-    void mediaOnlyRequestDoesNotFallBackToPromptArgsOrChargePayloadBytes() {
+    void mediaOnlyRequestDoesNotFallBackToPromptArgsOrChargePayloadBytes() throws Exception {
         ImageBlock image = ImageBlock.fromBase64("image/png", "a".repeat(1000));
         RoutingContext context =
                 ctx(List.of(ChatMessage.user(List.of(image))), Map.of("input", "unused-args"));
-        boolean[] truncated = new boolean[1];
-        ChatMessage input =
-                LlmJudgeRoutingExecutor.buildJudgeMessages(
-                                Strategies.llm("judge").withMaxContextChars(1),
-                                context,
-                                context.getMessages(),
-                                java.util.Set.of(),
-                                truncated)
-                        .get(1);
+        RoutingStrategy strategy = Strategies.llm("judge").withMaxContextChars(1);
+        RoutingInput prepared = prepare(strategy, context);
+        ChatMessage input = judgeRequest(strategy, context, prepared);
         assertEquals(List.of(new TextBlock("USER: "), image), input.getBlocks());
-        assertFalse(truncated[0]);
+        assertFalse(prepared.truncated);
     }
 }

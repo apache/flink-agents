@@ -19,9 +19,9 @@
 package org.apache.flink.agents.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.agents.ReActLoopBudget.BudgetMode;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -32,8 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Tests for budget construction and defaults. */
 class ReActLoopBudgetTest {
-    private static final ObjectMapper MAPPER =
-            new ObjectMapper().registerModule(new JavaTimeModule());
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
 
     @Test
     void defaultsAndExplicitNullsProduceUnlimitedSoftBudget() {

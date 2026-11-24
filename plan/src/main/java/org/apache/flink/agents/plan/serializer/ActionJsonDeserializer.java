@@ -25,7 +25,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.databind.node.NullNode;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.apache.flink.agents.plan.Function;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -42,6 +42,8 @@ import static org.apache.flink.agents.plan.serializer.ActionJsonSerializer.CONFI
 
 /** Custom deserializer for {@link Action} that handles its function and raw trigger conditions. */
 public class ActionJsonDeserializer extends StdDeserializer<Action> {
+
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
 
     public ActionJsonDeserializer() {
         super(Action.class);
@@ -147,7 +149,6 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
 
     private Map<String, Object> deserializeJavaConfig(JsonNode node) throws Exception {
 
-        ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
         JsonNode configNode = node.get("config");
         Map<String, Object> config = new HashMap<>();
         if (configNode != null && configNode.isObject()) {
@@ -164,7 +165,7 @@ public class ActionJsonDeserializer extends StdDeserializer<Action> {
                 JsonNode value = clazzAndValue.get("value");
                 config.put(
                         key,
-                        mapper.treeToValue(
+                        MAPPER.treeToValue(
                                 value,
                                 Class.forName(
                                         clazz,

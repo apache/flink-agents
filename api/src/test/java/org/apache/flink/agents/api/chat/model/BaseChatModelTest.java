@@ -655,8 +655,8 @@ class BaseChatModelTest {
     }
 
     @Test
-    @DisplayName("Plain chat() without tools keeps tool-only parameters")
-    void testPlainChatKeepsToolOnlyParams() {
+    @DisplayName("Plain chat() without tools omits tool-only parameters")
+    void testPlainChatWithoutToolsOmitsToolOnlyParams() {
         StructuredRecordingConnection connection =
                 new StructuredRecordingConnection(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
         RecordingChatModelSetup setup =
@@ -668,10 +668,15 @@ class BaseChatModelTest {
                 Map.of(),
                 Map.of("temperature", 0.2, "tool_choice", "required"));
 
-        Map<String, Object> expected = new HashMap<>(paramsWithToolChoice());
-        expected.put("temperature", 0.2);
-        expected.put("tool_choice", "required");
-        assertEquals(expected, connection.capturedModelParams);
+        assertEquals(
+                Map.of(
+                        "model",
+                        "setup-model",
+                        "temperature",
+                        0.2,
+                        "additional_kwargs",
+                        Map.of("top_p", 0.5)),
+                connection.capturedModelParams);
     }
 
     @Test
@@ -738,7 +743,7 @@ class BaseChatModelTest {
         setup.skillDiscoveryPrompt = "Available skills";
         Tool bound = new StubTool("bound", "help", "{\"type\":\"object\"}");
         setup.getTools().add(bound);
-        Map<String, Object> modelParams = Map.of("temperature", 0.9);
+        Map<String, Object> modelParams = Map.of("temperature", 0.9, "tool_choice", "required");
 
         setup.chat(List.of(new ChatMessage(MessageRole.USER, "")), Map.of("task", 7), modelParams);
 

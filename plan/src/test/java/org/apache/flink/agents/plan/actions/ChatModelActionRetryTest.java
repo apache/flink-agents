@@ -18,7 +18,6 @@
 package org.apache.flink.agents.plan.actions;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
@@ -45,6 +44,7 @@ import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.LLMExecutionMetadataKeys;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.ChatFixtures;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
@@ -93,6 +93,8 @@ import static org.mockito.Mockito.withSettings;
  * the finish-reason gate, and tool-response handling.
  */
 class ChatModelActionRetryTest {
+
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
 
     private static final Map<String, Object> LLM_METADATA =
             Map.of(LLMExecutionMetadataKeys.MODEL, "configured-model");
@@ -356,19 +358,10 @@ class ChatModelActionRetryTest {
     @Test
     void budgetDurationUsesWholeMilliseconds() {
         var budget = ReActLoopBudget.builder().maxTime(java.time.Duration.ofMillis(1)).build();
+        assertThat(MAPPER.convertValue(budget, Map.class).get("max_time")).isEqualTo("PT0.001S");
         assertThat(
-                        new ObjectMapper()
-                                .registerModule(new JavaTimeModule())
-                                .convertValue(budget, Map.class)
-                                .get("max_time"))
-                .isEqualTo("PT0.001S");
-        assertThat(
-                        new ObjectMapper()
-                                .registerModule(new JavaTimeModule())
-                                .convertValue(
-                                        new ObjectMapper()
-                                                .registerModule(new JavaTimeModule())
-                                                .convertValue(budget, Map.class),
+                        MAPPER.convertValue(
+                                        MAPPER.convertValue(budget, Map.class),
                                         ReActLoopBudget.class)
                                 .getMaxTime())
                 .isEqualTo(java.time.Duration.ofMillis(1));
@@ -437,11 +430,7 @@ class ChatModelActionRetryTest {
                                                 : ReActLoopBudget.BudgetMode.HARD)
                                 .build());
         ChatRequestEvent restored =
-                ChatRequestEvent.fromEvent(
-                        Event.fromJson(
-                                new ObjectMapper()
-                                        .registerModule(new JavaTimeModule())
-                                        .writeValueAsString(request)));
+                ChatRequestEvent.fromEvent(Event.fromJson(MAPPER.writeValueAsString(request)));
         // Keep the Java class schema while exercising budget/context wire round-tripping.
         restored.setAttr("output_schema", Map.class);
         ChatModelAction.processChatRequestOrToolResponse(restored, mockCtx);
@@ -1855,14 +1844,9 @@ class ChatModelActionRetryTest {
                 (Map<UUID, Map<String, Object>>)
                         sensoryMemory.get("_TOOL_REQUEST_EVENT_CONTEXT").getValue();
         Object checkpointed =
-                new ObjectMapper()
-                        .registerModule(new JavaTimeModule())
-                        .readValue(
-                                new ObjectMapper()
-                                        .registerModule(new JavaTimeModule())
-                                        .writeValueAsBytes(
-                                                parked.get(toolB.getId()).get("user_context")),
-                                Object.class);
+                MAPPER.readValue(
+                        MAPPER.writeValueAsBytes(parked.get(toolB.getId()).get("user_context")),
+                        Object.class);
         parked.get(toolB.getId()).put("user_context", checkpointed);
 
         // Finish B before A. Each final response keeps its own request context.
@@ -1901,11 +1885,7 @@ class ChatModelActionRetryTest {
                 new ChatRequestEvent(
                         "test-model", List.of(ChatMessage.user("hi")), null, null, context);
         ChatRequestEvent restored =
-                ChatRequestEvent.fromEvent(
-                        Event.fromJson(
-                                new ObjectMapper()
-                                        .registerModule(new JavaTimeModule())
-                                        .writeValueAsString(original)));
+                ChatRequestEvent.fromEvent(Event.fromJson(MAPPER.writeValueAsString(original)));
 
         ChatModelAction.processChatRequestOrToolResponse(restored, mockCtx);
 

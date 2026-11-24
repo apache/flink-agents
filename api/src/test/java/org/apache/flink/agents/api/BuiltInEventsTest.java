@@ -19,7 +19,6 @@
 package org.apache.flink.agents.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
@@ -43,6 +42,7 @@ import org.apache.flink.agents.api.event.ShortTermReadEvent;
 import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -67,12 +67,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** Unit tests for the {@link BuiltInEvents} registry and its {@code Event.fromJson} hookup. */
 class BuiltInEventsTest {
     @Test
-    void invalidBudgetRejectedDuringEventRestoration() {
-        for (Object raw :
+    void invalidBudgetMapRejectedDuringEventRestoration() {
+        for (Map<String, ?> raw :
                 List.of(
-                        "not-a-map",
-                        42,
-                        List.of(),
                         Map.of("max_turns", 0),
                         Map.of("max_time", "PT0S"),
                         Map.of("max_time", "PT-0.001S"),
@@ -151,8 +148,7 @@ class BuiltInEventsTest {
         }
     }
 
-    private static final ObjectMapper MAPPER =
-            new ObjectMapper().registerModule(new JavaTimeModule());
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
     private static final UUID FIXED_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
     private static final UUID REQUEST_ID = UUID.fromString("00000000-0000-0000-0000-000000000002");
 

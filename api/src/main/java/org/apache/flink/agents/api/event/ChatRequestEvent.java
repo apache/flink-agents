@@ -22,10 +22,10 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 
 import javax.annotation.Nullable;
 
@@ -40,8 +40,7 @@ public class ChatRequestEvent extends Event {
 
     public static final String EVENT_TYPE = "_chat_request_event";
 
-    private static final ObjectMapper MAPPER =
-            new ObjectMapper().registerModule(new JavaTimeModule());
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
 
     /**
      * The fixed cross-language attribute schema for this event: {@code model} and {@code messages}
@@ -132,8 +131,6 @@ public class ChatRequestEvent extends Event {
         Object budget = attributes.get("budget");
         if (budget instanceof Map) {
             attributes.put("budget", MAPPER.convertValue(budget, ReActLoopBudget.class));
-        } else if (budget != null && !(budget instanceof ReActLoopBudget)) {
-            throw new IllegalArgumentException("budget must be a ReActLoopBudget or Map");
         }
         return attributes;
     }

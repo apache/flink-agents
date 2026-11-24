@@ -293,7 +293,7 @@ Two optional settings customize the judge:
 | Setting | Description |
 |---------|-------------|
 | `Strategies.llm(judgeModel, promptTemplate)` | Supply the judge's system instructions. Include `{candidates}` to insert one `- name: description` line per candidate, and instruct the judge to return the verdict format above. |
-| `withMaxContextChars(int)` | Limit conversation text, including tool calls and results. System messages, rendered prompt messages, and the newest message are always kept; older messages are included newest-first as space allows. Media stays with its message and does not count toward the character limit. Required messages can exceed the limit. |
+| `withMaxContextChars(int)` | Limit conversation text, including tool calls and results. System messages and the newest message are always kept. Older messages are included newest-first as space allows. The anchor model’s bound prompt and skill-discovery messages are added after this limit is applied. Media stays with its message and does not count toward the character limit. Required messages can exceed the limit. |
 
 For example, `.strategy(Strategies.llm("judge").withMaxContextChars(8000))` sets a
 text budget. This is not a token limit or a hard cap on total input.

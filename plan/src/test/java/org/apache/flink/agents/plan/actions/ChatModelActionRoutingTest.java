@@ -18,7 +18,6 @@
 package org.apache.flink.agents.plan.actions;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.ReActLoopBudget;
@@ -61,6 +60,7 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.ChatFixtures;
 import org.apache.flink.agents.plan.routing.ModelRouter;
@@ -96,6 +96,8 @@ import static org.mockito.Mockito.when;
 
 /** Integration tests for model routing inside {@link ChatModelAction}. */
 public class ChatModelActionRoutingTest {
+
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
 
     /** An executor that returns a name that is not a candidate (to exercise the abstain path). */
     public static class SelectsUnknownStrategy implements CustomRoutingExecutor {
@@ -577,10 +579,8 @@ public class ChatModelActionRoutingTest {
     @Test
     void restoredChatRequestReachesActionAsConcreteType() throws Exception {
         String wireJson =
-                new ObjectMapper()
-                        .registerModule(new JavaTimeModule())
-                        .writeValueAsString(
-                                new ChatRequestEvent("small", List.of(ChatMessage.user("hi"))));
+                MAPPER.writeValueAsString(
+                        new ChatRequestEvent("small", List.of(ChatMessage.user("hi"))));
 
         Event restored = Event.fromJson(wireJson);
 
