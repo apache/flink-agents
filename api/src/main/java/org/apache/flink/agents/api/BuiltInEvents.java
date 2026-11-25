@@ -21,6 +21,7 @@ package org.apache.flink.agents.api;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.event.ContextManagementEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
 import org.apache.flink.agents.api.event.DecisionRequestEvent;
@@ -88,6 +89,7 @@ public final class BuiltInEvents {
                             ContextRetrievalResponseEvent.EVENT_TYPE,
                             ContextRetrievalResponseEvent::fromEvent),
                     Map.entry(ModelRoutingEvent.EVENT_TYPE, ModelRoutingEvent::fromEvent),
+                    Map.entry(ContextManagementEvent.EVENT_TYPE, ContextManagementEvent::fromEvent),
                     Map.entry(AgentRunBeginEvent.EVENT_TYPE, AgentRunBeginEvent::fromEvent),
                     Map.entry(ShortTermWriteEvent.EVENT_TYPE, MemoryEvent::fromEvent),
                     Map.entry(ShortTermReadEvent.EVENT_TYPE, MemoryEvent::fromEvent),

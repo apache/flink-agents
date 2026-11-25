@@ -39,6 +39,7 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.agents.plan.contextmanagement.ContextManager;
 import org.apache.flink.agents.plan.routing.ModelRoutingExecutionException;
 import org.apache.flink.agents.plan.routing.ModelRoutingExecutor;
 import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
@@ -297,6 +298,10 @@ public class ChatModelAction {
      * <p>If there is no tool calls in chat model response, send the chat response event. Otherwise,
      * generate tool request event and save the tool call context in memory.
      *
+     * <p>The call starts a request: context management takes it as the first model call of the
+     * request and applies the agent's default policy. The model calls that follow a tool round are
+     * made by this action itself.
+     *
      * @param initialRequestId The request id of the initial chat request event.
      * @param messages The chat messages as llm input.
      * @param ctx The runner context this function executed in.
@@ -316,9 +321,17 @@ public class ChatModelAction {
                 promptArgs,
                 outputSchema,
                 null,
+                true,
                 ctx);
     }
 
+    /**
+     * @param messages the request's stored conversation. What the model is sent is derived from it
+     *     by the request's context management policy; the stored conversation itself is kept
+     *     complete.
+     * @param firstCall whether this is the request's first model call, as opposed to a call that
+     *     follows a tool round
+     */
     private static void chat(
             UUID initialRequestId,
             ResolvedModelRoute route,
@@ -326,8 +339,23 @@ public class ChatModelAction {
             Map<String, Object> promptArgs,
             @Nullable Object outputSchema,
             @Nullable Map<String, Object> userContext,
+            boolean firstCall,
             RunnerContext ctx)
             throws Exception {
+        // Every candidate of the round is sent the same messages: the context management policy
+        // is applied once per model round, for the selected model.
+        String selectedModel = route.getSelectedModel();
+        ContextManager.Prepared prepared =
+                ContextManager.prepare(
+                        initialRequestId,
+                        selectedModel,
+                        messages,
+                        promptArgs,
+                        firstCall,
+                        ctx,
+                        route.getCandidateAttemptOrder(),
+                        outputSchema);
+
         // The routing layer owns the attempts: the strategy's pick, fallback after a failure,
         // escalation after a rejected answer, and the routing events and metrics. This action
         // processes the one answer it accepted.
@@ -335,7 +363,12 @@ public class ChatModelAction {
         try {
             routed =
                     ModelRoutingExecutor.execute(
-                            initialRequestId, route, messages, promptArgs, outputSchema, ctx);
+                            initialRequestId,
+                            route,
+                            prepared.messages,
+                            promptArgs,
+                            outputSchema,
+                            ctx);
         } catch (ModelRoutingExecutionException e) {
             sendFailure(initialRequestId, e.error, userContext, ctx);
             return;
@@ -346,6 +379,19 @@ public class ChatModelAction {
             // is kept for the tool loop: the next round of a tiered request reads its router and
             // hops from it.
             ModelRoutingExecutor.saveRoutingMetadata(ctx.getSensoryMemory(), routed);
+            // The estimate was made for the selected model; the usage of another candidate that
+            // answered in its place, by fallback or after an escalation, says nothing about it.
+            // The tool loop goes on with the model that answered, and the correction that was
+            // learned from the selected one does not apply to it.
+            if (result.model.equals(selectedModel)) {
+                ContextManager.recordUsage(
+                        ctx.getSensoryMemory(),
+                        initialRequestId,
+                        prepared,
+                        result.response.getUsage());
+            } else {
+                ContextManager.forgetCorrection(ctx.getSensoryMemory(), initialRequestId);
+            }
             handleToolCalls(
                     result.response,
                     initialRequestId,
@@ -406,6 +452,7 @@ public class ChatModelAction {
             }
         }
         ChatRetryStats.clear(memory, requestId);
+        ContextManager.clearRequest(memory, requestId);
     }
 
     /**
@@ -473,6 +520,8 @@ public class ChatModelAction {
             sendFailure(event.getId(), e, event.getUserContext(), ctx);
             return;
         }
+        ContextManager.setRequestPolicy(
+                ctx.getSensoryMemory(), event.getId(), event.getContextManagement());
         chat(
                 event.getId(),
                 selection,
@@ -480,6 +529,7 @@ public class ChatModelAction {
                 event.getPromptArgs(),
                 event.getOutputSchema(),
                 event.getUserContext(),
+                true,
                 ctx);
     }
 
@@ -527,6 +577,7 @@ public class ChatModelAction {
                 promptArgs,
                 outputSchema,
                 userContext,
+                false,
                 ctx);
     }
 

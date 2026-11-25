@@ -279,6 +279,7 @@ class BaseChatModelTest {
     /** Connection that captures the messages passed to it for assertions. */
     private static class RecordingConnection extends BaseChatModelConnection {
         List<ChatMessage> capturedMessages;
+        List<Tool> capturedPlainTools;
         Map<String, Object> capturedModelParams;
 
         RecordingConnection() {
@@ -292,6 +293,7 @@ class BaseChatModelTest {
         public ChatResult chat(
                 List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
             this.capturedMessages = new ArrayList<>(messages);
+            this.capturedPlainTools = new ArrayList<>(tools);
             this.capturedModelParams = new HashMap<>(modelParams);
             return new ChatResult(ChatMessage.assistant(List.of(new TextBlock("ok"))));
         }
@@ -645,6 +647,122 @@ class BaseChatModelTest {
         setup.chat(List.of(new ChatMessage(MessageRole.USER, "hi")));
 
         assertEquals(paramsWithToolChoice(), connection.capturedModelParams);
+    }
+
+    @Test
+    @DisplayName(
+            "chatWithoutTools() sends the messages as given, without the bound prompt, the bound"
+                    + " tools or the tool-only parameters")
+    void testChatWithoutToolsSendsTheMessagesAsGiven() {
+        RecordingConnection connection = new RecordingConnection();
+        Prompt prompt =
+                Prompt.fromMessages(
+                        List.of(new ChatMessage(MessageRole.SYSTEM, "You are the agent.")));
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(connection, prompt, null, paramsWithToolChoice());
+        setup.tools.add(new SubagentTool("bound", "help", "{\"type\":\"object\"}"));
+        List<ChatMessage> messages =
+                List.of(
+                        new ChatMessage(MessageRole.SYSTEM, "Write the notes."),
+                        new ChatMessage(MessageRole.USER, "the rounds"));
+
+        ChatResult result = setup.chatWithoutTools(messages);
+
+        assertEquals("ok", result.getText());
+        assertEquals(messages, connection.capturedMessages);
+        assertEquals(List.of(), connection.capturedPlainTools);
+        // tool_choice, tool_choice_option and parallel_tool_calls are left out at both levels.
+        assertEquals(
+                Map.of("model", "setup-model", "additional_kwargs", Map.of("top_p", 0.5)),
+                connection.capturedModelParams);
+        // The setup's own parameters and tools are as they were.
+        assertEquals(paramsWithToolChoice(), setup.getParameters());
+        assertEquals(1, setup.getTools().size());
+    }
+
+    @Test
+    @DisplayName(
+            "chatWithoutTools() leaves out the parameters with which the setup shapes its own"
+                    + " requests")
+    void testChatWithoutToolsLeavesOutRequestShapingParams() {
+        RecordingConnection connection = new RecordingConnection();
+        Map<String, Object> additional = new HashMap<>();
+        additional.put("tools", List.of(Map.of("type", "web_search")));
+        // Tools from an MCP server that the provider connects to.
+        additional.put("mcp_servers", List.of(Map.of("type", "url", "url", "https://mcp.test")));
+        // The instructions as the Anthropic API takes them.
+        additional.put("system", List.of(Map.of("type", "text", "text", "You are the agent.")));
+        // Functions as the OpenAI API bound them before it had tools.
+        additional.put("functions", List.of(Map.of("name", "lookup")));
+        additional.put("function_call", Map.of("name", "lookup"));
+        additional.put("response_format", Map.of("type", "json_object"));
+        additional.put("output_config", Map.of("format", "json"));
+        // A conversation the provider keeps: the call must not join it.
+        additional.put("conversation", "conv_1");
+        additional.put("previous_response_id", "resp_1");
+        // The output format and the stored prompt of the OpenAI Responses API.
+        additional.put("text", Map.of("format", Map.of("type", "json_schema")));
+        additional.put("prompt", Map.of("id", "pmpt_1"));
+        additional.put("stop_sequences", List.of("Observation:"));
+        // What the client of a connection that is declared in Python merges into its request.
+        additional.put(
+                "extra_body",
+                Map.of(
+                        "tools",
+                        List.of(Map.of("type", "web_search")),
+                        "response_format",
+                        Map.of("type", "json_object"),
+                        "seed",
+                        7));
+        additional.put("top_p", 0.5);
+        Map<String, Object> params = new HashMap<>();
+        params.put("model", "setup-model");
+        params.put("temperature", 0.2);
+        params.put("instructions", "You are the agent. Call the tools.");
+        params.put("json_prefill", true);
+        params.put("format", "json");
+        params.put("response_format", Map.of("type", "json_object"));
+        params.put("previous_response_id", "resp_1");
+        // A sequence at which the chat model's own answers stop.
+        params.put("stop", List.of("Observation:"));
+        params.put("extra_body", Map.of("tool_choice", "required", "user", "u"));
+        params.put("additional_kwargs", additional);
+        RecordingChatModelSetup setup = new RecordingChatModelSetup(connection, null, null, params);
+
+        setup.chatWithoutTools(List.of(new ChatMessage(MessageRole.USER, "the rounds")));
+
+        // Hosted tools, an output format and the provider's instructions would make the call
+        // something else than the messages as given. What is left are plain model settings.
+        assertEquals(
+                Map.of(
+                        "model",
+                        "setup-model",
+                        "temperature",
+                        0.2,
+                        "extra_body",
+                        Map.of("user", "u"),
+                        "additional_kwargs",
+                        Map.of("top_p", 0.5, "extra_body", Map.of("seed", 7))),
+                connection.capturedModelParams);
+        // The setup's own parameters are as they were.
+        assertEquals(params, setup.getParameters());
+        assertEquals(14, ((Map<?, ?>) setup.getParameters().get("additional_kwargs")).size());
+        assertEquals(3, ((Map<?, ?>) additional.get("extra_body")).size());
+        assertEquals(2, ((Map<?, ?>) params.get("extra_body")).size());
+    }
+
+    @Test
+    @DisplayName("chatWithoutTools() needs an open connection")
+    void testChatWithoutToolsNeedsAnOpenConnection() {
+        RecordingChatModelSetup setup = new RecordingChatModelSetup(null, null);
+
+        NullPointerException error =
+                assertThrows(
+                        NullPointerException.class,
+                        () ->
+                                setup.chatWithoutTools(
+                                        List.of(new ChatMessage(MessageRole.USER, "hi"))));
+        assertTrue(error.getMessage().contains("Connection is not initialized"));
     }
 
     @Test

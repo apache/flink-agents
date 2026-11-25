@@ -21,6 +21,7 @@ package org.apache.flink.agents.runtime;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.chat.contextmanagement.ContextManagementPolicy;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.plan.AgentConfiguration;
@@ -217,6 +218,10 @@ public class CompileUtils {
                             + " or zero or negative to disable TTL, got "
                             + DurationUtils.format(ttl));
         }
+
+        // Reading the agent's default context management policy applies its rules, so a value
+        // that is out of range fails the submission, not the first chat request.
+        ContextManagementPolicy.fromConfiguration(config);
     }
 
     private static long checkedMillis(ConfigOption<Duration> option, Duration duration) {

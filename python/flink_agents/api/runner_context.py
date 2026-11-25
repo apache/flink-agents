@@ -25,6 +25,7 @@ from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.configuration import ReadableConfiguration
+from flink_agents.api.context_management import ContextManagementPolicy
 from flink_agents.api.events.event import Event
 from flink_agents.api.memory.long_term_memory import BaseLongTermMemory
 from flink_agents.api.metric_group import MetricGroup
@@ -530,8 +531,12 @@ class RunnerContext(ABC):
         *,
         prompt_args: dict[str, Any] | None = None,
         output_schema: OutputSchema | None = None,
+        context_management: ContextManagementPolicy | None = None,
     ) -> DurableFuture[ChatResult]:
         """Call the chat/tool event loop using this action's resources and memory.
+
+        ``context_management`` replaces the agent's default context management
+        policy for this call; ``ContextManagementPolicy.disabled()`` switches it off.
 
         The runtime records the terminal response when durable execution is enabled.
         Creating a future does not dispatch events or consume durable state.

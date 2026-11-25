@@ -218,6 +218,42 @@ public class CompileUtilsTest {
         assertThat(CompileUtils.connectToAgent(input, json)).isNotNull();
     }
 
+    @Test
+    void connectToAgentRejectsAContextManagementOptionOutOfRange() throws Exception {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.CONTEXT_MANAGEMENT_TOOL_RESULTS_MAX_CHARS, 10);
+        String json =
+                new ObjectMapper()
+                        .writeValueAsString(
+                                new AgentPlan(new HashMap<>(), new HashMap<>(), config));
+        KeyedStream<Row, Row> input = pickledPythonInput();
+
+        // The agent's default policy is checked when the job is submitted.
+        assertThatThrownBy(() -> CompileUtils.connectToAgent(input, json))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("context-management.tool-results.max-chars")
+                .hasMessageContaining("at least 100");
+    }
+
+    @Test
+    void connectToAgentAcceptsAContextManagementPolicy() throws Exception {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.CONTEXT_MANAGEMENT_TOOL_RESULTS_MAX_CHARS, 20_000);
+        config.set(AgentExecutionOptions.CONTEXT_MANAGEMENT_TOOL_RESULTS_KEEP_LAST_ROUNDS, 3);
+        config.set(AgentExecutionOptions.CONTEXT_MANAGEMENT_TOOL_RESULTS_MASK_STEP_ROUNDS, 5);
+        config.set(AgentExecutionOptions.CONTEXT_MANAGEMENT_MAX_INPUT_TOKENS, 100_000);
+        config.set(AgentExecutionOptions.CONTEXT_MANAGEMENT_SUMMARIZATION_TRIGGER_RATIO, 0.7);
+        config.set(AgentExecutionOptions.CONTEXT_MANAGEMENT_SUMMARIZATION_KEEP_LAST_ROUNDS, 2);
+        config.set(AgentExecutionOptions.CONTEXT_MANAGEMENT_SUMMARIZATION_MODEL, "small");
+        String json =
+                new ObjectMapper()
+                        .writeValueAsString(
+                                new AgentPlan(new HashMap<>(), new HashMap<>(), config));
+        KeyedStream<Row, Row> input = pickledPythonInput();
+
+        assertThat(CompileUtils.connectToAgent(input, json)).isNotNull();
+    }
+
     /**
      * A pickled key and value, with the key type declared. The shared helper leaves the key type
      * generic, which the JSON overload rejects only after the plan parses.

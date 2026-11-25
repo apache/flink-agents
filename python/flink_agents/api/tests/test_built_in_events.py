@@ -32,6 +32,7 @@ import pytest
 from flink_agents.api import events
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_result import ChatResult
+from flink_agents.api.context_management import ContextManagementPolicy
 from flink_agents.api.decision_models import (
     DecisionRequest,
     DecisionResult,
@@ -40,6 +41,7 @@ from flink_agents.api.decision_models import (
 )
 from flink_agents.api.events.built_in_events import REGISTRY, restore
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
+from flink_agents.api.events.context_management_event import ContextManagementEvent
 from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
     ContextRetrievalResponseEvent,
@@ -118,6 +120,168 @@ def _category_fixtures() -> list[Event]:
         AgentRunBeginEvent(key="user-42", value={"user.tier": "gold"}),
         ShortTermWriteEvent(key="user-42", value={"user.tier": "gold"}),
     ]
+
+
+# ── Context management: the request's policy and the observability event ──
+
+
+def test_a_chat_request_carries_its_context_management_policy_across_json() -> None:
+    policy = ContextManagementPolicy(
+        tool_result_max_chars=2000,
+        tool_result_keep_last_rounds=3,
+        max_input_tokens=8000,
+    )
+    request = ChatRequestEvent(
+        model="test-model",
+        messages=[ChatMessage.user("hello")],
+        context_management=policy,
+    )
+    assert request.context_management == policy
+
+    # On the wire the policy is its dict form.
+    base = _round_trip_to_base(request)
+    assert base.attributes["context_management"] == {
+        "tool_result_max_chars": 2000,
+        "tool_result_keep_last_rounds": 3,
+        "max_input_tokens": 8000,
+    }
+
+    restored = Event.from_json(request.model_dump_json())
+    assert isinstance(restored, ChatRequestEvent)
+    assert restored.context_management == policy
+
+
+def test_a_chat_request_without_a_policy_has_none_and_the_attribute_is_absent() -> None:
+    request = ChatRequestEvent(model="test-model", messages=[ChatMessage.user("hello")])
+
+    assert request.context_management is None
+    assert "context_management" not in request.attributes
+    restored = Event.from_json(request.model_dump_json())
+    assert restored.context_management is None
+    assert "context_management" not in restored.attributes
+
+
+def test_a_disabled_policy_on_a_chat_request_survives_the_json_boundary() -> None:
+    request = ChatRequestEvent(
+        model="test-model",
+        messages=[ChatMessage.user("hello")],
+        context_management=ContextManagementPolicy.disabled(),
+    )
+
+    restored = Event.from_json(request.model_dump_json())
+
+    # An empty dict is a policy with nothing set, which is not the same as no policy.
+    assert restored.context_management == ContextManagementPolicy.disabled()
+
+
+def test_a_policy_set_as_its_dict_form_is_read_as_a_policy() -> None:
+    request = ChatRequestEvent(model="test-model", messages=[ChatMessage.user("hi")])
+    request.attributes["context_management"] = {"tool_result_keep_last_rounds": 2}
+
+    assert request.context_management == ContextManagementPolicy(
+        tool_result_keep_last_rounds=2
+    )
+
+
+def test_a_chat_request_checks_its_context_management_policy_where_it_is_made() -> None:
+    # The dict form of a policy is taken, and it is checked like a policy.
+    request = ChatRequestEvent(
+        model="m", messages=[], context_management={"tool_result_keep_last_rounds": 2}
+    )
+    assert request.context_management == ContextManagementPolicy(
+        tool_result_keep_last_rounds=2
+    )
+    # A policy that is not one fails here, and not later in the chat action.
+    with pytest.raises(ValueError, match="max_input_tokens must be at least 1, got 0"):
+        ChatRequestEvent(
+            model="m", messages=[], context_management={"max_input_tokens": 0}
+        )
+    with pytest.raises(
+        TypeError,
+        match="must be a ContextManagementPolicy or its dict form, got str",
+    ):
+        ChatRequestEvent(model="m", messages=[], context_management="aggressive")
+    # A copy with an update is made without the checks of a policy. It is checked
+    # here like the dict form, and one that passes is taken as it is.
+    policy = ContextManagementPolicy(tool_result_max_chars=200)
+    with pytest.raises(ValueError, match="tool_result_max_chars must be at least 100"):
+        ChatRequestEvent(
+            model="m",
+            messages=[],
+            context_management=policy.model_copy(update={"tool_result_max_chars": 50}),
+        )
+    longer = policy.model_copy(update={"tool_result_max_chars": 500})
+    request = ChatRequestEvent(model="m", messages=[], context_management=longer)
+    assert request.context_management == ContextManagementPolicy(
+        tool_result_max_chars=500
+    )
+
+
+def test_from_json_rejects_a_chat_request_whose_context_management_is_not_a_policy() -> (
+    None
+):
+    with pytest.raises(ValueError, match="Malformed built-in event") as wrong_type:
+        Event.from_json(
+            _event_json(
+                ChatRequestEvent.EVENT_TYPE,
+                {"model": "m", "messages": [], "context_management": "aggressive"},
+            )
+        )
+    assert "must be a ContextManagementPolicy or its dict form, got str" in str(
+        wrong_type.value.__cause__
+    )
+    with pytest.raises(ValueError, match="Malformed built-in event") as out_of_range:
+        Event.from_json(
+            _event_json(
+                ChatRequestEvent.EVENT_TYPE,
+                {
+                    "model": "m",
+                    "messages": [],
+                    "context_management": {"tool_result_max_chars": 5},
+                },
+            )
+        )
+    assert "tool_result_max_chars must be at least 100" in str(
+        out_of_range.value.__cause__
+    )
+
+
+def test_a_context_management_event_keeps_its_fields_across_json() -> None:
+    details = {
+        "keep_last_rounds": 3,
+        "step_rounds": 1,
+        "rounds": 1,
+        "results": [{"call_id": "call-1", "tool": "lookup", "omitted_chars": 20_000}],
+    }
+    event = ContextManagementEvent(
+        request_id=UUID(_REQUEST_ID),
+        model="test-model",
+        step=ContextManagementEvent.STEP_MASK,
+        details=details,
+    )
+
+    restored = Event.from_json(event.model_dump_json())
+
+    assert isinstance(restored, ContextManagementEvent)
+    assert restored.id == event.id
+    assert restored.request_id == UUID(_REQUEST_ID)
+    assert restored.model == "test-model"
+    assert restored.step == ContextManagementEvent.STEP_MASK
+    assert restored.details == details
+
+
+def test_a_context_management_event_copies_the_details_it_is_given() -> None:
+    details = {"rounds": 1}
+    event = ContextManagementEvent(
+        request_id=UUID(_REQUEST_ID),
+        model="test-model",
+        step=ContextManagementEvent.STEP_MASK,
+        details=details,
+    )
+
+    details["rounds"] = 99
+
+    assert event.details["rounds"] == 1
 
 
 # ── Registry completeness ────────────────────────────────────────────────
@@ -381,6 +545,12 @@ def _valid_attributes_by_type() -> dict:
             "fallback_enabled": False,
             "metadata": {},
         },
+        ContextManagementEvent.EVENT_TYPE: {
+            "request_id": _REQUEST_ID,
+            "model": "test-model",
+            "step": "mask",
+            "details": {"rounds": 2},
+        },
         InputEvent.EVENT_TYPE: {"input": "hello"},
         OutputEvent.EVENT_TYPE: {"output": "world"},
         ChatRequestEvent.EVENT_TYPE: {"model": "test-model", "messages": []},
@@ -552,6 +722,10 @@ def _mistyped_attribute_cases() -> list[tuple[str, str, object]]:
     this table in lockstep with the schemas.
     """
     return [
+        (ContextManagementEvent.EVENT_TYPE, "request_id", "not-a-uuid"),
+        (ContextManagementEvent.EVENT_TYPE, "model", 0),
+        (ContextManagementEvent.EVENT_TYPE, "step", 0),
+        (ContextManagementEvent.EVENT_TYPE, "details", "not-a-map"),
         (ModelRoutingEvent.EVENT_TYPE, "request_id", "not-a-uuid"),
         (ModelRoutingEvent.EVENT_TYPE, "router", 0),
         (ModelRoutingEvent.EVENT_TYPE, "candidates", [0]),

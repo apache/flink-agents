@@ -736,6 +736,97 @@ def test_chat_with_schema_and_no_tools_omits_tool_only_params(
     assert setup.setup_params == _params_with_tool_choice()
 
 
+def test_chat_without_tools_sends_the_messages_as_given() -> None:
+    """chat_without_tools() sends the messages as given: without the bound prompt,
+    the bound tools or the tool-only parameters, top level and nested, and leaves
+    the setup's parameters and tools untouched.
+    """
+    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+    setup.setup_params = _params_with_tool_choice()
+    setup.prompt = Prompt.from_messages([ChatMessage.system("You are the agent.")])
+    setup.tools = [_StubTool()]
+    messages = [
+        ChatMessage.of(MessageRole.SYSTEM, "Write the notes."),
+        ChatMessage.of(MessageRole.USER, "the rounds"),
+    ]
+
+    result = setup.chat_without_tools(messages)
+
+    assert result is not None
+    assert connection.captured_messages == messages
+    assert connection.captured_tools == []
+    assert connection.captured_output_schema is None
+    assert connection.captured_kwargs == _STRIPPED_PARAMS
+    assert setup.setup_params == _params_with_tool_choice()
+    assert len(setup.tools) == 1
+
+
+def test_chat_without_tools_leaves_out_request_shaping_params() -> None:
+    """chat_without_tools() leaves out the parameters with which the setup shapes its
+    own requests: hosted tools, an output format and the provider's instructions
+    would make the call something else than the messages as given.
+    """
+    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+    params = {
+        "temperature": 0.2,
+        "instructions": "You are the agent. Call the tools.",
+        "json_prefill": True,
+        "format": "json",
+        "response_format": {"type": "json_object"},
+        "previous_response_id": "resp_1",
+        # A sequence at which the chat model's own answers stop.
+        "stop": ["Observation:"],
+        "extra_body": {"tool_choice": "required", "user": "u"},
+        "additional_kwargs": {
+            "tools": [{"type": "web_search"}],
+            # Tools from an MCP server that the provider connects to.
+            "mcp_servers": [{"type": "url", "url": "https://mcp.example.com"}],
+            # The instructions as the Anthropic API takes them.
+            "system": [{"type": "text", "text": "You are the agent."}],
+            # Functions as the OpenAI API bound them before it had tools.
+            "functions": [{"name": "lookup", "parameters": {"type": "object"}}],
+            "function_call": {"name": "lookup"},
+            "response_format": {"type": "json_object"},
+            "output_config": {"format": "json"},
+            # The output format and the stored prompt of the OpenAI Responses API.
+            "text": {"format": {"type": "json_schema"}},
+            "prompt": {"id": "pmpt_1"},
+            "stop_sequences": ["Observation:"],
+            # A conversation the provider keeps: the call must not join it.
+            "conversation": "conv_1",
+            "previous_response_id": "resp_1",
+            # What a provider's client merges into the request it sends.
+            "extra_body": {
+                "tools": [{"type": "web_search"}],
+                "response_format": {"type": "json_object"},
+                "seed": 7,
+            },
+            "top_p": 0.5,
+        },
+    }
+    setup.setup_params = params
+
+    setup.chat_without_tools([ChatMessage.of(MessageRole.USER, "the rounds")])
+
+    # What is left are plain model settings.
+    assert connection.captured_kwargs == {
+        "temperature": 0.2,
+        "extra_body": {"user": "u"},
+        "additional_kwargs": {"top_p": 0.5, "extra_body": {"seed": 7}},
+    }
+    # The setup's own parameters are as they were.
+    assert setup.setup_params is params
+    assert len(params["additional_kwargs"]) == 14
+    assert len(params["additional_kwargs"]["extra_body"]) == 3
+
+
+def test_chat_without_tools_needs_a_resolved_connection() -> None:
+    setup = _RecordingChatModelSetup(connection="c", model="m")
+
+    with pytest.raises(TypeError, match="has not been resolved"):
+        setup.chat_without_tools([ChatMessage.of(MessageRole.USER, "hi")])
+
+
 def test_plain_chat_keeps_tool_only_params() -> None:
     """A plain chat() on a setup without tools sends the tool-only parameters."""
     setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)

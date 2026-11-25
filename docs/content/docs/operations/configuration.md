@@ -241,6 +241,26 @@ for cross-language async requirements.
 The `ErrorHandlingStrategy` API and `error-handling-strategy` option have been
 removed. Configure retries with `max-retries`; see Chat for terminal failure handling.
 
+### Context management
+
+These options declare the default policy that bounds the model input of chat
+requests. All of them are unset by default, which leaves context management off. A
+chat request can carry its own policy instead. See
+[Context Management]({{< ref "docs/development/calling-llms/context_management" >}}).
+
+| Key | Default | Type | Description |
+| --- | --- | --- | --- |
+| `context-management.max-input-tokens` | none | int | Input budget of one model call in tokens. When the estimated input exceeds `context-management.summarization.trigger-ratio` of it, the older tool-call rounds of the request are replaced with a summary. A round whose tool results are already masked is summarized only when what is left of it is still longer than a short line of the summary. The budget triggers summarization and is not a hard limit. At least `1`. |
+| `context-management.summarization.keep-last-rounds` | `3` | int | Number of the most recent tool-call rounds that a summarization leaves as they are. At least `1`. Requires `context-management.max-input-tokens`. |
+| `context-management.summarization.model` | none | String | Chat model resource that writes summaries. If unset, the chat model that answers the request writes them. It has to be declared in the same language as the Agent. Requires `context-management.max-input-tokens`. |
+| `context-management.summarization.trigger-ratio` | `0.8` | double | Share of `context-management.max-input-tokens` above which older rounds are summarized. Greater than `0` and at most `1`. Requires `context-management.max-input-tokens`. |
+| `context-management.tool-results.keep-last-rounds` | none | int | Number of the most recent tool-call rounds whose tool results are sent as they are. The results of older rounds are replaced with a one-line placeholder. At least `1`. |
+| `context-management.tool-results.mask-step-rounds` | `1` | int | Number of rounds that are masked together, so that the earlier part of the input stays unchanged between two steps. At least `1`. Requires `context-management.tool-results.keep-last-rounds`. |
+| `context-management.tool-results.max-chars` | none | int | Maximum characters of one tool result that are sent to the model. A longer result is cut in the middle. At least `100`. |
+
+An invalid value, or an option that is set without the option it requires, fails the
+job when it is submitted.
+
 ### Runtime and async execution
 
 See [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}})

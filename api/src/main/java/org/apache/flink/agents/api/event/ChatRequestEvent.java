@@ -23,6 +23,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.chat.contextmanagement.ContextManagementPolicy;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 
 import javax.annotation.Nullable;
@@ -40,12 +41,15 @@ public class ChatRequestEvent extends Event {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    private static final String CONTEXT_MANAGEMENT = "context_management";
+
     /**
      * The fixed cross-language attribute schema for this event: {@code model} and {@code messages}
-     * are required, {@code prompt_args}, {@code output_schema}, and {@code user_context} are
-     * optional, and no other attribute is allowed. {@link #fromEvent} enforces it at the JSON
-     * boundary. {@code user_context} is application-defined data propagated to the response; it is
-     * not part of the prompt.
+     * are required, {@code prompt_args}, {@code output_schema}, {@code user_context}, and {@code
+     * context_management} are optional, and no other attribute is allowed. {@link #fromEvent}
+     * enforces it at the JSON boundary. {@code user_context} is application-defined data propagated
+     * to the response; it is not part of the prompt. {@code context_management} is the {@link
+     * ContextManagementPolicy} of this request, or its map form.
      */
     private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
             List.of(
@@ -57,7 +61,8 @@ public class ChatRequestEvent extends Event {
                             Map.class),
                     BuiltInAttribute.optional("prompt_args", Map.class),
                     BuiltInAttribute.optionalUntyped("output_schema"),
-                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class));
+                    BuiltInAttribute.optional(UserDefinedContext.ATTRIBUTE, Map.class),
+                    BuiltInAttribute.optionalUntyped(CONTEXT_MANAGEMENT));
 
     public ChatRequestEvent(
             String model,
@@ -114,6 +119,17 @@ public class ChatRequestEvent extends Event {
             }
             attributes.put("messages", messages);
         }
+        Object policy = attributes.get(CONTEXT_MANAGEMENT);
+        if (policy instanceof Map) {
+            attributes.put(
+                    CONTEXT_MANAGEMENT,
+                    ContextManagementPolicy.fromMap((Map<String, Object>) policy));
+        } else if (policy != null && !(policy instanceof ContextManagementPolicy)) {
+            throw new IllegalArgumentException(
+                    "Attribute 'context_management' of a ChatRequestEvent must be a"
+                            + " ContextManagementPolicy or its map form, got "
+                            + policy.getClass().getName());
+        }
         return attributes;
     }
 
@@ -121,10 +137,11 @@ public class ChatRequestEvent extends Event {
      * Reconstructs a typed ChatRequestEvent from a base Event, deserializing nested types.
      *
      * <p>Enforces the fixed cross-language attribute schema: {@code model} and {@code messages} are
-     * required, {@code prompt_args}, {@code output_schema}, and {@code user_context} are optional,
-     * no other attribute is allowed, {@code model} must be a string, and every {@code messages}
-     * element must be a {@link ChatMessage} or its serialized map — an element such as a bare
-     * number is rejected rather than silently dropped.
+     * required, {@code prompt_args}, {@code output_schema}, {@code user_context}, and {@code
+     * context_management} are optional, no other attribute is allowed, {@code model} must be a
+     * string, every {@code messages} element must be a {@link ChatMessage} or its serialized map —
+     * an element such as a bare number is rejected rather than silently dropped — and {@code
+     * context_management} must be a {@link ContextManagementPolicy} or its map form.
      *
      * @param event the base event containing chat request data in attributes
      * @return a typed ChatRequestEvent
@@ -168,5 +185,37 @@ public class ChatRequestEvent extends Event {
     @Nullable
     public Map<String, Object> getUserContext() {
         return UserDefinedContext.get(this);
+    }
+
+    /**
+     * Sets how the built-in chat action bounds the model input of this request. The policy replaces
+     * the agent's default policy, declared by the {@code context-management.*} execution options,
+     * as a whole; {@link ContextManagementPolicy#disabled()} switches context management off for
+     * this request. With {@code null}, the request uses the agent's default policy.
+     *
+     * @return this event
+     */
+    public ChatRequestEvent withContextManagement(@Nullable ContextManagementPolicy policy) {
+        if (policy == null) {
+            getAttributes().remove(CONTEXT_MANAGEMENT);
+        } else {
+            setAttr(CONTEXT_MANAGEMENT, policy);
+        }
+        return this;
+    }
+
+    /**
+     * Returns the policy set on this request, or {@code null} when the request uses the agent's
+     * default policy. A policy that was set as its map form is returned as a policy.
+     */
+    @JsonIgnore
+    @Nullable
+    @SuppressWarnings("unchecked")
+    public ContextManagementPolicy getContextManagement() {
+        Object policy = getAttr(CONTEXT_MANAGEMENT);
+        if (policy instanceof Map) {
+            return ContextManagementPolicy.fromMap((Map<String, Object>) policy);
+        }
+        return (ContextManagementPolicy) policy;
     }
 }

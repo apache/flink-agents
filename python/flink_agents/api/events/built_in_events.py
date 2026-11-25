@@ -45,6 +45,7 @@ The contract is:
 from typing import Dict
 
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
+from flink_agents.api.events.context_management_event import ContextManagementEvent
 from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
     ContextRetrievalResponseEvent,
@@ -73,6 +74,7 @@ from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEve
 # selects the concrete subclass from the event type.
 REGISTRY: Dict[str, type[Event]] = {
     ModelRoutingEvent.EVENT_TYPE: ModelRoutingEvent,
+    ContextManagementEvent.EVENT_TYPE: ContextManagementEvent,
     InputEvent.EVENT_TYPE: InputEvent,
     OutputEvent.EVENT_TYPE: OutputEvent,
     ChatRequestEvent.EVENT_TYPE: ChatRequestEvent,
