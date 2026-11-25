@@ -149,6 +149,20 @@ class YamlLoaderBuildersTest {
                 .hasMessageContaining("parameter_types");
     }
 
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "type: python\nparameter_types: [int]\n",
+                "parameter_types: [int]\n",
+                "type: python\nparameter_types: []\n"
+            })
+    void buildToolPythonRejectsParameterTypes(String fields) throws Exception {
+        ToolSpec spec = M.readValue("name: t\nfunction: pkg:fn\n" + fields, ToolSpec.class);
+        assertThatThrownBy(() -> YamlLoader.buildTool(spec))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("'parameter_types' is only valid for Java tools");
+    }
+
     @Test
     void buildToolJava() throws Exception {
         ToolSpec spec =

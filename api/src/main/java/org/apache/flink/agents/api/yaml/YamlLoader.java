@@ -157,6 +157,12 @@ public final class YamlLoader {
                             + spec.getName()
                             + "': java tools must declare 'parameter_types' in YAML.");
         }
+        if (language != Language.JAVA && spec.getParameterTypes() != null) {
+            throw new IllegalArgumentException(
+                    "Tool '"
+                            + spec.getName()
+                            + "': 'parameter_types' is only valid for Java tools.");
+        }
         Function fn =
                 resolveFunction(
                         spec.getName(), spec.getFunction(), language, spec.getParameterTypes());
