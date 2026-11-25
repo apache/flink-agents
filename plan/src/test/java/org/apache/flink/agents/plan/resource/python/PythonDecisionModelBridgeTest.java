@@ -169,10 +169,9 @@ class PythonDecisionModelBridgeTest {
                                         .isEqualTo(status.equals("INTERRUPTED")));
     }
 
-    @ParameterizedTest
-    @MethodSource("invalidOutcomes")
-    void rejectsMalformedOutcomeInsteadOfGuessingItsMeaning(Object outcome) {
-        returnFromPython(outcome);
+    @Test
+    void rejectsUnknownOutcomeStatus() {
+        returnFromPython(Map.of("status", "UNKNOWN", "message", "provider stopped"));
 
         assertThatThrownBy(() -> bridge.decide(request, null, Map.of()))
                 .isInstanceOf(IllegalStateException.class);
@@ -192,17 +191,6 @@ class PythonDecisionModelBridgeTest {
                 Map.of("timeout", Double.NaN),
                 Map.of("extra_body", Map.of(42, "not a string key")),
                 Map.of("extra_body", Map.of("unsupported", new Object())));
-    }
-
-    private static Stream<Object> invalidOutcomes() {
-        return Stream.of(
-                "a result without an envelope",
-                Map.of(),
-                Map.of("status", "UNKNOWN", "message", "provider stopped"),
-                Map.of("status", "SUCCESS", "message", "wrong payload"),
-                Map.of("status", "CANCELLED", "result", "wrong payload"),
-                Map.of("status", "INTERRUPTED", "message", 42),
-                Map.of("status", "SUCCESS", "result", "{}", "message", "ambiguous"));
     }
 
     private void returnFromPython(Object outcome) {

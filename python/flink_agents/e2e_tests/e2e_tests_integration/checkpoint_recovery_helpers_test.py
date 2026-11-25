@@ -21,9 +21,9 @@ Covers the handshake's two obligations to the harness and the two helpers that
 feed the verdict's assertions.
 """
 
-import time
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -39,19 +39,24 @@ from flink_agents.e2e_tests.e2e_tests_integration.checkpoint_recovery_agent impo
 )
 
 
-def test_release_present_checks_before_sleeping(tmp_path: Path) -> None:
+def test_release_present_checks_before_sleeping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Contract: the release marker is checked before any poll interval is paid.
 
     After a restore the tool re-enters the handshake with the marker already on
-    disk. The poll interval used here is far larger than the assertion window, so
-    an implementation that slept first would miss it.
+    disk, so no polling sleep should be needed.
     """
     (tmp_path / RELEASE_MARKER).touch()
 
-    start = time.monotonic()
+    sleep = Mock()
+    monkeypatch.setattr(
+        "flink_agents.e2e_tests.e2e_tests_integration.checkpoint_recovery_agent.time.sleep",
+        sleep,
+    )
     await_release(str(tmp_path), timeout_s=30.0, poll_interval_s=5.0)
 
-    assert time.monotonic() - start < 2.0
+    sleep.assert_not_called()
 
 
 def test_tool_entered_marker_is_written(tmp_path: Path) -> None:

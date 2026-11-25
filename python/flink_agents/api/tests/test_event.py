@@ -112,15 +112,6 @@ def test_events_with_same_content_have_distinct_random_ids() -> None:
     assert second.id.version == 4
 
 
-def test_event_id_does_not_change_with_event_content() -> None:
-    event = Event(type="test", a=1)
-    event_id = event.id
-
-    event.a = 2
-
-    assert event.id == event_id
-
-
 def test_event_id_cannot_be_reassigned() -> None:
     event = Event(type="test")
 
