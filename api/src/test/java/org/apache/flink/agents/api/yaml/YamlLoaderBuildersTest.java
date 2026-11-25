@@ -114,6 +114,21 @@ class YamlLoaderBuildersTest {
     }
 
     @Test
+    void descriptorJavaRejectedForPythonOnlyKinds() throws Exception {
+        DescriptorSpec spec =
+                M.readValue("name: x\nclazz: typesafe\ntype: java\n", DescriptorSpec.class);
+        assertThatThrownBy(
+                        () ->
+                                YamlLoader.buildDescriptor(
+                                        spec, ResourceType.DECISION_MODEL_CONNECTION))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("type='java' is not supported for decision_model_connection");
+        assertThatThrownBy(() -> YamlLoader.buildDescriptor(spec, ResourceType.DECISION_MODEL))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("type='java' is not supported for decision_model");
+    }
+
+    @Test
     void descriptorPythonRejectedForUnsupportedKind() throws Exception {
         DescriptorSpec spec =
                 M.readValue("name: x\nclazz: anything\ntype: python\n", DescriptorSpec.class);

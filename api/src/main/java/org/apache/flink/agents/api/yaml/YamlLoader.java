@@ -57,6 +57,7 @@ import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /** YAML loader entry points and helpers. */
@@ -65,6 +66,29 @@ public final class YamlLoader {
     private YamlLoader() {}
 
     private static final ObjectMapper YAML_MAPPER = new ObjectMapper(new YAMLFactory());
+
+    /** Resource kinds that the Java loader can turn into a Python implementation descriptor. */
+    private static final Set<ResourceType> PYTHON_DESCRIPTOR_TYPES =
+            Set.of(
+                    ResourceType.CHAT_MODEL,
+                    ResourceType.CHAT_MODEL_CONNECTION,
+                    ResourceType.DECISION_MODEL,
+                    ResourceType.DECISION_MODEL_CONNECTION,
+                    ResourceType.EMBEDDING_MODEL,
+                    ResourceType.EMBEDDING_MODEL_CONNECTION,
+                    ResourceType.VECTOR_STORE,
+                    ResourceType.MCP_SERVER);
+
+    /** Resource kinds that have a Java implementation usable through a YAML descriptor. */
+    private static final Set<ResourceType> JAVA_DESCRIPTOR_TYPES =
+            Set.of(
+                    ResourceType.CHAT_MODEL,
+                    ResourceType.CHAT_MODEL_CONNECTION,
+                    ResourceType.EMBEDDING_MODEL,
+                    ResourceType.EMBEDDING_MODEL_CONNECTION,
+                    ResourceType.VECTOR_STORE,
+                    ResourceType.MODEL_ROUTER,
+                    ResourceType.AGENT);
 
     /** Default Java parameter types for an action method: (Event, RunnerContext). */
     private static final List<String> JAVA_ACTION_PARAMETER_TYPES =
@@ -124,20 +148,17 @@ public final class YamlLoader {
         Language language = spec.getType() == null ? Language.PYTHON : spec.getType();
         Map<String, Object> extras = new LinkedHashMap<>(spec.getExtras());
 
+        Set<ResourceType> supportedTypes =
+                language == Language.PYTHON ? PYTHON_DESCRIPTOR_TYPES : JAVA_DESCRIPTOR_TYPES;
+        if (!supportedTypes.contains(resourceType)) {
+            throw new IllegalArgumentException(
+                    "type='"
+                            + language.getValue()
+                            + "' is not supported for "
+                            + resourceType.getValue());
+        }
+
         if (language == Language.PYTHON) {
-            if (!java.util.Set.of(
-                            ResourceType.CHAT_MODEL,
-                            ResourceType.CHAT_MODEL_CONNECTION,
-                            ResourceType.DECISION_MODEL,
-                            ResourceType.DECISION_MODEL_CONNECTION,
-                            ResourceType.EMBEDDING_MODEL,
-                            ResourceType.EMBEDDING_MODEL_CONNECTION,
-                            ResourceType.VECTOR_STORE,
-                            ResourceType.MCP_SERVER)
-                    .contains(resourceType)) {
-                throw new IllegalArgumentException(
-                        "type='python' is not supported for " + resourceType.getValue());
-            }
             String pythonFqn = Aliases.resolveClazz(spec.getClazz(), resourceType, Language.PYTHON);
             PythonResourceDescriptor.Builder builder =
                     PythonResourceDescriptor.Builder.newBuilder(pythonFqn);

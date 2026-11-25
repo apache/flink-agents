@@ -34,6 +34,8 @@ import org.apache.flink.agents.api.tools.FunctionTool;
 import org.apache.flink.agents.api.yaml.YamlLoader.LoadedFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -156,6 +158,23 @@ class YamlLoaderBuildAgentsTest {
                 .containsEntry("model", "jev-latest");
         assertThat(agent.getActions().get("consume").f0)
                 .containsExactly(DecisionResponseEvent.EVENT_TYPE);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "decision_model_connections,decision_model_connection",
+        "decision_model_setups,decision_model"
+    })
+    void decisionModelJavaDeclarationsAreRejectedAtLoadTime(
+            String section, String resourceType, @TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve(section + ".yaml");
+        Files.writeString(
+                file,
+                String.format("%s:\n  - name: dm\n    clazz: typesafe\n    type: java\n", section));
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("type='java' is not supported for " + resourceType);
     }
 
     @Test
