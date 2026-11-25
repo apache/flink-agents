@@ -158,6 +158,7 @@ public class TaskLifecycleListenerNotificationTest {
 
     /** Agent whose input action suspends on a durable async call, forcing a task transfer. */
     public static class AsyncAgent extends Agent {
+        private static CountDownLatch allow;
 
         @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
         public static void handleInput(Event event, RunnerContext context) throws Exception {
@@ -178,8 +179,8 @@ public class TaskLifecycleListenerNotificationTest {
                                         @Override
                                         public Long call() {
                                             try {
-                                                // Force the action to yield, suspend, and transfer.
-                                                Thread.sleep(50);
+                                                assertThat(allow.await(10, TimeUnit.SECONDS))
+                                                        .isTrue();
                                             } catch (InterruptedException e) {
                                                 Thread.currentThread().interrupt();
                                             }
@@ -550,21 +551,12 @@ public class TaskLifecycleListenerNotificationTest {
             ParkingAgent.allow.countDown();
             operator.waitInFlightEventsFinished();
 
-            List<String> expected =
+            List<String> prefix =
                     new ArrayList<>(List.of("recordStart:" + recordedKey, "prepared:handleInput"));
             if (queued) {
-                expected.add("started:handleInput");
+                prefix.add("started:handleInput");
             }
-            expected.addAll(
-                    List.of(
-                            "transferred:handleInput->handleInput",
-                            "prepared:handleInput",
-                            "transferred:handleInput->handleInput",
-                            "prepared:handleInput",
-                            "finishing:handleInput",
-                            "finished:handleInput",
-                            "recordFinished:" + recordedKey));
-            assertThat(RecordingListener.EVENTS).containsExactlyElementsOf(expected);
+            assertLifecycleWithTransfers(prefix, recordedKey);
             List<StreamRecord<Object>> output =
                     (List<StreamRecord<Object>>) restored.getRecordOutput();
             List<Long> expectedOutput = new ArrayList<>();
@@ -651,6 +643,9 @@ public class TaskLifecycleListenerNotificationTest {
     @Test
     void suspendedTaskEmitsTransferBeforeItsSuccessorIsPrepared() throws Exception {
         AgentPlan plan = new AgentPlan(new AsyncAgent());
+        boolean suspends =
+                ContinuationActionExecutor.isContinuationSupported() || usesParallelWorker(plan);
+        AsyncAgent.allow = new CountDownLatch(suspends ? 1 : 0);
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
                         new ActionExecutionOperatorFactory(plan, true),
@@ -659,7 +654,14 @@ public class TaskLifecycleListenerNotificationTest {
             testHarness.open();
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
-            operator.addTaskLifecycleListener(new RecordingListener());
+            operator.addTaskLifecycleListener(
+                    new RecordingListener() {
+                        @Override
+                        public void onActionTransferred(ActionTask from, ActionTask to) {
+                            super.onActionTransferred(from, to);
+                            AsyncAgent.allow.countDown();
+                        }
+                    });
 
             testHarness.processElement(new StreamRecord<>(5L));
             operator.waitInFlightEventsFinished();
@@ -669,50 +671,10 @@ public class TaskLifecycleListenerNotificationTest {
             assertThat(recordOutput.size()).isEqualTo(1);
             assertThat(recordOutput.get(0).getValue()).isEqualTo(10L);
 
-            if (ContinuationActionExecutor.isContinuationSupported()) {
-                // JDK 21+: the action suspends on the durable async call and the operator
-                // re-polls the suspended task, emitting a transferred->prepared pair per
-                // suspension round. Assert the invariant the test is named after: every
-                // suspension transfers the task before its successor is prepared, bounded by
-                // recordStart/prepared/started first and finishing/finished last. The started
-                // notification fires once per action execution, not per suspension round.
-                assertThat(RecordingListener.EVENTS)
-                        .startsWith("recordStart:5", "prepared:handleInput", "started:handleInput")
-                        .endsWith(
-                                "finishing:handleInput",
-                                "finished:handleInput",
-                                "recordFinished:5");
-                assertThat(
-                                RecordingListener.EVENTS.stream()
-                                        .filter(event -> event.equals("started:handleInput"))
-                                        .count())
-                        .as("started fires once per action execution, not per suspension round")
-                        .isEqualTo(1);
-                List<String> suspensionRounds =
-                        RecordingListener.EVENTS.subList(3, RecordingListener.EVENTS.size() - 3);
-                assertThat(suspensionRounds)
-                        .as("suspension rounds alternate transferred -> prepared")
-                        .isNotEmpty();
-                assertThat(suspensionRounds.size() % 2).isZero();
-                for (int i = 0; i < suspensionRounds.size(); i += 2) {
-                    assertThat(suspensionRounds.get(i))
-                            .isEqualTo("transferred:handleInput->handleInput");
-                    assertThat(suspensionRounds.get(i + 1)).isEqualTo("prepared:handleInput");
-                }
-            } else if (usesParallelWorker(plan)) {
-                // One off-lock async call, then the worker-to-mailbox handoff.
-                assertThat(RecordingListener.EVENTS)
-                        .containsExactly(
-                                "recordStart:5",
-                                "prepared:handleInput",
-                                "started:handleInput",
-                                "transferred:handleInput->handleInput",
-                                "prepared:handleInput",
-                                "transferred:handleInput->handleInput",
-                                "prepared:handleInput",
-                                "finishing:handleInput",
-                                "finished:handleInput",
-                                "recordFinished:5");
+            if (suspends) {
+                assertLifecycleWithTransfers(
+                        List.of("recordStart:5", "prepared:handleInput", "started:handleInput"),
+                        5L);
             } else {
                 // Serial fallback runs the action synchronously: no suspension, no transfer.
                 assertThat(RecordingListener.EVENTS)
@@ -724,6 +686,20 @@ public class TaskLifecycleListenerNotificationTest {
                                 "finished:handleInput",
                                 "recordFinished:5");
             }
+        }
+    }
+
+    private static void assertLifecycleWithTransfers(List<String> prefix, long key) {
+        List<String> events = RecordingListener.EVENTS;
+        assertThat(events)
+                .startsWith(prefix.toArray(new String[0]))
+                .endsWith("finishing:handleInput", "finished:handleInput", "recordFinished:" + key);
+        List<String> transfers = events.subList(prefix.size(), events.size() - 3);
+        assertThat(transfers).isNotEmpty();
+        assertThat(transfers.size() % 2).isZero();
+        for (int i = 0; i < transfers.size(); i += 2) {
+            assertThat(transfers.get(i)).isEqualTo("transferred:handleInput->handleInput");
+            assertThat(transfers.get(i + 1)).isEqualTo("prepared:handleInput");
         }
     }
 

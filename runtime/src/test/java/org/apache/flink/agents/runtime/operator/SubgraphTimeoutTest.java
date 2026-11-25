@@ -36,7 +36,9 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.runtime.context.AsyncFutureImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.context.SchedulableFuture;
 import org.apache.flink.agents.runtime.subgraph.SubgraphCallManager;
 import org.apache.flink.agents.runtime.subgraph.SubgraphFuture;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -62,7 +64,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Timeout(30)
 public class SubgraphTimeoutTest {
     private static CountDownLatch release;
-    private static final AtomicInteger started = new AtomicInteger();
+    private static CountDownLatch started;
     private static final AtomicInteger finished = new AtomicInteger();
     private static final AtomicInteger successors = new AtomicInteger();
     private static SubgraphCallManager calls;
@@ -71,7 +73,7 @@ public class SubgraphTimeoutTest {
     @BeforeEach
     void reset() {
         release = new CountDownLatch(1);
-        started.set(0);
+        started = new CountDownLatch(1);
         finished.set(0);
         successors.set(0);
         calls = null;
@@ -114,11 +116,25 @@ public class SubgraphTimeoutTest {
             future = child.submit(context, input, "session", "call");
         }
         try {
+            if (timeout) {
+                // Start the graph before timing its wait. The test needs late events from an
+                // executing child, not a race between worker startup and the batch deadline.
+                RunnerContextImpl runtime = (RunnerContextImpl) context;
+                SchedulableFuture<?> graph = AsyncFutureImpl.requireSchedulable(future, runtime);
+                graph.validate(runtime);
+                graph.prepare(runtime);
+                graph.start();
+                context.executeAsync(
+                                () -> {
+                                    assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+                                    return null;
+                                })
+                        .await();
+            }
             var outcome = context.gather(List.of(future)).await().get(0);
             invocationId =
                     chat ? ((SubgraphFuture<?, ?>) future).getInvocation().getId() : "session#call";
             if (timeout) {
-                assertThat(started).hasValue(1);
                 assertThat(finished).hasValue(0);
                 assertThat(outcome.getError()).isInstanceOf(TimeoutException.class);
                 context.sendEvent(new OutputEvent("timeout"));
@@ -162,7 +178,7 @@ public class SubgraphTimeoutTest {
 
     private static void awaitCaller(String prompt) {
         if (prompt.endsWith("timeout")) {
-            started.incrementAndGet();
+            started.countDown();
             try {
                 assertThat(release.await(10, TimeUnit.SECONDS)).isTrue();
             } catch (InterruptedException e) {

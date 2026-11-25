@@ -68,6 +68,8 @@ class AsyncBatchExecutorTest {
     @Test
     void closeCancelsSubmissionsAndWaitsForManagedThreadCleanup() throws Exception {
         CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch runningInterrupted = new CountDownLatch(1);
+        AtomicInteger queuedCalls = new AtomicInteger();
         CountDownLatch cleanupStarted = new CountDownLatch(1);
         CountDownLatch releaseCleanup = new CountDownLatch(1);
         AtomicInteger cleanups = new AtomicInteger();
@@ -97,18 +99,26 @@ class AsyncBatchExecutorTest {
                     executor.submit(
                             () -> {
                                 started.countDown();
-                                new CountDownLatch(1).await();
-                                return "first";
+                                try {
+                                    new CountDownLatch(1).await();
+                                    return "first";
+                                } catch (InterruptedException e) {
+                                    runningInterrupted.countDown();
+                                    throw e;
+                                }
                             });
-            CompletableFuture<String> queued = executor.submit(() -> "queued");
+            CompletableFuture<Integer> queued = executor.submit(queuedCalls::incrementAndGet);
             assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
             Future<?> closing = drivers.submit(executor::close);
             assertThat(cleanupStarted.await(5, TimeUnit.SECONDS)).isTrue();
-            assertThat(running.isCancelled()).isTrue();
-            assertThat(queued.isCancelled()).isTrue();
+            assertThat(runningInterrupted.getCount()).isZero();
+            // shutdownNow may interrupt the callable before its result is explicitly cancelled.
+            assertThat(running.isCompletedExceptionally()).isTrue();
             assertThat(closing.isDone()).isFalse();
             releaseCleanup.countDown();
             closing.get(5, TimeUnit.SECONDS);
+            assertThat(queued.isCancelled()).isTrue();
+            assertThat(queuedCalls).hasValue(0);
             assertThat(cleanups.get()).isEqualTo(1);
         } finally {
             releaseCleanup.countDown();

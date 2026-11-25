@@ -74,8 +74,9 @@ final class AsyncBatchExecutor {
 
     /** Stops submissions and interrupts workers without waiting for their exit cleanup. */
     void shutdown() {
-        submissions.forEach(future -> future.cancel(true));
+        // Stop dequeuing work before cancellation can free an occupied worker.
         executor.shutdownNow();
+        submissions.forEach(future -> future.cancel(true));
     }
 
     void close() {
