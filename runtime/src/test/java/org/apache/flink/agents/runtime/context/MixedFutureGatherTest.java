@@ -72,7 +72,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -572,7 +571,8 @@ class MixedFutureGatherTest {
         AssertionError fatal = new AssertionError("fatal tool failure");
         try (Fixture f = new Fixture()) {
             ((Configuration) f.runner.getConfig())
-                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(250));
+                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofSeconds(1));
+            CountDownLatch started = new CountDownLatch(1);
             var tool =
                     f.runner.durableExecuteAsync(
                             call(
@@ -580,6 +580,7 @@ class MixedFutureGatherTest {
                                     String.class,
                                     () -> {
                                         calls.incrementAndGet();
+                                        started.countDown();
                                         release.await();
                                         if (outcome.equals("failure")) {
                                             throw businessFailure;
@@ -589,16 +590,22 @@ class MixedFutureGatherTest {
                                         }
                                         return "tool-result";
                                     }));
-            var racing =
-                    completeBeforeTimeoutCancellation(
-                            AsyncFutureImpl.requireSchedulable(tool, f.runner), release::countDown);
+            Callable<Outcome<String>> awaitRace =
+                    () -> {
+                        var racing =
+                                completeBeforeTimeoutCancellation(
+                                        f.runner,
+                                        AsyncFutureImpl.requireSchedulable(tool, f.runner),
+                                        release::countDown);
+                        assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+                        return f.runner.gather(List.of(racing)).await().get(0);
+                    };
             if (outcome.equals("fatal")) {
-                assertThatThrownBy(() -> f.run(() -> f.runner.gather(List.of(racing)).await()))
-                        .isSameAs(fatal);
+                assertThatThrownBy(() -> f.run(awaitRace)).isSameAs(fatal);
                 assertThat(f.state.getCallResults().get(0).isPending()).isTrue();
                 return;
             }
-            var result = f.run(() -> f.runner.gather(List.of(racing)).await()).get(0);
+            var result = f.run(awaitRace);
             if (outcome.equals("failure")) {
                 assertThat(result.getError()).isSameAs(businessFailure);
             } else {
@@ -639,18 +646,25 @@ class MixedFutureGatherTest {
         byte[] snapshot;
         try (Fixture f = new Fixture()) {
             ((Configuration) f.runner.getConfig())
-                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(250));
+                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofSeconds(1));
             var graph =
                     chat
                             ? AsyncFutureImpl.map(
                                     f.runner, f.chat(), r -> r.getResponse().getMessage().getText())
                             : AsyncFutureImpl.map(
                                     f.runner, f.internal("child"), r -> (String) r.getResult());
-            var racing =
-                    completeBeforeTimeoutCancellation(
-                            AsyncFutureImpl.requireSchedulable(graph, f.runner),
-                            () -> assertThat(f.completeGraphs(false)).isEqualTo(1));
-            var result = f.run(() -> f.runner.gather(List.of(racing)).await()).get(0);
+            var result =
+                    f.run(
+                            () -> {
+                                var racing =
+                                        completeBeforeTimeoutCancellation(
+                                                f.runner,
+                                                AsyncFutureImpl.requireSchedulable(graph, f.runner),
+                                                () ->
+                                                        assertThat(f.completeGraphs(false))
+                                                                .isEqualTo(1));
+                                return f.runner.gather(List.of(racing)).await().get(0);
+                            });
             assertThat(result.isFailure()).isFalse();
             assertThat(result.getValue()).isEqualTo(chat ? "chat-answer" : "child-answer");
             assertThat(f.state.getCallResults().get(0).isSuccess()).isTrue();
@@ -673,24 +687,22 @@ class MixedFutureGatherTest {
     /** Completes the real call after the scheduler's sweep, but before cancellation. */
     @SuppressWarnings("unchecked")
     private static <T> SchedulableFuture<T> completeBeforeTimeoutCancellation(
-            SchedulableFuture<T> source, Runnable complete) throws Exception {
+            RunnerContextImpl context, SchedulableFuture<T> source, Runnable complete)
+            throws Exception {
+        // Start the real call before gather starts its deadline. This fixture tests completion
+        // racing cancellation, not whether preparation or worker startup fits into a time window.
+        source.validate(context);
+        source.prepare(context);
+        CompletableFuture<?> signal = source.start();
         SchedulableFuture<T> wrapper = mock(SchedulableFuture.class, delegatesTo(source));
-        AtomicReference<CompletableFuture<?>> signal = new AtomicReference<>();
-        doAnswer(
-                        invocation -> {
-                            var started = source.start();
-                            signal.set(started);
-                            return started;
-                        })
-                .when(wrapper)
-                .start();
+        doReturn(signal).when(wrapper).start();
         doAnswer(
                         invocation -> {
                             source.preventStart();
                             complete.run();
                             // Wait for exceptional completions too, without throwing their error in
                             // this hook.
-                            signal.get().handle((value, failure) -> null).get(5, TimeUnit.SECONDS);
+                            signal.handle((value, failure) -> null).get(5, TimeUnit.SECONDS);
                             return null;
                         })
                 .when(wrapper)

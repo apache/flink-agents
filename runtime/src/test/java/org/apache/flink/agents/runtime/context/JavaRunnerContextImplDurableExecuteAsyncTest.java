@@ -80,6 +80,8 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.AdditionalAnswers.delegatesTo;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 
 /** Unit tests for async durable execution in {@link JavaRunnerContextImpl}. */
@@ -850,13 +852,14 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     @Test
     void testGatherTimeoutKeepsCompletedOutcomes() throws Exception {
         CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch started = new CountDownLatch(1);
         // Keep unfinished calls blocked even if the scheduler resumes after the deadline.
         try (InspectingContinuationActionExecutor executor =
                 new InspectingContinuationActionExecutor()) {
             executor.setUseTimeoutCollection(true);
             JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
             ((Configuration) context.getConfig())
-                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(500));
+                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofSeconds(1));
             TestDurableCallable<String> first =
                     new TestDurableCallable<>("batch-1", String.class, () -> "fast");
             TestDurableCallable<String> second =
@@ -864,11 +867,17 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                             "batch-2",
                             String.class,
                             () -> {
+                                started.countDown();
                                 release.await();
                                 return "slow";
                             });
 
-            List<Outcome<String>> outcomes = gather(context, List.of(first, second));
+            var completed = context.durableExecuteAsync(first);
+            assertEquals("fast", completed.await());
+            var batch =
+                    startCalls(context, List.of(completed, context.durableExecuteAsync(second)), 2);
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            List<Outcome<String>> outcomes = context.gather(batch).await();
 
             assertEquals("fast", outcomes.get(0).getValue());
             assertTrue(outcomes.get(1).isFailure());
@@ -921,13 +930,14 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     @Test
     void testGatherTimeoutLeavesUnsubmittedSlotsPending() throws Exception {
         CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch started = new CountDownLatch(2);
         // Keep unfinished calls blocked even if the scheduler resumes after the deadline.
         try (InspectingContinuationActionExecutor executor =
                 new InspectingContinuationActionExecutor()) {
             executor.setUseTimeoutCollection(true);
             JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
             ((Configuration) context.getConfig())
-                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(500));
+                    .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofSeconds(1));
             ((Configuration) context.getConfig())
                     .set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
             TestDurableCallable<String> first =
@@ -935,6 +945,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                             "batch-1",
                             String.class,
                             () -> {
+                                started.countDown();
                                 release.await();
                                 return "one";
                             });
@@ -943,6 +954,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                             "batch-2",
                             String.class,
                             () -> {
+                                started.countDown();
                                 release.await();
                                 return "two";
                             });
@@ -951,7 +963,15 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
             TestDurableCallable<String> fourth =
                     new TestDurableCallable<>("batch-4", String.class, () -> "four");
 
-            List<Outcome<String>> outcomes = gather(context, List.of(first, second, third, fourth));
+            var batch =
+                    startCalls(
+                            context,
+                            List.of(first, second, third, fourth).stream()
+                                    .map(context::durableExecuteAsync)
+                                    .collect(Collectors.toList()),
+                            2);
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            List<Outcome<String>> outcomes = context.gather(batch).await();
 
             assertTrue(outcomes.get(0).isFailure());
             assertTrue(outcomes.get(1).isFailure());
@@ -978,11 +998,13 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         executor.setBatchThreads(2);
         JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
         ((Configuration) context.getConfig())
-                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofMillis(500));
+                .set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT, Duration.ofSeconds(1));
         ((Configuration) context.getConfig()).set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 4);
         CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch started = new CountDownLatch(2);
         Callable<String> slow =
                 () -> {
+                    started.countDown();
                     release.await();
                     return "slow";
                 };
@@ -996,7 +1018,15 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                 new TestDurableCallable<>("batch-4", String.class, slow);
 
         try {
-            List<Outcome<String>> outcomes = gather(context, List.of(first, second, third, fourth));
+            var batch =
+                    startCalls(
+                            context,
+                            List.of(first, second, third, fourth).stream()
+                                    .map(context::durableExecuteAsync)
+                                    .collect(Collectors.toList()),
+                            4);
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            List<Outcome<String>> outcomes = context.gather(batch).await();
 
             assertTrue(outcomes.get(0).isFailure());
             assertTrue(outcomes.get(1).isFailure());
@@ -1416,6 +1446,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         Assumptions.assumeFalse(ContinuationActionExecutor.isContinuationSupported());
         ContinuationActionExecutor executor = new ContinuationActionExecutor(1);
         CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch started = new CountDownLatch(1);
         AtomicInteger ordinaryCalls = new AtomicInteger();
         ActionState state = new ActionState(null);
         JavaRunnerContextImpl context = createContext(state, executor);
@@ -1427,23 +1458,27 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                         "started",
                         String.class,
                         () -> {
+                            started.countDown();
                             release.await();
                             return "late";
                         });
         TestDurableCallable<String> second =
                 new TestDurableCallable<>("pending", String.class, () -> "recovered");
         try {
-            List<Outcome<String>> outcomes =
-                    context.gather(
-                                    List.of(
-                                            context.durableExecuteAsync(first),
-                                            context.executeAsync(
-                                                    () -> {
-                                                        ordinaryCalls.incrementAndGet();
-                                                        return "ordinary";
-                                                    }),
-                                            context.durableExecuteAsync(second)))
-                            .await();
+            var batch =
+                    startCalls(
+                            context,
+                            List.of(
+                                    context.durableExecuteAsync(first),
+                                    context.executeAsync(
+                                            () -> {
+                                                ordinaryCalls.incrementAndGet();
+                                                return "ordinary";
+                                            }),
+                                    context.durableExecuteAsync(second)),
+                            2);
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            List<Outcome<String>> outcomes = context.gather(batch).await();
             assertTrue(outcomes.stream().allMatch(Outcome::isFailure));
             assertTrue(state.getCallResults().get(0).isFailure());
             assertTrue(state.getCallResults().get(1).isPending());
@@ -1755,6 +1790,26 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                         actionState,
                         persister));
         return context;
+    }
+
+    /** Starts selected calls before the batch deadline, retaining real worker queueing. */
+    @SuppressWarnings("unchecked")
+    private static <T> List<AsyncFuture<T>> startCalls(
+            JavaRunnerContextImpl context, List<? extends AsyncFuture<T>> calls, int submissions)
+            throws Exception {
+        List<AsyncFuture<T>> batch = new ArrayList<>(calls);
+        for (AsyncFuture<T> call : calls) {
+            SchedulableFuture<T> source = AsyncFutureImpl.requireSchedulable(call, context);
+            source.validate(context);
+            source.prepare(context);
+        }
+        for (int i = 0; i < submissions; i++) {
+            SchedulableFuture<T> source = AsyncFutureImpl.requireSchedulable(calls.get(i), context);
+            SchedulableFuture<T> wrapper = mock(SchedulableFuture.class, delegatesTo(source));
+            doReturn(source.start()).when(wrapper).start();
+            batch.set(i, wrapper);
+        }
+        return batch;
     }
 
     private static <T> List<Outcome<T>> gather(
