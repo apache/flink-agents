@@ -202,6 +202,10 @@ class AliasesTest {
                 .isTrue();
         assertThat(
                         Aliases.isKnownAliasForOtherLanguage(
+                                "mcp", ResourceType.MCP_SERVER, Language.JAVA))
+                .isTrue();
+        assertThat(
+                        Aliases.isKnownAliasForOtherLanguage(
                                 "ollama", ResourceType.CHAT_MODEL_CONNECTION, Language.JAVA))
                 .isFalse();
         assertThat(

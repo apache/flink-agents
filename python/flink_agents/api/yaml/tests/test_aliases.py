@@ -127,6 +127,9 @@ def test_known_alias_for_other_language_is_detected() -> None:
         "dashscope", ResourceType.CHAT_MODEL_CONNECTION, "java"
     )
     assert is_known_alias_for_other_language(
+        "mcp", ResourceType.MCP_SERVER, "java"
+    )
+    assert is_known_alias_for_other_language(
         "chroma", ResourceType.VECTOR_STORE, "java"
     )
     assert not is_known_alias_for_other_language(

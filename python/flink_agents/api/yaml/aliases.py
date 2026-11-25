@@ -25,8 +25,9 @@ Two tables:
   different classes across sections and languages.
 
 Alias lookup answers only whether a short name is registered for a
-language. It does not describe which resource kinds a loader supports:
-custom implementations and Java-only kinds may have no alias entry.
+language. An alias miss is not an error: the loader also accepts
+fully-qualified custom class names. Only a short name registered for the
+other language is rejected during YAML loading.
 
 For Java resources, the loader resolves the alias to the Java FQN and
 creates a JavaResourceDescriptor. Plan selects the execution wrapper.

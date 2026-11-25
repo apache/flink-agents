@@ -57,7 +57,6 @@ import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 /** YAML loader entry points and helpers. */
@@ -66,36 +65,6 @@ public final class YamlLoader {
     private YamlLoader() {}
 
     private static final ObjectMapper YAML_MAPPER = new ObjectMapper(new YAMLFactory());
-
-    /**
-     * Resource kinds this loader accepts, keyed by the descriptor's implementation language.
-     *
-     * <p>This is a loader capability table, not an alias table. Some kinds support custom Java
-     * implementations without having a Java short alias, and external sub-agents are Java-only.
-     */
-    private static final Map<Language, Set<ResourceType>> SUPPORTED_DESCRIPTOR_TYPES =
-            Map.of(
-                    Language.PYTHON,
-                    Set.of(
-                            ResourceType.CHAT_MODEL,
-                            ResourceType.CHAT_MODEL_CONNECTION,
-                            ResourceType.DECISION_MODEL,
-                            ResourceType.DECISION_MODEL_CONNECTION,
-                            ResourceType.EMBEDDING_MODEL,
-                            ResourceType.EMBEDDING_MODEL_CONNECTION,
-                            ResourceType.VECTOR_STORE,
-                            ResourceType.MCP_SERVER),
-                    Language.JAVA,
-                    Set.of(
-                            ResourceType.CHAT_MODEL,
-                            ResourceType.CHAT_MODEL_CONNECTION,
-                            ResourceType.DECISION_MODEL,
-                            ResourceType.DECISION_MODEL_CONNECTION,
-                            ResourceType.EMBEDDING_MODEL,
-                            ResourceType.EMBEDDING_MODEL_CONNECTION,
-                            ResourceType.VECTOR_STORE,
-                            ResourceType.MODEL_ROUTER,
-                            ResourceType.AGENT));
 
     /** Default Java parameter types for an action method: (Event, RunnerContext). */
     private static final List<String> JAVA_ACTION_PARAMETER_TYPES =
@@ -155,14 +124,6 @@ public final class YamlLoader {
         Language language = spec.getType() == null ? Language.PYTHON : spec.getType();
         Map<String, Object> extras = new LinkedHashMap<>(spec.getExtras());
 
-        Set<ResourceType> supportedTypes = SUPPORTED_DESCRIPTOR_TYPES.get(language);
-        if (!supportedTypes.contains(resourceType)) {
-            throw new IllegalArgumentException(
-                    "type='"
-                            + language.getValue()
-                            + "' is not supported for "
-                            + resourceType.getValue());
-        }
         if (Aliases.isKnownAliasForOtherLanguage(spec.getClazz(), resourceType, language)) {
             throw new IllegalArgumentException(
                     "Unknown "

@@ -353,6 +353,34 @@ class YamlLoaderBuildAgentsTest {
     }
 
     @Test
+    void javaMcpServerDeclarationRejectsPythonOnlyAlias(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("java-mcp-alias.yaml");
+        Files.writeString(file, "mcp_servers:\n  - name: m\n    clazz: mcp\n    type: java\n");
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Java alias 'mcp' for mcp_server");
+    }
+
+    @Test
+    void javaMcpServerDeclarationAcceptsCustomFullyQualifiedClass(@TempDir Path tmp)
+            throws Exception {
+        Path file = tmp.resolve("java-mcp-custom.yaml");
+        Files.writeString(
+                file,
+                "mcp_servers:\n  - name: m\n"
+                        + "    clazz: com.example.CustomMCPServer\n    type: java\n");
+
+        ResourceDescriptor descriptor =
+                (ResourceDescriptor)
+                        YamlLoader.buildAgents(file)
+                                .getSharedResources()
+                                .get(ResourceType.MCP_SERVER)
+                                .get("m");
+        assertThat(descriptor.getClazz()).isEqualTo("com.example.CustomMCPServer");
+    }
+
+    @Test
     void mcpServersSupportAgentAndSharedPythonResources(@TempDir Path tmp) throws Exception {
         Path file = tmp.resolve("mcp.yaml");
         Files.writeString(

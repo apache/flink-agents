@@ -21,7 +21,7 @@ environment.
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 if TYPE_CHECKING:
     from flink_agents.api.execution_environment import AgentsExecutionEnvironment
@@ -62,28 +62,6 @@ from flink_agents.api.yaml.specs import (
     ToolSpec,
     YamlAgentsDocument,
 )
-
-_SUPPORTED_DESCRIPTOR_TYPES: Dict[Language, Set[ResourceType]] = {
-    "java": {
-        ResourceType.CHAT_MODEL,
-        ResourceType.CHAT_MODEL_CONNECTION,
-        ResourceType.EMBEDDING_MODEL,
-        ResourceType.EMBEDDING_MODEL_CONNECTION,
-        ResourceType.VECTOR_STORE,
-    },
-    "python": {
-        ResourceType.CHAT_MODEL,
-        ResourceType.CHAT_MODEL_CONNECTION,
-        ResourceType.DECISION_MODEL,
-        ResourceType.DECISION_MODEL_CONNECTION,
-        ResourceType.EMBEDDING_MODEL,
-        ResourceType.EMBEDDING_MODEL_CONNECTION,
-        ResourceType.VECTOR_STORE,
-        ResourceType.MCP_SERVER,
-        ResourceType.MODEL_ROUTER,
-        ResourceType.AGENT,
-    },
-}
 
 _DESCRIPTOR_TYPES: Dict[str, ResourceType] = {
     "chat_model_connections": ResourceType.CHAT_MODEL_CONNECTION,
@@ -169,16 +147,23 @@ def _build_descriptor(
 ) -> ResourceDescriptor:
     kwargs = dict(spec.model_extra or {})
     language = spec.type or "python"
-    if resource_type not in _SUPPORTED_DESCRIPTOR_TYPES[language]:
-        msg = f"type='{language}' is not supported for {resource_type.value}"
-        raise ValueError(msg)
     if is_known_alias_for_other_language(spec.clazz, resource_type, language):
         msg = f"Unknown {language.capitalize()} alias {spec.clazz!r} for {resource_type.value}"
         raise ValueError(msg)
-    fqn = resolve_clazz(spec.clazz, resource_type, language)
     if language == "java":
-        return JavaResourceDescriptor(clazz=fqn, **kwargs)
-    return ResourceDescriptor(clazz=fqn, **kwargs)
+        if resource_type not in {
+            ResourceType.CHAT_MODEL,
+            ResourceType.CHAT_MODEL_CONNECTION,
+            ResourceType.EMBEDDING_MODEL,
+            ResourceType.EMBEDDING_MODEL_CONNECTION,
+            ResourceType.VECTOR_STORE,
+        }:
+            msg = f"type='java' is not supported for {resource_type.value}"
+            raise ValueError(msg)
+        java_fqn = resolve_clazz(spec.clazz, resource_type, "java")
+        return JavaResourceDescriptor(clazz=java_fqn, **kwargs)
+    python_fqn = resolve_clazz(spec.clazz, resource_type, "python")
+    return ResourceDescriptor(clazz=python_fqn, **kwargs)
 
 
 def _build_subagent(spec: SubagentSpec, agents: Dict[str, Agent]) -> ResourceDescriptor:

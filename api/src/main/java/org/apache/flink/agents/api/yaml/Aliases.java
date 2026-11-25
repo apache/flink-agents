@@ -48,9 +48,9 @@ import java.util.Map;
  *       can refer to different classes across sections and languages.
  * </ul>
  *
- * <p>Alias lookup answers only whether a short name is registered for a language. It does not
- * describe which resource kinds a loader supports: custom implementations and Java-only kinds may
- * have no alias entry.
+ * <p>Alias lookup answers only whether a short name is registered for a language. An alias miss is
+ * not an error: the loader also accepts fully-qualified custom class names. Only a short name
+ * registered for the other language is rejected during YAML loading.
  *
  * <p>For Python resources, the loader resolves the alias to the Python FQN and wraps it in a Python
  * implementation descriptor.
