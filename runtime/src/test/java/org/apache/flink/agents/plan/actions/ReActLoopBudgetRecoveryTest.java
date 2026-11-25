@@ -163,11 +163,15 @@ class ReActLoopBudgetRecoveryTest {
                         journal,
                         (key, seq, action, event, saved) -> {
                             persisted = ActionStateSerde.serialize(saved);
-                            if (crashAfterPersistence
-                                    && !saved.getCallResult(saved.getCallResultCount() - 1)
-                                            .getFunctionId()
-                                            .equals("react-loop:budget-admission"))
-                                throw new Crash();
+                            if (crashAfterPersistence) {
+                                CallResult last =
+                                        saved.getCallResult(saved.getCallResultCount() - 1);
+                                if (!last.isPending()
+                                        && !last.getFunctionId()
+                                                .equals("react-loop:budget-admission")) {
+                                    throw new Crash();
+                                }
+                            }
                         }));
     }
 
