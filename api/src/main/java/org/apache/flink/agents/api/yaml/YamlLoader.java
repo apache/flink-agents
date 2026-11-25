@@ -84,6 +84,8 @@ public final class YamlLoader {
             Set.of(
                     ResourceType.CHAT_MODEL,
                     ResourceType.CHAT_MODEL_CONNECTION,
+                    ResourceType.DECISION_MODEL,
+                    ResourceType.DECISION_MODEL_CONNECTION,
                     ResourceType.EMBEDDING_MODEL,
                     ResourceType.EMBEDDING_MODEL_CONNECTION,
                     ResourceType.VECTOR_STORE,

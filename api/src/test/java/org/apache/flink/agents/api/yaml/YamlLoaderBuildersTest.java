@@ -114,18 +114,18 @@ class YamlLoaderBuildersTest {
     }
 
     @Test
-    void descriptorJavaRejectedForPythonOnlyKinds() throws Exception {
+    void descriptorJavaSupportsCustomDecisionImplementations() throws Exception {
         DescriptorSpec spec =
-                M.readValue("name: x\nclazz: typesafe\ntype: java\n", DescriptorSpec.class);
-        assertThatThrownBy(
-                        () ->
-                                YamlLoader.buildDescriptor(
-                                        spec, ResourceType.DECISION_MODEL_CONNECTION))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("type='java' is not supported for decision_model_connection");
-        assertThatThrownBy(() -> YamlLoader.buildDescriptor(spec, ResourceType.DECISION_MODEL))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("type='java' is not supported for decision_model");
+                M.readValue(
+                        "name: x\nclazz: com.example.CustomDecision\ntype: java\n",
+                        DescriptorSpec.class);
+
+        ResourceDescriptor connection =
+                YamlLoader.buildDescriptor(spec, ResourceType.DECISION_MODEL_CONNECTION);
+        assertThat(connection.getClazz()).isEqualTo("com.example.CustomDecision");
+
+        ResourceDescriptor setup = YamlLoader.buildDescriptor(spec, ResourceType.DECISION_MODEL);
+        assertThat(setup.getClazz()).isEqualTo("com.example.CustomDecision");
     }
 
     @Test
