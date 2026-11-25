@@ -40,8 +40,7 @@ import java.util.Set;
 final class ConditionEvaluator {
 
     private static final Logger LOG = LoggerFactory.getLogger(ConditionEvaluator.class);
-    private static final ObjectMapper OBJECT_MAPPER =
-            JacksonMapperFactory.builderWithJavaTime().build();
+    private static final ObjectMapper OBJECT_MAPPER = JacksonMapperFactory.builder().build();
 
     private final ConditionEvaluationFailureStrategy failureStrategy;
 

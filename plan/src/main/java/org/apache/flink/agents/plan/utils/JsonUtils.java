@@ -24,7 +24,7 @@ import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 
 /** Util class for json. */
 public final class JsonUtils {
-    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
 
     private JsonUtils() {}
 

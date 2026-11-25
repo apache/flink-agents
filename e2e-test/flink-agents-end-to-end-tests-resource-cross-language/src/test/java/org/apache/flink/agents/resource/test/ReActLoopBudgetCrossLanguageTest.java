@@ -80,7 +80,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Timeout(60)
 public class ReActLoopBudgetCrossLanguageTest {
 
-    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
 
     private static final AtomicInteger NORMAL_CALLS = new AtomicInteger();
     private static final AtomicInteger CLOSING_CALLS = new AtomicInteger();

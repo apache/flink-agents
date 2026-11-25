@@ -43,7 +43,7 @@ import static org.apache.flink.agents.plan.serializer.ActionJsonSerializer.CONFI
 /** Custom deserializer for {@link Action} that handles its function and raw trigger conditions. */
 public class ActionJsonDeserializer extends StdDeserializer<Action> {
 
-    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
 
     public ActionJsonDeserializer() {
         super(Action.class);

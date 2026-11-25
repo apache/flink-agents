@@ -80,7 +80,7 @@ public class Slf4jTraceLogger implements TraceLogger {
     // Trace-Log-only mapper: content blocks use their sanitized projection
     // (media metadata instead of payload bytes) at every level setting.
     private static final ObjectMapper MAPPER =
-            JacksonMapperFactory.builderWithJavaTime()
+            JacksonMapperFactory.builder()
                     .addModule(ContentBlockTraceLogSerializer.module())
                     .build();
 

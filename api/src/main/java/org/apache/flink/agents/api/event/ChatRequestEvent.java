@@ -40,7 +40,7 @@ public class ChatRequestEvent extends Event {
 
     public static final String EVENT_TYPE = "_chat_request_event";
 
-    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
 
     /**
      * The fixed cross-language attribute schema for this event: {@code model} and {@code messages}

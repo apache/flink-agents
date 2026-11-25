@@ -94,7 +94,7 @@ import static org.mockito.Mockito.withSettings;
  */
 class ChatModelActionRetryTest {
 
-    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
 
     private static final Map<String, Object> LLM_METADATA =
             Map.of(LLMExecutionMetadataKeys.MODEL, "configured-model");

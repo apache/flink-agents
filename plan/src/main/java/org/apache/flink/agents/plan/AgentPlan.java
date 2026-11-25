@@ -102,7 +102,7 @@ import static org.apache.flink.agents.api.resource.ResourceType.TOOL;
 @JsonDeserialize(using = AgentPlanJsonDeserializer.class)
 public class AgentPlan implements Serializable {
 
-    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
 
     private static final Logger LOG = LoggerFactory.getLogger(AgentPlan.class);
     private static final String JAVA_MCP_SERVER_CLASS_NAME =

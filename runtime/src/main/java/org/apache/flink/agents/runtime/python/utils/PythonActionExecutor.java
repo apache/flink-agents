@@ -45,7 +45,7 @@ import static org.apache.flink.util.Preconditions.checkState;
 /** Execute the corresponding Python action in the agent. */
 public class PythonActionExecutor implements AutoCloseable {
 
-    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
 
     // =========== RUNNER CONTEXT ===========
     private static final String CREATE_FLINK_RUNNER_CONTEXT =

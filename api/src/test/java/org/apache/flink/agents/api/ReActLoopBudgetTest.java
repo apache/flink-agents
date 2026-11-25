@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Tests for budget construction and defaults. */
 class ReActLoopBudgetTest {
-    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
 
     @Test
     void defaultsAndExplicitNullsProduceUnlimitedSoftBudget() {

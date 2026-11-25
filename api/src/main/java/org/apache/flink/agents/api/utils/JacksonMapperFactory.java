@@ -22,12 +22,13 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.annotation.Internal;
 
-/** Creates independently configurable JSON mappers with Java time support. */
+/** Creates independently configurable JSON mappers for Flink Agents. */
 @Internal
 public final class JacksonMapperFactory {
     private JacksonMapperFactory() {}
 
-    public static JsonMapper.Builder builderWithJavaTime() {
+    /** Returns a new builder with {@link JavaTimeModule} registered by default. */
+    public static JsonMapper.Builder builder() {
         return JsonMapper.builder().addModule(new JavaTimeModule());
     }
 }

@@ -148,7 +148,7 @@ class BuiltInEventsTest {
         }
     }
 
-    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
     private static final UUID FIXED_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
     private static final UUID REQUEST_ID = UUID.fromString("00000000-0000-0000-0000-000000000002");
 

@@ -63,8 +63,7 @@ public class InternalSubagentSetup extends BaseSubagentSetup {
      * active-scope plan JSON, so the eager materialization the operator runs at open and the lazy
      * resolution a child action performs at call time key the Python scope cache by one string.
      */
-    private static final ObjectMapper PLAN_MAPPER =
-            JacksonMapperFactory.builderWithJavaTime().build();
+    private static final ObjectMapper PLAN_MAPPER = JacksonMapperFactory.builder().build();
 
     private final String scope;
 

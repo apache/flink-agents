@@ -34,7 +34,7 @@ import java.util.Optional;
 
 /** Compilation and traversal of child plans carried by ordinary resource descriptors. */
 public final class InternalSubagentPlans {
-    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
 
     private InternalSubagentPlans() {}
 

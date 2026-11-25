@@ -109,7 +109,7 @@ public final class ActionStateSerde {
     }
 
     private static ObjectMapper createObjectMapper() {
-        ObjectMapper mapper = JacksonMapperFactory.builderWithJavaTime().build();
+        ObjectMapper mapper = JacksonMapperFactory.builder().build();
 
         // Add type information for polymorphic Event deserialization
         mapper.addMixIn(Event.class, EventTypeInfoMixin.class);

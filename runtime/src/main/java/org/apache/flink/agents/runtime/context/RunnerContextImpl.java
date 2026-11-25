@@ -106,8 +106,7 @@ import java.util.concurrent.TimeoutException;
  */
 public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
-    protected static final ObjectMapper OBJECT_MAPPER =
-            JacksonMapperFactory.builderWithJavaTime().build();
+    protected static final ObjectMapper OBJECT_MAPPER = JacksonMapperFactory.builder().build();
 
     public static class MemoryContext {
         private final CachedMemoryStore sensoryMemStore;

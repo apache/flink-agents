@@ -45,7 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Test for {@link ActionJsonSerializer}. */
 public class ActionJsonSerializerTest {
 
-    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
 
     @Test
     public void budgetConfigRestoresTypedObject() throws Exception {

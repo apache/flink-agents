@@ -48,7 +48,7 @@ import java.util.function.LongPredicate;
 public final class ActionStateUtil {
 
     private static final JsonMapper MAPPER =
-            JacksonMapperFactory.builderWithJavaTime()
+            JacksonMapperFactory.builder()
                     .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
                     .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
                     .build();

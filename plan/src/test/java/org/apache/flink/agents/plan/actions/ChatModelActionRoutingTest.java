@@ -97,7 +97,7 @@ import static org.mockito.Mockito.when;
 /** Integration tests for model routing inside {@link ChatModelAction}. */
 public class ChatModelActionRoutingTest {
 
-    private static final ObjectMapper MAPPER = JacksonMapperFactory.builderWithJavaTime().build();
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
 
     /** An executor that returns a name that is not a candidate (to exercise the abstain path). */
     public static class SelectsUnknownStrategy implements CustomRoutingExecutor {
