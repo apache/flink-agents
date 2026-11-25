@@ -622,8 +622,7 @@ class ChatModelActionEscalationTest {
                                 new String[] {"answer", "reason"}));
         FakeChatModel small = new FakeChatModel(ChatFixtures.response("{\"answer\":\"41\"}"));
         FakeChatModel big =
-                new FakeChatModel(
-                        ChatFixtures.response("{\"answer\":\"42\",\"reason\":\"math\"}"));
+                new FakeChatModel(ChatFixtures.response("{\"answer\":\"42\",\"reason\":\"math\"}"));
         FakeRunnerContext ctx =
                 new FakeRunnerContext(decisionTiers())
                         .registerDecision("dm", new FakeDecisionModel(verdict(0.99)))
