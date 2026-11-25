@@ -199,8 +199,8 @@ class RouterDeclaration(BaseModel):
     registration call site and the plan can apply the same rules to descriptors that
     did not pass through the builder (YAML, hand-written descriptors, restored plans).
     The resource the engine instantiates is
-    ``flink_agents.plan.routing.model_router.ModelRouter``; it only decodes arguments
-    that already passed these checks.
+    ``flink_agents.plan.routing.model_router.ModelRouter``; it applies the same rules
+    again after configuration is merged into the arguments.
     """
 
     candidates: list[str]

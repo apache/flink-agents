@@ -18,6 +18,7 @@
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -25,6 +26,7 @@ from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_models.routing import ModelRouter, Strategies
 from flink_agents.api.resource import (
     JavaResourceDescriptor,
+    ResourceContext,
     ResourceDescriptor,
     ResourceName,
     ResourceType,
@@ -151,11 +153,14 @@ def test_restored_plan_with_an_invalid_router_fails():
         AgentPlan.model_validate(plan)
 
 
-def test_resource_decodes_without_repeating_declaration_checks():
-    router = RouterResource(
-        candidates=["small"], strategy_type="rule_based", default_model="absent"
+def test_configured_default_model_must_be_a_candidate():
+    plan = compile_router(
+        ModelRouter.of("small").strategy(Strategies.rules({})).build()
     )
-    assert router.default_model == "absent"
+    provider = plan.resource_providers[ResourceType.MODEL_ROUTER]["router"]
+    config = AgentConfiguration({"ModelRouter.default_model": "outside"})
+    with pytest.raises(ValueError, match="default model must be a candidate"):
+        provider.provide(Mock(spec=ResourceContext), config)
 
 
 def test_declaration_is_not_a_resource():

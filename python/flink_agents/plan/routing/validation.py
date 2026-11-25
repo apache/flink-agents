@@ -64,7 +64,7 @@ def validate_routing(
     Runs when a plan is built and when one is restored, so a descriptor written by
     hand, loaded from YAML or read from a serialized plan meets the same checks as
     one built with ``ModelRouter.of(...)``. Each declaration is then provided as
-    ``flink_agents.plan.routing.model_router.ModelRouter``, which only decodes it.
+    ``flink_agents.plan.routing.model_router.ModelRouter``.
     ``allow_java`` keeps the Java routers of a restored Java plan, which the Java
     plan validates and Python never provides.
     """

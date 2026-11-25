@@ -19,9 +19,9 @@
 
 from typing import Any
 
-from pydantic import Field, PrivateAttr
+from pydantic import Field, PrivateAttr, model_validator
 
-from flink_agents.api.chat_models.routing import RoutingStrategy
+from flink_agents.api.chat_models.routing import RouterDeclaration, RoutingStrategy
 from flink_agents.api.resource import (
     Resource,
     ResourceDescriptor,
@@ -39,10 +39,10 @@ class ModelRouter(Resource):
     """The ``MODEL_ROUTER`` resource: a router declaration decoded for the engine.
 
     It selects nothing by itself; ``flink_agents.plan.routing.resolver`` asks the
-    strategy for the first model. Construction only decodes the descriptor. The
-    declaration rules run when the agent plan is built or restored
-    (``validate_routing``), so every descriptor meets them before a request reaches
-    this class.
+    strategy for the first model. The declaration rules run when the agent plan is
+    built or restored (``validate_routing``), and again here on the effective
+    arguments, because the provider merges ``ModelRouter.*`` configuration into the
+    descriptor arguments when it creates this resource.
     """
 
     _routing_executor: Any = PrivateAttr(default=None)
@@ -54,6 +54,13 @@ class ModelRouter(Resource):
     strategy_type: str
     strategy_args: dict[str, Any] = Field(default_factory=dict)
     strategy_executor_class: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_effective_arguments(self) -> "ModelRouter":
+        RouterDeclaration(
+            **self.model_dump(include=set(RouterDeclaration.model_fields))
+        )
+        return self
 
     @classmethod
     def resource_type(cls) -> ResourceType:
