@@ -54,6 +54,9 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
@@ -237,7 +240,15 @@ public class AsyncExecutionAgent {
     /** Agent that drives a six-tool batch used to verify max-parallelism in-flight caps. */
     public static class ToolBatchMaxParallelismAgent extends Agent {
         public static final int TOOL_COUNT = 6;
-        public static final int SLEEP_MS = 400;
+        static final AtomicInteger activeCalls = new AtomicInteger();
+        static final AtomicInteger peakActiveCalls = new AtomicInteger();
+        static CyclicBarrier concurrentCalls;
+
+        static void resetConcurrency(int parallelism) {
+            activeCalls.set(0);
+            peakActiveCalls.set(0);
+            concurrentCalls = new CyclicBarrier(parallelism);
+        }
 
         @ChatModelConnection
         public static ResourceDescriptor toolBatchMaxParallelismChatConnection() {
@@ -252,29 +263,24 @@ public class AsyncExecutionAgent {
                             ToolBatchMaxParallelismChatModel.class.getName())
                     .addInitialArgument("connection", "toolBatchMaxParallelismChatConnection")
                     .addInitialArgument("model", "test-model")
-                    .addInitialArgument("tools", List.of("timed_tool_with_sleep"))
+                    .addInitialArgument("tools", List.of("concurrent_tool"))
                     .build();
         }
 
         @org.apache.flink.agents.api.annotation.Tool(
-                description = "Records timing for a tool call with configurable sleep.")
-        public static String timed_tool_with_sleep(
+                description = "Waits for a pair of concurrent tool calls.")
+        public static String concurrent_tool(
                 @ToolParam(name = "request_id") String requestId,
-                @ToolParam(name = "call_index") String callIndex,
-                @ToolParam(name = "sleep_ms") Integer sleepMs) {
-            long start = System.currentTimeMillis();
-            int sleepMillis = sleepMs != null ? sleepMs : 0;
-            if (sleepMillis > 0) {
-                try {
-                    Thread.sleep(sleepMillis);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
+                @ToolParam(name = "call_index") String callIndex)
+                throws Exception {
+            int active = activeCalls.incrementAndGet();
+            peakActiveCalls.accumulateAndGet(active, Math::max);
+            try {
+                concurrentCalls.await(10, TimeUnit.SECONDS);
+                return "request=" + requestId + ",call=" + callIndex;
+            } finally {
+                activeCalls.decrementAndGet();
             }
-            long end = System.currentTimeMillis();
-            return String.format(
-                    "request=%s,call=%s,sleep_ms=%d,start=%d,end=%d",
-                    requestId, callIndex, sleepMillis, start, end);
         }
 
         @Action(EventType.InputEvent)
@@ -296,7 +302,7 @@ public class AsyncExecutionAgent {
         }
     }
 
-    /** Chat connection that emits six slow tool calls for max-parallelism verification. */
+    /** Chat connection that emits six tool calls for max-parallelism verification. */
     public static class ToolBatchMaxParallelismChatConnection extends BaseChatModelConnection {
         public ToolBatchMaxParallelismChatConnection(
                 ResourceDescriptor descriptor, ResourceContext resourceContext) {
@@ -329,8 +335,10 @@ public class AsyncExecutionAgent {
             List<ContentBlock> toolCalls = new java.util.ArrayList<>();
             for (int i = 1; i <= ToolBatchMaxParallelismAgent.TOOL_COUNT; i++) {
                 toolCalls.add(
-                        timeoutToolCallWithSleep(
-                                "call-" + i, requestId, i, ToolBatchMaxParallelismAgent.SLEEP_MS));
+                        new ToolCallBlock(
+                                "call-" + i,
+                                "concurrent_tool",
+                                Map.of("request_id", requestId, "call_index", String.valueOf(i))));
             }
             return new ChatResult(ChatMessage.assistant(toolCalls));
         }

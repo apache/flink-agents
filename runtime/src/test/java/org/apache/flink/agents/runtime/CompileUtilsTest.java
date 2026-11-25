@@ -17,7 +17,6 @@
  */
 package org.apache.flink.agents.runtime;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
@@ -447,23 +446,28 @@ public class CompileUtilsTest {
     }
 
     @Test
-    void rejectsRawByteArrayPythonInputBeforeDeserializingTheAgentPlan() {
+    void rejectsRawByteArrayPythonInput() throws Exception {
         KeyedStream<Row, Row> inputDataStream =
                 createPythonInputStream(Types.PRIMITIVE_ARRAY(Types.BYTE));
 
-        assertThatThrownBy(() -> CompileUtils.connectToAgent(inputDataStream, "not-json"))
+        String planJson = new ObjectMapper().writeValueAsString(TEST_AGENT_PLAN);
+        assertThatThrownBy(() -> CompileUtils.connectToAgent(inputDataStream, planJson))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("only supports PyFlink input values")
                 .hasMessageContaining("raw byte-array");
     }
 
     @Test
-    void acceptsPickledPythonInputBeforeDeserializingTheAgentPlan() {
+    void acceptsPickledPythonInput() throws Exception {
         KeyedStream<Row, Row> inputDataStream =
                 createPythonInputStream(PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO);
 
-        assertThatThrownBy(() -> CompileUtils.connectToAgent(inputDataStream, "not-json"))
-                .isInstanceOf(JsonProcessingException.class);
+        String planJson = new ObjectMapper().writeValueAsString(TEST_AGENT_PLAN);
+        DataStream<byte[]> output = CompileUtils.connectToAgent(inputDataStream, planJson);
+
+        assertThat(output.getType()).isEqualTo(Types.PRIMITIVE_ARRAY(Types.BYTE));
+        assertThat(output.getTransformation().getInputs())
+                .containsExactly(inputDataStream.getTransformation());
     }
 
     @Test
@@ -502,7 +506,9 @@ public class CompileUtilsTest {
                 Types.ROW(PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO, valueType);
         Row input = Row.of(new byte[0], new byte[0]);
         return env.fromData(Collections.singletonList(input), inputType)
-                .keyBy(value -> Row.of(value.getField(0)));
+                .keyBy(
+                        value -> Row.of(value.getField(0)),
+                        Types.ROW(PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO));
     }
 
     private static List<Long> getTestSequence() {

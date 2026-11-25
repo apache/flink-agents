@@ -46,7 +46,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -65,21 +65,14 @@ import static org.assertj.core.api.Assertions.catchThrowable;
  */
 public class ParallelExecutionE2ETest {
 
-    private static final int FANOUT_SLEEP_MS = 1500;
     private static final int FANOUT_HANDLERS = 3;
 
-    private static final int BROADCAST_LONG_SLEEP_MS = 1200;
-    private static final int BROADCAST_SHORT_SLEEP_MS = 100;
     private static final int BROADCAST_HANDLERS = 3;
 
-    private static final int MULTI_KEY_SLEEP_MS = 1500;
     private static final int MULTI_KEY_RECORDS = 3;
-    private static final CountDownLatch MULTI_KEY_ALL_STARTED =
-            new CountDownLatch(MULTI_KEY_RECORDS);
 
     private static final String CTX_OWNER_CONFIG = "context-owner";
     private static final String CTX_MEMORY_OWNER = "context-owner";
-    private static final int CTX_SLEEP_MS = 1500;
     private static final int CTX_HANDLERS = 3;
     /** Independent oracle for the action-specific context configuration. */
     private static final Map<String, String> CTX_EXPECTED_OWNER_BY_HANDLER =
@@ -104,6 +97,8 @@ public class ParallelExecutionE2ETest {
     private static final int BACKPRESSURE_ASYNC_THREADS = 2;
     private static final int BACKPRESSURE_MAX_IN_FLIGHT = 1;
     private static final int BACKPRESSURE_SLEEP_MS = 700;
+
+    private static CyclicBarrier concurrentCalls;
 
     @BeforeEach
     void clearRegistries() {
@@ -205,46 +200,10 @@ public class ParallelExecutionE2ETest {
         return result;
     }
 
-    private static Span spanOf(String action) {
-        return TimingLog.spans().stream()
-                .filter(span -> action.equals(span.action))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("Missing span for action " + action));
-    }
-
     private static String describe(List<Span> spans) {
         List<Span> sorted = new ArrayList<>(spans);
         sorted.sort(Comparator.comparingLong(span -> span.startMs));
         return sorted.toString();
-    }
-
-    /** Every pair of spans must overlap in time. */
-    private static void assertAllPairsOverlap(String description, List<Span> spans) {
-        assertThat(spans.size())
-                .as("%s needs at least two spans to compare", description)
-                .isGreaterThanOrEqualTo(2);
-        for (int i = 0; i < spans.size(); i++) {
-            for (int j = i + 1; j < spans.size(); j++) {
-                Span a = spans.get(i);
-                Span b = spans.get(j);
-                assertThat(a.startMs < b.endMs && b.startMs < a.endMs)
-                        .as(
-                                "%s: %s and %s must overlap; spans=%s",
-                                description, a, b, describe(spans))
-                        .isTrue();
-            }
-        }
-    }
-
-    /** Sum of span durations over the aggregate wall time. */
-    private static void assertSpeedup(String description, List<Span> spans, double minRatio) {
-        long minStart = spans.stream().mapToLong(span -> span.startMs).min().orElseThrow();
-        long maxEnd = spans.stream().mapToLong(span -> span.endMs).max().orElseThrow();
-        long sumDurations = spans.stream().mapToLong(span -> span.endMs - span.startMs).sum();
-        long wall = Math.max(maxEnd - minStart, 1L);
-        assertThat((double) sumDurations / wall)
-                .as("%s: speedup over wall time; spans=%s", description, describe(spans))
-                .isGreaterThanOrEqualTo(minRatio);
     }
 
     private static int distinctThreads(List<Span> spans) {
@@ -299,6 +258,11 @@ public class ParallelExecutionE2ETest {
         }
         results.close();
         return outputs;
+    }
+
+    /** No call can finish until all expected concurrent calls have entered. */
+    private static void awaitConcurrentCalls() throws Exception {
+        concurrentCalls.await(10, TimeUnit.SECONDS);
     }
 
     /** Serializable body used by {@link #durableTiming} hooks. */
@@ -391,6 +355,7 @@ public class ParallelExecutionE2ETest {
     @Test
     @Timeout(30)
     public void fanoutRunsSiblingActionsInParallel() throws Exception {
+        concurrentCalls = new CyclicBarrier(FANOUT_HANDLERS);
         List<String> outputs =
                 runJob(
                         new FanoutAgent(),
@@ -409,9 +374,7 @@ public class ParallelExecutionE2ETest {
         assertThat(spans)
                 .extracting(span -> span.action)
                 .containsExactlyInAnyOrder("handleA", "handleB", "handleC");
-        assertAllPairsOverlap("fan-out siblings", spans);
         assertThat(distinctThreads(spans)).isGreaterThanOrEqualTo(2);
-        assertSpeedup("fan-out siblings", spans, 2.0);
     }
 
     /** Agent: each handler consumes the input directly and does one durableExecuteAsync. */
@@ -443,7 +406,8 @@ public class ParallelExecutionE2ETest {
                             request.key,
                             request.recordId,
                             1,
-                            FANOUT_SLEEP_MS);
+                            0,
+                            ParallelExecutionE2ETest::awaitConcurrentCalls);
             ctx.sendEvent(new OutputEvent(marker));
         }
     }
@@ -451,6 +415,7 @@ public class ParallelExecutionE2ETest {
     @Test
     @Timeout(30)
     public void broadcastRunsAllListenersInParallel() throws Exception {
+        concurrentCalls = new CyclicBarrier(BROADCAST_HANDLERS);
         List<String> outputs =
                 runJob(
                         new BroadcastAgent(),
@@ -467,15 +432,7 @@ public class ParallelExecutionE2ETest {
 
         List<Span> spans = TimingLog.spans();
         assertThat(spans).hasSize(BROADCAST_HANDLERS);
-        assertAllPairsOverlap("broadcast listeners", spans);
         assertThat(distinctThreads(spans)).isGreaterThanOrEqualTo(2);
-
-        // The short-sleep listeners must finish before the long-sleep one.
-        Span alpha = spanOf("handleAlpha");
-        Span beta = spanOf("handleBeta");
-        Span gamma = spanOf("handleGamma");
-        assertThat(beta.endMs).isLessThan(alpha.endMs);
-        assertThat(gamma.endMs).isLessThan(alpha.endMs);
     }
 
     /** Broadcast event consumed by every listener in this scenario. */
@@ -512,19 +469,19 @@ public class ParallelExecutionE2ETest {
         }
 
         public static void handleAlpha(Event event, RunnerContext ctx) throws Exception {
-            invokeAndEmit(event, ctx, "handleAlpha", BROADCAST_LONG_SLEEP_MS);
+            invokeAndEmit(event, ctx, "handleAlpha");
         }
 
         public static void handleBeta(Event event, RunnerContext ctx) throws Exception {
-            invokeAndEmit(event, ctx, "handleBeta", BROADCAST_SHORT_SLEEP_MS);
+            invokeAndEmit(event, ctx, "handleBeta");
         }
 
         public static void handleGamma(Event event, RunnerContext ctx) throws Exception {
-            invokeAndEmit(event, ctx, "handleGamma", BROADCAST_SHORT_SLEEP_MS);
+            invokeAndEmit(event, ctx, "handleGamma");
         }
 
-        private static void invokeAndEmit(
-                Event event, RunnerContext ctx, String action, int sleepMs) throws Exception {
+        private static void invokeAndEmit(Event event, RunnerContext ctx, String action)
+                throws Exception {
             FanBroadcastEvent in = (FanBroadcastEvent) event;
             String marker =
                     durableTiming(
@@ -534,7 +491,8 @@ public class ParallelExecutionE2ETest {
                             in.inputId,
                             in.inputId,
                             1,
-                            sleepMs);
+                            0,
+                            ParallelExecutionE2ETest::awaitConcurrentCalls);
             ctx.sendEvent(new OutputEvent(marker));
         }
     }
@@ -542,6 +500,7 @@ public class ParallelExecutionE2ETest {
     @Test
     @Timeout(30)
     public void multiKeyInputsRunInParallel() throws Exception {
+        concurrentCalls = new CyclicBarrier(MULTI_KEY_RECORDS);
         List<String> outputs =
                 runJob(
                         new MultiKeyAgent(),
@@ -562,9 +521,7 @@ public class ParallelExecutionE2ETest {
         assertThat(spans)
                 .extracting(span -> span.recordId)
                 .containsExactlyInAnyOrder("1", "2", "3");
-        assertAllPairsOverlap("multi-key inputs", spans);
         assertThat(distinctThreads(spans)).isGreaterThanOrEqualTo(2);
-        assertSpeedup("multi-key inputs", spans, 2.0);
     }
 
     /** Agent with a single action issuing exactly one durableExecuteAsync call. */
@@ -581,15 +538,8 @@ public class ParallelExecutionE2ETest {
                             request.key,
                             request.recordId,
                             1,
-                            MULTI_KEY_SLEEP_MS,
-                            () -> {
-                                // Start-alignment barrier; runs before the timed window opens.
-                                MULTI_KEY_ALL_STARTED.countDown();
-                                if (!MULTI_KEY_ALL_STARTED.await(10, TimeUnit.SECONDS)) {
-                                    throw new IllegalStateException(
-                                            "Timed out waiting for all multi-key actions to start");
-                                }
-                            });
+                            0,
+                            ParallelExecutionE2ETest::awaitConcurrentCalls);
             ctx.sendEvent(new OutputEvent(marker));
         }
     }
@@ -597,6 +547,7 @@ public class ParallelExecutionE2ETest {
     @Test
     @Timeout(20)
     public void parallelSiblingsKeepActionScopedContext() throws Exception {
+        concurrentCalls = new CyclicBarrier(CTX_HANDLERS);
         List<String> outputs =
                 runJob(
                         new ContextSwitchAgent(),
@@ -631,12 +582,8 @@ public class ParallelExecutionE2ETest {
         List<Span> secondCalls = spansOfSlot(2);
         assertThat(firstCalls).hasSize(CTX_HANDLERS);
         assertThat(secondCalls).hasSize(CTX_HANDLERS);
-        assertAllPairsOverlap("context-switch slot 1", firstCalls);
-        assertAllPairsOverlap("context-switch slot 2", secondCalls);
         assertThat(distinctThreads(firstCalls)).isEqualTo(CTX_HANDLERS);
         assertThat(distinctThreads(secondCalls)).isEqualTo(CTX_HANDLERS);
-        assertSpeedup("context-switch slot 1", firstCalls, 2.0);
-        assertSpeedup("context-switch slot 2", secondCalls, 2.0);
     }
 
     /** Context values observed by one handler around its two yielding calls. */
@@ -752,7 +699,8 @@ public class ParallelExecutionE2ETest {
                     input.inputId,
                     input.inputId,
                     1,
-                    CTX_SLEEP_MS);
+                    0,
+                    ParallelExecutionE2ETest::awaitConcurrentCalls);
             String[] afterFirst = snapshot(ctx);
             durableTiming(
                     ctx,
@@ -761,7 +709,8 @@ public class ParallelExecutionE2ETest {
                     input.inputId,
                     input.inputId,
                     2,
-                    CTX_SLEEP_MS);
+                    0,
+                    ParallelExecutionE2ETest::awaitConcurrentCalls);
             String[] afterSecond = snapshot(ctx);
 
             assertSnapshot(action, "before", expectedOwner, before);

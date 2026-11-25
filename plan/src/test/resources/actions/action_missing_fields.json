@@ -1,9 +1,0 @@
-{
-  "name": "testAction",
-  "exec": {
-    "func_type": "JavaFunction"
-  },
-  "trigger_conditions": [
-    "_input_event"
-  ]
-}

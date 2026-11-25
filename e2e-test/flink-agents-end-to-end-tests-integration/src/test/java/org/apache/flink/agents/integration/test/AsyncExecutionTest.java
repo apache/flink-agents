@@ -32,6 +32,8 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 /**
  * End-to-end tests for Java async execution functionality.
  *
@@ -387,9 +389,9 @@ public class AsyncExecutionTest {
 
     @Test
     public void testToolCallBatchRespectsMaxParallelismInFlight() throws Exception {
-        final int sleepTimeMs = AsyncExecutionAgent.ToolBatchMaxParallelismAgent.SLEEP_MS;
         final int toolCount = AsyncExecutionAgent.ToolBatchMaxParallelismAgent.TOOL_COUNT;
         final int maxParallelism = 2;
+        AsyncExecutionAgent.ToolBatchMaxParallelismAgent.resetConcurrency(maxParallelism);
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
@@ -411,66 +413,23 @@ public class AsyncExecutionTest {
                         .apply(new AsyncExecutionAgent.ToolBatchMaxParallelismAgent())
                         .toDataStream();
 
-        CloseableIterator<Object> results = outputStream.collectAsync();
-        long pipelineStart = System.currentTimeMillis();
-        agentsEnv.execute();
-        long pipelineEnd = System.currentTimeMillis();
-
-        List<long[]> executionRanges = new ArrayList<>();
-        while (results.hasNext()) {
-            String output = results.next().toString();
-            Matcher matcher = Pattern.compile("start=(\\d+),end=(\\d+)").matcher(output);
-            while (matcher.find()) {
-                long start = Long.parseLong(matcher.group(1));
-                long end = Long.parseLong(matcher.group(2));
-                executionRanges.add(new long[] {start, end});
-            }
+        List<String> outputs = new ArrayList<>();
+        try (CloseableIterator<Object> results = outputStream.collectAsync()) {
+            agentsEnv.execute();
+            results.forEachRemaining(result -> outputs.add(result.toString()));
         }
-        results.close();
 
+        Assertions.assertEquals(1, outputs.size());
+        List<String> expectedCalls = new ArrayList<>();
+        for (int i = 1; i <= toolCount; i++) {
+            expectedCalls.add("request=1,call=" + i);
+        }
+        assertThat(outputs.get(0).split("\\|")).containsExactlyInAnyOrderElementsOf(expectedCalls);
         Assertions.assertEquals(
-                toolCount,
-                executionRanges.size(),
-                "Expected one timing record per tool call in the batch.");
-        int maxConcurrent = maxConcurrentOverlap(executionRanges);
-        Assertions.assertTrue(
-                maxConcurrent <= maxParallelism,
-                "At most "
-                        + maxParallelism
-                        + " tool calls should run concurrently, but observed "
-                        + maxConcurrent
-                        + " in-flight.");
-
-        long batchStart =
-                executionRanges.stream().mapToLong(range -> range[0]).min().orElse(pipelineStart);
-        long batchEnd =
-                executionRanges.stream().mapToLong(range -> range[1]).max().orElse(pipelineEnd);
-        long batchDuration = batchEnd - batchStart;
-        int expectedWaves = (int) Math.ceil((double) toolCount / maxParallelism);
-        long expectedMinDuration = (long) sleepTimeMs * expectedWaves;
-        Assertions.assertTrue(
-                batchDuration >= expectedMinDuration - 150,
-                "With max-parallelism="
-                        + maxParallelism
-                        + ", a "
-                        + toolCount
-                        + "-tool batch should take at least "
-                        + expectedWaves
-                        + " waves (~"
-                        + expectedMinDuration
-                        + "ms), but took "
-                        + batchDuration
-                        + "ms.");
-        Assertions.assertTrue(
-                batchDuration < (long) sleepTimeMs * toolCount - 150,
-                "Capped batch should finish faster than fully serial execution: "
-                        + batchDuration
-                        + "ms vs serial ~"
-                        + ((long) sleepTimeMs * toolCount)
-                        + "ms.");
-        Assertions.assertTrue(
-                pipelineEnd - pipelineStart >= expectedMinDuration - 150,
-                "Pipeline wall time should reflect capped in-flight execution.");
+                maxParallelism,
+                AsyncExecutionAgent.ToolBatchMaxParallelismAgent.peakActiveCalls.get());
+        Assertions.assertEquals(
+                0, AsyncExecutionAgent.ToolBatchMaxParallelismAgent.activeCalls.get());
     }
 
     @Test
@@ -632,29 +591,6 @@ public class AsyncExecutionTest {
                     output.contains("SyncProcessed:"),
                     "Output should contain processed data: " + output);
         }
-    }
-
-    private static int maxConcurrentOverlap(List<long[]> executionRanges) {
-        List<long[]> events = new ArrayList<>();
-        for (long[] range : executionRanges) {
-            events.add(new long[] {range[0], 1});
-            events.add(new long[] {range[1], -1});
-        }
-        events.sort(
-                (left, right) -> {
-                    int byTime = Long.compare(left[0], right[0]);
-                    if (byTime != 0) {
-                        return byTime;
-                    }
-                    return Long.compare(left[1], right[1]);
-                });
-        int current = 0;
-        int max = 0;
-        for (long[] event : events) {
-            current += event[1];
-            max = Math.max(max, current);
-        }
-        return max;
     }
 
     private static int countOverlaps(List<long[]> executionRanges) {

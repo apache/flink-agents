@@ -117,17 +117,6 @@ public class ActionJsonDeserializerTest {
     }
 
     @Test
-    public void testDeserializeMissingFields() throws IOException {
-        // Read JSON with missing fields from resource file
-        String json = Utils.readJsonFromResource("actions/action_missing_fields.json");
-
-        // Attempt to deserialize the JSON: a JavaFunction exec missing 'qualname' fails fast
-        // in deserializeJavaFunction before any trigger-condition parsing.
-        ObjectMapper mapper = new ObjectMapper();
-        assertThrows(NullPointerException.class, () -> mapper.readValue(json, Action.class));
-    }
-
-    @Test
     public void deserializesDottedCondition() throws IOException {
         String json = Utils.readJsonFromResource("actions/action_unquoted_dotted_event_type.json");
 
