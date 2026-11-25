@@ -269,16 +269,24 @@ class YamlLoaderBuildAgentsTest {
         "decision_model_connections,decision_model_connection",
         "decision_model_setups,decision_model"
     })
-    void decisionModelJavaDeclarationsAreRejectedAtLoadTime(
+    void decisionModelJavaDeclarationsLoadCustomImplementations(
             String section, String resourceType, @TempDir Path tmp) throws Exception {
         Path file = tmp.resolve(section + ".yaml");
         Files.writeString(
                 file,
-                String.format("%s:\n  - name: dm\n    clazz: typesafe\n    type: java\n", section));
+                String.format(
+                        "%s:\n  - name: dm\n    clazz: com.example.CustomDecision\n"
+                                + "    type: java\n",
+                        section));
 
-        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("type='java' is not supported for " + resourceType);
+        ResourceDescriptor descriptor =
+                (ResourceDescriptor)
+                        YamlLoader.buildAgents(file)
+                                .getSharedResources()
+                                .get(ResourceType.fromValue(resourceType))
+                                .get("dm");
+        assertThat(descriptor.getClazz()).isEqualTo("com.example.CustomDecision");
+        assertThat(descriptor.getInitialArguments()).isEmpty();
     }
 
     @Test
