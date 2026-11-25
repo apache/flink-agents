@@ -48,6 +48,10 @@ import java.util.Map;
  *       can refer to different classes across sections and languages.
  * </ul>
  *
+ * <p>Alias lookup answers only whether a short name is registered for a language. It does not
+ * describe which resource kinds a loader supports: custom implementations and Java-only kinds may
+ * have no alias entry.
+ *
  * <p>For Python resources, the loader resolves the alias to the Python FQN and wraps it in a Python
  * implementation descriptor.
  *
@@ -231,6 +235,31 @@ public final class Aliases {
     /** Look up an event alias; return {@code name} unchanged on miss. */
     public static String resolveEventType(String name) {
         return EVENT_ALIASES.getOrDefault(name, name);
+    }
+
+    /** Whether {@code name} is a registered short alias for {@code (resourceType, language)}. */
+    public static boolean isKnownAlias(String name, ResourceType resourceType, Language language) {
+        Map<Language, Map<String, String>> byLang = CLAZZ_ALIASES.get(resourceType);
+        return byLang != null && byLang.get(language).containsKey(name);
+    }
+
+    /**
+     * Whether {@code name} is a short alias registered only for a language other than {@code
+     * language}. An alias miss is not an error because the loader also accepts fully-qualified
+     * custom class names.
+     */
+    public static boolean isKnownAliasForOtherLanguage(
+            String name, ResourceType resourceType, Language language) {
+        Map<Language, Map<String, String>> byLang = CLAZZ_ALIASES.get(resourceType);
+        if (byLang == null || isKnownAlias(name, resourceType, language)) {
+            return false;
+        }
+        for (Language aliasLanguage : Language.values()) {
+            if (aliasLanguage != language && byLang.get(aliasLanguage).containsKey(name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

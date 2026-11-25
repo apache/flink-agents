@@ -129,6 +129,35 @@ class YamlLoaderBuildersTest {
     }
 
     @Test
+    void descriptorJavaRejectedForPythonOnlyKinds() throws Exception {
+        DescriptorSpec spec =
+                M.readValue("name: x\nclazz: mcp\ntype: java\n", DescriptorSpec.class);
+        assertThatThrownBy(() -> YamlLoader.buildDescriptor(spec, ResourceType.MCP_SERVER))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("type='java' is not supported for mcp_server");
+    }
+
+    @Test
+    void descriptorJavaRejectedForPythonOnlyAlias() throws Exception {
+        DescriptorSpec spec =
+                M.readValue("name: x\nclazz: dashscope\ntype: java\n", DescriptorSpec.class);
+        assertThatThrownBy(
+                        () -> YamlLoader.buildDescriptor(spec, ResourceType.CHAT_MODEL_CONNECTION))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Java alias 'dashscope' for chat_model_connection");
+    }
+
+    @Test
+    void descriptorPythonRejectedForJavaOnlyAlias() throws Exception {
+        DescriptorSpec spec =
+                M.readValue("name: x\nclazz: gemini\ntype: python\n", DescriptorSpec.class);
+        assertThatThrownBy(
+                        () -> YamlLoader.buildDescriptor(spec, ResourceType.CHAT_MODEL_CONNECTION))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Python alias 'gemini' for chat_model_connection");
+    }
+
+    @Test
     void descriptorPythonRejectedForUnsupportedKind() throws Exception {
         DescriptorSpec spec =
                 M.readValue("name: x\nclazz: anything\ntype: python\n", DescriptorSpec.class);

@@ -24,6 +24,10 @@ Two tables:
   implementation language so the same alias (``ollama``) can refer to
   different classes across sections and languages.
 
+Alias lookup answers only whether a short name is registered for a
+language. It does not describe which resource kinds a loader supports:
+custom implementations and Java-only kinds may have no alias entry.
+
 For Java resources, the loader resolves the alias to the Java FQN and
 creates a JavaResourceDescriptor. Plan selects the execution wrapper.
 
@@ -201,6 +205,29 @@ def resolve_event_type(name: str) -> str:
     or pass through if no alias matches.
     """
     return EVENT_ALIASES.get(name, name)
+
+
+def is_known_alias(name: str, resource_type: ResourceType, language: Language) -> bool:
+    """Whether ``name`` is a registered short alias for the given language."""
+    return name in CLAZZ_ALIASES.get(resource_type, {}).get(language, {})
+
+
+def is_known_alias_for_other_language(
+    name: str, resource_type: ResourceType, language: Language
+) -> bool:
+    """Whether ``name`` is a short alias known only to the other language.
+
+    Alias misses intentionally pass through so a fully-qualified custom class can
+    be supplied. This check distinguishes that custom-class case from a built-in
+    alias that belongs to the other loader.
+    """
+    lang_map = CLAZZ_ALIASES.get(resource_type, {})
+    if name in lang_map.get(language, {}):
+        return False
+    return any(
+        alias_language != language and name in bucket
+        for alias_language, bucket in lang_map.items()
+    )
 
 
 def resolve_clazz(

@@ -36,6 +36,7 @@ from flink_agents.api.resource import ResourceName, ResourceType
 from flink_agents.api.yaml.aliases import (
     CLAZZ_ALIASES,
     EVENT_ALIASES,
+    is_known_alias_for_other_language,
     resolve_clazz,
     resolve_event_type,
 )
@@ -118,6 +119,23 @@ def test_resolve_clazz_replaces_mcp_alias() -> None:
 def test_resolve_clazz_passes_through_fqn() -> None:
     assert (
         resolve_clazz("my.custom.Klass", ResourceType.CHAT_MODEL) == "my.custom.Klass"
+    )
+
+
+def test_known_alias_for_other_language_is_detected() -> None:
+    assert is_known_alias_for_other_language(
+        "dashscope", ResourceType.CHAT_MODEL_CONNECTION, "java"
+    )
+    assert is_known_alias_for_other_language(
+        "chroma", ResourceType.VECTOR_STORE, "java"
+    )
+    assert not is_known_alias_for_other_language(
+        "ollama", ResourceType.CHAT_MODEL_CONNECTION, "java"
+    )
+    assert not is_known_alias_for_other_language(
+        "com.example.CustomChatModel",
+        ResourceType.CHAT_MODEL,
+        "java",
     )
 
 

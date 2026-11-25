@@ -67,30 +67,35 @@ public final class YamlLoader {
 
     private static final ObjectMapper YAML_MAPPER = new ObjectMapper(new YAMLFactory());
 
-    /** Resource kinds that the Java loader can turn into a Python implementation descriptor. */
-    private static final Set<ResourceType> PYTHON_DESCRIPTOR_TYPES =
-            Set.of(
-                    ResourceType.CHAT_MODEL,
-                    ResourceType.CHAT_MODEL_CONNECTION,
-                    ResourceType.DECISION_MODEL,
-                    ResourceType.DECISION_MODEL_CONNECTION,
-                    ResourceType.EMBEDDING_MODEL,
-                    ResourceType.EMBEDDING_MODEL_CONNECTION,
-                    ResourceType.VECTOR_STORE,
-                    ResourceType.MCP_SERVER);
-
-    /** Resource kinds that have a Java implementation usable through a YAML descriptor. */
-    private static final Set<ResourceType> JAVA_DESCRIPTOR_TYPES =
-            Set.of(
-                    ResourceType.CHAT_MODEL,
-                    ResourceType.CHAT_MODEL_CONNECTION,
-                    ResourceType.DECISION_MODEL,
-                    ResourceType.DECISION_MODEL_CONNECTION,
-                    ResourceType.EMBEDDING_MODEL,
-                    ResourceType.EMBEDDING_MODEL_CONNECTION,
-                    ResourceType.VECTOR_STORE,
-                    ResourceType.MODEL_ROUTER,
-                    ResourceType.AGENT);
+    /**
+     * Resource kinds this loader accepts, keyed by the descriptor's implementation language.
+     *
+     * <p>This is a loader capability table, not an alias table. Some kinds support custom Java
+     * implementations without having a Java short alias, and external sub-agents are Java-only.
+     */
+    private static final Map<Language, Set<ResourceType>> SUPPORTED_DESCRIPTOR_TYPES =
+            Map.of(
+                    Language.PYTHON,
+                    Set.of(
+                            ResourceType.CHAT_MODEL,
+                            ResourceType.CHAT_MODEL_CONNECTION,
+                            ResourceType.DECISION_MODEL,
+                            ResourceType.DECISION_MODEL_CONNECTION,
+                            ResourceType.EMBEDDING_MODEL,
+                            ResourceType.EMBEDDING_MODEL_CONNECTION,
+                            ResourceType.VECTOR_STORE,
+                            ResourceType.MCP_SERVER),
+                    Language.JAVA,
+                    Set.of(
+                            ResourceType.CHAT_MODEL,
+                            ResourceType.CHAT_MODEL_CONNECTION,
+                            ResourceType.DECISION_MODEL,
+                            ResourceType.DECISION_MODEL_CONNECTION,
+                            ResourceType.EMBEDDING_MODEL,
+                            ResourceType.EMBEDDING_MODEL_CONNECTION,
+                            ResourceType.VECTOR_STORE,
+                            ResourceType.MODEL_ROUTER,
+                            ResourceType.AGENT));
 
     /** Default Java parameter types for an action method: (Event, RunnerContext). */
     private static final List<String> JAVA_ACTION_PARAMETER_TYPES =
@@ -150,13 +155,22 @@ public final class YamlLoader {
         Language language = spec.getType() == null ? Language.PYTHON : spec.getType();
         Map<String, Object> extras = new LinkedHashMap<>(spec.getExtras());
 
-        Set<ResourceType> supportedTypes =
-                language == Language.PYTHON ? PYTHON_DESCRIPTOR_TYPES : JAVA_DESCRIPTOR_TYPES;
+        Set<ResourceType> supportedTypes = SUPPORTED_DESCRIPTOR_TYPES.get(language);
         if (!supportedTypes.contains(resourceType)) {
             throw new IllegalArgumentException(
                     "type='"
                             + language.getValue()
                             + "' is not supported for "
+                            + resourceType.getValue());
+        }
+        if (Aliases.isKnownAliasForOtherLanguage(spec.getClazz(), resourceType, language)) {
+            throw new IllegalArgumentException(
+                    "Unknown "
+                            + language.name().charAt(0)
+                            + language.name().substring(1).toLowerCase()
+                            + " alias '"
+                            + spec.getClazz()
+                            + "' for "
                             + resourceType.getValue());
         }
 

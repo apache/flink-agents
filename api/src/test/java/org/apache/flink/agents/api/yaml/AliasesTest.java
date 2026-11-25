@@ -195,6 +195,24 @@ class AliasesTest {
     }
 
     @Test
+    void knownAliasForOtherLanguageDistinguishesAliasesFromCustomClasses() {
+        assertThat(
+                        Aliases.isKnownAliasForOtherLanguage(
+                                "dashscope", ResourceType.CHAT_MODEL_CONNECTION, Language.JAVA))
+                .isTrue();
+        assertThat(
+                        Aliases.isKnownAliasForOtherLanguage(
+                                "ollama", ResourceType.CHAT_MODEL_CONNECTION, Language.JAVA))
+                .isFalse();
+        assertThat(
+                        Aliases.isKnownAliasForOtherLanguage(
+                                "com.example.CustomChatModel",
+                                ResourceType.CHAT_MODEL,
+                                Language.JAVA))
+                .isFalse();
+    }
+
+    @Test
     void clazzAliasMissPassesThrough() {
         String fqn =
                 Aliases.resolveClazz(
