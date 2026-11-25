@@ -1318,9 +1318,6 @@ def test_flink_runner_context_gather_timeout_leaves_queued_slots_pending() -> No
     finally:
         release.set()
         _close_runner_context(ctx)
-        # Give the pool a chance to pick up any work item that escaped
-        # cancellation; a retracted item stays absent from executions.
-        time.sleep(0.1)
 
     assert all(outcome.is_failure() for outcome in outcomes)
     statuses = [result.status for result in j_runner_context.call_results]
@@ -1735,37 +1732,35 @@ def test_flink_runner_context_gather_respects_max_parallelism() -> None:
     active_count = 0
     peak_active = 0
     counter_lock = threading.Lock()
-    hold_seconds = 0.15
+    pair_started = threading.Barrier(2, timeout=5)
 
-    def slow_call(value: str) -> str:
+    def concurrent_call(value: str) -> str:
         nonlocal active_count, peak_active
         with counter_lock:
             active_count += 1
             peak_active = max(peak_active, active_count)
-        time.sleep(hold_seconds)
-        with counter_lock:
-            active_count -= 1
-        return value
+        try:
+            # Each pair must overlap; the timeout only guards against a stalled test.
+            pair_started.wait()
+            return value
+        finally:
+            with counter_lock:
+                active_count -= 1
 
     try:
-        start = time.perf_counter()
         outcomes = _run_async(
             ctx.gather(
-                ctx.durable_execute_async(slow_call, "one"),
-                ctx.durable_execute_async(slow_call, "two"),
-                ctx.durable_execute_async(slow_call, "three"),
-                ctx.durable_execute_async(slow_call, "four"),
+                ctx.durable_execute_async(concurrent_call, "one"),
+                ctx.durable_execute_async(concurrent_call, "two"),
+                ctx.durable_execute_async(concurrent_call, "three"),
+                ctx.durable_execute_async(concurrent_call, "four"),
             )
         )
-        elapsed = time.perf_counter() - start
     finally:
         _close_runner_context(ctx)
 
     assert [outcome.value for outcome in outcomes] == ["one", "two", "three", "four"]
     assert peak_active == 2
-    # parallelism=2 → two waves; allow scheduler slack on shared CI runners
-    assert elapsed >= hold_seconds * 2 - 0.08
-    assert elapsed < hold_seconds * 4 + 0.4
     assert [result.status for result in j_runner_context.call_results] == [
         "SUCCEEDED",
         "SUCCEEDED",
