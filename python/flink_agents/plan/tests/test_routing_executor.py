@@ -25,10 +25,11 @@ import pytest
 from flink_agents.api.events.model_routing_event import ModelRoutingEvent
 from flink_agents.plan.routing import executor
 from flink_agents.plan.routing.executor import (
-    ROUTING_METADATA_CONTEXT,
     CandidateAttemptFailed,
+    ExecutionResult,
     ModelRoutingExecutionException,
 )
+from flink_agents.plan.routing.metadata import ROUTING_METADATA_CONTEXT
 from flink_agents.plan.routing.resolved_route import ResolvedModelRoute
 
 
@@ -72,40 +73,40 @@ def _attempts(failing: set[str]) -> tuple[Callable, list]:
     return attempt, calls
 
 
-def test_selected_candidate_answers_and_metadata_is_stored():
+def test_selected_candidate_answers_with_its_metadata_and_stores_nothing():
     ctx, request_id = _ctx(), uuid4()
     attempt, calls = _attempts(set())
-    model, result = asyncio.run(executor.execute(request_id, _route(), attempt, ctx))
-    assert (model, result) == ("small", "answer from small")
+    result = asyncio.run(executor.execute(request_id, _route(), attempt, ctx))
+    assert (result.model, result.attempt) == ("small", "answer from small")
     assert calls == [("small", "chat:router:small")]
     ctx.send_event.assert_not_called()
-    stored = executor.response_metadata(ctx.sensory_memory, request_id)
-    assert stored["final_model"] == "small"
-    assert ctx.sensory_memory.get(ROUTING_METADATA_CONTEXT)[str(request_id)] == stored
+    assert result.routing_metadata["final_model"] == "small"
+    assert result.routing_metadata["decision_source"] == "strategy"
+    assert ctx.sensory_memory.get(ROUTING_METADATA_CONTEXT) is None
 
 
 def test_fallback_answer_sends_a_routing_event():
     ctx, request_id = _ctx(), uuid4()
     attempt, calls = _attempts({"small"})
-    model, _ = asyncio.run(executor.execute(request_id, _route(), attempt, ctx))
-    assert model == "big"
+    result = asyncio.run(executor.execute(request_id, _route(), attempt, ctx))
+    assert result.model == "big"
     assert [c for c, _ in calls] == ["small", "big"]
     event = ctx.send_event.call_args.args[0]
     assert isinstance(event, ModelRoutingEvent)
     assert event.selected_model == "big"
     assert event.decision_source == "fallback"
-    stored = executor.response_metadata(ctx.sensory_memory, request_id)
-    assert stored["fallback_attempted"] is True
+    assert result.routing_metadata["fallback_attempted"] is True
+    assert result.routing_metadata["fallback_models_tried"] == ["big"]
 
 
-def test_direct_route_stores_no_metadata():
+def test_direct_route_has_no_metadata():
     ctx, request_id = _ctx(), uuid4()
     attempt, calls = _attempts(set())
-    asyncio.run(
+    result = asyncio.run(
         executor.execute(request_id, ResolvedModelRoute.direct("m"), attempt, ctx)
     )
     assert calls == [("m", "chat")]
-    assert executor.response_metadata(ctx.sensory_memory, request_id) is None
+    assert result.routing_metadata is None
 
 
 def test_every_candidate_failing_raises_with_causes_in_order():
@@ -116,3 +117,35 @@ def test_every_candidate_failing_raises_with_causes_in_order():
     assert caught.value.tried == ["small", "big"]
     assert [str(e) for e in caught.value.errors] == ["small down", "big down"]
     assert ctx.sensory_memory.get(ROUTING_METADATA_CONTEXT) is None
+
+
+def test_saved_block_stands_for_a_tool_round_and_is_cleared_with_the_response():
+    memory, request_id = _Memory(), uuid4()
+    initial = ExecutionResult(request_id, "small", "a", {"final_model": "small"})
+    executor.save_routing_metadata(memory, initial)
+    tool_round = ExecutionResult(request_id, "small", "b", None)
+    executor.save_routing_metadata(memory, tool_round)
+    assert executor.get_and_clear_routing_metadata(memory, tool_round) == {
+        "final_model": "small"
+    }
+    assert memory.get(ROUTING_METADATA_CONTEXT) == {}
+
+
+def test_a_rounds_own_block_wins_over_the_saved_one():
+    memory, request_id = _Memory(), uuid4()
+    executor.save_routing_metadata(
+        memory, ExecutionResult(request_id, "small", "a", {"final_model": "small"})
+    )
+    final = ExecutionResult(request_id, "big", "b", {"final_model": "big"})
+    assert executor.get_and_clear_routing_metadata(memory, final) == {
+        "final_model": "big"
+    }
+    assert memory.get(ROUTING_METADATA_CONTEXT) == {}
+
+
+def test_direct_request_has_no_block_and_leaves_memory_untouched():
+    memory, request_id = _Memory(), uuid4()
+    result = ExecutionResult(request_id, "m", "a", None)
+    assert executor.get_and_clear_routing_metadata(memory, result) is None
+    executor.clear_routing_metadata(memory, request_id)
+    assert memory.get(ROUTING_METADATA_CONTEXT) is None

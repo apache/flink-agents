@@ -57,7 +57,6 @@ from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.resource.java.java_chat_model import JavaChatModelSetup
 from flink_agents.plan.routing import executor as routing_executor
 from flink_agents.plan.routing.executor import (
-    ROUTING_METADATA_CONTEXT,
     CandidateAttemptFailed,
     ModelRoutingExecutionException,
 )
@@ -224,10 +223,11 @@ def _send_failure(
 
 
 def _clear_request_context(memory: MemoryObject, request_id: UUID) -> None:
-    for key in (_TOOL_CALL_CONTEXT, RETRY_STATS_CONTEXT, ROUTING_METADATA_CONTEXT):
+    for key in (_TOOL_CALL_CONTEXT, RETRY_STATS_CONTEXT):
         context = dict(memory.get(key) or {})
         if context.pop(str(request_id), None) is not None:
             memory.set(key, context)
+    routing_executor.clear_routing_metadata(memory, request_id)
 
 
 # ============================================================================
@@ -826,7 +826,7 @@ async def _chat_resolved(
         )
 
     try:
-        model, attempt_result = await routing_executor.execute(
+        executed = await routing_executor.execute(
             initial_request_id, selection, attempt, ctx
         )
     except ModelRoutingExecutionException as failure:
@@ -843,6 +843,8 @@ async def _chat_resolved(
         )
         _send_failure(initial_request_id, error, ctx, user_context)
         return
+    model = executed.model
+    attempt_result = executed.attempt
     response = attempt_result.response
     chat_model = attempt_result.chat_model
     structured_output = attempt_result.structured_output
@@ -850,6 +852,7 @@ async def _chat_resolved(
     if (
         len(response.tool_calls) > 0
     ):  # generate tool request event according tool calls in response
+        routing_executor.save_routing_metadata(ctx.sensory_memory, executed)
         _handle_tool_calls(
             response,
             initial_request_id,
@@ -865,8 +868,8 @@ async def _chat_resolved(
         retry_stats = chat_retry_stats.get(ctx.sensory_memory, initial_request_id)
         total_retry_count = retry_stats["total_retry_count"]
         total_retry_wait_ms = retry_stats["total_retry_wait_ms"]
-        routing_metadata = routing_executor.response_metadata(
-            ctx.sensory_memory, initial_request_id
+        routing_metadata = routing_executor.get_and_clear_routing_metadata(
+            ctx.sensory_memory, executed
         )
         _clear_request_context(ctx.sensory_memory, initial_request_id)
         completed = ChatResponseEvent.success(

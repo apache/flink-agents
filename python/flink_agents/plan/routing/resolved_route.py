@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-"""Resolved selection, fallback order and response metadata."""
+"""Resolved selection and fallback order."""
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -51,25 +51,3 @@ class ResolvedModelRoute:
     def durable_chat_call_id(self, candidate: str) -> str:
         """Stable call identity, scoped by the durable action's sequence."""
         return f"chat:{self.requested_model}:{candidate}" if self.is_router else "chat"
-
-    def build_response_metadata(
-        self, final_model: str, tried: list[str]
-    ) -> dict[str, Any]:
-        """Build the Java-compatible model_routing response attribute."""
-        fallback = final_model != self.selected_model
-        result = {
-            "router": self.requested_model,
-            "selected_model": self.selected_model,
-            "final_model": final_model,
-            "candidates": list(self.candidates),
-            "decision_source": "fallback" if fallback else self.decision_source,
-            "fallback_enabled": self.fallback_enabled,
-            "fallback_attempted": fallback,
-            "fallback_models_tried": tried[1:],
-            "metadata": dict(self.metadata),
-        }
-        if self.reason is not None:
-            result["reason"] = self.reason
-        if self.score is not None:
-            result["score"] = self.score
-        return result

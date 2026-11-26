@@ -15,18 +15,17 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-"""Run a resolved route's candidates and keep its routing metadata."""
+"""Run a resolved route's candidates and hand back the round's routing metadata."""
 
-from typing import Any, Awaitable, Callable, TypeVar
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Generic, TypeVar
 from uuid import UUID
 
 from flink_agents.api.events.model_routing_event import ModelRoutingEvent
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.plan.routing import metadata as routing_metadata
 from flink_agents.plan.routing.resolved_route import ResolvedModelRoute
-
-# Sensory-memory key; checkpointed state, so the name must not change.
-ROUTING_METADATA_CONTEXT = "_ROUTING_METADATA_CONTEXT"
 
 T = TypeVar("T")
 
@@ -50,17 +49,33 @@ class ModelRoutingExecutionException(Exception):
         self.errors = errors
 
 
+@dataclass
+class ExecutionResult(Generic[T]):
+    """What a round produced: the accepted candidate's answer and its routing block.
+
+    ``routing_metadata`` is None when the round has no block of its own: a request
+    that never went through a router, or a tool round, for which the block saved by
+    the initial round stands.
+    """
+
+    request_id: UUID
+    model: str
+    attempt: T
+    routing_metadata: dict[str, Any] | None
+
+
 async def execute(
     initial_request_id: UUID,
     selection: ResolvedModelRoute,
     attempt: Callable[[str, str], Awaitable[T]],
     ctx: RunnerContext,
-) -> tuple[str, T]:
+) -> ExecutionResult[T]:
     """Try the route's candidates in order and return the first that answers.
 
     ``attempt(candidate, durable_id)`` raises ``CandidateAttemptFailed`` to move on to
     the next candidate. For a router, a fallback answer is announced with a
-    ``ModelRoutingEvent`` and the route's response metadata is stored for the request.
+    ``ModelRoutingEvent``. The round's block is returned, not stored: the caller
+    saves it for a tool loop or attaches it to the response.
     """
     tried: list[str] = []
     errors: list[Exception] = []
@@ -71,6 +86,7 @@ async def execute(
         except CandidateAttemptFailed as failure:
             errors.append(failure.error)
             continue
+        block = None
         if selection.is_router:
             if candidate != selection.selected_model:
                 ctx.send_event(
@@ -85,27 +101,35 @@ async def execute(
                         metadata=selection.metadata,
                     )
                 )
-            _store_metadata(
-                ctx.sensory_memory,
-                initial_request_id,
-                selection.build_response_metadata(candidate, tried),
-            )
-        return candidate, result
+            block = routing_metadata.build(selection, candidate, tried)
+        return ExecutionResult(initial_request_id, candidate, result, block)
     raise ModelRoutingExecutionException(tried, errors)
 
 
-def _store_metadata(
-    sensory_memory: MemoryObject, initial_request_id: UUID, metadata: dict[str, Any]
+def save_routing_metadata(
+    sensory_memory: MemoryObject, result: ExecutionResult
 ) -> None:
-    routing_context = dict(sensory_memory.get(ROUTING_METADATA_CONTEXT) or {})
-    routing_context[str(initial_request_id)] = metadata
-    sensory_memory.set(ROUTING_METADATA_CONTEXT, routing_context)
+    """Keep the round's block while the request continues in a tool loop.
+
+    A round without a block of its own leaves the saved one in place.
+    """
+    if result.routing_metadata is not None:
+        routing_metadata.save(
+            sensory_memory, result.request_id, result.routing_metadata
+        )
 
 
-def response_metadata(
-    sensory_memory: MemoryObject, initial_request_id: UUID
+def get_and_clear_routing_metadata(
+    sensory_memory: MemoryObject, result: ExecutionResult
 ) -> dict[str, Any] | None:
-    """Return the routing metadata stored for a request, if it was routed."""
-    return (sensory_memory.get(ROUTING_METADATA_CONTEXT) or {}).get(
-        str(initial_request_id)
-    )
+    """Return the block to attach to the final response and remove the saved one.
+
+    None when the request never went through a router.
+    """
+    saved = routing_metadata.take(sensory_memory, result.request_id)
+    return result.routing_metadata if result.routing_metadata is not None else saved
+
+
+def clear_routing_metadata(sensory_memory: MemoryObject, request_id: UUID) -> None:
+    """Remove the request's saved block when the request fails."""
+    routing_metadata.take(sensory_memory, request_id)
