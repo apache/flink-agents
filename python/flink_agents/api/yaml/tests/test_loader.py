@@ -778,13 +778,15 @@ def test_build_agents_accepts_custom_java_classes(
     assert descriptor.target_clazz == "com.example.CustomJavaResource"
 
 
-def test_build_agents_rejects_python_only_mcp_alias_for_java_declaration(
+def test_build_agents_rejects_unknown_alias(
     tmp_path: Path,
 ) -> None:
-    source = tmp_path / "java-mcp-alias.yaml"
-    source.write_text("mcp_servers:\n  - name: x\n    clazz: mcp\n    type: java\n")
+    source = tmp_path / "java-unknown-alias.yaml"
+    source.write_text(
+        "chat_model_connections:\n  - name: x\n    clazz: ollmaa\n    type: java\n"
+    )
     with pytest.raises(
-        ValueError, match=r"Unknown Java alias 'mcp' for mcp_server"
+        ValueError, match=r"Unknown Java alias 'ollmaa' for chat_model_connection"
     ):
         build_agents(source)
 

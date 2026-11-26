@@ -15,6 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import pytest
+
 from flink_agents.api.events.chat_event import (
     ChatRequestEvent,
     ChatResponseEvent,
@@ -36,7 +38,6 @@ from flink_agents.api.resource import ResourceName, ResourceType
 from flink_agents.api.yaml.aliases import (
     CLAZZ_ALIASES,
     EVENT_ALIASES,
-    is_known_alias_for_other_language,
     resolve_clazz,
     resolve_event_type,
 )
@@ -122,28 +123,22 @@ def test_resolve_clazz_passes_through_fqn() -> None:
     )
 
 
-def test_known_alias_for_other_language_is_detected() -> None:
-    assert is_known_alias_for_other_language(
-        "dashscope", ResourceType.CHAT_MODEL_CONNECTION, "java"
-    )
-    assert is_known_alias_for_other_language(
-        "mcp", ResourceType.MCP_SERVER, "java"
-    )
-    assert is_known_alias_for_other_language(
-        "chroma", ResourceType.VECTOR_STORE, "java"
-    )
-    assert not is_known_alias_for_other_language(
-        "ollama", ResourceType.CHAT_MODEL_CONNECTION, "java"
-    )
-    assert not is_known_alias_for_other_language(
-        "com.example.CustomChatModel",
-        ResourceType.CHAT_MODEL,
-        "java",
-    )
+def test_resolve_clazz_rejects_alias_for_other_language() -> None:
+    with pytest.raises(
+        ValueError, match=r"Unknown Java alias 'dashscope' for chat_model_connection"
+    ):
+        resolve_clazz("dashscope", ResourceType.CHAT_MODEL_CONNECTION, "java")
+    with pytest.raises(
+        ValueError, match=r"Unknown Python alias 'gemini' for chat_model_connection"
+    ):
+        resolve_clazz("gemini", ResourceType.CHAT_MODEL_CONNECTION, "python")
 
 
-def test_resolve_clazz_unknown_alias_passes_through() -> None:
-    assert resolve_clazz("nonexistent", ResourceType.CHAT_MODEL) == "nonexistent"
+def test_resolve_clazz_rejects_unknown_alias() -> None:
+    with pytest.raises(
+        ValueError, match=r"Unknown Python alias 'ollmaa' for chat_model_connection"
+    ):
+        resolve_clazz("ollmaa", ResourceType.CHAT_MODEL_CONNECTION)
 
 
 def test_clazz_aliases_have_per_language_buckets() -> None:
@@ -310,15 +305,16 @@ def test_resolve_clazz_covers_model_router_in_both_languages() -> None:
         resolve_clazz("router", ResourceType.MODEL_ROUTER, "java")
         == ResourceName.ModelRouter.Java.MODEL_ROUTER
     )
-    # The section name already identifies the resource, so the old alias is not kept.
-    assert (
+    # The section name already identifies the resource, and a bare unknown alias is
+    # rejected rather than passed through.
+    with pytest.raises(
+        ValueError, match=r"Unknown Python alias 'model_router' for model_router"
+    ):
         resolve_clazz("model_router", ResourceType.MODEL_ROUTER, "python")
-        == "model_router"
-    )
-    assert (
+    with pytest.raises(
+        ValueError, match=r"Unknown Java alias 'model_router' for model_router"
+    ):
         resolve_clazz("model_router", ResourceType.MODEL_ROUTER, "java")
-        == "model_router"
-    )
 
 
 def test_custom_java_resource_class_passes_through() -> None:

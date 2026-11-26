@@ -129,25 +129,6 @@ class YamlLoaderBuildersTest {
     }
 
     @Test
-    void descriptorJavaRejectsPythonOnlyMcpAlias() throws Exception {
-        DescriptorSpec spec =
-                M.readValue("name: x\nclazz: mcp\ntype: java\n", DescriptorSpec.class);
-        assertThatThrownBy(() -> YamlLoader.buildDescriptor(spec, ResourceType.MCP_SERVER))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Unknown Java alias 'mcp' for mcp_server");
-    }
-
-    @Test
-    void descriptorJavaAcceptsCustomMcpServerClass() throws Exception {
-        DescriptorSpec spec =
-                M.readValue(
-                        "name: x\nclazz: com.example.CustomMCPServer\ntype: java\n",
-                        DescriptorSpec.class);
-        assertThat(YamlLoader.buildDescriptor(spec, ResourceType.MCP_SERVER).getClazz())
-                .isEqualTo("com.example.CustomMCPServer");
-    }
-
-    @Test
     void descriptorJavaRejectedForPythonOnlyAlias() throws Exception {
         DescriptorSpec spec =
                 M.readValue("name: x\nclazz: dashscope\ntype: java\n", DescriptorSpec.class);

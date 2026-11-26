@@ -124,17 +124,6 @@ public final class YamlLoader {
         Language language = spec.getType() == null ? Language.PYTHON : spec.getType();
         Map<String, Object> extras = new LinkedHashMap<>(spec.getExtras());
 
-        if (Aliases.isKnownAliasForOtherLanguage(spec.getClazz(), resourceType, language)) {
-            throw new IllegalArgumentException(
-                    "Unknown "
-                            + language.name().charAt(0)
-                            + language.name().substring(1).toLowerCase()
-                            + " alias '"
-                            + spec.getClazz()
-                            + "' for "
-                            + resourceType.getValue());
-        }
-
         if (language == Language.PYTHON) {
             if (!java.util.Set.of(
                             ResourceType.CHAT_MODEL,

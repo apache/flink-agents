@@ -310,6 +310,24 @@ class YamlLoaderBuildAgentsTest {
 
     @ParameterizedTest
     @CsvSource({
+        "chat_model_connections,chat_model_connection",
+        "embedding_model_connections,embedding_model_connection",
+        "vector_stores,vector_store"
+    })
+    void declarationsRejectUnknownAliases(String section, String resourceType, @TempDir Path tmp)
+            throws Exception {
+        Path file = tmp.resolve(section + "-unknown.yaml");
+        Files.writeString(
+                file,
+                String.format("%s:%n  - name: x%n    type: java%n    clazz: ollmaa%n", section));
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Java alias 'ollmaa' for " + resourceType);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
         "chat_model_connections,chat_model_connection,gemini",
         "embedding_model_connections,embedding_model_connection,bedrock",
         "vector_stores,vector_store,elasticsearch"
@@ -350,34 +368,6 @@ class YamlLoaderBuildAgentsTest {
                                 .get(ResourceType.fromValue(resourceType))
                                 .get("x");
         assertThat(descriptor.getClazz()).isEqualTo("com.example.CustomJavaResource");
-    }
-
-    @Test
-    void javaMcpServerDeclarationRejectsPythonOnlyAlias(@TempDir Path tmp) throws Exception {
-        Path file = tmp.resolve("java-mcp-alias.yaml");
-        Files.writeString(file, "mcp_servers:\n  - name: m\n    clazz: mcp\n    type: java\n");
-
-        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Unknown Java alias 'mcp' for mcp_server");
-    }
-
-    @Test
-    void javaMcpServerDeclarationAcceptsCustomFullyQualifiedClass(@TempDir Path tmp)
-            throws Exception {
-        Path file = tmp.resolve("java-mcp-custom.yaml");
-        Files.writeString(
-                file,
-                "mcp_servers:\n  - name: m\n"
-                        + "    clazz: com.example.CustomMCPServer\n    type: java\n");
-
-        ResourceDescriptor descriptor =
-                (ResourceDescriptor)
-                        YamlLoader.buildAgents(file)
-                                .getSharedResources()
-                                .get(ResourceType.MCP_SERVER)
-                                .get("m");
-        assertThat(descriptor.getClazz()).isEqualTo("com.example.CustomMCPServer");
     }
 
     @Test

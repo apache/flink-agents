@@ -48,9 +48,10 @@ import java.util.Map;
  *       can refer to different classes across sections and languages.
  * </ul>
  *
- * <p>Alias lookup answers only whether a short name is registered for a language. An alias miss is
- * not an error: the loader also accepts fully-qualified custom class names. Only a short name
- * registered for the other language is rejected during YAML loading.
+ * <p>A class name that matches an alias resolves to its registered class path. A name containing a
+ * dot is treated as a fully-qualified custom class name and passes through unchanged. Any other
+ * alias miss is rejected, which catches typos and aliases that belong only to the other language.
+ * Java classes in the default package are not supported.
  *
  * <p>For Python resources, the loader resolves the alias to the Python FQN and wraps it in a Python
  * implementation descriptor.
@@ -237,44 +238,34 @@ public final class Aliases {
         return EVENT_ALIASES.getOrDefault(name, name);
     }
 
-    /** Whether {@code name} is a registered short alias for {@code (resourceType, language)}. */
-    public static boolean isKnownAlias(String name, ResourceType resourceType, Language language) {
-        Map<Language, Map<String, String>> byLang = CLAZZ_ALIASES.get(resourceType);
-        return byLang != null && byLang.get(language).containsKey(name);
-    }
-
     /**
-     * Whether {@code name} is a short alias registered only for a language other than {@code
-     * language}. An alias miss is not an error because the loader also accepts fully-qualified
-     * custom class names.
-     */
-    public static boolean isKnownAliasForOtherLanguage(
-            String name, ResourceType resourceType, Language language) {
-        Map<Language, Map<String, String>> byLang = CLAZZ_ALIASES.get(resourceType);
-        if (byLang == null || isKnownAlias(name, resourceType, language)) {
-            return false;
-        }
-        for (Language aliasLanguage : Language.values()) {
-            if (aliasLanguage != language && byLang.get(aliasLanguage).containsKey(name)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Look up a class alias for {@code (resourceType, language)}; return {@code name} unchanged on
-     * miss.
+     * Resolve a YAML {@code clazz} value for {@code (resourceType, language)}.
+     *
+     * <p>If {@code name} matches an alias, return the mapped class name. Otherwise, if it contains
+     * a dot, treat it as a fully-qualified custom class name and pass it through. Otherwise reject
+     * it as an unknown alias. This also rejects a short alias registered only for the other
+     * language. Java classes in the default package are not supported.
+     *
+     * @throws IllegalArgumentException if {@code name} is not a known alias and is not
+     *     package-qualified
      */
     public static String resolveClazz(String name, ResourceType resourceType, Language language) {
         Map<Language, Map<String, String>> byLang = CLAZZ_ALIASES.get(resourceType);
-        if (byLang == null) {
+        Map<String, String> bucket = byLang == null ? null : byLang.get(language);
+        String resolved = bucket == null ? null : bucket.get(name);
+        if (resolved != null) {
+            return resolved;
+        }
+        if (name != null && name.indexOf('.') >= 0) {
             return name;
         }
-        Map<String, String> bucket = byLang.get(language);
-        if (bucket == null) {
-            return name;
-        }
-        return bucket.getOrDefault(name, name);
+        throw new IllegalArgumentException(
+                "Unknown "
+                        + language.name().charAt(0)
+                        + language.name().substring(1).toLowerCase()
+                        + " alias '"
+                        + name
+                        + "' for "
+                        + resourceType.getValue());
     }
 }

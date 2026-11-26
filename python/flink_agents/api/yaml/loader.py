@@ -47,7 +47,6 @@ from flink_agents.api.skills import Skills, SkillSourceSpec
 from flink_agents.api.subagent import InternalSubagentResourceDescriptorBuilder
 from flink_agents.api.tools.function_tool import FunctionTool
 from flink_agents.api.yaml.aliases import (
-    is_known_alias_for_other_language,
     resolve_clazz,
     resolve_event_type,
 )
@@ -147,9 +146,6 @@ def _build_descriptor(
 ) -> ResourceDescriptor:
     kwargs = dict(spec.model_extra or {})
     language = spec.type or "python"
-    if is_known_alias_for_other_language(spec.clazz, resource_type, language):
-        msg = f"Unknown {language.capitalize()} alias {spec.clazz!r} for {resource_type.value}"
-        raise ValueError(msg)
     if language == "java":
         if resource_type not in {
             ResourceType.CHAT_MODEL,

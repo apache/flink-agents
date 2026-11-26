@@ -24,10 +24,11 @@ Two tables:
   implementation language so the same alias (``ollama``) can refer to
   different classes across sections and languages.
 
-Alias lookup answers only whether a short name is registered for a
-language. An alias miss is not an error: the loader also accepts
-fully-qualified custom class names. Only a short name registered for the
-other language is rejected during YAML loading.
+A class name that matches an alias resolves to its registered class path.
+A name containing a dot is treated as a fully-qualified custom class name
+and passes through unchanged. Any other alias miss is rejected, which
+catches typos and aliases that belong only to the other language. Java
+classes in the default package are not supported.
 
 For Java resources, the loader resolves the alias to the Java FQN and
 creates a JavaResourceDescriptor. Plan selects the execution wrapper.
@@ -208,38 +209,25 @@ def resolve_event_type(name: str) -> str:
     return EVENT_ALIASES.get(name, name)
 
 
-def is_known_alias(name: str, resource_type: ResourceType, language: Language) -> bool:
-    """Whether ``name`` is a registered short alias for the given language."""
-    return name in CLAZZ_ALIASES.get(resource_type, {}).get(language, {})
-
-
-def is_known_alias_for_other_language(
-    name: str, resource_type: ResourceType, language: Language
-) -> bool:
-    """Whether ``name`` is a short alias known only to the other language.
-
-    Alias misses intentionally pass through so a fully-qualified custom class can
-    be supplied. This check distinguishes that custom-class case from a built-in
-    alias that belongs to the other loader.
-    """
-    lang_map = CLAZZ_ALIASES.get(resource_type, {})
-    if name in lang_map.get(language, {}):
-        return False
-    return any(
-        alias_language != language and name in bucket
-        for alias_language, bucket in lang_map.items()
-    )
-
-
 def resolve_clazz(
     name: str, resource_type: ResourceType, language: Language = "python"
 ) -> str:
-    """Look up ``name`` in the alias bucket for ``(resource_type, language)``.
+    """Resolve a YAML ``clazz`` value for ``(resource_type, language)``.
 
-    Returns the fully-qualified class path on hit, or ``name`` unchanged
-    on miss (so users can supply a fully-qualified class path directly).
-    The Java ``router`` alias returns the declaration placeholder instead
-    of a class path; see the module docstring.
+    If ``name`` matches an alias, return the mapped class name. Otherwise, if
+    it contains ``.``, treat it as a fully-qualified custom class name and pass
+    it through. Otherwise reject it as an unknown alias. This also rejects a
+    short alias registered only for the other language. Java classes in the
+    default package are not supported.
+
+    The Java ``router`` alias returns the declaration placeholder instead of a
+    class path; see the module docstring.
     """
     bucket = CLAZZ_ALIASES.get(resource_type, {}).get(language, {})
-    return bucket.get(name, name)
+    resolved = bucket.get(name)
+    if resolved is not None:
+        return resolved
+    if "." in name:
+        return name
+    msg = f"Unknown {language.capitalize()} alias {name!r} for {resource_type.value}"
+    raise ValueError(msg)
