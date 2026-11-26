@@ -268,13 +268,12 @@ public final class ResourceName {
          * the plan names it when it builds the agent plan, as it does for a Java MCP server ({@link
          * ResourceName#MCP_SERVER}).
          */
-        public static final String MODEL_ROUTER = "DECIDE_IN_RUNTIME_ModelRouter";
+        public static final String MODEL_ROUTER = "MODEL_ROUTER_PLACEHOLDER";
 
-        /** Python implementation of ModelRouter. */
+        /** Python ModelRouter declaration: the same placeholder, named by the Python plan. */
         public static final class Python {
 
-            public static final String MODEL_ROUTER =
-                    "flink_agents.api.chat_models.routing.ModelRouter";
+            public static final String MODEL_ROUTER = "MODEL_ROUTER_PLACEHOLDER";
 
             private Python() {}
         }
@@ -283,5 +282,5 @@ public final class ResourceName {
     }
 
     // ==================== MCP ====================
-    public static final String MCP_SERVER = "DECIDE_IN_RUNTIME_MCPServer";
+    public static final String MCP_SERVER = "MCP_SERVER_PLACEHOLDER";
 }

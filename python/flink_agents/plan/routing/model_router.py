@@ -25,14 +25,8 @@ from flink_agents.api.chat_models.routing import RouterDeclaration, RoutingStrat
 from flink_agents.api.resource import (
     Resource,
     ResourceDescriptor,
-    ResourceName,
     ResourceType,
 )
-
-# The class path a declaration names: the placeholder the builder and the YAML
-# ``router`` alias write, which is also the path of the api declaration class that
-# descriptors named while the declaration was the resource.
-_DECLARATION_CLASS = ResourceName.ModelRouter.MODEL_ROUTER
 
 
 class ModelRouter(Resource):
@@ -78,12 +72,15 @@ class ModelRouter(Resource):
     def resource_descriptor(declaration: ResourceDescriptor) -> ResourceDescriptor:
         """Return ``declaration`` with this class named as the resource to provide.
 
-        A Python descriptor that names the declaration is provided as this resource.
-        Any other descriptor, including a Java one, is returned unchanged.
+        The router resource is framework-owned, so a Python declaration does not
+        choose the class it is provided as. The builder and the YAML ``router``
+        alias write ``ResourceName.ModelRouter.MODEL_ROUTER``, and whatever class a
+        Python descriptor names is replaced, as the Java plan does for Java
+        descriptors. A Java descriptor is returned unchanged.
         """
         if declaration.language != "python" or (
-            f"{declaration.target_module}.{declaration.target_clazz}"
-            != _DECLARATION_CLASS
+            declaration.target_module == ModelRouter.__module__
+            and declaration.target_clazz == ModelRouter.__name__
         ):
             return declaration
         return ResourceDescriptor(

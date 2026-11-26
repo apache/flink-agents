@@ -126,6 +126,13 @@ class SerializableResource(Resource, ABC):
         return self
 
 
+# Placeholders a declaration puts where a descriptor names its class when the
+# framework, not the declaration, chooses the implementation. The plan names the
+# implementation when it builds the agent plan.
+MODEL_ROUTER_PLACEHOLDER = "MODEL_ROUTER_PLACEHOLDER"
+_PLACEHOLDERS = frozenset({MODEL_ROUTER_PLACEHOLDER})
+
+
 class ResourceDescriptor(BaseModel):
     """Descriptor for Resource instances, storing metadata for serialization and
     instantiation.
@@ -177,7 +184,7 @@ class ResourceDescriptor(BaseModel):
             msg = "Use the descriptor class matching the resource language"
             raise ValueError(msg)
         if clazz is not None:
-            if language == "java":
+            if language == "java" or clazz in _PLACEHOLDERS:
                 target_module, target_clazz = "", clazz
             else:
                 target_module, separator, target_clazz = clazz.rpartition(".")
@@ -220,7 +227,11 @@ class ResourceDescriptor(BaseModel):
         if self.language == "java" and self.target_module:
             msg = "Java resources require a full class name and an empty module"
             raise ValueError(msg)
-        if self.language == "python" and not self.target_module.strip():
+        if (
+            self.language == "python"
+            and not self.target_module.strip()
+            and self.target_clazz not in _PLACEHOLDERS
+        ):
             msg = "Python resources require a module"
             raise ValueError(msg)
         return self
@@ -440,7 +451,7 @@ class ResourceName:
     class ModelRouter:
         """ModelRouter resource names."""
 
-        MODEL_ROUTER = "flink_agents.api.chat_models.routing.ModelRouter"
+        MODEL_ROUTER = "MODEL_ROUTER_PLACEHOLDER"
 
         class Java:
             """Java ModelRouter declaration.
@@ -449,7 +460,7 @@ class ResourceName:
             resource class when it builds the agent plan.
             """
 
-            MODEL_ROUTER = "DECIDE_IN_RUNTIME_ModelRouter"
+            MODEL_ROUTER = "MODEL_ROUTER_PLACEHOLDER"
 
     # MCP resource names
     MCP_SERVER = "flink_agents.integrations.mcp.mcp.MCPServer"

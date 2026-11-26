@@ -135,14 +135,30 @@ def test_plan_provides_declarations_as_the_plan_resource():
     assert isinstance(provider.provide(None, AgentConfiguration()), RouterResource)
 
 
-def test_restored_plan_naming_the_declaration_is_provided_as_the_resource():
+@pytest.mark.parametrize(
+    ("module", "clazz"),
+    [
+        ("", ResourceName.ModelRouter.MODEL_ROUTER),
+        ("flink_agents.api.chat_models.routing", "ModelRouter"),
+        ("my.routers", "CustomRouter"),
+    ],
+)
+def test_restored_python_router_is_always_provided_as_the_resource(module, clazz):
     plan = json.loads(compile_router(descriptor()).model_dump_json())
     router = plan["resource_providers"]["model_router"]["router"]["descriptor"]
-    router["target_module"] = "flink_agents.api.chat_models.routing"
+    router["target_module"], router["target_clazz"] = module, clazz
     restored = AgentPlan.model_validate(plan)
     provider = restored.resource_providers[ResourceType.MODEL_ROUTER]["router"]
     assert provider.descriptor.clazz is RouterResource
     assert provider.descriptor.arguments == descriptor().arguments
+
+
+def test_custom_router_class_is_provided_as_the_resource():
+    plan = compile_router(
+        ResourceDescriptor(clazz="my.routers.CustomRouter", **descriptor().arguments)
+    )
+    provider = plan.resource_providers[ResourceType.MODEL_ROUTER]["router"]
+    assert provider.descriptor.clazz is RouterResource
 
 
 def test_restored_plan_with_an_invalid_router_fails():
