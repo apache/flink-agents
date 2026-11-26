@@ -40,10 +40,13 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 
 import java.time.Duration;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
@@ -127,10 +130,33 @@ public final class ChatModelInvoker {
                 && error.getCause() instanceof Exception) {
             error = (Exception) error.getCause();
         }
-        return error instanceof InvocationFailure
-                        || error instanceof ModelRoutingResolver.RoutingFailure
-                ? error.getMessage()
-                : error.getClass().getName() + ": " + String.valueOf(error.getMessage());
+        String message =
+                error instanceof InvocationFailure
+                                || error instanceof ModelRoutingResolver.RoutingFailure
+                        ? error.getMessage()
+                        : error.getClass().getName() + ": " + String.valueOf(error.getMessage());
+        // Traverse the full cause chain so that deeply nested exceptions — such as
+        // a RuntimeException wrapping an SDK transport error wrapping a
+        // SocketTimeoutException — carry every layer's type and message. Once
+        // persisted as text in an InvocationOutcome the original exception object
+        // is no longer recoverable, so the chain must be captured here.
+        Throwable cause = error.getCause();
+        Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        visited.add(error);
+        while (cause != null && visited.add(cause)) {
+            String causeMessage =
+                    cause instanceof InvocationFailure
+                                    || cause instanceof ModelRoutingResolver.RoutingFailure
+                            ? cause.getMessage()
+                            : cause.getClass().getName()
+                                    + ": "
+                                    + String.valueOf(cause.getMessage());
+            if (!causeMessage.isEmpty() && !message.contains(causeMessage)) {
+                message += " [caused by: " + causeMessage + "]";
+            }
+            cause = cause.getCause();
+        }
+        return message;
     }
 
     public static final class ChatAttemptResult {

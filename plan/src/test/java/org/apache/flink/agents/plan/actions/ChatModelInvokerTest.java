@@ -32,6 +32,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import java.net.SocketTimeoutException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -485,5 +486,82 @@ class ChatModelInvokerTest {
                 Thread.interrupted();
             }
         }
+    }
+
+    // ---- errorText cause-chain tests ----
+
+    /**
+     * Verifies that {@link ChatModelInvoker#errorText} traverses the full cause chain, not just the
+     * immediate cause.
+     *
+     * <p>Provider integrations typically wrap SDK exceptions, which themselves wrap transport-level
+     * exceptions. For example:
+     *
+     * <pre>
+     * RuntimeException("Failed to call API.")
+     *   → RuntimeException("Request failed")
+     *     → SocketTimeoutException("read timed out")
+     * </pre>
+     *
+     * The underlying reason ("read timed out") must appear in the error text so it survives
+     * persistence in an InvocationOutcome.
+     */
+    @Test
+    void testErrorTextTraversesFullCauseChain() {
+        Exception nested =
+                new RuntimeException(
+                        "Failed to call API.",
+                        new RuntimeException(
+                                "Request failed", new SocketTimeoutException("read timed out")));
+
+        String text = ChatModelInvoker.errorText(nested);
+
+        assertTrue(text.contains("Failed to call API."), "top-level message present");
+        assertTrue(text.contains("Request failed"), "intermediate cause present");
+        assertTrue(text.contains("SocketTimeoutException"), "root cause type present");
+        assertTrue(text.contains("read timed out"), "root cause message present");
+    }
+
+    /**
+     * Verifies that the error text produced from a nested exception chain survives JSON round-trip,
+     * simulating the durable replay path where InvocationOutcome is serialized and deserialized.
+     */
+    @Test
+    void testErrorTextSurvivesSerialization() throws Exception {
+        Exception nested =
+                new RuntimeException(
+                        "Failed to call API.",
+                        new RuntimeException(
+                                "Request failed", new SocketTimeoutException("read timed out")));
+
+        String text = ChatModelInvoker.errorText(nested);
+
+        // Simulate persistence: serialize as JSON and read back
+        ObjectMapper mapper = new ObjectMapper();
+        String json = mapper.writeValueAsString(text);
+        String replayed = mapper.readValue(json, String.class);
+
+        assertEquals(text, replayed, "error text survives JSON round-trip");
+        assertTrue(replayed.contains("read timed out"), "root cause preserved after replay");
+    }
+
+    /**
+     * Verifies that {@link ChatModelInvoker#errorText} terminates when the cause chain contains a
+     * cycle, rather than looping indefinitely.
+     */
+    @Test
+    void testErrorTextHandlesCircularCauseChain() {
+        RuntimeException a = new RuntimeException("outer");
+        RuntimeException b = new RuntimeException("inner");
+        a.initCause(b);
+        b.initCause(a); // circular: a → b → a
+
+        String text = ChatModelInvoker.errorText(a);
+
+        assertTrue(text.contains("outer"), "outer message present");
+        assertTrue(text.contains("inner"), "inner message present");
+        // Each message should appear at most once despite the cycle
+        assertEquals(1, text.split("outer").length - 1, "outer appears exactly once");
+        assertEquals(1, text.split("inner").length - 1, "inner appears exactly once");
     }
 }
