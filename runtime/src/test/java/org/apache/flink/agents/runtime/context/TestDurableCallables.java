@@ -108,3 +108,27 @@ class TestReconcilableCallable<T> implements DurableCallable<T> {
         return reconcileCount;
     }
 }
+
+/** A failure with a business field and no {@code (String)} constructor. */
+class TaskFailure extends RuntimeException {
+    private final String taskId;
+
+    TaskFailure(String taskId, String message) {
+        super(message);
+        this.taskId = taskId;
+    }
+
+    String getTaskId() {
+        return taskId;
+    }
+}
+
+/** A failure that Java serialization rejects because one of its fields is not serializable. */
+class UnserializableFailure extends RuntimeException {
+    @SuppressWarnings("unused")
+    private final Object handle = new Object();
+
+    public UnserializableFailure(String message) {
+        super(message);
+    }
+}

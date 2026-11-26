@@ -17,6 +17,8 @@
  */
 package org.apache.flink.agents.runtime.context;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -76,6 +78,7 @@ import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.streaming.api.TimeDomain;
+import org.apache.flink.util.InstantiationUtil;
 import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.function.ThrowingRunnable;
 import org.slf4j.Logger;
@@ -1356,10 +1359,19 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         return durableExecuteWithReconcile(callable, reconcileCallable, callable::call);
     }
 
-    /** Serializable exception info for durable execution persistence. */
+    /**
+     * Durable record of a failed call.
+     *
+     * <p>Besides the class name and message, the record carries the exception itself in Java
+     * serialized form, so replay rethrows the same type with its fields. When the exception cannot
+     * be serialized, or the serialized form cannot be read back (for example after the class
+     * changed), replay falls back to rebuilding the exception from its class name and message.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class DurableExecutionException {
         private static final String FIELD_MESSAGE = "message";
         private static final String FIELD_EXCEPTION_CLASS = "exceptionClass";
+        private static final String FIELD_SERIALIZED_EXCEPTION = "serializedException";
 
         @JsonProperty(FIELD_EXCEPTION_CLASS)
         private final String exceptionClass;
@@ -1367,29 +1379,73 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         @JsonProperty(FIELD_MESSAGE)
         private final String message;
 
+        @JsonProperty(FIELD_SERIALIZED_EXCEPTION)
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        @Nullable
+        private final byte[] serializedException;
+
         public DurableExecutionException() {
-            this.exceptionClass = null;
-            this.message = null;
+            this(null, null, null);
         }
 
         public DurableExecutionException(String exceptionClass, String message) {
+            this(exceptionClass, message, null);
+        }
+
+        public DurableExecutionException(
+                String exceptionClass, String message, @Nullable byte[] serializedException) {
             this.exceptionClass = exceptionClass;
             this.message = message;
+            this.serializedException = serializedException;
         }
 
         public static DurableExecutionException fromException(Exception e) {
-            return new DurableExecutionException(e.getClass().getName(), e.getMessage());
+            return new DurableExecutionException(
+                    e.getClass().getName(), e.getMessage(), trySerialize(e));
         }
 
         public Exception toException() {
+            ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+            if (classLoader == null) {
+                classLoader = RunnerContextImpl.class.getClassLoader();
+            }
+            if (serializedException != null) {
+                try {
+                    Object restored =
+                            InstantiationUtil.deserializeObject(serializedException, classLoader);
+                    if (restored instanceof Exception) {
+                        return (Exception) restored;
+                    }
+                } catch (Exception | LinkageError e) {
+                    LOG.warn(
+                            "Could not deserialize the recorded {}; rebuilding it from its "
+                                    + "class name and message.",
+                            exceptionClass,
+                            e);
+                }
+            }
+            return fromClassAndMessage(classLoader);
+        }
+
+        @Nullable
+        private static byte[] trySerialize(Exception e) {
+            try {
+                return InstantiationUtil.serializeObject(e);
+            } catch (Exception | LinkageError ex) {
+                LOG.debug(
+                        "Could not serialize {}; replay will rebuild it from its class name "
+                                + "and message.",
+                        e.getClass().getName(),
+                        ex);
+                return null;
+            }
+        }
+
+        private Exception fromClassAndMessage(ClassLoader classLoader) {
             if (exceptionClass == null) {
                 return new RuntimeException(message);
             }
             try {
-                ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
-                if (classLoader == null) {
-                    classLoader = RunnerContextImpl.class.getClassLoader();
-                }
                 Class<?> clazz = Class.forName(exceptionClass, true, classLoader);
                 if (Exception.class.isAssignableFrom(clazz)) {
                     @SuppressWarnings("unchecked")
