@@ -112,10 +112,10 @@ public class Slf4jTraceLogger implements TraceLogger {
                                         TraceLoggerConfig.AGENT_CONFIG_PROPERTY_KEY,
                                         Collections.emptyMap());
         prettyPrint =
-                (Boolean)
-                        agentConfig.getOrDefault(
-                                AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getKey(),
-                                AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getDefaultValue());
+                getBooleanFromConfig(
+                        agentConfig,
+                        AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getKey(),
+                        AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getDefaultValue());
         int maxStringLength =
                 getIntFromConfig(
                         agentConfig,
@@ -134,6 +134,18 @@ public class Slf4jTraceLogger implements TraceLogger {
         this.truncator = new JsonTruncator(maxStringLength, maxArrayElements, maxDepth);
 
         ensureLog4j2AppenderConfigured();
+    }
+
+    private static boolean getBooleanFromConfig(
+            Map<String, Object> config, String key, boolean defaultValue) {
+        Object value = config.get(key);
+        if (value == null) {
+            return defaultValue;
+        }
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        return Boolean.parseBoolean(value.toString());
     }
 
     private static int getIntFromConfig(Map<String, Object> config, String key, int defaultValue) {

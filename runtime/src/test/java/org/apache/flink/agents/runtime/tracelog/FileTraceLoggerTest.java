@@ -397,6 +397,22 @@ class FileTraceLoggerTest {
     }
 
     @Test
+    void testPrettyPrintAcceptsStringValue() throws Exception {
+        // Legacy flink-conf.yaml values reach the logger as strings.
+        Map<String, Object> agentConfig = new HashMap<>();
+        agentConfig.put(AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getKey(), "true");
+        config = buildConfig(agentConfig);
+        logger = new FileTraceLogger(config);
+
+        logger.open(openParams);
+        append(logger, new InputEvent("test input"), null, TraceLogLevel.STANDARD);
+        logger.flush();
+
+        List<String> lines = Files.readAllLines(getExpectedLogFilePath());
+        assertTrue(lines.size() > 1, "Pretty-printed JSON should span multiple lines");
+    }
+
+    @Test
     void testStandardLevelTruncation() throws Exception {
         // Given - STANDARD level and a small max-string-length for easy testing
         Map<String, Object> agentConfig = new HashMap<>();

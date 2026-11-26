@@ -130,10 +130,10 @@ public class FileTraceLogger implements TraceLogger {
         // Create writer in append mode
         writer = new PrintWriter(new BufferedWriter(new FileWriter(logFilePath, true)));
         prettyPrint =
-                (Boolean)
-                        agentConfig.getOrDefault(
-                                AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getKey(),
-                                AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getDefaultValue());
+                getBooleanFromConfig(
+                        agentConfig,
+                        AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getKey(),
+                        AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getDefaultValue());
 
         int maxStringLength =
                 getIntFromConfig(
@@ -151,6 +151,18 @@ public class FileTraceLogger implements TraceLogger {
                         AgentConfigOptions.TRACE_LOG_MAX_DEPTH.getKey(),
                         AgentConfigOptions.TRACE_LOG_MAX_DEPTH.getDefaultValue());
         this.truncator = new JsonTruncator(maxStringLength, maxArrayElements, maxDepth);
+    }
+
+    private static boolean getBooleanFromConfig(
+            Map<String, Object> config, String key, boolean defaultValue) {
+        Object value = config.get(key);
+        if (value == null) {
+            return defaultValue;
+        }
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        return Boolean.parseBoolean(value.toString());
     }
 
     private static int getIntFromConfig(Map<String, Object> config, String key, int defaultValue) {

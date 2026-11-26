@@ -337,6 +337,26 @@ class Slf4jTraceLoggerTest {
     }
 
     @Test
+    void testPrettyPrintAcceptsStringValue() throws Exception {
+        // Legacy flink-conf.yaml values reach the logger as strings.
+        Map<String, Object> agentConfig = new HashMap<>();
+        agentConfig.put(AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getKey(), "true");
+        TraceLoggerConfig config =
+                TraceLoggerConfig.builder()
+                        .loggerType(LoggerType.SLF4J)
+                        .property(TraceLoggerConfig.AGENT_CONFIG_PROPERTY_KEY, agentConfig)
+                        .build();
+        logger = new Slf4jTraceLogger(config);
+        logger.open(openParams);
+
+        append(new InputEvent("test input"), null, TraceLogLevel.STANDARD);
+
+        List<String> messages = testAppender.getMessages();
+        assertEquals(1, messages.size());
+        assertTrue(messages.get(0).contains("\n"), "Pretty-printed output should span lines");
+    }
+
+    @Test
     void testContentBlocksInGenericEventAreSanitized() throws Exception {
         TraceLoggerConfig config = TraceLoggerConfig.builder().loggerType(LoggerType.SLF4J).build();
         logger = new Slf4jTraceLogger(config);
