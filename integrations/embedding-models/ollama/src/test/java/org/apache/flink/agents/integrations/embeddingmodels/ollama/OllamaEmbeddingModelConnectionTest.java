@@ -18,22 +18,32 @@
 
 package org.apache.flink.agents.integrations.embeddingmodels.ollama;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.ollama4j.Ollama;
+import io.github.ollama4j.models.embed.OllamaEmbedRequest;
+import io.github.ollama4j.models.embed.OllamaEmbedResult;
 import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
+import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.TestResourceContexts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.MockedConstruction;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 class OllamaEmbeddingModelConnectionTest {
 
@@ -98,5 +108,44 @@ class OllamaEmbeddingModelConnectionTest {
         assertThrows(
                 UnsupportedContentBlockException.class,
                 () -> conn.embed(List.of(new TextBlock("first"), image), Map.of()));
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(ints = {0, 7})
+    void testPreservesSdkUsageForSingleAndBatchInputs(Integer reportedCount) throws Exception {
+        String usage = reportedCount == null ? "" : ",\"prompt_eval_count\":" + reportedCount;
+        ObjectMapper mapper = new ObjectMapper();
+        OllamaEmbedResult single =
+                mapper.readValue(
+                        "{\"embeddings\":[[0.1,0.2]]" + usage + "}", OllamaEmbedResult.class);
+        OllamaEmbedResult batch =
+                mapper.readValue(
+                        "{\"embeddings\":[[0.1,0.2],[0.3,0.4]]" + usage + "}",
+                        OllamaEmbedResult.class);
+        try (MockedConstruction<Ollama> clients = mockConstruction(Ollama.class)) {
+            OllamaEmbeddingModelConnection connection =
+                    new OllamaEmbeddingModelConnection(buildDescriptor(), dummyResource);
+            Ollama client = clients.constructed().get(0);
+            when(client.embed(any(OllamaEmbedRequest.class))).thenReturn(single, batch);
+
+            EmbeddingResult<float[]> singleResult = connection.embed("first", Map.of());
+            EmbeddingResult<List<float[]>> batchResult =
+                    connection.embed(
+                            List.of(new TextBlock("first"), new TextBlock("second")), Map.of());
+
+            assertArrayEquals(new float[] {0.1f, 0.2f}, singleResult.getEmbeddings());
+            assertEquals(2, batchResult.getEmbeddings().size());
+            assertArrayEquals(new float[] {0.1f, 0.2f}, batchResult.getEmbeddings().get(0));
+            assertArrayEquals(new float[] {0.3f, 0.4f}, batchResult.getEmbeddings().get(1));
+            // Preserve the SDK's value, including its zero default for an omitted field.
+            long expected = reportedCount == null ? 0 : reportedCount;
+            for (EmbeddingResult<?> result : List.of(singleResult, batchResult)) {
+                assertNotNull(result.getTokenUsage());
+                assertEquals(expected, result.getTokenUsage().getPromptTokens());
+                assertEquals(expected, result.getTokenUsage().getTotalTokens());
+            }
+            verify(client, times(2)).embed(any(OllamaEmbedRequest.class));
+        }
     }
 }

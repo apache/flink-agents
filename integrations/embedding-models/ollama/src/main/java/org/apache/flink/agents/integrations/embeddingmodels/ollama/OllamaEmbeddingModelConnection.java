@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.chat.messages.DataContentBlock;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
 import org.apache.flink.agents.api.embedding.model.EmbeddingModelUtils;
 import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
+import org.apache.flink.agents.api.embedding.model.EmbeddingTokenUsage;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 
@@ -82,7 +83,8 @@ public class OllamaEmbeddingModelConnection extends BaseEmbeddingModelConnection
                 results.add(result);
             }
 
-            return new EmbeddingResult<>(results, null);
+            int tokens = response.getPromptEvalCount();
+            return new EmbeddingResult<>(results, new EmbeddingTokenUsage(tokens, tokens));
 
         } catch (OllamaException e) {
             throw new RuntimeException("Error generating embeddings for texts", e);

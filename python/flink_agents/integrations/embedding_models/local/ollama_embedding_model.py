@@ -25,6 +25,7 @@ from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelSetup,
     EmbeddingContent,
     EmbeddingResult,
+    EmbeddingTokenUsage,
     _text_embedding_input,
 )
 
@@ -100,7 +101,15 @@ class OllamaEmbeddingModelConnection(BaseEmbeddingModelConnection):
         )
 
         embeddings = [list(embedding) for embedding in response.embeddings]
-        return EmbeddingResult(embeddings[0] if isinstance(text, str) else embeddings)
+        count = response.prompt_eval_count
+        usage = (
+            EmbeddingTokenUsage(prompt_tokens=count, total_tokens=count)
+            if count is not None
+            else None
+        )
+        return EmbeddingResult(
+            embeddings[0] if isinstance(text, str) else embeddings, usage
+        )
 
 
 class OllamaEmbeddingModelSetup(BaseEmbeddingModelSetup):
