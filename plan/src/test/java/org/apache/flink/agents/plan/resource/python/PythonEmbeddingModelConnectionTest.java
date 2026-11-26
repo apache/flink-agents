@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.plan.resource.python;
 
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -32,6 +33,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -96,12 +98,11 @@ public class PythonEmbeddingModelConnectionTest {
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModel),
-                        eq("embed"),
                         any(),
                         any(Map.class)))
-                .thenReturn(pythonResult);
+                .thenReturn(Map.of("embeddings", List.of(pythonResult)));
 
-        float[] result = pythonEmbeddingModelConnection.embed(text, parameters);
+        float[] result = pythonEmbeddingModelConnection.embed(text, parameters).getEmbeddings();
 
         assertThat(result).isNotNull();
         assertThat(result).hasSize(4);
@@ -114,8 +115,7 @@ public class PythonEmbeddingModelConnectionTest {
                 .invoke(
                         "python_java_utils.call_embedding",
                         mockEmbeddingModel,
-                        "embed",
-                        text,
+                        List.of(Map.of("type", "text", "text", text)),
                         parameters);
     }
 
@@ -129,25 +129,26 @@ public class PythonEmbeddingModelConnectionTest {
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModel),
-                        eq("embed"),
                         any(),
                         any(Map.class)))
-                .thenReturn(pythonResult);
+                .thenReturn(Map.of("embeddings", List.of(pythonResult)));
 
-        float[] result = pythonEmbeddingModelConnection.embed(text, parameters);
+        float[] result = pythonEmbeddingModelConnection.embed(text, parameters).getEmbeddings();
 
         assertThat(result).isNotNull();
         assertThat(result).hasSize(2);
     }
 
     @Test
-    void testEmbedWithUsageMultipleTexts() {
+    void testEmbedPreservesUsageMultipleTexts() {
         List<String> texts = List.of("first", "second");
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModel),
-                        eq("embed_with_usage"),
-                        eq(texts),
+                        eq(
+                                texts.stream()
+                                        .map(t -> Map.of("type", "text", "text", t))
+                                        .collect(Collectors.toList())),
                         any(Map.class)))
                 .thenReturn(
                         Map.of(
@@ -157,7 +158,9 @@ public class PythonEmbeddingModelConnectionTest {
                                 Map.of("prompt_tokens", 7, "total_tokens", 9)));
 
         EmbeddingResult<List<float[]>> result =
-                pythonEmbeddingModelConnection.embedWithUsage(texts, Map.of("batch_size", 2));
+                pythonEmbeddingModelConnection.embed(
+                        texts.stream().map(TextBlock::new).collect(Collectors.toList()),
+                        Map.of("batch_size", 2));
 
         assertThat(result.getEmbeddings()).hasSize(2);
         assertThat(result.getEmbeddings().get(0)).containsExactly(0.1f, 0.2f);
@@ -169,8 +172,9 @@ public class PythonEmbeddingModelConnectionTest {
                 .invoke(
                         "python_java_utils.call_embedding",
                         mockEmbeddingModel,
-                        "embed_with_usage",
-                        texts,
+                        texts.stream()
+                                .map(t -> Map.of("type", "text", "text", t))
+                                .collect(Collectors.toList()),
                         Map.of("batch_size", 2));
     }
 
@@ -190,21 +194,20 @@ public class PythonEmbeddingModelConnectionTest {
     }
 
     @Test
-    void testEmbedSingleTextWithNonListResultThrowsException() {
+    void testEmbedSingleTextWithNonMapResultThrowsException() {
         String text = "test text";
         Map<String, Object> parameters = new HashMap<>();
 
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModel),
-                        eq("embed"),
                         any(),
                         any(Map.class)))
                 .thenReturn("invalid result");
 
         assertThatThrownBy(() -> pythonEmbeddingModelConnection.embed(text, parameters))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Expected List from Python embed method")
+                .hasMessageContaining("Expected Map from Python embed method")
                 .hasMessageContaining("java.lang.String");
     }
 
@@ -222,12 +225,16 @@ public class PythonEmbeddingModelConnectionTest {
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModel),
-                        eq("embed"),
                         any(),
                         any(Map.class)))
-                .thenReturn(pythonResult);
+                .thenReturn(Map.of("embeddings", pythonResult));
 
-        List<float[]> result = pythonEmbeddingModelConnection.embed(texts, parameters);
+        List<float[]> result =
+                pythonEmbeddingModelConnection
+                        .embed(
+                                texts.stream().map(TextBlock::new).collect(Collectors.toList()),
+                                parameters)
+                        .getEmbeddings();
 
         assertThat(result).isNotNull();
         assertThat(result).hasSize(3);
@@ -240,8 +247,9 @@ public class PythonEmbeddingModelConnectionTest {
                 .invoke(
                         "python_java_utils.call_embedding",
                         mockEmbeddingModel,
-                        "embed",
-                        texts,
+                        texts.stream()
+                                .map(t -> Map.of("type", "text", "text", t))
+                                .collect(Collectors.toList()),
                         parameters);
     }
 
@@ -254,28 +262,39 @@ public class PythonEmbeddingModelConnectionTest {
         List<String> texts = Arrays.asList("text1", "text2");
         Map<String, Object> parameters = new HashMap<>();
 
-        assertThatThrownBy(() -> connectionWithNullModel.embed(texts, parameters))
+        assertThatThrownBy(
+                        () ->
+                                connectionWithNullModel.embed(
+                                        texts.stream()
+                                                .map(TextBlock::new)
+                                                .collect(Collectors.toList()),
+                                        parameters))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("EmbeddingModelSetup is not initialized")
                 .hasMessageContaining("Cannot perform embed operation");
     }
 
     @Test
-    void testEmbedMultipleTextsWithNonListResultThrowsException() {
+    void testEmbedMultipleTextsWithNonMapResultThrowsException() {
         List<String> texts = Arrays.asList("text1", "text2");
         Map<String, Object> parameters = new HashMap<>();
 
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModel),
-                        eq("embed"),
                         any(),
                         any(Map.class)))
                 .thenReturn("invalid result");
 
-        assertThatThrownBy(() -> pythonEmbeddingModelConnection.embed(texts, parameters))
+        assertThatThrownBy(
+                        () ->
+                                pythonEmbeddingModelConnection.embed(
+                                        texts.stream()
+                                                .map(TextBlock::new)
+                                                .collect(Collectors.toList()),
+                                        parameters))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Expected List from Python embed method")
+                .hasMessageContaining("Expected Map from Python embed method")
                 .hasMessageContaining("java.lang.String");
     }
 
@@ -291,14 +310,19 @@ public class PythonEmbeddingModelConnectionTest {
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModel),
-                        eq("embed"),
                         any(),
                         any(Map.class)))
-                .thenReturn(pythonResult);
+                .thenReturn(Map.of("embeddings", pythonResult));
 
-        assertThatThrownBy(() -> pythonEmbeddingModelConnection.embed(texts, parameters))
+        assertThatThrownBy(
+                        () ->
+                                pythonEmbeddingModelConnection.embed(
+                                        texts.stream()
+                                                .map(TextBlock::new)
+                                                .collect(Collectors.toList()),
+                                        parameters))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Expected List value in embedding results")
+                .hasMessageContaining("Expected List value in Python embedding result")
                 .hasMessageContaining("java.lang.String");
     }
 

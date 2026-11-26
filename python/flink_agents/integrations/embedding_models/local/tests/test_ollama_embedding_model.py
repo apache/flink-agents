@@ -61,7 +61,7 @@ def test_ollama_embedding_setup() -> None:
     setup.open()
 
     # Test embedding through setup
-    embedding = setup.embed("This is a test sentence for embedding.")
+    embedding = setup.embed("This is a test sentence for embedding.").embeddings
     assert embedding is not None
     assert isinstance(embedding, list)
     assert len(embedding) > 0

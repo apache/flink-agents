@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.resource.python;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.embedding.model.EmbeddingModelUtils;
 import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
+import org.apache.flink.agents.api.embedding.model.EmbeddingTokenUsage;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -34,46 +35,68 @@ final class PythonEmbeddingModelInvoker {
 
     private PythonEmbeddingModelInvoker() {}
 
-    static float[] embedSingle(
-            PythonResourceWrapper model, Object content, Map<String, Object> parameters) {
-        return EmbeddingModelUtils.toFloatArray(
-                requireList(
-                        invoke(model, "embed", content, parameters),
-                        "Expected List from Python embed method"));
+    static EmbeddingResult<List<float[]>> embedBatch(
+            PythonResourceWrapper model, List<?> content, Map<String, Object> parameters) {
+        return toBatchEmbeddingResult(invoke(model, content, parameters));
     }
 
-    static List<float[]> embedBatch(
-            PythonResourceWrapper model, List<?> content, Map<String, Object> parameters) {
-        List<?> result =
-                requireList(
-                        invoke(model, "embed", content, parameters),
-                        "Expected List from Python embed method");
+    private static EmbeddingResult<List<float[]>> toBatchEmbeddingResult(Object result) {
+        Map<?, ?> values = toResultMap(result);
+        List<?> rawEmbeddings = toEmbeddingList(values.get("embeddings"));
         List<float[]> embeddings = new ArrayList<>();
-        for (Object vector : result) {
-            embeddings.add(
-                    EmbeddingModelUtils.toFloatArray(
-                            requireList(vector, "Expected List value in embedding results")));
+        for (Object embedding : rawEmbeddings) {
+            embeddings.add(EmbeddingModelUtils.toFloatArray(toEmbeddingList(embedding)));
         }
-        return embeddings;
+        return new EmbeddingResult<>(embeddings, toTokenUsage(values.get("token_usage")));
     }
 
-    static EmbeddingResult<float[]> embedSingleWithUsage(
-            PythonResourceWrapper model, Object content, Map<String, Object> parameters) {
-        return EmbeddingModelUtils.toSingleEmbeddingResult(
-                invoke(model, "embed_with_usage", content, parameters));
+    private static Map<?, ?> toResultMap(Object result) {
+        if (result instanceof Map) {
+            return (Map<?, ?>) result;
+        }
+        throw new IllegalArgumentException(
+                "Expected Map from Python embed method, but got: "
+                        + (result == null ? "null" : result.getClass().getName()));
     }
 
-    static EmbeddingResult<List<float[]>> embedBatchWithUsage(
-            PythonResourceWrapper model, List<?> content, Map<String, Object> parameters) {
-        return EmbeddingModelUtils.toBatchEmbeddingResult(
-                invoke(model, "embed_with_usage", content, parameters));
+    private static List<?> toEmbeddingList(Object embeddings) {
+        if (embeddings instanceof List) {
+            return (List<?>) embeddings;
+        }
+        throw new IllegalArgumentException(
+                "Expected List value in Python embedding result, but got: "
+                        + (embeddings == null ? "null" : embeddings.getClass().getName()));
+    }
+
+    private static EmbeddingTokenUsage toTokenUsage(Object tokenUsage) {
+        if (tokenUsage == null) {
+            return null;
+        }
+        if (!(tokenUsage instanceof Map)) {
+            throw new IllegalArgumentException(
+                    "Expected Map token_usage in Python embedding result, but got: "
+                            + tokenUsage.getClass().getName());
+        }
+
+        Map<?, ?> usage = (Map<?, ?>) tokenUsage;
+        return new EmbeddingTokenUsage(
+                toLong(usage.get("prompt_tokens"), "prompt_tokens"),
+                toLong(usage.get("total_tokens"), "total_tokens"));
+    }
+
+    private static long toLong(Object value, String fieldName) {
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        throw new IllegalArgumentException(
+                "Expected numeric "
+                        + fieldName
+                        + " in Python embedding token usage, but got: "
+                        + (value == null ? "null" : value.getClass().getName()));
     }
 
     private static Object invoke(
-            PythonResourceWrapper model,
-            String method,
-            Object content,
-            Map<String, Object> parameters) {
+            PythonResourceWrapper model, Object content, Map<String, Object> parameters) {
         Object pythonModel = model.getPythonResource();
         checkState(
                 pythonModel != null,
@@ -82,16 +105,7 @@ final class PythonEmbeddingModelInvoker {
                 .invoke(
                         CALL_EMBEDDING,
                         pythonModel,
-                        method,
                         MAPPER.convertValue(content, Object.class),
                         parameters);
-    }
-
-    private static List<?> requireList(Object result, String message) {
-        if (result instanceof List) {
-            return (List<?>) result;
-        }
-        throw new IllegalArgumentException(
-                message + ", but got: " + (result == null ? "null" : result.getClass().getName()));
     }
 }

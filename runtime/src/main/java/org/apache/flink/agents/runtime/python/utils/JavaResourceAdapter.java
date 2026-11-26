@@ -36,6 +36,7 @@ import org.apache.flink.agents.runtime.skill.repository.SkillMaterializer;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -153,6 +154,15 @@ public class JavaResourceAdapter {
     /** Restore a data block from its canonical Python map. */
     public DataContentBlock fromPythonDataContentBlock(Map<String, Object> block) {
         return DATA_BLOCK_MAPPER.convertValue(block, DataContentBlock.class);
+    }
+
+    /** Restore a batch of data blocks in one call from Python, preserving input order. */
+    public List<DataContentBlock> fromPythonDataContentBlocks(List<Map<String, Object>> blocks) {
+        List<DataContentBlock> result = new ArrayList<>(blocks.size());
+        for (Map<String, Object> block : blocks) {
+            result.add(fromPythonDataContentBlock(block));
+        }
+        return result;
     }
 
     public ChatResult fromPythonChatResult(Map<String, Object> response) {

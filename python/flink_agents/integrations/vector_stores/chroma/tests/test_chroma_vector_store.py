@@ -25,6 +25,7 @@ from unittest.mock import MagicMock
 import pytest
 from chromadb.errors import NotFoundError
 
+from flink_agents.api.embedding_models.embedding_model import EmbeddingResult
 from flink_agents.api.resource_context import ResourceContext
 
 try:
@@ -64,11 +65,13 @@ class MockEmbeddingModel(BaseEmbeddingModelSetup):
     def model_kwargs(self) -> Dict[str, Any]:
         return {}
 
-    def embed(self, text: str, **kwargs: Any) -> list[float]:
+    def embed(
+        self, text: str, **kwargs: Any
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
         if "ChromaDB" in text:
-            return [0.2, 0.3, 0.4, 0.5, 0.6]
+            return EmbeddingResult([0.2, 0.3, 0.4, 0.5, 0.6])
         else:
-            return [0.1, 0.2, 0.3, 0.4, 0.5]
+            return EmbeddingResult([0.1, 0.2, 0.3, 0.4, 0.5])
 
 
 def _populate_test_data(
@@ -298,8 +301,10 @@ class _FixedVecEmbeddingModel(MockEmbeddingModel):
     without having to pass vectors manually.
     """
 
-    def embed(self, text: str, **kwargs: Any) -> list[float]:
-        return [1.0, 0.0, 0.0, 0.0, 0.0]
+    def embed(
+        self, text: str, **kwargs: Any
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
+        return EmbeddingResult([1.0, 0.0, 0.0, 0.0, 0.0])
 
 
 def _filter_test_store() -> ChromaVectorStore:

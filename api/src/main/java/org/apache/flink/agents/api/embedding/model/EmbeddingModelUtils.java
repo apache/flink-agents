@@ -17,11 +17,44 @@
  */
 package org.apache.flink.agents.api.embedding.model;
 
+import org.apache.flink.agents.api.chat.messages.DataContentBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
+
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 public class EmbeddingModelUtils {
+    /** Validate the entire batch and extract text before a text-only provider calls its service. */
+    public static List<String> requireTextInputs(
+            List<? extends DataContentBlock> blocks, String provider) {
+        if (blocks == null) {
+            throw new IllegalArgumentException("embedding blocks must not be null");
+        }
+        List<String> texts = new ArrayList<>(blocks.size());
+        for (int i = 0; i < blocks.size(); i++) {
+            DataContentBlock block = blocks.get(i);
+            if (block == null) {
+                throw new IllegalArgumentException(
+                        "Embedding block at index " + i + " must not be null.");
+            }
+            if (!(block instanceof TextBlock)) {
+                throw UnsupportedContentBlockException.forBlock(
+                        provider, block, "the embedding model accepts only text");
+            }
+            texts.add(((TextBlock) block).getText());
+        }
+        return texts;
+    }
+
+    /** Unwrap a single-input response without losing its usage metadata. */
+    static EmbeddingResult<float[]> singleResult(EmbeddingResult<List<float[]>> result) {
+        if (result.getEmbeddings().size() != 1) {
+            throw new IllegalStateException("Expected exactly one embedding for a single input.");
+        }
+        return new EmbeddingResult<>(result.getEmbeddings().get(0), result.getTokenUsage());
+    }
+
     public static float[] toFloatArray(List list) {
         float[] array = new float[list.size()];
         for (int i = 0; i < list.size(); i++) {
@@ -35,67 +68,5 @@ public class EmbeddingModelUtils {
             }
         }
         return array;
-    }
-
-    public static EmbeddingResult<float[]> toSingleEmbeddingResult(Object result) {
-        Map<?, ?> values = toResultMap(result);
-        return new EmbeddingResult<>(
-                toFloatArray(toEmbeddingList(values.get("embeddings"))),
-                toTokenUsage(values.get("token_usage")));
-    }
-
-    public static EmbeddingResult<List<float[]>> toBatchEmbeddingResult(Object result) {
-        Map<?, ?> values = toResultMap(result);
-        List<?> rawEmbeddings = toEmbeddingList(values.get("embeddings"));
-        List<float[]> embeddings = new ArrayList<>();
-        for (Object embedding : rawEmbeddings) {
-            embeddings.add(toFloatArray(toEmbeddingList(embedding)));
-        }
-        return new EmbeddingResult<>(embeddings, toTokenUsage(values.get("token_usage")));
-    }
-
-    private static Map<?, ?> toResultMap(Object result) {
-        if (result instanceof Map) {
-            return (Map<?, ?>) result;
-        }
-        throw new IllegalArgumentException(
-                "Expected Map from Python embed_with_usage method, but got: "
-                        + (result == null ? "null" : result.getClass().getName()));
-    }
-
-    private static List<?> toEmbeddingList(Object embeddings) {
-        if (embeddings instanceof List) {
-            return (List<?>) embeddings;
-        }
-        throw new IllegalArgumentException(
-                "Expected List value in Python embedding result, but got: "
-                        + (embeddings == null ? "null" : embeddings.getClass().getName()));
-    }
-
-    private static EmbeddingTokenUsage toTokenUsage(Object tokenUsage) {
-        if (tokenUsage == null) {
-            return null;
-        }
-        if (!(tokenUsage instanceof Map)) {
-            throw new IllegalArgumentException(
-                    "Expected Map token_usage in Python embedding result, but got: "
-                            + tokenUsage.getClass().getName());
-        }
-
-        Map<?, ?> usage = (Map<?, ?>) tokenUsage;
-        return new EmbeddingTokenUsage(
-                toLong(usage.get("prompt_tokens"), "prompt_tokens"),
-                toLong(usage.get("total_tokens"), "total_tokens"));
-    }
-
-    private static long toLong(Object value, String fieldName) {
-        if (value instanceof Number) {
-            return ((Number) value).longValue();
-        }
-        throw new IllegalArgumentException(
-                "Expected numeric "
-                        + fieldName
-                        + " in Python embedding token usage, but got: "
-                        + (value == null ? "null" : value.getClass().getName()));
     }
 }

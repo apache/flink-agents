@@ -26,6 +26,9 @@ import com.openai.models.embeddings.Embedding;
 import com.openai.models.embeddings.EmbeddingCreateParams;
 import com.openai.models.embeddings.EmbeddingValue;
 import com.openai.services.blocking.EmbeddingService;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
@@ -284,14 +287,13 @@ class OpenAIEmbeddingModelTest {
         OpenAIEmbeddingModelConnection conn = connectionWith(client, service);
 
         EmbeddingResult<float[]> result =
-                conn.embedWithUsage("hello", Map.of("model", "text-embedding-3-small"));
+                conn.embed("hello", Map.of("model", "text-embedding-3-small"));
 
         assertThat(result.getEmbeddings()).containsExactly(0.1f, 0.2f, 0.3f);
         assertThat(result.getTokenUsage()).isNotNull();
         assertThat(result.getTokenUsage().getPromptTokens()).isEqualTo(5L);
         assertThat(result.getTokenUsage().getTotalTokens()).isEqualTo(5L);
-        assertThat(conn.embed("hello", Map.of("model", "text-embedding-3-small")))
-                .containsExactly(0.1f, 0.2f, 0.3f);
+        verify(service).create(any(EmbeddingCreateParams.class));
     }
 
     @Test
@@ -305,8 +307,9 @@ class OpenAIEmbeddingModelTest {
         OpenAIEmbeddingModelConnection conn = connectionWith(client, service);
 
         EmbeddingResult<List<float[]>> result =
-                conn.embedWithUsage(
-                        List.of("first", "second"), Map.of("model", "text-embedding-3-small"));
+                conn.embed(
+                        List.of(new TextBlock("first"), new TextBlock("second")),
+                        Map.of("model", "text-embedding-3-small"));
 
         assertThat(result.getEmbeddings()).hasSize(2);
         assertThat(result.getEmbeddings().get(0)).containsExactly(0.1f);
@@ -365,7 +368,7 @@ class OpenAIEmbeddingModelTest {
         assertThatThrownBy(
                         () ->
                                 conn.embed(
-                                        List.of("a", "b"),
+                                        List.of(new TextBlock("a"), new TextBlock("b")),
                                         Map.of("model", "text-embedding-3-small")))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("2 input texts");
@@ -437,23 +440,24 @@ class OpenAIEmbeddingModelTest {
         OpenAIEmbeddingModelConnection conn = connectionWith(client, service);
 
         EmbeddingResult<float[]> result =
-                conn.embedWithUsage("hello", Map.of("model", "text-embedding-3-small"));
+                conn.embed("hello", Map.of("model", "text-embedding-3-small"));
         assertThat(result.getEmbeddings()).containsExactly(0.5f);
         assertThat(result.getTokenUsage()).isNull();
     }
 
     @Test
-    @DisplayName("A null input text is rejected with its index before any request")
-    void testNullTextRejected() {
+    @DisplayName("A null input block is rejected with its index before any request")
+    void testNullBlockRejected() {
         OpenAIClient client = mock(OpenAIClient.class);
         EmbeddingService service = mock(EmbeddingService.class);
         OpenAIEmbeddingModelConnection conn = connectionWith(client, service);
-        List<String> texts = new java.util.ArrayList<>();
-        texts.add("ok");
-        texts.add(null);
-        assertThatThrownBy(() -> conn.embed(texts, Map.of("model", "text-embedding-3-small")))
+        List<TextBlock> blocks = new java.util.ArrayList<>();
+        blocks.add(new TextBlock("ok"));
+        blocks.add(null);
+        assertThatThrownBy(() -> conn.embed(blocks, Map.of("model", "text-embedding-3-small")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("index 1");
+        org.mockito.Mockito.verifyNoInteractions(service);
     }
 
     @Test
@@ -479,7 +483,9 @@ class OpenAIEmbeddingModelTest {
         OpenAIEmbeddingModelConnection conn = connectionWith(client, service);
 
         EmbeddingResult<List<float[]>> result =
-                conn.embedWithUsage(List.of("a", "b"), Map.of("model", "text-embedding-3-small"));
+                conn.embed(
+                        List.of(new TextBlock("a"), new TextBlock("b")),
+                        Map.of("model", "text-embedding-3-small"));
 
         assertThat(result.getEmbeddings().get(0)).containsExactly(0.1f);
         assertThat(result.getEmbeddings().get(1)).containsExactly(0.2f);
@@ -620,7 +626,10 @@ class OpenAIEmbeddingModelTest {
         OpenAIEmbeddingModelConnection conn = connectionWith(client, service);
 
         List<float[]> embeddings =
-                conn.embed(List.of("a", "b"), Map.of("model", "text-embedding-3-small"));
+                conn.embed(
+                                List.of(new TextBlock("a"), new TextBlock("b")),
+                                Map.of("model", "text-embedding-3-small"))
+                        .getEmbeddings();
 
         assertThat(embeddings.get(0)).containsExactly(0.1f);
         assertThat(embeddings.get(1)).containsExactly(0.2f);
@@ -640,7 +649,7 @@ class OpenAIEmbeddingModelTest {
         assertThatThrownBy(
                         () ->
                                 conn.embed(
-                                        List.of("a", "b"),
+                                        List.of(new TextBlock("a"), new TextBlock("b")),
                                         Map.of("model", "text-embedding-3-small")))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("unexpected embedding index 0 at position 1");
@@ -653,14 +662,15 @@ class OpenAIEmbeddingModelTest {
         EmbeddingService service = mock(EmbeddingService.class);
         OpenAIEmbeddingModelConnection conn = connectionWith(client, service);
 
-        assertThat(conn.embed(List.of(), Map.of("model", "text-embedding-3-small"))).isEmpty();
+        assertThat(conn.embed(List.of(), Map.of("model", "text-embedding-3-small")).getEmbeddings())
+                .isEmpty();
         assertThatThrownBy(
                         () ->
                                 conn.embed(
-                                        (List<String>) null,
+                                        (List<TextBlock>) null,
                                         Map.of("model", "text-embedding-3-small")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("texts must not be null");
+                .hasMessageContaining("embedding blocks");
         // A null parameter map is treated as empty, so the missing model is the reported error.
         assertThatThrownBy(() -> conn.embed("hello", null))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -705,8 +715,13 @@ class OpenAIEmbeddingModelTest {
 
         float[] vector =
                 conn.embed(
-                        "hello",
-                        Map.of("model", "text-embedding-3-small", "encoding_format", "base64"));
+                                "hello",
+                                Map.of(
+                                        "model",
+                                        "text-embedding-3-small",
+                                        "encoding_format",
+                                        "base64"))
+                        .getEmbeddings();
 
         assertThat(vector).containsExactly(0.5f, 0.25f);
     }
@@ -760,7 +775,7 @@ class OpenAIEmbeddingModelTest {
         OpenAIEmbeddingModelConnection conn = connectionWith(client, service);
 
         EmbeddingResult<float[]> result =
-                conn.embedWithUsage("a", Map.of("model", "text-embedding-3-small"));
+                conn.embed("a", Map.of("model", "text-embedding-3-small"));
 
         assertThat(result.getTokenUsage()).isNotNull();
         assertThat(result.getTokenUsage().getPromptTokens()).isEqualTo(5L);
@@ -783,7 +798,7 @@ class OpenAIEmbeddingModelTest {
         assertThatThrownBy(
                         () ->
                                 conn.embed(
-                                        List.of("a", "b"),
+                                        List.of(new TextBlock("a"), new TextBlock("b")),
                                         Map.of("model", "text-embedding-3-small")))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("returned 0 embeddings for 2 input texts");
@@ -855,7 +870,7 @@ class OpenAIEmbeddingModelTest {
         assertThatThrownBy(
                         () ->
                                 conn.embed(
-                                        List.of("a", "b"),
+                                        List.of(new TextBlock("a"), new TextBlock("b")),
                                         Map.of("model", "text-embedding-3-small")))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("malformed embedding at position 1")
@@ -880,7 +895,7 @@ class OpenAIEmbeddingModelTest {
         assertThatThrownBy(
                         () ->
                                 conn.embed(
-                                        List.of("a", "b"),
+                                        List.of(new TextBlock("a"), new TextBlock("b")),
                                         Map.of("model", "text-embedding-3-small")))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("non-integer embedding index");
@@ -898,9 +913,26 @@ class OpenAIEmbeddingModelTest {
         assertThatThrownBy(
                         () ->
                                 conn.embed(
-                                        List.of("a", "b"),
+                                        List.of(new TextBlock("a"), new TextBlock("b")),
                                         Map.of("model", "text-embedding-3-small")))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("unexpected embedding index " + Long.MAX_VALUE);
+    }
+
+    @Test
+    void testRejectsMediaBeforeCallingService() {
+        OpenAIClient client = mock(OpenAIClient.class);
+        EmbeddingService service = mock(EmbeddingService.class);
+        OpenAIEmbeddingModelConnection conn = connectionWith(client, service);
+        ImageBlock image = ImageBlock.fromBase64("image/png", "aGk=");
+        assertThatThrownBy(() -> conn.embed(image, Map.of("model", "test")))
+                .isInstanceOf(UnsupportedContentBlockException.class);
+        assertThatThrownBy(
+                        () ->
+                                conn.embed(
+                                        List.of(new TextBlock("first"), image),
+                                        Map.of("model", "test")))
+                .isInstanceOf(UnsupportedContentBlockException.class);
+        org.mockito.Mockito.verifyNoInteractions(service);
     }
 }

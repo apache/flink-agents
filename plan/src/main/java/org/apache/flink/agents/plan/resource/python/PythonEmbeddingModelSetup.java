@@ -71,30 +71,9 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
     }
 
     @Override
-    public float[] embed(String text, Map<String, Object> parameters) {
-        return PythonEmbeddingModelInvoker.embedSingle(this, text, parameters);
-    }
-
-    @Override
-    public List<float[]> embed(List<String> texts, Map<String, Object> parameters) {
-        return PythonEmbeddingModelInvoker.embedBatch(this, texts, parameters);
-    }
-
-    @Override
-    public EmbeddingResult<float[]> embedWithUsage(String text, Map<String, Object> parameters) {
-        return PythonEmbeddingModelInvoker.embedSingleWithUsage(this, text, parameters);
-    }
-
-    @Override
-    public EmbeddingResult<List<float[]>> embedWithUsage(
-            List<String> texts, Map<String, Object> parameters) {
-        return PythonEmbeddingModelInvoker.embedBatchWithUsage(this, texts, parameters);
-    }
-
-    @Override
-    public EmbeddingResult<List<float[]>> embedBlocksWithUsage(
+    public EmbeddingResult<List<float[]>> embed(
             List<? extends DataContentBlock> blocks, Map<String, Object> parameters) {
-        return PythonEmbeddingModelInvoker.embedBatchWithUsage(this, blocks, parameters);
+        return PythonEmbeddingModelInvoker.embedBatch(this, blocks, parameters);
     }
 
     @Override

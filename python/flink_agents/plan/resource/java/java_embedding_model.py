@@ -35,39 +35,33 @@ def _call_java_embedding(
     adapter: JavaResourceAdapter,
     content: EmbeddingContent,
     kwargs: Dict[str, Any],
-    *,
-    with_usage: bool,
 ) -> EmbeddingResult[list[float] | list[list[float]]]:
     """Call the Java model and adapt its result to the Python input shape."""
     single = isinstance(content, str | TextBlock | MediaBlock)
     inputs = [content] if single else list(content)
-    argument = content if single else inputs
-    j_result = None
-
-    if any(isinstance(item, TextBlock | MediaBlock) for item in inputs):
+    if single and isinstance(content, str):
+        j_result = resource.embed(content, kwargs)
+    else:
         blocks = [
             TextBlock(text=item) if isinstance(item, str) else item for item in inputs
         ]
-        java_blocks = [
-            adapter.fromPythonDataContentBlock(block.model_dump(mode="json"))
-            for block in blocks
-        ]
-        j_result = resource.embedBlocksWithUsage(java_blocks, kwargs)
-        j_embeddings = j_result.getEmbeddings()
         if single:
-            j_embeddings = j_embeddings[0]
-    elif with_usage:
-        j_result = resource.embedWithUsage(argument, kwargs)
-        j_embeddings = j_result.getEmbeddings()
-    else:
-        j_embeddings = resource.embed(argument, kwargs)
+            java_content = adapter.fromPythonDataContentBlock(
+                blocks[0].model_dump(mode="json")
+            )
+        else:
+            java_content = adapter.fromPythonDataContentBlocks(
+                [block.model_dump(mode="json") for block in blocks]
+            )
+        j_result = resource.embed(java_content, kwargs)
+    j_embeddings = j_result.getEmbeddings()
 
     embeddings = (
         list(j_embeddings)
         if single
         else [list(embedding) for embedding in j_embeddings]
     )
-    j_usage = j_result.getTokenUsage() if with_usage else None
+    j_usage = j_result.getTokenUsage()
     token_usage = (
         None
         if j_usage is None
@@ -81,10 +75,7 @@ def _call_java_embedding(
 
 class JavaEmbeddingModelConnection(BaseEmbeddingModelConnection):
     """Java-based implementation of EmbeddingModelConnection that wraps a Java embedding
-    model object.
-    This class serves as a bridge between Python and Java embedding model environments,
-    but unlike JavaEmbeddingModelSetup, it does not provide direct embedding
-    functionality in Python.
+    model object and preserves vectors and usage across the language boundary.
     """
 
     _j_resource: Any
@@ -109,34 +100,19 @@ class JavaEmbeddingModelConnection(BaseEmbeddingModelConnection):
         super().set_metric_group(metric_group)
         self._j_resource_adapter.set_metric_group(self._j_resource, metric_group)
 
-    def embed(
-        self, content: EmbeddingContent, **kwargs: Any
-    ) -> list[float] | list[list[float]]:
-        """Generate vectors for one input or an ordered batch through Java."""
-        return _call_java_embedding(
-            self._j_resource,
-            self._j_resource_adapter,
-            content,
-            kwargs,
-            with_usage=False,
-        ).embeddings
-
     @override
-    def embed_with_usage(
+    def embed(
         self, content: EmbeddingContent, **kwargs: Any
     ) -> EmbeddingResult[list[float] | list[list[float]]]:
         """Generate embeddings through Java and preserve provider token usage."""
         return _call_java_embedding(
-            self._j_resource, self._j_resource_adapter, content, kwargs, with_usage=True
+            self._j_resource, self._j_resource_adapter, content, kwargs
         )
 
 
 class JavaEmbeddingModelSetup(BaseEmbeddingModelSetup):
     """Java-based implementation of EmbeddingModelSetup that wraps a Java embedding
-    model object.
-    This class serves as a bridge between Python and Java embedding model environments,
-    but unlike JavaEmbeddingModelConnection, it does not provide direct embedding
-    functionality in Python.
+    model object and preserves vectors and usage across the language boundary.
     """
 
     _j_resource: Any
@@ -179,23 +155,11 @@ class JavaEmbeddingModelSetup(BaseEmbeddingModelSetup):
         """Open the java resource."""
         self._j_resource.open()
 
-    def embed(
-        self, content: EmbeddingContent, **kwargs: Any
-    ) -> list[float] | list[list[float]]:
-        """Generate vectors for one input or an ordered batch through Java."""
-        return _call_java_embedding(
-            self._j_resource,
-            self._j_resource_adapter,
-            content,
-            kwargs,
-            with_usage=False,
-        ).embeddings
-
     @override
-    def embed_with_usage(
+    def embed(
         self, content: EmbeddingContent, **kwargs: Any
     ) -> EmbeddingResult[list[float] | list[list[float]]]:
         """Generate embeddings through Java and preserve provider token usage."""
         return _call_java_embedding(
-            self._j_resource, self._j_resource_adapter, content, kwargs, with_usage=True
+            self._j_resource, self._j_resource_adapter, content, kwargs
         )

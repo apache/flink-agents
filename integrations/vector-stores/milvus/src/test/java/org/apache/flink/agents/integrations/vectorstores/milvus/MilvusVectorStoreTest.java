@@ -29,6 +29,7 @@ import io.milvus.v2.service.index.request.DescribeIndexReq;
 import io.milvus.v2.service.index.request.ListIndexesReq;
 import io.milvus.v2.service.index.response.DescribeIndexResp;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
+import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -635,11 +636,14 @@ public class MilvusVectorStoreTest {
     private static Resource getResource(String name, ResourceType type) {
         BaseEmbeddingModelSetup embeddingModel = Mockito.mock(BaseEmbeddingModelSetup.class);
         Mockito.when(embeddingModel.embed("Milvus is a vector database"))
-                .thenReturn(new float[] {1.0f, 0.0f, 0.0f, 0.0f, 0.0f});
+                .thenReturn(
+                        new EmbeddingResult<>(new float[] {1.0f, 0.0f, 0.0f, 0.0f, 0.0f}, null));
         Mockito.when(embeddingModel.embed("Milvus stores dense vectors"))
-                .thenReturn(new float[] {1.0f, 0.0f, 0.0f, 0.0f, 0.0f});
+                .thenReturn(
+                        new EmbeddingResult<>(new float[] {1.0f, 0.0f, 0.0f, 0.0f, 0.0f}, null));
         Mockito.when(embeddingModel.embed("Apache Flink Agents is an AI framework"))
-                .thenReturn(new float[] {0.0f, 1.0f, 0.0f, 0.0f, 0.0f});
+                .thenReturn(
+                        new EmbeddingResult<>(new float[] {0.0f, 1.0f, 0.0f, 0.0f, 0.0f}, null));
         return embeddingModel;
     }
 }

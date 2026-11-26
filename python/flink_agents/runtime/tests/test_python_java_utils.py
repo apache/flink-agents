@@ -137,7 +137,7 @@ def test_invoke_python_tool_instance_preserves_explicit_failure() -> None:
 
 
 class _UsageAwareEmbeddingModel:
-    def embed_with_usage(
+    def embed(
         self, text: str, **kwargs: object
     ) -> EmbeddingResult[list[float]]:
         assert text == "hello"
@@ -151,7 +151,6 @@ class _UsageAwareEmbeddingModel:
 def test_call_embedding_with_usage_returns_pemja_safe_primitives() -> None:
     result = call_embedding(
         _UsageAwareEmbeddingModel(),
-        "embed_with_usage",
         "hello",
         {"model": "test-model"},
     )

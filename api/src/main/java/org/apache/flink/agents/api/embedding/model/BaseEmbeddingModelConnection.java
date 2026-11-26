@@ -20,7 +20,6 @@ package org.apache.flink.agents.api.embedding.model;
 
 import org.apache.flink.agents.api.chat.messages.DataContentBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
-import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -28,8 +27,6 @@ import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.stream.Collectors;
 
 /**
  * Abstraction of embedding model connection.
@@ -59,58 +56,22 @@ public abstract class BaseEmbeddingModelConnection extends Resource {
         return ResourceType.EMBEDDING_MODEL_CONNECTION;
     }
 
+    /** Generate one vector for text, with optional provider token usage. */
+    public EmbeddingResult<float[]> embed(String text, Map<String, Object> parameters) {
+        return embed(new TextBlock(text), parameters);
+    }
+
+    /** Generate one vector for a supported block by invoking the batch implementation. */
+    public EmbeddingResult<float[]> embed(DataContentBlock block, Map<String, Object> parameters) {
+        return EmbeddingModelUtils.singleResult(embed(List.of(block), parameters));
+    }
+
     /**
-     * Generate embeddings for a single text input.
+     * Generate one vector per block in input order, with optional usage for the batch.
      *
-     * @param text The input text to generate embeddings for
-     * @param parameters Additional parameters to configure the embedding request. Common parameters
-     *     include: - "model" (String): The specific model variant to use - "encoding_format"
-     *     (String): The format for encoding (e.g., "float", "base64") - "timeout" (Integer):
-     *     Request timeout in milliseconds
-     * @return An array of floating-point values representing the text embeddings. The length of the
-     *     array is determined by the model itself.
+     * <p>Providers must reject unsupported content before making service calls. Text-only providers
+     * can use {@link EmbeddingModelUtils#requireTextInputs(List, String)}.
      */
-    public abstract float[] embed(String text, Map<String, Object> parameters);
-
-    /**
-     * Generate embeddings for multiple text inputs.
-     *
-     * @param texts The list of input texts to generate embeddings for
-     * @param parameters Additional parameters to configure the embedding request. Common parameters
-     *     include: - "model" (String): The specific model variant to use - "encoding_format"
-     *     (String): The format for encoding (e.g., "float", "base64") - "batch_size" (Integer):
-     *     Maximum number of texts to process in a single request - "timeout" (Integer): Request
-     *     timeout in milliseconds
-     * @return A list of arrays, each containing floating-point values representing the text
-     *     embeddings. The length of each array is determined by the model itself.
-     */
-    public abstract List<float[]> embed(List<String> texts, Map<String, Object> parameters);
-
-    public EmbeddingResult<float[]> embedWithUsage(String text, Map<String, Object> parameters) {
-        return new EmbeddingResult<>(embed(text, parameters), null);
-    }
-
-    public EmbeddingResult<List<float[]>> embedWithUsage(
-            List<String> texts, Map<String, Object> parameters) {
-        return new EmbeddingResult<>(embed(texts, parameters), null);
-    }
-
-    /**
-     * Generate one vector per supported data content block in input order, with token usage when
-     * available.
-     */
-    public EmbeddingResult<List<float[]>> embedBlocksWithUsage(
-            List<? extends DataContentBlock> blocks, Map<String, Object> parameters) {
-        List<String> texts = blocks.stream().map(this::requireText).collect(Collectors.toList());
-        return embedWithUsage(texts, parameters);
-    }
-
-    private String requireText(DataContentBlock block) {
-        Objects.requireNonNull(block, "embedding block");
-        if (block instanceof TextBlock) {
-            return ((TextBlock) block).getText();
-        }
-        throw UnsupportedContentBlockException.forBlock(
-                getClass().getSimpleName(), block, "the embedding model accepts only text");
-    }
+    public abstract EmbeddingResult<List<float[]>> embed(
+            List<? extends DataContentBlock> blocks, Map<String, Object> parameters);
 }

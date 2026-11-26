@@ -34,6 +34,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -105,12 +106,11 @@ public class PythonEmbeddingModelSetupTest {
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModelSetup),
-                        eq("embed"),
                         any(),
                         any(Map.class)))
-                .thenReturn(pythonResult);
+                .thenReturn(Map.of("embeddings", List.of(pythonResult)));
 
-        float[] result = pythonEmbeddingModelSetup.embed(text, parameters);
+        float[] result = pythonEmbeddingModelSetup.embed(text, parameters).getEmbeddings();
 
         assertThat(result).isNotNull();
         assertThat(result).hasSize(4);
@@ -123,8 +123,7 @@ public class PythonEmbeddingModelSetupTest {
                 .invoke(
                         "python_java_utils.call_embedding",
                         mockEmbeddingModelSetup,
-                        "embed",
-                        text,
+                        List.of(Map.of("type", "text", "text", text)),
                         parameters);
     }
 
@@ -138,36 +137,33 @@ public class PythonEmbeddingModelSetupTest {
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModelSetup),
-                        eq("embed"),
                         any(),
                         any(Map.class)))
-                .thenReturn(pythonResult);
+                .thenReturn(Map.of("embeddings", List.of(pythonResult)));
 
-        float[] result = pythonEmbeddingModelSetup.embed(text, parameters);
+        float[] result = pythonEmbeddingModelSetup.embed(text, parameters).getEmbeddings();
 
         assertThat(result).isNotNull();
         assertThat(result).hasSize(2);
     }
 
     @Test
-    void testEmbedWithUsageSingleText() {
+    void testEmbedPreservesUsageSingleText() {
         String text = "test text";
         Map<String, Object> parameters = Map.of("model", "test-model");
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModelSetup),
-                        eq("embed_with_usage"),
-                        eq(text),
+                        eq(List.of(Map.of("type", "text", "text", text))),
                         any(Map.class)))
                 .thenReturn(
                         Map.of(
                                 "embeddings",
-                                List.of(0.1, 0.2),
+                                List.of(List.of(0.1, 0.2)),
                                 "token_usage",
                                 Map.of("prompt_tokens", 7, "total_tokens", 9)));
 
-        EmbeddingResult<float[]> result =
-                pythonEmbeddingModelSetup.embedWithUsage(text, parameters);
+        EmbeddingResult<float[]> result = pythonEmbeddingModelSetup.embed(text, parameters);
 
         assertThat(result.getEmbeddings()).containsExactly(0.1f, 0.2f);
         assertThat(result.getTokenUsage()).isNotNull();
@@ -177,8 +173,7 @@ public class PythonEmbeddingModelSetupTest {
                 .invoke(
                         "python_java_utils.call_embedding",
                         mockEmbeddingModelSetup,
-                        "embed_with_usage",
-                        text,
+                        List.of(Map.of("type", "text", "text", text)),
                         parameters);
     }
 
@@ -191,12 +186,11 @@ public class PythonEmbeddingModelSetupTest {
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModelSetup),
-                        eq("embed_with_usage"),
                         any(),
                         eq(parameters)))
                 .thenAnswer(
                         invocation -> {
-                            List<?> blocks = invocation.getArgument(3);
+                            List<?> blocks = invocation.getArgument(2);
                             assertThat(blocks).hasSize(2);
                             Map<?, ?> text = (Map<?, ?>) blocks.get(0);
                             assertThat(text.get("type")).isEqualTo("text");
@@ -214,7 +208,7 @@ public class PythonEmbeddingModelSetupTest {
                         });
 
         EmbeddingResult<List<float[]>> result =
-                pythonEmbeddingModelSetup.embedBlocksWithUsage(
+                pythonEmbeddingModelSetup.embed(
                         List.of(
                                 new TextBlock("caption"),
                                 ImageBlock.fromBase64("image/png", "aGk=")),
@@ -242,21 +236,20 @@ public class PythonEmbeddingModelSetupTest {
     }
 
     @Test
-    void testEmbedSingleTextWithNonListResultThrowsException() {
+    void testEmbedSingleTextWithNonMapResultThrowsException() {
         String text = "test text";
         Map<String, Object> parameters = new HashMap<>();
 
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModelSetup),
-                        eq("embed"),
                         any(),
                         any(Map.class)))
                 .thenReturn("invalid result");
 
         assertThatThrownBy(() -> pythonEmbeddingModelSetup.embed(text, parameters))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Expected List from Python embed method")
+                .hasMessageContaining("Expected Map from Python embed method")
                 .hasMessageContaining("java.lang.String");
     }
 
@@ -274,12 +267,16 @@ public class PythonEmbeddingModelSetupTest {
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModelSetup),
-                        eq("embed"),
                         any(),
                         any(Map.class)))
-                .thenReturn(pythonResult);
+                .thenReturn(Map.of("embeddings", pythonResult));
 
-        List<float[]> result = pythonEmbeddingModelSetup.embed(texts, parameters);
+        List<float[]> result =
+                pythonEmbeddingModelSetup
+                        .embed(
+                                texts.stream().map(TextBlock::new).collect(Collectors.toList()),
+                                parameters)
+                        .getEmbeddings();
 
         assertThat(result).isNotNull();
         assertThat(result).hasSize(3);
@@ -292,8 +289,9 @@ public class PythonEmbeddingModelSetupTest {
                 .invoke(
                         "python_java_utils.call_embedding",
                         mockEmbeddingModelSetup,
-                        "embed",
-                        texts,
+                        texts.stream()
+                                .map(t -> Map.of("type", "text", "text", t))
+                                .collect(Collectors.toList()),
                         parameters);
     }
 
@@ -305,28 +303,39 @@ public class PythonEmbeddingModelSetupTest {
         List<String> texts = Arrays.asList("text1", "text2");
         Map<String, Object> parameters = new HashMap<>();
 
-        assertThatThrownBy(() -> setupWithNullModel.embed(texts, parameters))
+        assertThatThrownBy(
+                        () ->
+                                setupWithNullModel.embed(
+                                        texts.stream()
+                                                .map(TextBlock::new)
+                                                .collect(Collectors.toList()),
+                                        parameters))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("EmbeddingModelSetup is not initialized")
                 .hasMessageContaining("Cannot perform embed operation");
     }
 
     @Test
-    void testEmbedMultipleTextsWithNonListResultThrowsException() {
+    void testEmbedMultipleTextsWithNonMapResultThrowsException() {
         List<String> texts = Arrays.asList("text1", "text2");
         Map<String, Object> parameters = new HashMap<>();
 
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModelSetup),
-                        eq("embed"),
                         any(),
                         any(Map.class)))
                 .thenReturn("invalid result");
 
-        assertThatThrownBy(() -> pythonEmbeddingModelSetup.embed(texts, parameters))
+        assertThatThrownBy(
+                        () ->
+                                pythonEmbeddingModelSetup.embed(
+                                        texts.stream()
+                                                .map(TextBlock::new)
+                                                .collect(Collectors.toList()),
+                                        parameters))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Expected List from Python embed method")
+                .hasMessageContaining("Expected Map from Python embed method")
                 .hasMessageContaining("java.lang.String");
     }
 
@@ -342,14 +351,19 @@ public class PythonEmbeddingModelSetupTest {
         when(mockAdapter.invoke(
                         eq("python_java_utils.call_embedding"),
                         eq(mockEmbeddingModelSetup),
-                        eq("embed"),
                         any(),
                         any(Map.class)))
-                .thenReturn(pythonResult);
+                .thenReturn(Map.of("embeddings", pythonResult));
 
-        assertThatThrownBy(() -> pythonEmbeddingModelSetup.embed(texts, parameters))
+        assertThatThrownBy(
+                        () ->
+                                pythonEmbeddingModelSetup.embed(
+                                        texts.stream()
+                                                .map(TextBlock::new)
+                                                .collect(Collectors.toList()),
+                                        parameters))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Expected List value in embedding results")
+                .hasMessageContaining("Expected List value in Python embedding result")
                 .hasMessageContaining("java.lang.String");
     }
 

@@ -57,7 +57,7 @@ def test_openai_embedding_model() -> None:
     )
     embedding_model.open()
 
-    response = embedding_model.embed("Hello, Flink Agent!")
+    response = embedding_model.embed("Hello, Flink Agent!").embeddings
     assert response is not None
     assert isinstance(response, list)
     assert len(response) > 0
@@ -88,7 +88,7 @@ def test_openai_embedding_model_returns_token_usage() -> None:
     )
     embedding_model.open()
 
-    result = embedding_model.embed_with_usage("Hello, Flink Agent!")
+    result = embedding_model.embed("Hello, Flink Agent!")
     assert result.embeddings == [0.1, 0.2, 0.3]
     assert result.token_usage is not None
     assert result.token_usage.prompt_tokens == 5
@@ -329,7 +329,7 @@ def test_openai_embedding_decodes_base64_and_orders_by_index() -> None:
         ]
     )
 
-    result = connection.embed_with_usage(
+    result = connection.embed(
         ["a", "b"], model=test_model, encoding_format="base64"
     )
 
@@ -337,7 +337,7 @@ def test_openai_embedding_decodes_base64_and_orders_by_index() -> None:
 
     # Unpadded base64 (one float, "AACAPw" instead of "AACAPw==") decodes as in Java.
     unpadded, _ = _connection_returning([SimpleNamespace(index=0, embedding="AACAPw")])
-    assert unpadded.embed("a", model=test_model, encoding_format="base64") == [1.0]
+    assert unpadded.embed("a", model=test_model, encoding_format="base64").embeddings == [1.0]
     # Partial padding ("AACAPw=" for "AACAPw==") is rejected, as by Java's decoder.
     partial, _ = _connection_returning([SimpleNamespace(index=0, embedding="AACAPw=")])
     with pytest.raises(RuntimeError, match="malformed embedding at position 0"):
@@ -385,7 +385,7 @@ def test_openai_embedding_rejects_inconsistent_responses() -> None:
             SimpleNamespace(index=0.0, embedding=[0.2]),
         ]
     )
-    assert float_index.embed(["a", "b"], model=test_model) == [[0.2], [0.1]]
+    assert float_index.embed(["a", "b"], model=test_model).embeddings == [[0.2], [0.1]]
 
     malformed, _ = _connection_returning(
         [SimpleNamespace(index=0, embedding="AACAPwAA")]
@@ -419,7 +419,7 @@ def test_openai_embedding_rejects_inconsistent_responses() -> None:
 
 def test_openai_embedding_empty_batch_skips_request() -> None:
     connection, mock_client = _connection_returning([])
-    result = connection.embed_with_usage([], model=test_model)
+    result = connection.embed([], model=test_model)
     assert result.embeddings == []
     assert result.token_usage is None
     mock_client.embeddings.create.assert_not_called()
@@ -431,7 +431,7 @@ def test_openai_embedding_empty_batch_skips_request() -> None:
             SimpleNamespace(index=1, embedding=[0.2]),
         ]
     )
-    result = connection.embed_with_usage((t for t in ["a", "b"]), model=test_model)
+    result = connection.embed((t for t in ["a", "b"]), model=test_model)
     assert result.embeddings == [[0.1], [0.2]]
     assert mock_client.embeddings.create.call_args.kwargs["input"] == ["a", "b"]
 
@@ -445,7 +445,7 @@ def test_openai_embedding_unusable_usage_yields_none() -> None:
     )
     connection._OpenAIEmbeddingModelConnection__client = mock_client
 
-    result = connection.embed_with_usage("a", model=test_model)
+    result = connection.embed("a", model=test_model)
 
     assert result.embeddings == [0.1]
     assert result.token_usage is None
@@ -456,7 +456,7 @@ def test_openai_embedding_unusable_usage_yields_none() -> None:
         usage=SimpleNamespace(prompt_tokens=10**400, total_tokens=None),
     )
     assert (
-        connection.embed_with_usage("a", model=test_model).token_usage.prompt_tokens
+        connection.embed("a", model=test_model).token_usage.prompt_tokens
         == 10**400
     )
 
@@ -465,6 +465,6 @@ def test_openai_embedding_unusable_usage_yields_none() -> None:
         data=[SimpleNamespace(index=0, embedding=[0.1])],
         usage=SimpleNamespace(prompt_tokens="5", total_tokens="5"),
     )
-    result = connection.embed_with_usage("a", model=test_model)
+    result = connection.embed("a", model=test_model)
     assert result.token_usage is not None
     assert (result.token_usage.prompt_tokens, result.token_usage.total_tokens) == (5, 5)

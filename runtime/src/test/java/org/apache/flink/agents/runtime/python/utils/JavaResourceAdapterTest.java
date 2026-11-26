@@ -24,8 +24,10 @@ import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.DataContentBlock;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.tools.ToolParameterSource;
@@ -42,6 +44,28 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class JavaResourceAdapterTest {
+
+    @Test
+    void restoresOrderedDataBlockBatches() {
+        JavaResourceAdapter adapter =
+                new JavaResourceAdapter(null, Thread.currentThread().getContextClassLoader());
+        Map<String, Object> text = Map.of("type", "text", "text", "caption");
+        Map<String, Object> image =
+                Map.of(
+                        "type",
+                        "image",
+                        "media_type",
+                        "image/png",
+                        "source",
+                        Map.of("type", "base64", "data", "aGk="));
+        List<DataContentBlock> blocks = adapter.fromPythonDataContentBlocks(List.of(text, image));
+        assertThat(blocks).hasSize(2);
+        assertThat(blocks.get(0)).isInstanceOf(TextBlock.class);
+        assertThat(((TextBlock) blocks.get(0)).getText()).isEqualTo("caption");
+        assertThat(blocks.get(1)).isEqualTo(ImageBlock.fromBase64("image/png", "aGk="));
+        assertThat(adapter.fromPythonDataContentBlocks(List.of(text))).hasSize(1);
+        assertThat(adapter.fromPythonDataContentBlocks(List.of())).isEmpty();
+    }
 
     @Test
     void buildsJavaChatResultFromPythonAssistantMessage() {
