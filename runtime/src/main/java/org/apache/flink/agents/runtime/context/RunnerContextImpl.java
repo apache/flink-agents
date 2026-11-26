@@ -37,11 +37,9 @@ import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.context.TimerMode;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
-import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.agents.api.trace.TraceRecord;
@@ -65,11 +63,10 @@ import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.memory.MemoryValueObservation;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
-import org.apache.flink.agents.runtime.subagent.InternalSubagentInvocation;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
 import org.apache.flink.agents.runtime.subgraph.SubgraphCallManager;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
-import org.apache.flink.agents.runtime.subgraph.SubgraphExecution;
+import org.apache.flink.agents.runtime.subgraph.SubgraphFuture;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.agents.runtime.timer.TimerOperation;
 import org.apache.flink.agents.runtime.utils.DeterministicIdAllocator;
@@ -301,52 +298,6 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     /**
-     * Issues an internal sub-agent call by scope name, without waiting for it.
-     *
-     * <p>Cross-language (Python) entry point invoked over pemja: the Python side cannot hold a Java
-     * setup instance, so it passes the resource scope and this method resolves the materialized
-     * {@link InternalSubagentSetup} from the cache in effect (a nested call resolves against the
-     * caller's child plan). Must run on the mailbox thread. Issuing reads the caller's durable
-     * slot, so a replay returns without starting the child graph; the caller then polls {@link
-     * #tryCompleteInternalSubagentCall}, yielding the mailbox between polls so the operator can
-     * dispatch the child agent's actions.
-     */
-    public void bootstrapInternalSubagentCallForScope(
-            String scope, String sessionId, String callId, Object prompt) throws Exception {
-        Resource resource = getResource(scope, ResourceType.AGENT);
-        Preconditions.checkState(
-                resource instanceof InternalSubagentSetup,
-                "AGENT resource '"
-                        + scope
-                        + "' is not an internal sub-agent setup, got "
-                        + resource.getClass().getName());
-        ((InternalSubagentSetup) resource).bootstrap(this, sessionId, callId, prompt);
-    }
-
-    /**
-     * Takes the result of the internal sub-agent call issued under {@code (sessionId, callId)} as
-     * JSON, or returns {@code null} while its child graph still runs so the caller can yield the
-     * mailbox and poll again.
-     *
-     * <p>Cross-language (Python) entry point invoked over pemja on the mailbox thread. A child
-     * failure comes back inside that JSON rather than being thrown, so the bridge needs no catch
-     * that would also fold this call's own persistence failure into the child's answer.
-     */
-    @Nullable
-    public String tryCompleteInternalSubagentCall(String sessionId, String callId)
-            throws Exception {
-        try {
-            SubagentResult result = InternalSubagentInvocation.tryComplete(this, sessionId, callId);
-            return result == null ? null : OBJECT_MAPPER.writeValueAsString(result);
-        } catch (Exception failure) {
-            if (CancellationUtils.isCancellation(failure)) {
-                throw failure;
-            }
-            throw UncapturableException.wrap(failure);
-        }
-    }
-
-    /**
      * Selects the task's resource/configuration environment on every context switch. Passing {@code
      * null} restores the root plan; it does not change the event-routing boundary.
      */
@@ -429,28 +380,74 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 .allocator(targetName);
     }
 
-    /**
-     * Issues a chat call from its serialized request and returns the id its response is polled
-     * under.
-     *
-     * <p>Cross-language (Python) entry point invoked over pemja on the mailbox thread, and the chat
-     * adapter for {@link SubgraphExecution#prepare}. Issuing reads the caller's durable slot, so a
-     * replay returns without starting the chat graph; what remains chat's here is the wire format.
-     */
+    /** Reserve a Python chat call without starting its child graph. */
     public String prepareChatCall(String requestJson) throws Exception {
         ChatRequestEvent request = (ChatRequestEvent) Event.fromJson(requestJson);
-        return SubgraphExecution.prepare(this, ChatSubgraphDefinition.invocationFor(this), request);
+        return preparePythonSubgraph(
+                new SubgraphFuture<>(
+                        this,
+                        () -> ChatSubgraphDefinition.invocationFor(this),
+                        request,
+                        result -> result));
     }
 
-    /**
-     * Returns the serialized response of the chat call {@code id}, or {@code null} while its graph
-     * still runs so the caller can yield the mailbox and poll again. Only terminal responses are
-     * persisted, never runtime errors; the serialized response is also the bridge's wire format.
-     */
-    @Nullable
-    public String tryCompleteChatCall(String id) throws Exception {
-        ChatResponseEvent response = SubgraphExecution.tryFinish(this, id);
-        return response == null ? null : OBJECT_MAPPER.writeValueAsString(response);
+    /** Reserve an internal subagent call in the same input order as Python durable calls. */
+    public String prepareInternalSubagentCall(
+            String scope, String sessionId, String callId, Object prompt) throws Exception {
+        Resource resource = getResource(scope, ResourceType.AGENT);
+        Preconditions.checkState(
+                resource instanceof InternalSubagentSetup,
+                "AGENT resource is not an internal subagent setup: " + scope);
+        InternalSubagentSetup setup = (InternalSubagentSetup) resource;
+        return preparePythonSubgraph(
+                new SubgraphFuture<>(
+                        this,
+                        () -> setup.invocation(this, sessionId, callId),
+                        prompt,
+                        result -> result));
+    }
+
+    private String preparePythonSubgraph(SubgraphFuture<?, ?> future) throws Exception {
+        // Python yields its generator to the mailbox on every supported JDK; it does not
+        // block an action worker and therefore does not need Java's releasable-operator guard.
+        checkMailboxThread();
+        future.prepare(this);
+        getSubgraphCalls().registerPythonCall(future);
+        return future.getInvocation().getId();
+    }
+
+    /** Start an already reserved call when the Python gather has available capacity. */
+    public void startSubgraphCall(String id) throws Exception {
+        checkMailboxThread();
+        getSubgraphCalls().getPythonCall(id).start();
+    }
+
+    /** A cancelled notification is not a completed call result. */
+    public boolean isSubgraphCallReady(String id) {
+        checkMailboxThread();
+        SubgraphFuture<?, ?> future = getSubgraphCalls().getPythonCall(id);
+        CompletableFuture<?> completion = future.getInvocation().completionFuture();
+        return future.isDone() || (completion.isDone() && !completion.isCancelled());
+    }
+
+    /** Collect and persist the raw result; decoding/mapping remains on the Python side. */
+    public String finishSubgraphCall(String id) throws Exception {
+        checkMailboxThread();
+        Outcome<?> outcome = getSubgraphCalls().getPythonCall(id).finish(null);
+        if (outcome.isFailure()) {
+            throw outcome.getError();
+        }
+        return OBJECT_MAPPER.writeValueAsString(outcome.getValue());
+    }
+
+    public void cancelSubgraphCall(String id) {
+        checkMailboxThread();
+        getSubgraphCalls().getPythonCall(id).cancel();
+    }
+
+    public void closeSubgraphCall(String id) {
+        checkMailboxThread();
+        getSubgraphCalls().closePythonCall(id);
     }
 
     /** Checks thread confinement for runtime components accessing this shared context. */

@@ -25,6 +25,7 @@ import pytest
 from flink_agents.api.media import AsyncJobModel
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
+from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.media_models.dashscope_media_model import (
     DashScopeMediaModelConnection,
 )
@@ -44,6 +45,9 @@ class SingleConnectionContext(ResourceContext):
             return self._connection
         msg = f"Unknown resource: {name} ({resource_type})"
         raise KeyError(msg)
+
+    def get_subagent_tool(self, name: str) -> Tool:
+        raise NotImplementedError
 
     def generate_available_skills_prompt(self, *skill_names: str) -> str:
         return ""

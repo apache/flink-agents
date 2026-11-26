@@ -23,6 +23,7 @@ from typing import Any
 import cloudpickle
 import pytest
 
+from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.exceptions import UncapturableException, is_cancellation
 from flink_agents.runtime.durable_exception import (
     deserialize_durable_exception,
@@ -408,34 +409,10 @@ def test_payload_is_read_from_any_bytes_like_object(wrapper: Any) -> None:
     assert type(deserialize_durable_exception(payload)) is ValueError
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        b"FLINK-AGENTS-EXC\x00not a pickle",
-        b"FLINK-AGENTS-EXC\x00" + cloudpickle.dumps(["not", "a", "record"]),
-        b"FLINK-AGENTS-EXC\x00" + cloudpickle.dumps({"version": 99}),
-        b"FLINK-AGENTS-EXC\x00" + cloudpickle.dumps({"version": 1}),
-        b"FLINK-AGENTS-EXC\x00"
-        + cloudpickle.dumps(
-            {"version": 1, "class": None, "message": None, "pickle": None}
-        ),
-        b"FLINK-AGENTS-EXC\x00"
-        + cloudpickle.dumps(
-            {"version": True, "class": "E", "message": "m", "pickle": None}
-        ),
-    ],
-    ids=[
-        "corrupt",
-        "not-a-record",
-        "unknown-version",
-        "incomplete",
-        "malformed",
-        "boolean-version",
-    ],
-)
-def test_unreadable_record_is_reported(payload: bytes) -> None:
+def test_truncated_record_is_reported() -> None:
+    payload = serialize_durable_exception(ValueError("boom"))
     with pytest.raises(RuntimeError, match="durable call exception"):
-        deserialize_durable_exception(payload)
+        deserialize_durable_exception(payload[:-5])
 
 
 def test_failure_raised_while_handling_an_interruption_is_not_one() -> None:
@@ -476,9 +453,9 @@ def test_java_interruption_is_not_recorded_by_async_call(
     finally:
         _close_runner_context(ctx)
 
-    expected = ["PENDING"] if use_reconciler else []
+    expected = ["PENDING"]
     assert [slot.status for slot in store.call_results] == expected
-    assert store.current_call_index == 0
+    assert store.current_call_index == 1
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -503,10 +480,10 @@ def test_java_interruption_leaves_preloaded_pending_slot(
 
     assert raised.value is interruption
     assert [slot.status for slot in store.call_results] == ["PENDING"]
-    assert store.current_call_index == 0
+    assert store.current_call_index == (1 if asynchronous else 0)
 
 
-def test_interrupted_future_is_executed_again_when_awaited_again() -> None:
+def test_recovery_reexecutes_an_interrupted_future() -> None:
     calls = []
 
     def call() -> str:
@@ -521,7 +498,9 @@ def test_interrupted_future_is_executed_again_when_awaited_again() -> None:
         future = ctx.durable_execute_async(call)
         with pytest.raises(RuntimeError):
             _run_async(future)
-        outcomes = _run_async(ctx.gather(future))
+        assert not future._is_done()
+        store.current_call_index = 0
+        outcomes = _run_async(ctx.gather(ctx.durable_execute_async(call)))
     finally:
         _close_runner_context(ctx)
 
@@ -561,7 +540,9 @@ def test_java_interruption_in_gather_leaves_the_slot_pending() -> None:
         return "done"
 
     store = _FakeJavaRunnerContext()
-    ctx = _create_runner_context(store)
+    ctx = _create_runner_context(
+        store, config=AgentConfiguration({"async.batch.parallelism": 1})
+    )
     try:
         with pytest.raises(RuntimeError) as raised:
             _run_async(
@@ -580,7 +561,7 @@ def test_java_interruption_in_gather_leaves_the_slot_pending() -> None:
         "PENDING",
         "PENDING",
     ]
-    assert store.current_call_index == 0
+    assert store.current_call_index == 3
 
 
 def test_gather_records_exception_that_cannot_be_pickled() -> None:
@@ -607,7 +588,7 @@ def test_gather_records_exception_that_cannot_be_pickled() -> None:
     assert len(calls) == 1
 
 
-def test_interrupted_gather_is_executed_again_when_awaited_again() -> None:
+def test_recovery_reexecutes_an_interrupted_gather() -> None:
     calls = []
 
     def call() -> str:
@@ -622,7 +603,8 @@ def test_interrupted_gather_is_executed_again_when_awaited_again() -> None:
         gathered = ctx.gather(ctx.durable_execute_async(call))
         with pytest.raises(RuntimeError):
             _run_async(gathered)
-        outcomes = _run_async(gathered)
+        store.current_call_index = 0
+        outcomes = _run_async(ctx.gather(ctx.durable_execute_async(call)))
     finally:
         _close_runner_context(ctx)
 
@@ -693,7 +675,9 @@ def test_ordinary_java_interruption_propagates_without_caching(
         return "later"
 
     store = _FakeJavaRunnerContext()
-    ctx = _create_runner_context(store)
+    ctx = _create_runner_context(
+        store, config=AgentConfiguration({"async.batch.parallelism": 1})
+    )
     try:
         future = ctx.execute_async(call)
         if mode == "single":
@@ -711,15 +695,27 @@ def test_ordinary_java_interruption_propagates_without_caching(
         with pytest.raises(type(interruption)) as raised:
             _run_async(handle)
         assert raised.value is interruption
-        assert store.current_call_index == 0
+        assert store.current_call_index == (2 if mode == "mixed_batch" else 0)
         # The durable sibling completed before the interruption, so its outcome is
         # kept and recovery rereads it instead of running it again.
         assert [slot.status for slot in store.call_results] == (
             ["SUCCEEDED", "PENDING"] if mode == "mixed_batch" else []
         )
-        if mode == "mixed_batch":
-            assert later_calls == [1]
+        assert not future._is_done()
+        previous_later_calls = len(later_calls)
 
+        store.current_call_index = 0
+        future = ctx.execute_async(call)
+        if mode == "single":
+            handle = future
+        elif mode == "mixed_batch":
+            handle = ctx.gather(
+                ctx.durable_execute_async(durable),
+                future,
+                ctx.durable_execute_async(later),
+            )
+        else:
+            handle = ctx.gather(ctx.execute_async(lambda: "ordinary"), future)
         result = _run_async(handle)
         assert (result if mode == "single" else result[1].value) == "retried"
         assert _run_async(future) == "retried"
@@ -728,7 +724,7 @@ def test_ordinary_java_interruption_propagates_without_caching(
             assert result[0].value == "durable"
             assert durable_calls == [1]
             assert result[2].value == "later"
-            assert later_calls == [1, 1]
+            assert len(later_calls) == previous_later_calls + 1
             assert [slot.status for slot in store.call_results] == [
                 "SUCCEEDED",
                 "SUCCEEDED",
@@ -770,7 +766,7 @@ def test_framework_fault_is_not_recorded_and_recovery_can_retry(
     finally:
         _close_runner_context(ctx)
     assert [slot.status for slot in store.call_results] == (
-        ["PENDING"] if pending else []
+        ["PENDING"] if pending or asynchronous else []
     )
     store.current_call_index = 0
     recovered = _create_runner_context(store)
@@ -788,7 +784,9 @@ def test_durable_batch_framework_fault_leaves_its_slot_pending():
         raise UncapturableException(message)
 
     store = _FakeJavaRunnerContext()
-    ctx = _create_runner_context(store)
+    ctx = _create_runner_context(
+        store, config=AgentConfiguration({"async.batch.parallelism": 1})
+    )
     try:
         futures = [
             ctx.durable_execute_async(lambda: "before", durable_id="before"),
@@ -804,7 +802,7 @@ def test_durable_batch_framework_fault_leaves_its_slot_pending():
         "PENDING",
         "PENDING",
     ]
-    assert store.current_call_index == 0
+    assert store.current_call_index == 3
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])

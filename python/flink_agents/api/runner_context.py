@@ -88,16 +88,17 @@ class Outcome:
 
 
 class AsyncFuture(ABC, Generic[T]):
-    """A deferred call resolved by the runner's scheduler, without an asyncio loop.
+    """A runtime-managed call handle, awaited without an asyncio event loop.
 
-    Creation does not start work. Await directly or compose callable-backed handles
-    with :meth:`RunnerContext.gather`. Event-backed chat handles do not yet support
-    gather. Repeated awaits reuse the local result or exception. Persistence across
-    recovery is an additional DurableFuture contract.
-    Handles belong to their creating action execution and are not thread-safe;
-    do not await them in callbacks or pass them to another action. Unawaited
-    handles perform no work and can be discarded when the action finishes.
-    Polling, explicit cancellation, and standard asyncio composition are unsupported.
+    Await directly or pass handles to :meth:`RunnerContext.gather`. Whether work
+    starts at creation or await depends on the operation: async subagent submission
+    starts the remote run before returning its handle. Repeated terminal awaits
+    reuse the local outcome. Persistence is an additional DurableFuture contract.
+
+    Handles belong to the action execution that created them. Do not pass them to
+    another action or await them in worker callbacks. After cancellation or a runtime
+    fault, recovery creates new handles; retrying the same handle is unsupported.
+    These handles do not participate in standard asyncio composition.
     """
 
     def __init__(self) -> None:
@@ -160,7 +161,7 @@ class AsyncFuture(ABC, Generic[T]):
 class DurableFuture(AsyncFuture[T]):
     """An AsyncFuture with durable result persistence and recovery replay.
 
-    Creating the handle reserves no state. When awaited as part of a batch,
+    Creating the handle reserves no state. When awaited alone or as part of a batch,
     all required durable slots are reserved before any batch callback starts.
     The runner manages call identity, persistence and optional reconciliation.
     """
@@ -507,18 +508,20 @@ class RunnerContext(ABC):
 
     @abstractmethod
     def gather(self, *futures: "AsyncFuture[Any]") -> "AsyncFuture[list[Outcome]]":
-        """Compose deferred ordinary and/or durable calls into one deferred batch.
+        """Compose ordinary, durable, Chat and built-in subagent calls into one batch.
 
         The input order defines result order. When the returned future is awaited, the
         runtime reuses locally completed outcomes and reserves all required slots for
         unresolved durable calls only before starting any callback. Individual
-        callable failures are returned as failure outcomes. Only single-call handles
-        created by this context are accepted; duplicates, foreign handles and nested
+        call failures are returned as failure outcomes; runtime faults propagate.
+        Only single-call handles created by this context are accepted; duplicates,
+        foreign handles and nested
         batches are rejected before work starts. Mixed batches persist only durable
         children, in their relative input order.
 
         On timeout, completed calls keep their outcomes. Started durable calls are
-        finalized as failures; unstarted durable calls remain pending for recovery.
+        finalized as failures; unstarted calls and cancelled subgraph waits remain
+        pending for recovery. Subgraph timeouts are not persisted as child results.
         Running callbacks are not interrupted and their external effects cannot be
         undone.
         """

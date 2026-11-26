@@ -15,36 +15,16 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-"""Framework-level handle utilities for sub-agent setups.
+"""Subagent business handles delegating execution to runtime futures."""
 
-These companions are execution-mode agnostic. The execution modes build
-on them, so the framework never needs to know how a request is issued.
-"""
+from concurrent.futures import CancelledError
+from typing import Any, Callable
 
-from typing import Any, Protocol, runtime_checkable
+from typing_extensions import override
 
-from flink_agents.api.subagent import (
-    SubagentFuture,
-    SubagentFutures,
-    SubagentResult,
-)
-
-
-@runtime_checkable
-class PhasedSubagentFuture(Protocol):
-    """A handle with separate preparation and execution phases.
-
-    :class:`SubagentFutureGroup` prepares every member before executing any;
-    preparation need not issue the call.
-    """
-
-    def prepare(self) -> Any:
-        """Prepare the call without waiting for it. Idempotent."""
-        ...
-
-    def execute(self) -> Any:
-        """Wait for the prepared call, preparing it first if awaited on its own."""
-        ...
+from flink_agents.api.runner_context import Outcome
+from flink_agents.api.subagent import SubagentFuture, SubagentFutures, SubagentResult
+from flink_agents.runtime.async_future import MappedAsyncFuture, SchedulableFuture
 
 
 class PendingSubagentCallRegistry:
@@ -89,103 +69,144 @@ class PendingSubagentCallRegistry:
             raise RuntimeError(msg)
 
 
-class CompletedSubagentFuture(SubagentFuture):
-    """A handle for an invocation that has already produced ``value``."""
+class SubagentFutureImpl(MappedAsyncFuture, SubagentFuture):
+    """Identity, remote probes and cancellation around one schedulable call."""
 
-    def __init__(self, session_id: str, call_id: str, value: SubagentResult) -> None:
-        """Initialize with the identity and the produced value."""
-        super().__init__(session_id, call_id)
-        self._value = value
+    def __init__(
+        self,
+        session_id: str,
+        call_id: str,
+        delegate: SchedulableFuture,
+        registry: PendingSubagentCallRegistry | None = None,
+        probe: Callable[[], bool] | None = None,
+        remote_cancel: Callable[[], None] | None = None,
+    ) -> None:
+        """Add subagent identity and lifecycle hooks to the execution delegate."""
+        MappedAsyncFuture.__init__(self, delegate, lambda value: value)
+        self._session_id = session_id
+        self._call_id = call_id
+        self._registry = registry
+        self._probe = probe
+        self._remote_cancel = remote_cancel
+        self._cancelled = False
+        if registry is not None:
+            registry.track_pending_subagent_call(self.identity)
 
+    @override
     def done(self) -> bool:
-        """The invocation has already reached its terminal state."""
-        return True
+        return (
+            self._is_done()
+            or self._cancelled
+            or (self._probe is not None and self._probe())
+        )
 
+    @override
+    def prepare(self) -> Outcome | None:
+        if self._cancelled:
+            message = f"Sub-agent call cancelled: {self.identity}"
+            raise CancelledError(message)
+        return super().prepare()
+
+    @override
+    def cancel(self) -> None:
+        if self._is_done() or self._cancelled:
+            return
+        # Let a completed result win a timeout/cancel race; retain it for finish().
+        if self._source.ready():
+            return
+        self._cancelled = True
+        try:
+            super().cancel()
+            if self._remote_cancel is not None:
+                self._remote_cancel()
+        finally:
+            self._release()
+
+    @override
+    def close(self) -> None:
+        try:
+            super().close()
+        finally:
+            self._release()
+
+    def _release(self) -> None:
+        if self._registry is not None:
+            self._registry.untrack_pending_subagent_call(self.identity)
+
+    @override
     def combine(self, *others: SubagentFuture) -> SubagentFutures:
-        """Group this handle with others to be resolved together."""
         return SubagentFutureGroup((self, *others))
 
-    def __await__(self) -> Any:
-        """Resolve immediately with the produced value."""
-        return self._value
-        yield  # pragma: no cover - makes this a generator function
+
+class CompletedSubagentFuture(SchedulableFuture, SubagentFuture):
+    """An already resolved subagent result; no runtime work or durable slot."""
+
+    def __init__(self, session_id: str, call_id: str, value: SubagentResult) -> None:
+        """Cache an existing subagent result without scheduling work."""
+        SchedulableFuture.__init__(self, None)
+        self._session_id = session_id
+        self._call_id = call_id
+        self._complete(Outcome.success(value))
+
+    @override
+    def done(self) -> bool:
+        return True
+
+    @override
+    def ready(self) -> bool:
+        return True
+
+    @override
+    def start(self) -> None:
+        pass
+
+    @override
+    def finish(self, timeout: TimeoutError | None = None) -> Outcome:
+        return self._get_completed_outcome()
+
+    @override
+    def combine(self, *others: SubagentFuture) -> SubagentFutures:
+        return SubagentFutureGroup((self, *others))
 
 
 class SubagentFutureGroup(SubagentFutures):
-    """The :class:`SubagentFutures` returned by ``combine``: several
-    handles held together.
-    """
+    """Subagent convenience grouping over the same mixed gather scheduler."""
 
     def __init__(self, futures: tuple) -> None:
-        """Initialize with the handles to resolve together."""
-        self._futures = tuple(futures)
+        """Keep the handles to resolve through their owning context."""
+        self._futures = futures
 
+    @override
     def done(self) -> bool:
-        """Whether every handle in the group has been resolved."""
         return all(future.done() for future in self._futures)
 
+    @override
     def cancel(self) -> None:
-        """Propagate the cancellation request to every handle in the group."""
         for future in self._futures:
             future.cancel()
 
+    @override
     def combine(self, *others: SubagentFuture) -> SubagentFutures:
-        """Add more handles to the group."""
         return SubagentFutureGroup((*self._futures, *others))
 
     def __await__(self) -> Any:
-        """Wait for every handle in submission order.
-
-        Pending phased handles are prepared before any execution starts, then
-        executed one by one.
-        """
-        pending = [
-            future
-            for future in self._futures
-            if isinstance(future, PhasedSubagentFuture) and not future.done()
-        ]
-        _check_not_mixed_internal_and_deferred(pending)
-        for future in pending:
-            future.prepare()
-        # TODO(#926): wait for the issued calls as one batch once durable
-        # execution supports batched submission; until then they are waited
-        # for one by one.
-        for future in pending:
-            yield from future.execute()
-        outcomes = []
-        for future in self._futures:
-            outcome = yield from future.__await__()
-            outcomes.append(outcome)
-        return outcomes
-
-
-def _check_not_mixed_internal_and_deferred(pending: list) -> None:
-    """Fail when a group mixes internal and deferred handles: the two consult
-    the calling action's durable journal in different phases, so mixing them
-    currently breaks durable recovery.
-    """
-    # Imported here because both modules import this one for SubagentFutureGroup.
-    from flink_agents.runtime.deferred_subagent import DeferredSubagentFuture
-    from flink_agents.runtime.internal_subagent import InternalSubagentFuture
-
-    internal = None
-    deferred = None
-    for future in pending:
-        if isinstance(future, InternalSubagentFuture):
-            internal = future
-        elif isinstance(future, DeferredSubagentFuture):
-            deferred = future
-    if internal is not None and deferred is not None:
-        msg = (
-            f"A combined sub-agent group cannot mix the internal call "
-            f"{_describe(internal)} with the deferred call {_describe(deferred)}: "
-            f"the two consult this action's durable journal in different phases, "
-            f"so recovery cannot replay the reads in the written order. Resolve "
-            f"the two calls separately."
+        ctx = next(
+            (
+                future._ctx
+                for future in self._futures
+                if isinstance(future, SchedulableFuture) and future._ctx is not None
+            ),
+            None,
         )
-        raise RuntimeError(msg)
-
-
-def _describe(future: SubagentFuture) -> str:
-    """Name a handle the way the Java-side rejection does."""
-    return f"{type(future).__name__} {future.identity}"
+        if ctx is None:
+            values = []
+            for future in self._futures:
+                values.append((yield from future.__await__()))  # noqa: PERF401
+            return values
+        outcomes = yield from ctx.gather(*self._futures).__await__()
+        values = []
+        for outcome in outcomes:
+            if outcome.error is not None:
+                raise outcome.error
+            values.append(outcome.value)
+        return values

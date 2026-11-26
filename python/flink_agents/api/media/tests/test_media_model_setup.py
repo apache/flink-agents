@@ -39,6 +39,7 @@ from flink_agents.api.media import (
 )
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
+from flink_agents.api.tools.tool import Tool
 
 
 class _RecordingConnection(BaseMediaModelConnection):
@@ -112,6 +113,9 @@ class _MappingContext(ResourceContext):
         self, name: str, resource_type: ResourceType, metric_group: Any = None
     ) -> Resource:
         return self._resources[(name, resource_type)]
+
+    def get_subagent_tool(self, name: str) -> Tool:
+        raise NotImplementedError
 
     def generate_available_skills_prompt(self, *skill_names: str) -> str:
         return ""

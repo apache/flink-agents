@@ -18,7 +18,6 @@
 """Tests for compiling AGENT resources (SubagentSetup) into the agent plan."""
 
 import json
-from unittest.mock import create_autospec
 
 import pytest
 from pydantic import BaseModel
@@ -32,8 +31,12 @@ from flink_agents.api.subagent import (
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.resource_provider import JavaResourceProvider
-from flink_agents.runtime.internal_subagent import InternalSubagentCallFactory
 from flink_agents.runtime.resource_cache import ResourceCache
+from flink_agents.runtime.tests.future_test_utils import (  # noqa: F401
+    RuntimeContext,
+    SubgraphBridge,
+    close_runtime_contexts,
+)
 from flink_agents.runtime.tests.test_base_subagent import _run
 
 
@@ -73,16 +76,16 @@ def test_descriptor_round_trip_builds_a_python_caller_with_metadata() -> None:
     assert json.dumps(provider.descriptor.arguments) == before
     assert cache.get_resource("child", ResourceType.AGENT) is setup
     # The Python caller issues on the mailbox thread, then polls the child to completion.
-    ctx = create_autospec(InternalSubagentCallFactory, instance=True, spec_set=True)
-    ctx.try_complete_internal_subagent_call.return_value = SubagentResult.ok(["answer"])
+    bridge = SubgraphBridge()
+    ctx = RuntimeContext(bridge)
+    bridge.responses["session#call"] = json.dumps(
+        {"success": True, "result": ["answer"], "errorMessage": None}
+    )
     future = _run(
         setup.submit_with_identity(ctx, {"question": "hello"}, "session", "call")
     )
     assert _run(future) == SubagentResult.ok(["answer"])
-    ctx.bootstrap_internal_subagent_call.assert_called_once_with(
-        "child", "session", "call", {"question": "hello"}
-    )
-    ctx.try_complete_internal_subagent_call.assert_called_once_with("session", "call")
+    assert bridge.call_results[0].function_id == "session#call"
     cache.close()
 
 

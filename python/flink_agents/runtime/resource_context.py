@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, cast
 
+from typing_extensions import override
+
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.plan.agent_plan import SKILLS_CONFIG
@@ -30,6 +32,7 @@ from flink_agents.runtime.skill.skill_manager import SkillManager
 if TYPE_CHECKING:
     from flink_agents.api.resource import Resource
     from flink_agents.api.skills import Skills, SkillSourceSpec
+    from flink_agents.api.tools.tool import Tool
     from flink_agents.runtime.resource_cache import ResourceCache
 
 
@@ -51,6 +54,12 @@ class ResourceContextImpl(ResourceContext):
     def get_resource(self, name: str, resource_type: ResourceType) -> Resource:
         """Get another resource declared in the same Agent."""
         return self._resource_cache.get_resource(name, resource_type)
+
+    @override
+    def get_subagent_tool(self, name: str) -> Tool:
+        from flink_agents.runtime.subagent_tool import SubagentTool
+
+        return SubagentTool.of(name, self.get_resource(name, ResourceType.AGENT))
 
     def generate_available_skills_prompt(self, *skill_names: str) -> str:
         """Generate the skill discovery prompt for the given skill names."""

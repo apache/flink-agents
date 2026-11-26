@@ -37,11 +37,10 @@ from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
-from flink_agents.api.subagent import SubagentResult
+from flink_agents.api.subagent import SubagentCall, SubagentResult
 from flink_agents.runtime.async_subagent import BaseAsyncSubagentSetup, RunStatus
 from flink_agents.runtime.deferred_subagent import (
     DeferredSubagentSetup,
-    PreparedTriple,
 )
 
 
@@ -91,7 +90,7 @@ class InMemoryDeferredSubagentSetup(DeferredSubagentSetup):
         prompt: Any,
         session_id: str,
         call_id: str,
-    ) -> PreparedTriple:
+    ) -> SubagentCall:
         """Return a durable call echoing the prompt (or failing on demand)."""
         name = self.subagent_name
 
@@ -100,7 +99,7 @@ class InMemoryDeferredSubagentSetup(DeferredSubagentSetup):
                 return SubagentResult.error("deferred run failed on demand")
             return SubagentResult.ok(f"deferred[{name}]:{prompt}")
 
-        return (f"{session_id}#{call_id}", call, None)
+        return SubagentCall(call)
 
 
 class AsyncExternalAgent(Agent):

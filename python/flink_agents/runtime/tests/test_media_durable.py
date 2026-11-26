@@ -161,11 +161,13 @@ def test_interrupted_wait_replays_the_submitted_job(
     assert is_cancellation(raised.value)
     assert service.submits == 1
     assert service.queries == ["/tasks/job-1", "/tasks/job-1"]
-    assert [slot.status for slot in store.call_results] == ["SUCCEEDED"]
+    assert [slot.status for slot in store.call_results] == (
+        ["SUCCEEDED", "PENDING"] if asynchronous else ["SUCCEEDED"]
+    )
     assert store.call_results[0].exception_payload is None
     stored_job = cloudpickle.loads(store.call_results[0].result_payload)
     assert stored_job == job
-    assert store.current_call_index == 1
+    assert store.current_call_index == (2 if asynchronous else 1)
 
     store.current_call_index = 0
     cache = _resource_cache()

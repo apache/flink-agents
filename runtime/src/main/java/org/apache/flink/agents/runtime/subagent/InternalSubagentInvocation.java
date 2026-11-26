@@ -20,7 +20,6 @@ package org.apache.flink.agents.runtime.subagent;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.MemoryScope;
-import org.apache.flink.agents.runtime.subgraph.SubgraphExecution;
 import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 
 import javax.annotation.Nullable;
@@ -48,21 +47,5 @@ public final class InternalSubagentInvocation extends SubgraphInvocation<Subagen
                 // its own instead of inheriting the enclosing ones.
                 MemoryScope.isolated(),
                 environment);
-    }
-
-    /**
-     * Takes the identified call's result for a bridge that polls it: the child's terminal outcome
-     * once the graph has quiesced, or {@code null} while it still runs so the bridge can yield the
-     * mailbox and come back.
-     *
-     * <p>The polling turn is {@link SubgraphExecution#tryFinish}, which owns the registry lookup
-     * and the null-while-running contract; what stays here is this kind's own identity. A child
-     * failure stays inside the returned result rather than being thrown for the bridge to catch.
-     */
-    @Nullable
-    public static SubagentResult tryComplete(
-            RunnerContextImpl context, String sessionId, String callId) throws Exception {
-        return SubgraphExecution.tryFinish(
-                context, InternalSubagentDefinition.identity(sessionId, callId));
     }
 }

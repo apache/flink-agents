@@ -19,7 +19,7 @@
 
 from concurrent.futures import CancelledError
 from datetime import timedelta
-from typing import Any, NamedTuple
+from typing import Any
 
 import pytest
 from pydantic import PrivateAttr
@@ -29,62 +29,15 @@ from flink_agents.runtime.async_subagent import (
     BaseAsyncSubagentSetup,
     RunStatus,
 )
+from flink_agents.runtime.tests.future_test_utils import (  # noqa: F401
+    RuntimeContext,
+    close_runtime_contexts,
+)
 from flink_agents.runtime.tests.test_base_subagent import _FakeTask, _run
 
 
-class _DurableExecuteCall(NamedTuple):
-    """One recorded durable execution invocation."""
-
-    func: Any
-    args: tuple
-    reconciler: Any
-    durable_id: str | None
-
-
-class _RecordingContext:
-    """Fake context recording durable execution and running it inline."""
-
-    def __init__(self) -> None:
-        self.durable_execute_calls: list[_DurableExecuteCall] = []
-        self.async_durable_calls = 0
-
-    def durable_execute(
-        self,
-        func: Any,
-        *args: Any,
-        reconciler: Any = None,
-        durable_id: str | None = None,
-        **kwargs: Any,
-    ) -> Any:
-        self.durable_execute_calls.append(
-            _DurableExecuteCall(func, args, reconciler, durable_id)
-        )
-        return func(*args)
-
-    def durable_execute_async(
-        self,
-        func: Any,
-        *args: Any,
-        reconciler: Any = None,
-        durable_id: str | None = None,
-        **kwargs: Any,
-    ) -> Any:
-        self.async_durable_calls += 1
-        self.durable_execute_calls.append(
-            _DurableExecuteCall(func, args, reconciler, durable_id)
-        )
-        return _ImmediateAwaitable(func(*args))
-
-
-class _ImmediateAwaitable:
-    """Awaitable resolving without yielding, mirroring a cached durable result."""
-
-    def __init__(self, value: Any) -> None:
-        self._value = value
-
-    def __await__(self) -> Any:
-        return self._value
-        yield  # pragma: no cover - makes this a generator function
+class _RecordingContext(RuntimeContext):
+    pass
 
 
 class _MockAsyncSetup(BaseAsyncSubagentSetup):
@@ -164,10 +117,6 @@ class _MockAsyncSetup(BaseAsyncSubagentSetup):
             "queries_remaining": queries_until_complete,
         }
 
-    def forget_run(self, session_id: str, call_id: str) -> None:
-        """Drop the remote record of a run, simulating a POST that never landed."""
-        self._runs.pop(f"{session_id}#{call_id}", None)
-
     def post_count(self) -> int:
         """Number of times the POST endpoint has been hit."""
         return self._post_count
@@ -229,11 +178,8 @@ def test_submit_posts_immediately_under_the_call_identity() -> None:
     assert setup.post_count() == 1
     assert setup.status_query_count() == 0
     assert setup.fetch_count() == 0
-    assert len(ctx.durable_execute_calls) == 1
-    # The pub POST ran through async durable execution.
-    assert ctx.async_durable_calls == 1
-    assert ctx.durable_execute_calls[0].durable_id == "sid-1#call-1"
-    assert ctx.durable_execute_calls[0].reconciler is not None
+    assert len(ctx._j_runner_context.call_results) == 1
+    assert ctx._j_runner_context.call_results[0].function_id == "sid-1#call-1"
     assert future.session_id == "sid-1"
     assert future.call_id == "call-1"
 
@@ -269,8 +215,8 @@ def test_short_forms_assign_through_the_prepared_task() -> None:
 
     assert setup.post_count() == 1
     assert handle.call_id == f"{handle.session_id}-1"
-    posted = ctx.durable_execute_calls[0]
-    assert posted.durable_id == f"{handle.session_id}#{handle.call_id}"
+    posted = ctx._j_runner_context.call_results[0]
+    assert posted.function_id == f"{handle.session_id}#{handle.call_id}"
 
 
 # ------------------------------------------------------------------------------------------
@@ -278,59 +224,33 @@ def test_short_forms_assign_through_the_prepared_task() -> None:
 # ------------------------------------------------------------------------------------------
 
 
-def _recorded_reconciler(setup: _MockAsyncSetup, ctx: _RecordingContext) -> Any:
+@pytest.mark.parametrize(
+    "remote_state", ["not_started", "running", "completed", "failed"]
+)
+def test_recovery_reconciles_pending_submission(remote_state: str) -> None:
+    setup = _MockAsyncSetup(queries_until_complete=0)
+    ctx = _RecordingContext()
+    # A checkpoint captured the pending POST. The remote request may or may not
+    # have landed before the attempt stopped; recovery must query before reposting.
+    journal = ctx._j_runner_context
+    journal.appendPendingCall("sid-1#call-1")
+    if remote_state != "not_started":
+        setup.seed_run(
+            "sid-1",
+            "call-1",
+            "done:ping",
+            "run exploded" if remote_state == "failed" else None,
+            1 if remote_state == "running" else 0,
+        )
+
     _run(setup.submit(ctx, "ping", "sid-1", "call-1"))
-    return ctx.durable_execute_calls[0].reconciler
 
-
-def test_reconciler_reposts_when_the_run_is_not_on_record() -> None:
-    setup = _MockAsyncSetup(queries_until_complete=1)
-    ctx = _RecordingContext()
-    reconciler = _recorded_reconciler(setup, ctx)
-    # The remote has no record of the run: the POST never landed.
-    setup.forget_run("sid-1", "call-1")
-
-    reconciler()
-
-    # Probe reported NOT_STARTED, so the missing POST was issued exactly once.
-    assert setup.post_count() == 2
     assert setup.status_query_count() == 1
-
-
-def test_reconciler_does_not_repost_a_running_run() -> None:
-    setup = _MockAsyncSetup(queries_until_complete=1)
-    ctx = _RecordingContext()
-    reconciler = _recorded_reconciler(setup, ctx)
-    setup.seed_run("sid-1", "call-1", "done:ping", None, 1)
-
-    reconciler()
-
-    assert setup.post_count() == 1
-    assert setup.status_query_count() == 1
-
-
-def test_reconciler_does_not_repost_a_terminal_run() -> None:
-    setup = _MockAsyncSetup(queries_until_complete=0)
-    ctx = _RecordingContext()
-    reconciler = _recorded_reconciler(setup, ctx)
-    setup.seed_run("sid-1", "call-1", "done:ping", None, 0)
-
-    reconciler()
-
-    assert setup.post_count() == 1
-    assert setup.status_query_count() == 1
-
-
-def test_reconciler_treats_a_failed_run_as_landed() -> None:
-    setup = _MockAsyncSetup(queries_until_complete=0)
-    ctx = _RecordingContext()
-    reconciler = _recorded_reconciler(setup, ctx)
-    setup.seed_run("sid-1", "call-1", None, "run exploded", 0)
-
-    reconciler()
-
-    assert setup.post_count() == 1
-    assert setup.status_query_count() == 1
+    assert setup.post_count() == (1 if remote_state == "not_started" else 0)
+    assert setup.fetch_count() == 0
+    assert [(call.function_id, call.status) for call in journal.call_results] == [
+        ("sid-1#call-1", "SUCCEEDED")
+    ]
 
 
 # ------------------------------------------------------------------------------------------
@@ -347,7 +267,7 @@ def test_done_probes_the_status_directly_without_durable_calls() -> None:
     assert future.done() is False  # first probe: RUNNING
     assert future.done() is True  # second probe: COMPLETED
     assert setup.status_query_count() == 2
-    assert len(ctx.durable_execute_calls) == 1  # only the pub POST
+    assert len(ctx._j_runner_context.call_results) == 1  # only the pub POST
 
 
 def test_await_waits_durably_then_fetches() -> None:
@@ -359,7 +279,7 @@ def test_await_waits_durably_then_fetches() -> None:
 
     assert result.success is True
     assert result.result == "done:ping"
-    assert ctx.durable_execute_calls[1].durable_id == "sid-1#call-1#await"
+    assert ctx._j_runner_context.call_results[1].function_id == "sid-1#call-1#await"
     # Two RUNNING probes, the terminal one, then the separate fetch.
     assert setup.status_query_count() == 3
     assert setup.fetch_count() == 1
@@ -389,20 +309,7 @@ def test_resolve_twice_runs_one_durable_await() -> None:
 
     assert first is second
     # Only the pub POST and one await composition.
-    assert len(ctx.durable_execute_calls) == 2
-
-
-def test_resolve_without_probing_goes_straight_to_the_await() -> None:
-    setup = _MockAsyncSetup(queries_until_complete=2)
-    ctx = _RecordingContext()
-
-    future = _run(setup.submit(ctx, "ping", "sid-1", "call-1"))
-    result = _run(future)
-
-    assert result.result == "done:ping"
-    # No done()-style probes: the await composition did them all.
-    assert setup.status_query_count() == 3
-    assert setup.fetch_count() == 1
+    assert len(ctx._j_runner_context.call_results) == 2
 
 
 # ------------------------------------------------------------------------------------------
@@ -448,7 +355,7 @@ def test_cancel_then_resolve_raises_cancelled_error_by_default() -> None:
     assert setup.post_count() == 1
     assert setup.status_query_count() == 0
     assert setup.fetch_count() == 0
-    assert len(ctx.durable_execute_calls) == 1
+    assert len(ctx._j_runner_context.call_results) == 1
 
 
 def test_repeated_cancel_is_a_local_no_op() -> None:
@@ -502,33 +409,6 @@ def test_combine_resolves_every_handle_of_the_batch() -> None:
     outcomes = _run(first.combine(second))
 
     assert [outcome.result for outcome in outcomes] == ["done:a", "done:b"]
-
-
-def test_the_await_form_waits_through_the_async_durable_composition() -> None:
-    setup = _MockAsyncSetup(queries_until_complete=1)
-    ctx = _RecordingContext()
-
-    future = _run(setup.submit(ctx, "ping", "sid-1", "call-1"))
-    result = _run(future)
-
-    assert result.result == "done:ping"
-    # One async durable call for the pub POST, one for the await.
-    assert ctx.async_durable_calls == 2
-    assert ctx.durable_execute_calls[1].durable_id == "sid-1#call-1#await"
-    assert future.done() is True
-
-
-def test_the_await_form_of_a_cancelled_handle_raises() -> None:
-    setup = _MockAsyncSetup()
-    ctx = _RecordingContext()
-
-    future = _run(setup.submit(ctx, "ping", "sid-1", "call-1"))
-    future.cancel()
-
-    with pytest.raises(CancelledError):
-        _run(future)
-    # Only the pub POST ran through async durable execution.
-    assert ctx.async_durable_calls == 1
 
 
 # ------------------------------------------------------------------------------------------

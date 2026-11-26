@@ -29,12 +29,12 @@ from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
 )
-from flink_agents.api.chat_models.subagent_tool import SubagentTool
 from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.api.subagent import SubagentSetup
 from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
+from flink_agents.runtime.subagent_tool import SubagentTool
 
 CUSTOM_SCHEMA = '{"type":"object","properties":{"path":{"type":"string"}}}'
 
@@ -145,6 +145,9 @@ class _StubResourceContext(ResourceContext):
             msg = f"No such resource: {name}"
             raise KeyError(msg)
         return self._store[name]
+
+    def get_subagent_tool(self, name: str) -> Tool:
+        return SubagentTool.of(name, self.get_resource(name, ResourceType.AGENT))
 
     def generate_available_skills_prompt(self, *skill_names: str) -> str:
         """Return a recognizable stand-in for the skill listing."""
@@ -387,3 +390,27 @@ def test_a_setup_without_subagents_injects_nothing() -> None:
 
     assert len(connection.captured_messages) == 1
     assert connection.captured_tools == []
+
+
+def test_java_owned_subagent_metadata_is_bound_as_a_remote_tool():
+    from types import SimpleNamespace
+
+    from flink_agents.plan.resource.java.java_resource_wrapper import (
+        JavaResourceContextWrapper,
+    )
+
+    # The wire representation produced by JavaResourceAdapterTest.
+    metadata = json.dumps(
+        {
+            "name": "_subagent_child",
+            "description": "Delegate",
+            "inputSchema": '{"type":"object"}',
+        }
+    )
+    ctx = JavaResourceContextWrapper(
+        SimpleNamespace(getSubagentToolMetadata=lambda name: metadata)
+    )
+    tool = ctx.get_subagent_tool("child")
+    assert tool.name == "_subagent_child"
+    assert tool.metadata.args_schema == {"type": "object"}
+    assert tool.tool_type() == ToolType.REMOTE_FUNCTION

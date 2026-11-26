@@ -57,6 +57,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -102,6 +103,21 @@ class ChatCallTest {
         bindChatIds(context, recordKey, event);
     }
 
+    private String prepare(RunnerContextImpl context, String request) throws Exception {
+        String id = context.prepareChatCall(request);
+        context.startSubgraphCall(id);
+        return id;
+    }
+
+    private String poll(RunnerContextImpl context, String id) throws Exception {
+        if (!context.isSubgraphCallReady(id)) {
+            return null;
+        }
+        String result = context.finishSubgraphCall(id);
+        context.closeSubgraphCall(id);
+        return result;
+    }
+
     @Test
     void persistenceFollowsTheExplicitCallerContext() throws Exception {
         ActionState firstState = new ActionState(new Event("input"));
@@ -109,8 +125,8 @@ class ChatCallTest {
         RunnerContextImpl first = context(firstState, (k, s, a, e, saved) -> {});
         RunnerContextImpl second = context(secondState, (k, s, a, e, saved) -> {});
         bindChatIds(second, "second-key", new Event("input"));
-        String firstId = first.prepareChatCall(request());
-        String secondId = second.prepareChatCall(request());
+        String firstId = prepare(first, request());
+        String secondId = prepare(second, request());
         chatCall(first, firstId)
                 .dispatch(
                         ChatResponseEvent.success(
@@ -121,14 +137,18 @@ class ChatCallTest {
                                 UUID.randomUUID(),
                                 new ChatResult(ChatMessage.assistant("second"))));
 
-        assertThat(firstState.getCallResults()).isEmpty();
-        assertThat(secondState.getCallResults()).isEmpty();
-        assertThat(response(second.tryCompleteChatCall(secondId)).getResponse().getText())
-                .isEqualTo("second");
+        assertThat(firstState.getCallResults())
+                .singleElement()
+                .satisfies(call -> assertThat(call.isPending()).isTrue());
+        assertThat(secondState.getCallResults())
+                .singleElement()
+                .satisfies(call -> assertThat(call.isPending()).isTrue());
+        assertThat(response(poll(second, secondId)).getResponse().getText()).isEqualTo("second");
         assertThat(secondState.getCallResults()).hasSize(1);
-        assertThat(firstState.getCallResults()).isEmpty();
-        assertThat(response(first.tryCompleteChatCall(firstId)).getResponse().getText())
-                .isEqualTo("first");
+        assertThat(firstState.getCallResults())
+                .singleElement()
+                .satisfies(call -> assertThat(call.isPending()).isTrue());
+        assertThat(response(poll(first, firstId)).getResponse().getText()).isEqualTo("first");
         assertThat(firstState.getCallResults()).hasSize(1);
         assertThatThrownBy(() -> chatCall(first, firstId))
                 .hasMessageContaining("Missing subgraph call");
@@ -143,8 +163,8 @@ class ChatCallTest {
         RunnerContextImpl second =
                 context(new ActionState(new Event("input")), (k, s, a, e, saved) -> {});
         switchToRecord(second, "second-key", new Event("input"));
-        String firstId = first.prepareChatCall(request());
-        String secondId = second.prepareChatCall(request());
+        String firstId = prepare(first, request());
+        String secondId = prepare(second, request());
         calls.finishRecord("key");
         assertThatThrownBy(() -> chatCall(first, firstId))
                 .hasMessageContaining("Missing subgraph call");
@@ -160,7 +180,7 @@ class ChatCallTest {
                 context(new ActionState(new Event("input")), (k, seq, action, event, saved) -> {});
         ChatRequestEvent request =
                 new ChatRequestEvent("model", List.of(ChatMessage.user("hello")));
-        context.prepareChatCall(MAPPER.writeValueAsString(request));
+        prepare(context, MAPPER.writeValueAsString(request));
 
         SubgraphEvent bootstrap = (SubgraphEvent) context.getPendingEvents().get(0);
         // The response names the request the caller holds, so the delegate keeps its id ...
@@ -174,7 +194,7 @@ class ChatCallTest {
     void terminalResponseReplaysWithoutBootstrap(boolean failed) throws Exception {
         ActionState state = new ActionState(new Event("input"));
         RunnerContextImpl context = context(state, (k, seq, action, event, saved) -> {});
-        String id = context.prepareChatCall(request());
+        String id = prepare(context, request());
         UUID requestId = UUID.randomUUID();
         ChatResult result =
                 new ChatResult(
@@ -189,7 +209,7 @@ class ChatCallTest {
                         ? ChatResponseEvent.failed(requestId, "provider refused", 2, 3)
                         : ChatResponseEvent.success(requestId, result);
         chatCall(context, id).dispatch(response);
-        context.tryCompleteChatCall(id);
+        poll(context, id);
         assertThat(state.getCallResults()).hasSize(1);
         assertThat(state.getCallResults().get(0).isSuccess()).isTrue();
 
@@ -199,10 +219,10 @@ class ChatCallTest {
                         (k, seq, action, event, saved) -> {
                             throw new AssertionError("replay persisted again");
                         });
-        String replayId = restored.prepareChatCall(request());
+        String replayId = prepare(restored, request());
         assertThat(replayId).isEqualTo(id);
         assertThat(restored.getPendingEvents()).isEmpty();
-        ChatResponseEvent replay = response(restored.tryCompleteChatCall(replayId));
+        ChatResponseEvent replay = response(poll(restored, replayId));
         assertThat(replay.getStatus()).isEqualTo(response.getStatus());
         assertThat(replay.getRequestId()).isEqualTo(response.getRequestId());
         if (failed) {
@@ -220,9 +240,11 @@ class ChatCallTest {
         RunnerContextImpl context = context(state, (k, seq, action, event, saved) -> {});
         Event ordinary = new Event("ordinary");
         context.sendEvent(ordinary);
-        String id = context.prepareChatCall(request());
-        assertThat(context.tryCompleteChatCall(id)).isNull();
-        assertThat(state.getCallResults()).isEmpty();
+        String id = prepare(context, request());
+        assertThat(poll(context, id)).isNull();
+        assertThat(state.getCallResults())
+                .singleElement()
+                .satisfies(call -> assertThat(call.isPending()).isTrue());
         List<Event> dispatched = context.drainEventsAtActionYield(42L);
         assertThat(dispatched).hasSize(1);
         assertThat(dispatched.get(0)).isInstanceOf(SubgraphEvent.class);
@@ -232,18 +254,21 @@ class ChatCallTest {
 
     @Test
     void persistenceFailurePropagatesInsteadOfBecomingChatFailure() throws Exception {
+        AtomicInteger writes = new AtomicInteger();
         RunnerContextImpl context =
                 context(
                         new ActionState(new Event("input")),
                         (k, seq, action, event, saved) -> {
-                            throw new IllegalStateException("state unavailable");
+                            if (writes.incrementAndGet() > 1) {
+                                throw new IllegalStateException("state unavailable");
+                            }
                         });
-        String id = context.prepareChatCall(request());
+        String id = prepare(context, request());
         SubgraphInvocation<ChatResponseEvent> call = chatCall(context, id);
         call.dispatch(
                 ChatResponseEvent.success(
                         UUID.randomUUID(), new ChatResult(ChatMessage.assistant("answer"))));
-        assertThatThrownBy(() -> context.tryCompleteChatCall(id)).hasMessage("state unavailable");
+        assertThatThrownBy(() -> poll(context, id)).hasRootCauseMessage("state unavailable");
         assertThat(call.awaitResult().isSuccess()).isTrue();
     }
 
@@ -251,8 +276,7 @@ class ChatCallTest {
     void duplicateRecordedResponseIsRejected() throws Exception {
         RunnerContextImpl context =
                 context(new ActionState(new Event("input")), (k, s, a, e, saved) -> {});
-        SubgraphInvocation<ChatResponseEvent> call =
-                chatCall(context, context.prepareChatCall(request()));
+        SubgraphInvocation<ChatResponseEvent> call = chatCall(context, prepare(context, request()));
         ChatResponseEvent response =
                 ChatResponseEvent.success(
                         UUID.randomUUID(), new ChatResult(ChatMessage.assistant("answer")));
@@ -274,8 +298,7 @@ class ChatCallTest {
         RunnerContextImpl context =
                 context(new ActionState(new Event("input")), (k, s, a, e, saved) -> {});
         IdAllocatorSource callerIds = context.getIdAllocatorSource();
-        SubgraphInvocation<ChatResponseEvent> call =
-                chatCall(context, context.prepareChatCall(request()));
+        SubgraphInvocation<ChatResponseEvent> call = chatCall(context, prepare(context, request()));
         context.getPendingEvents().clear();
         context.setSubgraphInvocation(call);
         context.sendEvent(new ChatRequestEvent("model", List.of()));

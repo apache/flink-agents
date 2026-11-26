@@ -16,10 +16,8 @@
 # limitations under the License.
 #################################################################################
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from functools import wraps
 from typing import Any, cast
 
 from flink_agents.api.core_options import AgentExecutionOptions
@@ -28,11 +26,6 @@ from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEve
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import Outcome, RunnerContext
-from flink_agents.api.subagent import (
-    CALLABLE_NAME_PREFIX,
-    SubagentResult,
-    SubagentSetup,
-)
 from flink_agents.api.tools import ToolExecutionMetadataProvider, ToolResponse
 from flink_agents.api.tools.tool_parameter_injection import (
     InjectedArg,
@@ -46,12 +39,12 @@ from flink_agents.api.trace import (
 )
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.tool_result_utils import (
-    normalize_agent_result,
-    to_chat_message_content,
     to_tool_response,
 )
 from flink_agents.plan.exceptions import raise_if_framework_fault_or_cancellation
 from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.subagent_constants import TOOL_NAME_PREFIX
+from flink_agents.plan.tools.async_tool import AsyncTool, ToolCallContext
 from flink_agents.plan.tools.function_tool import FunctionTool
 
 _logger = logging.getLogger(__name__)
@@ -90,29 +83,6 @@ def _tool_entity_metadata(
     return metadata
 
 
-@dataclass
-class _ToolCallOccurrence:
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-
-    def mark_started(self) -> None:
-        self.started_at = datetime.now(timezone.utc)
-
-    def mark_finished(self) -> None:
-        self.finished_at = datetime.now(timezone.utc)
-
-    def wrap(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        @wraps(func)
-        def observed_call(*args: Any, **kwargs: Any) -> Any:
-            self.mark_started()
-            try:
-                return func(*args, **kwargs)
-            finally:
-                self.mark_finished()
-
-        return observed_call
-
-
 @dataclass(frozen=True)
 class _ToolCallExecution:
     trace_execution_id: str
@@ -122,9 +92,10 @@ class _ToolCallExecution:
     args: tuple[Any, ...]
     kwargs: dict[str, Any]
     entity_metadata: dict[str, Any]
-    occurrence: _ToolCallOccurrence
-    agent: SubagentSetup | None = None
-    agent_kwargs: dict[str, Any] | None = None
+    occurrence: ToolCallContext
+    tool: Any
+    entity_type: str
+    entity_name: str
 
 
 async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
@@ -192,7 +163,6 @@ def _build_tool_call_executions(
         call_kwargs = dict(kwargs) if isinstance(kwargs, dict) else {}
 
         tool = None
-        agent = None
         preparation_error = (
             None
             if isinstance(kwargs, dict)
@@ -203,7 +173,7 @@ def _build_tool_call_executions(
         # Matched once here and carried down, because resolving the AGENT resource
         # raises when the name is absent and would otherwise have to be attempted for
         # every plain tool call.
-        delegated = name.startswith(CALLABLE_NAME_PREFIX)
+        delegated = name.startswith(TOOL_NAME_PREFIX)
         enabled = name in allowed_tool_names
         if not enabled:
             preparation_error = ValueError(
@@ -211,7 +181,7 @@ def _build_tool_call_executions(
             )
         else:
             try:
-                tool, agent = _resolve_callable(name, ctx, delegated=delegated)
+                tool = _resolve_callable(name, ctx, model, delegated=delegated)
             except Exception as e:
                 raise_if_framework_fault_or_cancellation(e)
                 preparation_error = e
@@ -234,15 +204,17 @@ def _build_tool_call_executions(
         # tool=unknown.
         entity_type = (
             ExecutionEntityTypes.SUBAGENT
-            if agent is not None
+            if delegated and tool is not None
             else ExecutionEntityTypes.TOOL
         )
-        entity_name = name[len(CALLABLE_NAME_PREFIX) :] if agent is not None else name
+        entity_name = (
+            name[len(TOOL_NAME_PREFIX) :] if delegated and tool is not None else name
+        )
         trace_execution_id = ExecutionReporters.created(
             ctx, entity_type, entity_name, entity_metadata
         )
 
-        unresolved = tool is None and agent is None
+        unresolved = tool is None
         if unresolved or preparation_error is not None:
             failure = preparation_error or RuntimeError(
                 f"Tool `{name}` does not exist."
@@ -267,38 +239,22 @@ def _build_tool_call_executions(
             )
             continue
 
-        if agent is not None:
-            # A sub-agent call cannot join the durable batch: submit() and awaiting the
-            # handle already run through durable execution inside the setup, so wrapping
-            # it again here would nest durable cursors.
-            executions.append(
-                _ToolCallExecution(
-                    trace_execution_id=trace_execution_id,
-                    id=call_id,
-                    name=name,
-                    func=None,
-                    args=(),
-                    kwargs={},
-                    entity_metadata=entity_metadata,
-                    occurrence=_ToolCallOccurrence(),
-                    agent=agent,
-                    agent_kwargs=call_kwargs,
-                )
+        occurrence = ToolCallContext()
+        executions.append(
+            _ToolCallExecution(
+                trace_execution_id=trace_execution_id,
+                id=call_id,
+                name=name,
+                func=occurrence.wrap(tool.call),
+                args=(),
+                kwargs=call_kwargs,
+                entity_metadata=entity_metadata,
+                occurrence=occurrence,
+                tool=tool,
+                entity_type=entity_type,
+                entity_name=entity_name,
             )
-        else:
-            occurrence = _ToolCallOccurrence()
-            executions.append(
-                _ToolCallExecution(
-                    trace_execution_id=trace_execution_id,
-                    id=call_id,
-                    name=name,
-                    func=occurrence.wrap(tool.call),
-                    args=(),
-                    kwargs=call_kwargs,
-                    entity_metadata=entity_metadata,
-                    occurrence=occurrence,
-                )
-            )
+        )
     return executions
 
 
@@ -309,54 +265,54 @@ async def _execute_parallel(
     success: dict,
     error: dict,
 ) -> None:
-    # Sub-agent calls run through durable execution inside the setup, so they
-    # cannot join the tool batch below; they are dispatched concurrently on
-    # their own (submit every call, then await each) so that, like the batched
-    # tool calls, they overlap instead of running one by one. The agent phase
-    # completes before the tool batch, so a sub-agent handle is never left
-    # submitted-but-unawaited if the batch below raises.
-    agent_executions = []
-    tool_executions = []
-    for execution in executions:
-        if execution.agent is not None:
-            agent_executions.append(execution)
-        else:
-            tool_executions.append(execution)
-    await _dispatch_agent_executions(agent_executions, ctx, responses, success, error)
-    outcomes: list[Outcome] = []
-    result_observed_at = None
+    prepared = []
+    futures = []
     try:
-        futures = [
-            ctx.durable_execute_async(
-                execution.func,
-                *execution.args,
-                **execution.kwargs,
-                durable_id="tool-call:" + execution.id,
-            )
-            for execution in tool_executions
-        ]
-        outcomes = await ctx.gather(*futures)
-        result_observed_at = datetime.now(timezone.utc)
-        for index, (execution, outcome) in enumerate(
-            zip(tool_executions, outcomes, strict=True)
-        ):
-            outcomes[index] = _record_outcome(
-                execution, outcome, responses, success, error
-            )
-    except Exception as e:
-        raise_if_framework_fault_or_cancellation(e)
-        if result_observed_at is None:
-            result_observed_at = datetime.now(timezone.utc)
-        for execution in tool_executions:
-            _record_execution_exception(execution, e, responses, success, error)
+        for execution in executions:
+            try:
+                future = await _prepare_async(execution, ctx)
+                futures.append(future)
+                prepared.append(execution)
+            except Exception as failure:  # noqa: PERF203
+                raise_if_framework_fault_or_cancellation(failure)
+                _record_execution_exception(
+                    execution, failure, responses, success, error
+                )
+                _report_execution(
+                    execution, ctx, Outcome.failure(failure), datetime.now(timezone.utc)
+                )
+        try:
+            outcomes = await ctx.gather(*futures)
+        except Exception as failure:
+            raise_if_framework_fault_or_cancellation(failure)
+            observed_at = datetime.now(timezone.utc)
+            for execution in prepared:
+                _record_execution_exception(
+                    execution, failure, responses, success, error
+                )
+                _report_execution(execution, ctx, None, observed_at)
+            return
+        observed_at = datetime.now(timezone.utc)
+        for execution, outcome in zip(prepared, outcomes, strict=True):
+            outcome = _record_outcome(execution, outcome, responses, success, error)
+            _report_execution(execution, ctx, outcome, observed_at)
     finally:
-        for index, execution in enumerate(tool_executions):
-            _report_execution(
-                execution,
-                ctx,
-                outcomes[index] if index < len(outcomes) else None,
-                result_observed_at,
-            )
+        for execution in prepared:
+            if execution.occurrence.on_cancel is not None:
+                execution.occurrence.on_cancel()
+
+
+async def _prepare_async(execution: _ToolCallExecution, ctx: RunnerContext) -> Any:
+    if isinstance(execution.tool, AsyncTool):
+        return await execution.tool.call_async(
+            ctx, execution.occurrence, **execution.kwargs
+        )
+    return ctx.durable_execute_async(
+        execution.func,
+        *execution.args,
+        **execution.kwargs,
+        durable_id="tool-call:" + execution.id,
+    )
 
 
 async def _execute_sequentially(
@@ -369,19 +325,11 @@ async def _execute_sequentially(
     error: dict,
 ) -> None:
     for execution in executions:
-        if execution.agent is not None:
-            await _dispatch_agent_execution(execution, ctx, responses, success, error)
-            continue
         outcome = None
         result_observed_at = None
         try:
-            if tool_call_async:
-                response = await ctx.durable_execute_async(
-                    execution.func,
-                    *execution.args,
-                    **execution.kwargs,
-                    durable_id="tool-call:" + execution.id,
-                )
+            if tool_call_async or isinstance(execution.tool, AsyncTool):
+                response = await (await _prepare_async(execution, ctx))
             else:
                 response = ctx.durable_execute(
                     execution.func,
@@ -441,163 +389,6 @@ def _record_tool_response(
     success[execution.id] = True
 
 
-async def _dispatch_agent_execution(
-    execution: _ToolCallExecution,
-    ctx: RunnerContext,
-    responses: dict,
-    success: dict,
-    error: dict,
-) -> None:
-    try:
-        # The start occurrence is reported once here, before the hand-off, so a failure
-        # while normalizing the result -- which re-enters _record_agent_failure below --
-        # still yields a single started/terminal pair rather than a duplicate start.
-        execution.occurrence.mark_started()
-        _report_subagent_started(execution, ctx)
-        # submit() and awaiting the handle already run through durable execution inside
-        # the setup, so wrapping the call again here would nest durable cursors.
-        future = await execution.agent.submit(ctx, execution.agent_kwargs)
-        result = await future
-        _record_agent_result(execution, result, ctx, responses, success, error)
-    except Exception as e:
-        _record_agent_failure(execution, e, ctx, responses, success, error)
-
-
-async def _dispatch_agent_executions(
-    agent_executions: list[_ToolCallExecution],
-    ctx: RunnerContext,
-    responses: dict,
-    success: dict,
-    error: dict,
-) -> None:
-    """Run the sub-agent calls concurrently rather than one by one.
-
-    Every ``submit`` is awaited first, so the async setups start their remote
-    runs together, and each future is then awaited. Submitting and awaiting both
-    follow ``agent_executions`` order, which is the deterministic tool-call
-    order, so the setup's id allocator -- which assigns ids as each ``submit``
-    is awaited -- hands out the same ids on every replay and the durable keys
-    stay stable. The per-call try/except keeps the isolation the serial path
-    had: one sub-agent failing, at submit or at await, is recorded and reported
-    without stopping the rest.
-    """
-    # submit() runs through durable execution inside the setup, so it is not
-    # wrapped here.
-    submitted = []
-    futures = []
-    for execution in agent_executions:
-        try:
-            # As in the serial path: report the start once, before the hand-off, so a
-            # later normalization failure still yields a single started/terminal pair.
-            execution.occurrence.mark_started()
-            _report_subagent_started(execution, ctx)
-            futures.append(await execution.agent.submit(ctx, execution.agent_kwargs))
-            submitted.append(execution)
-        except Exception as e:  # noqa: PERF203
-            _record_agent_failure(execution, e, ctx, responses, success, error)
-    for execution, future in zip(submitted, futures, strict=True):
-        try:
-            result = await future
-            _record_agent_result(execution, result, ctx, responses, success, error)
-        except Exception as e:  # noqa: PERF203
-            _record_agent_failure(execution, e, ctx, responses, success, error)
-
-
-def _report_subagent_started(execution: _ToolCallExecution, ctx: RunnerContext) -> None:
-    """Report the single start occurrence for a resolved delegation.
-
-    The start is emitted before the hand-off rather than alongside the terminal
-    report, so a failure while normalizing the result -- which re-enters
-    ``_record_agent_failure`` -- cannot produce a second start.
-    """
-    started_at = execution.occurrence.started_at
-    if started_at is not None:
-        ExecutionReporters.started_at(
-            ctx,
-            ExecutionEntityTypes.SUBAGENT,
-            _subagent_report_name(execution),
-            execution.entity_metadata,
-            started_at.isoformat().replace("+00:00", "Z"),
-            execution_id=execution.trace_execution_id,
-        )
-
-
-def _subagent_report_name(execution: _ToolCallExecution) -> str:
-    """The registered sub-agent name the metric scope is keyed by.
-
-    Derived by dropping the reserved callable prefix from the name the model
-    emitted, so the scope is bounded by the plan rather than by whatever names a
-    model may emit.
-    """
-    return execution.name[len(CALLABLE_NAME_PREFIX) :]
-
-
-def _record_agent_failure(
-    execution: _ToolCallExecution,
-    exception: BaseException,
-    ctx: RunnerContext,
-    responses: dict,
-    success: dict,
-    error: dict,
-) -> None:
-    _record_execution_exception(execution, exception, responses, success, error)
-    execution.occurrence.mark_finished()
-    ExecutionReporters.failed_at(
-        ctx,
-        execution.trace_execution_id,
-        ExecutionEntityTypes.SUBAGENT,
-        _subagent_report_name(execution),
-        execution.entity_metadata,
-        exception,
-        ExecutionProblemCategories.TOOL_CALL_FAILED,
-        execution.occurrence.finished_at.isoformat().replace("+00:00", "Z"),
-    )
-
-
-def _record_agent_result(
-    execution: _ToolCallExecution,
-    result: SubagentResult,
-    ctx: RunnerContext,
-    responses: dict,
-    success: dict,
-    error: dict,
-) -> None:
-    if result.success:
-        responses[execution.id] = to_chat_message_content(
-            normalize_agent_result(result.result, execution.agent.result_type())
-        )
-        success[execution.id] = True
-        execution.occurrence.mark_finished()
-        ExecutionReporters.succeeded_at(
-            ctx,
-            execution.trace_execution_id,
-            ExecutionEntityTypes.SUBAGENT,
-            _subagent_report_name(execution),
-            execution.entity_metadata,
-            execution.occurrence.finished_at.isoformat().replace("+00:00", "Z"),
-        )
-    else:
-        # The model sees why the delegation failed, so it can correct the call
-        # instead of repeating it blindly; the error map keeps the same detail
-        # for observability.
-        responses[execution.id] = _with_reason(
-            f"Sub-agent `{execution.name}` execute failed", result.error_message
-        )
-        success[execution.id] = False
-        error[execution.id] = result.error_message
-        execution.occurrence.mark_finished()
-        ExecutionReporters.failed_at(
-            ctx,
-            execution.trace_execution_id,
-            ExecutionEntityTypes.SUBAGENT,
-            _subagent_report_name(execution),
-            execution.entity_metadata,
-            result.exception,
-            ExecutionProblemCategories.TOOL_CALL_FAILED,
-            execution.occurrence.finished_at.isoformat().replace("+00:00", "Z"),
-        )
-
-
 def _record_execution_exception(
     execution: _ToolCallExecution,
     exception: BaseException,
@@ -608,7 +399,7 @@ def _record_execution_exception(
     raise_if_framework_fault_or_cancellation(exception)
     responses[execution.id] = (
         _with_reason(f"Sub-agent `{execution.name}` execute failed", str(exception))
-        if execution.agent is not None
+        if execution.entity_type == ExecutionEntityTypes.SUBAGENT
         else f"Tool `{execution.name}` execute failed."
     )
     success[execution.id] = False
@@ -626,8 +417,8 @@ def _report_execution(
     if started_at is not None and (outcome is None or started_at <= result_observed_at):
         ExecutionReporters.started_at(
             ctx,
-            ExecutionEntityTypes.TOOL,
-            execution.name,
+            execution.entity_type,
+            execution.entity_name,
             execution.entity_metadata,
             started_at.isoformat().replace("+00:00", "Z"),
             execution_id=execution.trace_execution_id,
@@ -645,8 +436,8 @@ def _report_execution(
         ExecutionReporters.succeeded_at(
             ctx,
             execution.trace_execution_id,
-            ExecutionEntityTypes.TOOL,
-            execution.name,
+            execution.entity_type,
+            execution.entity_name,
             execution.entity_metadata,
             finished_timestamp,
         )
@@ -654,8 +445,8 @@ def _report_execution(
         ExecutionReporters.failed_at(
             ctx,
             execution.trace_execution_id,
-            ExecutionEntityTypes.TOOL,
-            execution.name,
+            execution.entity_type,
+            execution.entity_name,
             execution.entity_metadata,
             failure,
             ExecutionProblemCategories.TOOL_CALL_FAILED,
@@ -670,16 +461,11 @@ def _tool_response_failure(value: Any) -> BaseException | None:
 
 
 def _resolve_callable(
-    name: str, ctx: RunnerContext, *, delegated: bool
-) -> tuple[Any | None, SubagentSetup | None]:
-    """Resolve a callable name the model emitted to either a tool or a sub-agent.
-
-    ``delegated`` is the namespace the caller decided on, matched once there
-    rather than again here.
-    """
+    name: str, ctx: RunnerContext, model: Any, *, delegated: bool
+) -> Any:
     if delegated:
-        return None, _resolve_subagent(name[len(CALLABLE_NAME_PREFIX) :], ctx)
-    return ctx.get_resource(name, ResourceType.TOOL), None
+        return model.resource_context.get_subagent_tool(name[len(TOOL_NAME_PREFIX) :])
+    return ctx.get_resource(name, ResourceType.TOOL)
 
 
 def _preparation_failure_message(
@@ -702,22 +488,6 @@ def _preparation_failure_message(
 
 def _with_reason(message: str, reason: str | None) -> str:
     return f"{message}: {reason}" if reason else f"{message}."
-
-
-def _resolve_subagent(name: str, ctx: RunnerContext) -> SubagentSetup:
-    """Resolve a sub-agent, in one lookup: the AGENT resource is fetched once and
-    checked once here, and the caller carries the setup from then on.
-    """
-    setup = ctx.get_resource(name, ResourceType.AGENT)
-    if not isinstance(setup, SubagentSetup):
-        # A sub-agent owned by the other language resolves to a bridge handle here,
-        # which cannot be called through this path.
-        msg = (
-            f"Sub-agent {name} must resolve to a SubagentSetup, "
-            f"but was {type(setup).__name__}."
-        )
-        raise TypeError(msg)
-    return setup
 
 
 def _resolve_injected_arguments(tool: object, ctx: RunnerContext) -> dict:
