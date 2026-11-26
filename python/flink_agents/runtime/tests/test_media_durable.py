@@ -27,8 +27,8 @@ from flink_agents.api.chat_message import VideoBlock
 from flink_agents.api.media import MediaJob, MediaResult
 from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
 from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.plan.exceptions import is_cancellation
 from flink_agents.plan.resource_provider import PythonResourceProvider
-from flink_agents.runtime.durable_exception import is_java_interruption
 from flink_agents.runtime.durable_execution import (
     durable_identity_for_call,
     with_durable_id,
@@ -158,7 +158,7 @@ def test_interrupted_wait_replays_the_submitted_job(
         _close_runner_context(ctx)
         cache.close()
 
-    assert is_java_interruption(raised.value)
+    assert is_cancellation(raised.value)
     assert service.submits == 1
     assert service.queries == ["/tasks/job-1", "/tasks/job-1"]
     assert [slot.status for slot in store.call_results] == ["SUCCEEDED"]
@@ -271,7 +271,7 @@ def test_named_media_model_setup_replays_submitted_job(
         _close_runner_context(ctx)
         cache.close()
 
-    assert is_java_interruption(raised.value)
+    assert is_cancellation(raised.value)
     assert service.submits == 1
 
     store.current_call_index = 0

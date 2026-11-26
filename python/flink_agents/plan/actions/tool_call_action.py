@@ -50,7 +50,7 @@ from flink_agents.plan.actions.tool_result_utils import (
     to_chat_message_content,
     to_tool_response,
 )
-from flink_agents.plan.exceptions import raise_if_uncapturable
+from flink_agents.plan.exceptions import raise_if_framework_fault_or_cancellation
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
 
@@ -77,7 +77,7 @@ def _tool_entity_metadata(
         try:
             supplemental = tool.get_tool_execution_metadata(dict(kwargs)) or {}
         except Exception as error:
-            raise_if_uncapturable(error)
+            raise_if_framework_fault_or_cancellation(error)
             _logger.debug(
                 "Failed to collect execution metadata for tool %s.",
                 tool_name,
@@ -213,7 +213,7 @@ def _build_tool_call_executions(
             try:
                 tool, agent = _resolve_callable(name, ctx, delegated=delegated)
             except Exception as e:
-                raise_if_uncapturable(e)
+                raise_if_framework_fault_or_cancellation(e)
                 preparation_error = e
         # Injection is a tool-only contract, so a sub-agent call carries the model
         # arguments unchanged.
@@ -221,7 +221,7 @@ def _build_tool_call_executions(
             try:
                 call_kwargs.update(_resolve_injected_arguments(tool, ctx))
             except Exception as e:
-                raise_if_uncapturable(e)
+                raise_if_framework_fault_or_cancellation(e)
                 preparation_error = e
 
         entity_metadata = _tool_entity_metadata(
@@ -344,7 +344,7 @@ async def _execute_parallel(
                 execution, outcome, responses, success, error
             )
     except Exception as e:
-        raise_if_uncapturable(e)
+        raise_if_framework_fault_or_cancellation(e)
         if result_observed_at is None:
             result_observed_at = datetime.now(timezone.utc)
         for execution in tool_executions:
@@ -393,7 +393,7 @@ async def _execute_sequentially(
             outcome = Outcome.success(response)
             _record_tool_response(execution, response, responses, success, error)
         except Exception as e:
-            raise_if_uncapturable(e)
+            raise_if_framework_fault_or_cancellation(e)
             if result_observed_at is None:
                 result_observed_at = datetime.now(timezone.utc)
             outcome = Outcome.failure(e)
@@ -605,7 +605,7 @@ def _record_execution_exception(
     success: dict,
     error: dict,
 ) -> None:
-    raise_if_uncapturable(exception)
+    raise_if_framework_fault_or_cancellation(exception)
     responses[execution.id] = (
         _with_reason(f"Sub-agent `{execution.name}` execute failed", str(exception))
         if execution.agent is not None

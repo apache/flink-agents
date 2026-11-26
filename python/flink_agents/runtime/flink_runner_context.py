@@ -54,13 +54,12 @@ from flink_agents.api.runner_context import (
 )
 from flink_agents.api.subagent import SubagentResult
 from flink_agents.api.trace import ExecutionReporter
-from flink_agents.plan.exceptions import raise_if_uncapturable
+from flink_agents.plan.exceptions import is_cancellation, raise_if_uncapturable
 from flink_agents.runtime.chat_future import _ChatFuture
 from flink_agents.runtime.close_utils import failure_of, first_or_logged
 from flink_agents.runtime.durable_exception import (
     deserialize_durable_exception,
     durable_exception_message,
-    is_java_interruption,
     serialize_durable_exception,
 )
 from flink_agents.runtime.durable_execution import (
@@ -431,7 +430,7 @@ class _BatchAsyncExecutionResult:
                     zip(execution_indexes, executed, strict=True)
                 )
                 if isinstance(self._futures[index], _SingleAsyncFuture)
-                and is_java_interruption(outcome.error)
+                and is_cancellation(outcome.error)
             ),
             None,
         )
@@ -479,7 +478,7 @@ class _SingleAsyncFuture(AsyncFuture[Any]):
 
     @override
     def _is_cancellation(self, error: Exception) -> bool:
-        return is_java_interruption(error)
+        return is_cancellation(error)
 
     def _resolve(self) -> Any:
         result = _AsyncExecutionResult(self._ctx.executor, self._callable, (), {})
@@ -494,7 +493,7 @@ class _SingleDurableFuture(DurableFuture[Any]):
 
     @override
     def _is_cancellation(self, error: Exception) -> bool:
-        return is_java_interruption(error)
+        return is_cancellation(error)
 
     def _resolve(self) -> Any:
         return (yield from self._ctx._resolve_durable_call(self._call).__await__())
@@ -512,7 +511,7 @@ class _GatherAsyncFuture(AsyncFuture[list[Outcome]]):
 
     @override
     def _is_cancellation(self, error: Exception) -> bool:
-        return is_java_interruption(error)
+        return is_cancellation(error)
 
     def _resolve(self) -> Any:
         outcomes_by_index: dict[int, Outcome] = {}
@@ -1354,7 +1353,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             The exception raised by the function (None if successful).
         """
         raise_if_uncapturable(exception)
-        if is_java_interruption(exception):
+        if is_cancellation(exception):
             # The attempt was cancelled: record nothing, so recovery executes the
             # call again instead of replaying the interruption.
             return
@@ -1434,7 +1433,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         exception: BaseException | None,
     ) -> None:
         raise_if_uncapturable(exception)
-        if is_java_interruption(exception):
+        if is_cancellation(exception):
             # The attempt was cancelled: leave the slot pending, so recovery
             # executes or reconciles the call instead of replaying the interruption.
             return
@@ -1724,7 +1723,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
                 outcomes[call_index] = outcome
                 continue
             raise_if_uncapturable(outcome.error)
-            if is_java_interruption(outcome.error):
+            if is_cancellation(outcome.error):
                 # The attempt was cancelled: leave this slot and the ones after it
                 # pending and propagate, as the Java batch does. Slots finalized
                 # earlier in this loop keep their outcome.

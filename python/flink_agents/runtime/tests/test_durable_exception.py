@@ -15,16 +15,17 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import asyncio
 import threading
+from concurrent.futures import CancelledError
 from typing import Any
 
 import cloudpickle
 import pytest
 
-from flink_agents.plan.exceptions import UncapturableException
+from flink_agents.plan.exceptions import UncapturableException, is_cancellation
 from flink_agents.runtime.durable_exception import (
     deserialize_durable_exception,
-    is_java_interruption,
     serialize_durable_exception,
 )
 from flink_agents.runtime.tests.test_flink_runner_context_reconcilable import (
@@ -254,16 +255,17 @@ def test_pending_slot_keeps_exception_that_cannot_be_pickled(
     [
         _java_error(_INTERRUPTED),
         _java_error(_CLOSED_BY_INTERRUPT),
+        _java_error("java.util.concurrent.CancellationException"),
         _java_error("java.lang.RuntimeException", _fake_java_throwable(_INTERRUPTED)),
     ],
-    ids=["direct", "closed-by-interrupt", "wrapped"],
+    ids=["direct", "closed-by-interrupt", "cancelled", "wrapped"],
 )
-def test_java_interruption_is_recognized(error: RuntimeError) -> None:
+def test_java_cancellation_is_recognized(error: RuntimeError) -> None:
     wrapped = ConnectionError("call failed")
     wrapped.__cause__ = error
 
-    assert is_java_interruption(error)
-    assert is_java_interruption(wrapped)
+    assert is_cancellation(error)
+    assert is_cancellation(wrapped)
 
 
 @pytest.mark.parametrize(
@@ -278,8 +280,8 @@ def test_java_interruption_is_recognized(error: RuntimeError) -> None:
     ],
     ids=["other-java", "interrupted-io", "message-only", "python", "none"],
 )
-def test_other_failures_are_not_java_interruptions(error: Any) -> None:
-    assert not is_java_interruption(error)
+def test_other_failures_are_not_cancellations(error: Any) -> None:
+    assert not is_cancellation(error)
 
 
 def test_java_interruption_is_not_recorded() -> None:
@@ -447,7 +449,7 @@ def test_failure_raised_while_handling_an_interruption_is_not_one() -> None:
         failure = error
 
     assert failure.__context__ is not None
-    assert not is_java_interruption(failure)
+    assert not is_cancellation(failure)
 
 
 def test_interruption_is_found_past_an_argument_that_cannot_be_inspected() -> None:
@@ -455,7 +457,7 @@ def test_interruption_is_found_past_an_argument_that_cannot_be_inspected() -> No
     error = ConnectionError(not_a_throwable)
     error.__cause__ = _java_error(_INTERRUPTED)
 
-    assert is_java_interruption(error)
+    assert is_cancellation(error)
 
 
 @pytest.mark.parametrize("use_reconciler", [False, True])
@@ -635,7 +637,7 @@ def test_inspection_never_replaces_the_failure() -> None:
         def args(self) -> tuple:
             raise KeyboardInterrupt
 
-    assert not is_java_interruption(_Hostile())
+    assert not is_cancellation(_Hostile())
 
 
 def test_long_message_is_stored_once() -> None:
@@ -803,3 +805,40 @@ def test_durable_batch_framework_fault_leaves_its_slot_pending():
         "PENDING",
     ]
     assert store.current_call_index == 0
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "error_type", [InterruptedError, CancelledError, asyncio.CancelledError]
+)
+def test_wrapped_cancellation_is_reexecuted_on_recovery(
+    asynchronous: bool, error_type: type[BaseException]
+) -> None:
+    failure = RuntimeError("call interrupted")
+    failure.__cause__ = error_type("cancelled")
+    calls = []
+
+    def call() -> str:
+        calls.append(1)
+        if len(calls) == 1:
+            raise failure
+        return "recovered"
+
+    store = _FakeJavaRunnerContext()
+    ctx = _create_runner_context(store)
+    try:
+        with pytest.raises(RuntimeError) as raised:
+            _execute(ctx, asynchronous, call)
+        assert raised.value is failure
+        assert all(slot.status == "PENDING" for slot in store.call_results)
+    finally:
+        _close_runner_context(ctx)
+
+    store.current_call_index = 0
+    ctx = _create_runner_context(store)
+    try:
+        assert _execute(ctx, asynchronous, call) == "recovered"
+    finally:
+        _close_runner_context(ctx)
+    assert len(calls) == 2
+    assert [slot.status for slot in store.call_results] == ["SUCCEEDED"]

@@ -28,8 +28,6 @@ import logging
 
 import cloudpickle
 
-from flink_agents.plan.exceptions import find_java_exception
-
 logger = logging.getLogger(__name__)
 
 # A pickle stream never starts with these bytes, so a payload without them is one
@@ -41,16 +39,6 @@ _VERSION = 1
 # enough of it to name the failure.
 _MAX_MESSAGE_LENGTH = 16 * 1024
 _TRUNCATION_MARK = "... [truncated]"
-
-# java.io.InterruptedIOException is left out on purpose. HTTP stacks raise it for an
-# ordinary network timeout, which must stay a recorded failure. Same choice as
-# ModelRoutingResolver.isCancellation on the Java side.
-_JAVA_INTERRUPTION_CLASS_NAMES = frozenset(
-    {
-        "java.lang.InterruptedException",
-        "java.nio.channels.ClosedByInterruptException",
-    }
-)
 
 
 def _class_name(exception: BaseException) -> str:
@@ -145,8 +133,3 @@ def deserialize_durable_exception(payload: bytes) -> BaseException:
             if isinstance(exception, BaseException):
                 return exception
     return RuntimeError(f"{class_name}: {message}")
-
-
-def is_java_interruption(exception: BaseException | None) -> bool:
-    """Recognize a Java interruption through Pemja proxies and explicit causes."""
-    return find_java_exception(exception, _JAVA_INTERRUPTION_CLASS_NAMES) is not None
