@@ -17,7 +17,9 @@
  */
 package org.apache.flink.agents.plan.actions;
 
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
@@ -27,6 +29,10 @@ import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.plan.ChatFixtures;
+import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.java.typeutils.RowTypeInfo;
+import org.apache.flink.types.Row;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -34,7 +40,14 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.withSettings;
 
 /** Tests for {@link ChatModelAction}. */
@@ -57,6 +70,58 @@ class ChatModelActionTest {
         assertEquals(2, original.getBlocks().size());
         assertEquals("test", original.getMetadata().get("provider"));
         assertFalse(original.getMetadata().containsKey(Agent.STRUCTURED_OUTPUT));
+    }
+
+    private static OutputSchema rowSchema() {
+        return new OutputSchema(
+                new RowTypeInfo(
+                        new TypeInformation<?>[] {
+                            BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.INT_TYPE_INFO
+                        },
+                        new String[] {"name", "age"}));
+    }
+
+    @Test
+    void rowSchemaOutputFillsEveryField() throws Exception {
+        Row row =
+                (Row)
+                        ChatModelAction.generateStructuredOutput(
+                                ChatFixtures.response("{\"name\":\"Ada\",\"age\":36}"),
+                                rowSchema());
+        assertEquals("Ada", row.getField("name"));
+        assertEquals(36, row.getField("age"));
+    }
+
+    @Test
+    void rowSchemaOutputKeepsExplicitNull() throws Exception {
+        Row row =
+                (Row)
+                        ChatModelAction.generateStructuredOutput(
+                                ChatFixtures.response("{\"name\":\"Ada\",\"age\":null}"),
+                                rowSchema());
+        assertNull(row.getField("age"));
+    }
+
+    @Test
+    void rowSchemaOutputRejectsMissingField() throws Exception {
+        RunnerContext ctx = reportingContext();
+        MismatchedInputException error =
+                assertThrows(
+                        MismatchedInputException.class,
+                        () ->
+                                ChatModelAction.generateStructuredOutputWithReport(
+                                        ctx,
+                                        ChatFixtures.response("{\"name\":\"Ada\"}"),
+                                        rowSchema()));
+        assertTrue(error.getMessage().contains("'age'"));
+        verify((ExecutionReporter) ctx)
+                .reportExecutionFailed(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.PARSER),
+                        eq(Agent.STRUCTURED_OUTPUT),
+                        eq(Map.of()),
+                        same(error),
+                        eq(ExecutionReporter.ProblemCategories.MODEL_OUTPUT_PARSE_ERROR));
     }
 
     private static RunnerContext reportingContext() {
