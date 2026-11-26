@@ -42,6 +42,10 @@ class JavaResourceAdapter(Protocol):
         """Create a Java data content block from Python values."""
         ...
 
+    def fromPythonDataContentBlocks(self, blocks: list[dict]) -> Any:
+        """Create an ordered batch of Java data content blocks in one call."""
+        ...
+
     def fromPythonDocument(
         self, content: str, metadata: dict, document_id: str, embedding: Any, score: Any
     ) -> Any:

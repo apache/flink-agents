@@ -45,11 +45,15 @@ def _call_java_embedding(
         blocks = [
             TextBlock(text=item) if isinstance(item, str) else item for item in inputs
         ]
-        java_blocks = [
-            adapter.fromPythonDataContentBlock(block.model_dump(mode="json"))
-            for block in blocks
-        ]
-        j_result = resource.embed(java_blocks[0] if single else java_blocks, kwargs)
+        if single:
+            java_content = adapter.fromPythonDataContentBlock(
+                blocks[0].model_dump(mode="json")
+            )
+        else:
+            java_content = adapter.fromPythonDataContentBlocks(
+                [block.model_dump(mode="json") for block in blocks]
+            )
+        j_result = resource.embed(java_content, kwargs)
     j_embeddings = j_result.getEmbeddings()
 
     embeddings = (

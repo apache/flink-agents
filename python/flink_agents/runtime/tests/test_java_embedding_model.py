@@ -60,6 +60,7 @@ def test_java_embedding_wrappers_preserve_usage(
     j_resource.embed.return_value = _JavaEmbeddingResult()
     adapter = MagicMock()
     adapter.fromPythonDataContentBlock.side_effect = lambda block: block
+    adapter.fromPythonDataContentBlocks.side_effect = lambda blocks: blocks
     wrapper = wrapper_class(j_resource, adapter, **kwargs)
 
     result = wrapper.embed(["first", "second"], batch_size=2)
@@ -70,7 +71,7 @@ def test_java_embedding_wrappers_preserve_usage(
     assert result.token_usage.total_tokens == 9
     j_resource.embed.assert_called_once_with(
         [TextBlock(text=t).model_dump(mode="json") for t in ["first", "second"]],
-        {"batch_size": 2}
+        {"batch_size": 2},
     )
 
 
@@ -79,6 +80,7 @@ def test_java_embedding_setup_preserves_block_order_and_result_shape() -> None:
     j_resource = MagicMock()
     adapter = MagicMock()
     adapter.fromPythonDataContentBlock.side_effect = lambda block: block
+    adapter.fromPythonDataContentBlocks.side_effect = lambda blocks: blocks
     setup = JavaEmbeddingModelSetup(
         j_resource, adapter, connection="connection", model="test-model"
     )
@@ -98,6 +100,8 @@ def test_java_embedding_setup_preserves_block_order_and_result_shape() -> None:
         {"dimension": 2},
     )
 
+    adapter.fromPythonDataContentBlocks.assert_called_once()
+    adapter.fromPythonDataContentBlock.assert_not_called()
     j_resource.embed.reset_mock()
     single_result = MagicMock()
     single_result.getEmbeddings.return_value = [0.1, 0.2]
@@ -107,3 +111,30 @@ def test_java_embedding_setup_preserves_block_order_and_result_shape() -> None:
     assert result.embeddings == [0.1, 0.2]
     assert result.token_usage is None
     j_resource.embed.assert_called_once_with(image.model_dump(mode="json"), {})
+
+
+@pytest.mark.parametrize("size", [0, 1, 128])
+@pytest.mark.parametrize(
+    "wrapper_class", [JavaEmbeddingModelConnection, JavaEmbeddingModelSetup]
+)
+def test_batch_conversion_uses_one_adapter_call(size: int, wrapper_class: type) -> None:
+    """Batch conversion crosses the language boundary once regardless of input size."""
+    resource = MagicMock()
+    vectors = [[float(i)] for i in range(size)]
+    resource.embed.return_value.getEmbeddings.return_value = vectors
+    resource.embed.return_value.getTokenUsage.return_value = None
+    adapter = MagicMock()
+    java_blocks = object()
+    adapter.fromPythonDataContentBlocks.return_value = java_blocks
+    wrapper = wrapper_class(resource, adapter, connection="connection", model="fixture")
+    content = [str(i) for i in range(size)]
+
+    result = wrapper.embed(content)
+
+    adapter.fromPythonDataContentBlocks.assert_called_once_with(
+        [TextBlock(text=item).model_dump(mode="json") for item in content]
+    )
+    adapter.fromPythonDataContentBlock.assert_not_called()
+    resource.embed.assert_called_once_with(java_blocks, {})
+    assert result.embeddings == vectors
+    assert result.token_usage is None
