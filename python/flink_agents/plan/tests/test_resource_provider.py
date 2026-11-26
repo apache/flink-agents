@@ -170,3 +170,134 @@ def test_internal_descriptor_is_java_owned(
         ResourceType.AGENT
     ]["child"]
     assert not is_python_owned(provider)
+
+
+@pytest.mark.parametrize(
+    ("section", "resource_type", "clazz", "extra_lines", "default_module"),
+    [
+        (
+            "chat_model_connections",
+            ResourceType.CHAT_MODEL_CONNECTION,
+            "ollama",
+            "",
+            "flink_agents.integrations.chat_models.ollama_chat_model",
+        ),
+        (
+            "embedding_model_connections",
+            ResourceType.EMBEDDING_MODEL_CONNECTION,
+            "openai",
+            "        api_key: fake-key\n",
+            "flink_agents.integrations.embedding_models.openai_embedding_model",
+        ),
+    ],
+    ids=["ollama-chat", "openai-embedding"],
+)
+@pytest.mark.parametrize(
+    ("timeout_line", "expected"),
+    [
+        ("", "default"),
+        ("        request_timeout: 5\n", 5.0),
+        ("        request_timeout: null\n", None),
+    ],
+    ids=["omitted", "number", "null"],
+)
+def test_yaml_request_timeout_contract(
+    tmp_path: Path,
+    section: str,
+    resource_type: ResourceType,
+    clazz: str,
+    extra_lines: str,
+    default_module: str,
+    timeout_line: str,
+    expected: object,
+) -> None:
+    """A YAML connection's request_timeout, as the runtime provider builds it.
+
+    Omitted uses the default, a number is used as given, and ``null`` is a
+    validation error rather than another way to select the default.
+    """
+    import importlib
+
+    from pydantic import ValidationError
+
+    from flink_agents.api.yaml.loader import build_agents
+
+    path = tmp_path / "agent.yaml"
+    path.write_text(
+        "agents:\n"
+        "  - name: test_agent\n"
+        f"    {section}:\n"
+        "      - name: conn\n"
+        f"        clazz: {clazz}\n"
+        f"{extra_lines}"
+        f"{timeout_line}"
+    )
+    agents, _, _ = build_agents(path)
+    descriptor = agents["test_agent"].resources[resource_type]["conn"]
+    provider = PythonResourceProvider.get("conn", descriptor, resource_type)
+
+    if expected is None:
+        with pytest.raises(ValidationError, match="request_timeout"):
+            provider.provide(Mock(spec=ResourceContext), AgentConfiguration())
+        return
+    connection = provider.provide(Mock(spec=ResourceContext), AgentConfiguration())
+    if expected == "default":
+        expected = importlib.import_module(default_module).DEFAULT_REQUEST_TIMEOUT
+    assert connection.request_timeout == expected
+
+
+_UNSET = object()
+
+
+@pytest.mark.parametrize(
+    ("config_value", "descriptor_value", "expected"),
+    [
+        (_UNSET, _UNSET, "default"),
+        (7, _UNSET, 7.0),
+        (7, 5, 5.0),
+        (None, 5, 5.0),
+        (None, _UNSET, None),
+        (7, None, None),
+    ],
+    ids=[
+        "neither",
+        "config-only",
+        "descriptor-overrides-config",
+        "descriptor-overrides-null-config",
+        "null-config",
+        "null-descriptor-overrides-config",
+    ],
+)
+def test_request_timeout_from_config_and_descriptor(
+    config_value: object, descriptor_value: object, expected: object
+) -> None:
+    """Class-level config and descriptor arguments compose as the runtime does.
+
+    The descriptor argument wins over class-level config, and ``None`` from
+    either source is a validation error once it is the effective value.
+    """
+    from pydantic import ValidationError
+
+    from flink_agents.api.resource import ResourceName
+    from flink_agents.integrations.chat_models import ollama_chat_model
+
+    conf = {}
+    if config_value is not _UNSET:
+        conf["OllamaChatModelConnection.request_timeout"] = config_value
+    arguments = {}
+    if descriptor_value is not _UNSET:
+        arguments["request_timeout"] = descriptor_value
+    provider = PythonResourceProvider.get(
+        "conn",
+        ResourceDescriptor(clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, **arguments),
+        ResourceType.CHAT_MODEL_CONNECTION,
+    )
+
+    if expected is None:
+        with pytest.raises(ValidationError, match="request_timeout"):
+            provider.provide(Mock(spec=ResourceContext), AgentConfiguration(conf))
+        return
+    connection = provider.provide(Mock(spec=ResourceContext), AgentConfiguration(conf))
+    if expected == "default":
+        expected = ollama_chat_model.DEFAULT_REQUEST_TIMEOUT
+    assert connection.request_timeout == expected

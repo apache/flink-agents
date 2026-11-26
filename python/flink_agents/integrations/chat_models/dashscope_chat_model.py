@@ -318,7 +318,7 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
     def __init__(
         self,
         api_key: str | None = None,
-        request_timeout: float | None = DEFAULT_REQUEST_TIMEOUT,
+        request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
         **kwargs: Any,
     ) -> None:
         """Init method."""

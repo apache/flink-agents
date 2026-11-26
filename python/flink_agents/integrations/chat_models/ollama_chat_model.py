@@ -147,7 +147,7 @@ class OllamaChatModelConnection(BaseChatModelConnection):
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
-        request_timeout: float | None = DEFAULT_REQUEST_TIMEOUT,
+        request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
         **kwargs: Any,
     ) -> None:
         """Init method."""
