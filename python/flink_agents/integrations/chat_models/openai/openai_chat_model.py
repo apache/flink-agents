@@ -50,7 +50,7 @@ from flink_agents.integrations.chat_models.openai.openai_utils import (
     resolve_openai_credentials,
 )
 
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_OPENAI_MODEL = "gpt-6-luna"
 MAX_OPENAI_TIMEOUT_SECONDS = 2_147_483.647
 MAX_OPENAI_RETRIES = 2_147_483_647
 
@@ -82,12 +82,26 @@ _NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIXES = (
     "gpt-4o-search-preview",
     "gpt-4.1",
     "gpt-5",
+    "gpt-6",
     "o3",
     "o4-mini",
 )
 _NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
     {"gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20", "o1", "o1-2024-12-17"}
 )
+
+# Models whose OpenAI model page states: "Chat Completions supports function calling
+# only with `reasoning_effort` set to `none`." Source of truth:
+# https://developers.openai.com/api/docs/models/gpt-6-luna and
+# https://developers.openai.com/api/docs/models/gpt-6-sol
+#
+# Matched exactly rather than by a "gpt-6" prefix: other GPT-6 models reject "none"
+# (for example gpt-6.2-astra) or call tools through the Responses API only, so "none"
+# would either fail the request or turn reasoning off without making tool calls
+# possible.
+_MODELS_CALLING_TOOLS_ONLY_WITHOUT_REASONING = frozenset({"gpt-6-luna", "gpt-6-sol"})
+
+_ReasoningEffort = Literal["none", "low", "medium", "high"]
 
 
 def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
@@ -413,8 +427,14 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
         Additional kwargs for the OpenAI API.
     strict : bool
         Whether to use strict mode for invoking tools/using schemas.
-    reasoning_effort : Optional[Literal["low", "medium", "high"]]
-        The effort to use for reasoning models.
+    reasoning_effort : Optional[Literal["none", "low", "medium", "high"]]
+        The effort to use for reasoning models. Unset by default, with one
+        exception: OpenAI documents some models as calling functions through Chat
+        Completions only with ``reasoning_effort`` set to ``"none"`` (``gpt-6-luna``
+        and ``gpt-6-sol``). For a setup on one of these models that binds at least
+        one tool, counting the tools added for skills and sub-agents, ``open()``
+        sends ``"none"`` unless ``reasoning_effort`` is configured, either here or as
+        an ``additional_kwargs`` entry. A configured value is always sent as given.
     """
 
     temperature: float = Field(
@@ -444,10 +464,12 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
         default=False,
         description="Whether to use strict mode for invoking tools/using schemas.",
     )
-    reasoning_effort: Literal["low", "medium", "high"] | None = Field(
+    reasoning_effort: _ReasoningEffort | None = Field(
         default=None,
         description="The effort to use for reasoning models.",
     )
+    # The effort open() chose because none was configured, or None.
+    _default_reasoning_effort: _ReasoningEffort | None = PrivateAttr(default=None)
 
     def __init__(
         self,
@@ -457,7 +479,7 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
         max_tokens: int | None = None,
         additional_kwargs: Dict[str, Any] | None = None,
         strict: bool = False,
-        reasoning_effort: Literal["low", "medium", "high"] | None = None,
+        reasoning_effort: _ReasoningEffort | None = None,
         **kwargs: Any,
     ) -> None:
         """Init method."""
@@ -472,6 +494,28 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
             **kwargs,
         )
 
+    @override
+    def open(self) -> None:
+        """Resolve the connection, prompt and tools, then pick the default
+        ``reasoning_effort`` described on this class.
+
+        The default depends on the resolved tools, so it is chosen here rather than
+        at construction, and it is chosen again on every call.
+        """
+        super().open()
+        configured = (
+            self.reasoning_effort is not None
+            or "reasoning_effort" in self.additional_kwargs
+        )
+        if (
+            not configured
+            and self.tools
+            and self.model in _MODELS_CALLING_TOOLS_ONLY_WITHOUT_REASONING
+        ):
+            self._default_reasoning_effort = "none"
+        else:
+            self._default_reasoning_effort = None
+
     @property
     def model_kwargs(self) -> Dict[str, Any]:
         """Return chat model settings."""
@@ -483,8 +527,13 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
             base_kwargs["top_logprobs"] = self.top_logprobs
         if self.strict:
             base_kwargs["strict"] = self.strict
-        if self.reasoning_effort is not None:
-            base_kwargs["reasoning_effort"] = self.reasoning_effort
+        reasoning_effort = (
+            self.reasoning_effort
+            if self.reasoning_effort is not None
+            else self._default_reasoning_effort
+        )
+        if reasoning_effort is not None:
+            base_kwargs["reasoning_effort"] = reasoning_effort
 
         all_kwargs = {**base_kwargs, **self.additional_kwargs}
         return all_kwargs

@@ -1004,13 +1004,13 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | str | `"gpt-4o-mini"` | Name of the chat model to use |
+| `model` | str | `"gpt-6-luna"` | Name of the chat model to use |
 | `temperature` | float | `0.1` | Sampling temperature (0.0 to 2.0) |
 | `max_tokens` | int | None | Maximum number of tokens to generate |
 | `logprobs` | bool | None | Whether to return log probabilities per token |
 | `top_logprobs` | int | `0` | Number of top token log probabilities to return (0-20) |
 | `strict` | bool | `False` | Enable strict mode for tool calling and schemas |
-| `reasoning_effort` | str | None | Reasoning effort level for reasoning models ("low", "medium", "high") |
+| `reasoning_effort` | str | None | Reasoning effort level for reasoning models ("none", "low", "medium", "high"). Unset by default, except on `gpt-6-luna` and `gpt-6-sol`, which call functions through Chat Completions only with `"none"`: a setup on one of them with at least one tool, including the tools added for skills and sub-agents, sends `"none"` unless `reasoning_effort` is set here or in `additional_kwargs` |
 | `additional_kwargs` | dict | `{}` | Additional OpenAI API parameters |
 
 {{< /tab >}}
@@ -1019,13 +1019,13 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | String | `"gpt-4o-mini"` | Name of the chat model to use |
+| `model` | String | `"gpt-6-luna"` | Name of the chat model to use |
 | `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
 | `max_tokens` | int | None | Maximum number of tokens to generate |
 | `logprobs` | boolean | None | Whether to return log probabilities per token |
 | `top_logprobs` | int | `0` | Number of top token log probabilities to return (0-20) |
 | `strict` | boolean | `false` | Enable strict mode for tool calling and schemas |
-| `reasoning_effort` | String | None | Reasoning effort level for reasoning models ("low", "medium", "high") |
+| `reasoning_effort` | String | None | Reasoning effort level for reasoning models ("none", "low", "medium", "high"). Unset by default, except on `gpt-6-luna` and `gpt-6-sol`, which call functions through Chat Completions only with `"none"`: a setup on one of them with at least one tool, including the tools added for skills and sub-agents, sends `"none"` unless `reasoning_effort` is set here or in `additional_kwargs` |
 | `additional_kwargs` | Map<String, Object> | `{}` | Additional OpenAI API parameters |
 
 {{< /tab >}}
@@ -1157,11 +1157,11 @@ differ from the Chat Completions integration above, even when both connect to Op
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | String | `"gpt-4o"` | Name of the chat model to use |
+| `model` | String | `"gpt-6-luna"` | Name of the chat model to use |
 | `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
 | `max_tokens` | int | None | Maximum number of tokens to generate |
 | `strict` | boolean | `false` | Enable strict mode for tool calling schemas |
-| `reasoning_effort` | String | None | Reasoning effort level for reasoning models ("low", "medium", "high") |
+| `reasoning_effort` | String | None | Reasoning effort level for reasoning models ("none", "low", "medium", "high"). Unset by default, with or without tools |
 | `store` | boolean | `false` | Whether to store the response for later retrieval |
 | `instructions` | String | None | System-level instructions for the model |
 | `additional_kwargs` | Map<String, Object> | `{}` | Additional Responses API parameters |

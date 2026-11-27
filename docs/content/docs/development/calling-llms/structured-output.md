@@ -209,7 +209,7 @@ Native path:  ChatRequestEvent → model call (tool loop, no schema)
 
 | Provider | Languages | Recommended models (`AUTO` goes native) | Blocked (besides a non-typed-class schema) |
 |---|---|---|---|
-| OpenAI | Java, Python | `gpt-4o-mini`, `gpt-4o-search-preview`, `gpt-4.1`, `gpt-5` and `o3`, `o4-mini` families (names that start with these), plus `gpt-4o`, `gpt-4o-2024-08-06`, `gpt-4o-2024-11-20`, `o1`, `o1-2024-12-17`. Audio, realtime, TTS and transcribe variants are excluded. | The schema has an open-keyed field |
+| OpenAI | Java, Python | `gpt-4o-mini`, `gpt-4o-search-preview`, `gpt-4.1`, `gpt-5`, `gpt-6` and `o3`, `o4-mini` families (names that start with these), plus `gpt-4o`, `gpt-4o-2024-08-06`, `gpt-4o-2024-11-20`, `o1`, `o1-2024-12-17`. Audio, realtime, TTS and transcribe variants are excluded. | The schema has an open-keyed field |
 | OpenAI Responses | Java | none | Always. Use the prompt path. |
 | Azure OpenAI | Java, Python | The model named by `model_of_azure_deployment` is one of `gpt-5.1`, `gpt-5.1-chat`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `o3`, `o3-mini`, `o4-mini`, `o1`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`. | `api_version` older than `2024-08-01`, or not a date. The schema has an open-keyed field. |
 | vLLM | Java, Python | Any model | Java only: the schema has an open-keyed field |

@@ -34,6 +34,9 @@ import java.util.Set;
  * bindings, and Responses API-specific parameters. The setup delegates execution to {@link
  * OpenAIResponsesModelConnection}.
  *
+ * <p>{@code reasoning_effort} accepts {@code none}, {@code low}, {@code medium} or {@code high}. It
+ * is unset by default, whether or not tools are bound, so the model's own default applies.
+ *
  * <p>Example usage:
  *
  * <pre>{@code
@@ -56,11 +59,12 @@ import java.util.Set;
  */
 public class OpenAIResponsesModelSetup extends BaseChatModelSetup {
 
-    private static final String DEFAULT_MODEL = "gpt-4o";
+    private static final String DEFAULT_MODEL = "gpt-6-luna";
     private static final double DEFAULT_TEMPERATURE = 0.1d;
     private static final boolean DEFAULT_STRICT = false;
     private static final boolean DEFAULT_STORE = false;
-    private static final Set<String> VALID_REASONING_EFFORTS = Set.of("low", "medium", "high");
+    private static final Set<String> VALID_REASONING_EFFORTS =
+            Set.of("none", "low", "medium", "high");
 
     private final Double temperature;
     private final Integer maxTokens;
@@ -98,7 +102,7 @@ public class OpenAIResponsesModelSetup extends BaseChatModelSetup {
         if (this.reasoningEffort != null
                 && !VALID_REASONING_EFFORTS.contains(this.reasoningEffort)) {
             throw new IllegalArgumentException(
-                    "reasoning_effort must be one of: low, medium, high");
+                    "reasoning_effort must be one of: none, low, medium, high");
         }
 
         this.store =

@@ -156,7 +156,14 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
     private static final Set<String> NON_TEXT_MODALITY_MARKERS =
             Set.of("-audio", "-realtime", "-tts", "-transcribe");
     private static final Set<String> NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIXES =
-            Set.of("gpt-4o-mini", "gpt-4o-search-preview", "gpt-4.1", "gpt-5", "o3", "o4-mini");
+            Set.of(
+                    "gpt-4o-mini",
+                    "gpt-4o-search-preview",
+                    "gpt-4.1",
+                    "gpt-5",
+                    "gpt-6",
+                    "o3",
+                    "o4-mini");
     private static final Set<String> NATIVE_STRUCTURED_OUTPUT_MODELS =
             Set.of("gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20", "o1", "o1-2024-12-17");
 
