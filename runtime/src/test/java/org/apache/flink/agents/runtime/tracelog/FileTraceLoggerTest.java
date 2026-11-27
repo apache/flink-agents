@@ -55,6 +55,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -394,6 +396,27 @@ class FileTraceLoggerTest {
         assertDoesNotThrow(
                 () -> objectMapper.readValue(content, TraceRecord.class),
                 "Pretty-printed output should be valid JSON deserializable to TraceRecord");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"true", "false"})
+    void testPrettyPrintAcceptsStringValue(String prettyPrint) throws Exception {
+        // Legacy flink-conf.yaml values reach the logger as strings.
+        Map<String, Object> agentConfig = new HashMap<>();
+        agentConfig.put(AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getKey(), prettyPrint);
+        config = buildConfig(agentConfig);
+        logger = new FileTraceLogger(config);
+
+        logger.open(openParams);
+        append(logger, new InputEvent("test input"), null, TraceLogLevel.STANDARD);
+        logger.flush();
+
+        List<String> lines = Files.readAllLines(getExpectedLogFilePath());
+        if (Boolean.parseBoolean(prettyPrint)) {
+            assertTrue(lines.size() > 1, "Pretty-printed JSON should span multiple lines");
+        } else {
+            assertEquals(1, lines.size(), "Compact JSON should stay on one line");
+        }
     }
 
     @Test

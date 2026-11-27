@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.logger.TraceLoggerConfig;
 import org.apache.flink.agents.api.logger.TraceLoggerOpenParams;
 import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.api.utils.JacksonMapperFactory;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.metrics.Counter;
 
 import java.io.BufferedWriter;
@@ -130,10 +131,8 @@ public class FileTraceLogger implements TraceLogger {
         // Create writer in append mode
         writer = new PrintWriter(new BufferedWriter(new FileWriter(logFilePath, true)));
         prettyPrint =
-                (Boolean)
-                        agentConfig.getOrDefault(
-                                AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getKey(),
-                                AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getDefaultValue());
+                new AgentConfiguration(agentConfig)
+                        .get(AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT);
 
         int maxStringLength =
                 getIntFromConfig(

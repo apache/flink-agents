@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.logger.TraceLoggerConfig;
 import org.apache.flink.agents.api.logger.TraceLoggerOpenParams;
 import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.api.utils.JacksonMapperFactory;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.metrics.Counter;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -112,10 +113,8 @@ public class Slf4jTraceLogger implements TraceLogger {
                                         TraceLoggerConfig.AGENT_CONFIG_PROPERTY_KEY,
                                         Collections.emptyMap());
         prettyPrint =
-                (Boolean)
-                        agentConfig.getOrDefault(
-                                AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getKey(),
-                                AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getDefaultValue());
+                new AgentConfiguration(agentConfig)
+                        .get(AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT);
         int maxStringLength =
                 getIntFromConfig(
                         agentConfig,
