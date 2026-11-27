@@ -94,19 +94,26 @@ MCP servers can be configured with authentication:
 
 {{< tab "Python" >}}
 ```python
+from flink_agents.integrations.mcp.auth import (
+    ApiKeyAuth,
+    BasicAuth,
+    BearerTokenAuth,
+)
+
 @mcp_server
 @staticmethod
 def authenticated_mcp_server() -> ResourceDescriptor:
     """Connect to MCP server with authentication."""
-    return ResourceDescriptor(clazz=ResourceName.MCP_SERVER, 
+    # Using Bearer Token Authentication
+    return ResourceDescriptor(clazz=ResourceName.MCP_SERVER,
                               endpoint="http://api.example.com/mcp",
-                              headers={"Authorization": "Bearer your-token"})
+                              auth=BearerTokenAuth(token="your-oauth-token"))
+
     # Or using Basic Authentication
-    # credentials = base64.b64encode(b"username:password").decode("ascii")
-    # headers={"Authorization": f"Basic {credentials}"}
+    # auth=BasicAuth(username="username", password="password")
 
     # Or using API Key Authentication
-    # headers={"X-API-Key": "your-api-key"}
+    # auth=ApiKeyAuth(header_name="X-API-Key", api_key="your-api-key")
 ```
 {{< /tab >}}
 
@@ -136,6 +143,48 @@ public static ResourceDescriptor authenticatedMcpServer() {
 - `BearerTokenAuth` - For OAuth 2.0 and JWT tokens
 - `BasicAuth` - For username/password authentication
 - `ApiKeyAuth` - For API key authentication via custom headers
+- `CustomAuth` (Python only) - For any other `httpx.Auth`, such as the MCP SDK's `OAuthClientProvider`
+
+A Python MCP server stores `auth` in the agent plan as plain JSON, using the
+same field names as the Java classes. In YAML, give a Python server's `auth` as
+a mapping with an `authType` key:
+
+```yaml
+mcp_servers:
+  - name: my_mcp
+    clazz: mcp
+    endpoint: http://api.example.com/mcp
+    auth:
+      authType: bearer        # or: basic (username, password),
+      token: your-oauth-token #     api_key (headerName, apiKey)
+```
+
+In Python, `CustomAuth` names a factory as `<module>:<qualname>` plus JSON
+keyword arguments. The factory must be importable where the agent runs:
+
+```python
+# my_pkg/auth.py
+import httpx
+from mcp.client.auth import OAuthClientProvider
+
+def make_oauth(server_url: str) -> httpx.Auth:
+    return OAuthClientProvider(server_url=server_url, ...)
+
+# In the agent
+from flink_agents.integrations.mcp.auth import CustomAuth
+
+auth=CustomAuth(factory="my_pkg.auth:make_oauth",
+                arguments={"server_url": "https://mcp.example.com/mcp"})
+```
+
+- The factory is imported and called when the server first connects, so it must
+  name trusted code, like a resource's `clazz`.
+- Each MCP server instance calls the factory once and reuses the returned
+  `httpx.Auth` for its later connections. Parallel subtasks build their own
+  instances, possibly in different processes, so an OAuth provider that should
+  not authorize once per subtask needs token storage outside the process.
+- A string `auth` value, or an `httpx.Auth` instance passed directly, is
+  rejected.
 
 ### Retries
 

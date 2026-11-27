@@ -16,24 +16,21 @@
 # limitations under the License.
 #################################################################################
 import asyncio
-import base64
 from abc import ABC
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import timedelta
 from typing import Any, AsyncIterator, Dict, List, Mapping
 from urllib.parse import urlparse
 
-import cloudpickle
 import httpx
 from mcp.client.session import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.types import PromptArgument, TextContent
 from pydantic import (
     ConfigDict,
     Field,
-    field_serializer,
+    PrivateAttr,
     field_validator,
-    model_validator,
 )
 from typing_extensions import override
 
@@ -46,6 +43,7 @@ from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
 from flink_agents.api.trace import (
     ToolExecutionMetadataKeys,
 )
+from flink_agents.integrations.mcp.auth import AnyMCPAuth, MCPAuth
 from flink_agents.integrations.mcp.utils import extract_mcp_content_item
 
 
@@ -168,10 +166,14 @@ class MCPServer(Resource, ABC):
     headers: Dict[str, Any] | None = None
     timeout: timedelta = timedelta(seconds=30)
     sse_read_timeout: timedelta = timedelta(minutes=5)
-    auth: httpx.Auth | None = None
+    auth: AnyMCPAuth | None = None
 
     session: ClientSession = Field(default=None, exclude=True)
     connection_context: AsyncExitStack = Field(default=None, exclude=True)
+
+    # The httpx.Auth built from ``auth``, kept so that every connection of this
+    # server shares it: an OAuth provider keeps its tokens between connections.
+    _httpx_auth: tuple[MCPAuth, httpx.Auth] | None = PrivateAttr(default=None)
 
     @field_validator("timeout", "sse_read_timeout", mode="before")
     @classmethod
@@ -183,19 +185,32 @@ class MCPServer(Resource, ABC):
             raise ValueError(msg)
         return duration
 
-    @field_serializer("auth")
-    def __serialize_auth(self, auth: httpx.Auth | None) -> str | None:
-        if auth is None:
-            return auth
-        return base64.b64encode(cloudpickle.dumps(auth)).decode()
+    @field_validator("auth", mode="before")
+    @classmethod
+    def validate_auth(cls, value: Any) -> Any:
+        """Reject auth values that are not an auth configuration.
 
-    @model_validator(mode="before")
-    def __custom_deserialize(self) -> "MCPServer":
-        if "auth" in self:
-            auth = self["auth"]
-            if auth and isinstance(auth, str):
-                self["auth"] = cloudpickle.loads(base64.b64decode(auth))
-        return self
+        Raises:
+            TypeError: If ``value`` is a string or an ``httpx.Auth`` instance.
+                Pydantic passes a TypeError through unchanged, so the message
+                never repeats the value, which may hold a credential.
+        """
+        if isinstance(value, str):
+            msg = (
+                "auth must be an auth configuration (BasicAuth, BearerTokenAuth, "
+                "ApiKeyAuth or CustomAuth) or a mapping with an 'authType' key, "
+                "not a string. Pickled auth values are no longer supported."
+            )
+            raise TypeError(msg)
+        if isinstance(value, httpx.Auth):
+            msg = (
+                f"auth must be an auth configuration, not an httpx.Auth instance "
+                f"({type(value).__name__}). Use BasicAuth, BearerTokenAuth or "
+                f"ApiKeyAuth, or CustomAuth with a factory that returns the "
+                f"httpx.Auth."
+            )
+            raise TypeError(msg)
+        return value
 
     @classmethod
     @override
@@ -210,6 +225,29 @@ class MCPServer(Resource, ABC):
         except Exception:
             return False
 
+    def _get_httpx_auth(self) -> httpx.Auth | None:
+        """Build the httpx.Auth for ``auth`` on first use and reuse it after."""
+        if self.auth is None:
+            return None
+        if self._httpx_auth is None or self._httpx_auth[0] is not self.auth:
+            self._httpx_auth = (self.auth, self.auth.to_httpx_auth())
+        return self._httpx_auth[1]
+
+    def _create_http_client(self) -> httpx.AsyncClient:
+        """Create the HTTP client for one connection."""
+        return httpx.AsyncClient(
+            headers=self.headers,
+            timeout=httpx.Timeout(
+                self.timeout.total_seconds(),
+                read=self.sse_read_timeout.total_seconds(),
+            ),
+            auth=self._get_httpx_auth(),
+            # mcp 1.24 to 1.29 follow redirects through the client, as their
+            # deprecated ``streamablehttp_client`` did. mcp 1.30 follows
+            # same-origin redirects itself and ignores this setting.
+            follow_redirects=True,
+        )
+
     @asynccontextmanager
     async def _get_session(self) -> AsyncIterator[ClientSession]:
         """Get or create an MCP client session using the official SDK's streamable
@@ -219,14 +257,14 @@ class MCPServer(Resource, ABC):
             msg = f"Invalid HTTP endpoint: {self.endpoint}"
             raise ValueError(msg)
 
+        http_client = self._create_http_client()
         async with (
-            streamablehttp_client(
-                url=self.endpoint,
-                headers=self.headers,
-                timeout=self.timeout,
-                sse_read_timeout=self.sse_read_timeout,
-                auth=self.auth,
-            ) as (read, write, _),
+            http_client,
+            streamable_http_client(self.endpoint, http_client=http_client) as (
+                read,
+                write,
+                _,
+            ),
             # Bound every request by ``timeout``: without it a server that accepts
             # the connection but never answers would hang discovery at startup.
             ClientSession(read, write, read_timeout_seconds=self.timeout) as session,
