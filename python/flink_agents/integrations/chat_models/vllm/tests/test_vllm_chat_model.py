@@ -189,9 +189,9 @@ def test_setup_carries_served_model_name() -> None:
         connection="vllm",
         model="Qwen/Qwen2.5-7B-Instruct",
         temperature=0.3,
-        max_tokens=512,
+        max_completion_tokens=512,
     )
     kwargs = setup.model_kwargs
     assert kwargs["model"] == "Qwen/Qwen2.5-7B-Instruct"
     assert kwargs["temperature"] == 0.3
-    assert kwargs["max_tokens"] == 512
+    assert kwargs["max_completion_tokens"] == 512

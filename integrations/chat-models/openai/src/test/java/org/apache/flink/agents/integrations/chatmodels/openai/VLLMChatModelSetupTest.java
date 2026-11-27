@@ -72,7 +72,7 @@ class VLLMChatModelSetupTest {
                         .addInitialArgument("connection", "vllm")
                         .addInitialArgument("model", "Qwen/Qwen2.5-7B-Instruct")
                         .addInitialArgument("temperature", 0.3d)
-                        .addInitialArgument("max_tokens", 512)
+                        .addInitialArgument("max_completion_tokens", 512)
                         .build();
         VLLMChatModelSetup setup = new VLLMChatModelSetup(desc, NOOP);
 
@@ -80,6 +80,6 @@ class VLLMChatModelSetupTest {
         assertThat(params)
                 .containsEntry("model", "Qwen/Qwen2.5-7B-Instruct")
                 .containsEntry("temperature", 0.3d)
-                .containsEntry("max_tokens", 512);
+                .containsEntry("max_completion_tokens", 512);
     }
 }

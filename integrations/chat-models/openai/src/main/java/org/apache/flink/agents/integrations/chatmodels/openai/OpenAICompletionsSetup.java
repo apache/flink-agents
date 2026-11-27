@@ -34,6 +34,14 @@ import java.util.Set;
  * and additional OpenAI parameters. The setup delegates execution to {@link
  * OpenAICompletionsConnection}.
  *
+ * <p>{@code reasoning_effort} accepts {@code none}, {@code low}, {@code medium} or {@code high} and
+ * is unset by default. One exception: OpenAI documents some models as calling functions through
+ * Chat Completions only with {@code reasoning_effort} set to {@code none} ({@code gpt-6-luna} and
+ * {@code gpt-6-sol}). For a setup on one of these models that binds at least one tool, counting the
+ * tools added for skills and sub-agents, {@link #open()} sets {@code reasoning_effort} to {@code
+ * none} unless it is configured, either directly or as an {@code additional_kwargs} entry. A
+ * configured value is always sent as given.
+ *
  * <p>Example usage:
  *
  * <pre>{@code
@@ -44,7 +52,7 @@ import java.util.Set;
  *             .addInitialArgument("connection", "myOpenAIConnection")
  *             .addInitialArgument("model", "gpt-4o-mini")
  *             .addInitialArgument("temperature", 0.3d)
- *             .addInitialArgument("max_tokens", 500)
+ *             .addInitialArgument("max_completion_tokens", 500)
  *             .addInitialArgument("strict", true)
  *             .addInitialArgument("reasoning_effort", "medium")
  *             .addInitialArgument("tools", List.of("convertTemperature", "calculateBMI"))
@@ -58,19 +66,36 @@ import java.util.Set;
  */
 public class OpenAICompletionsSetup extends BaseChatModelSetup {
 
-    private static final String DEFAULT_MODEL = "gpt-4o-mini";
+    private static final String DEFAULT_MODEL = "gpt-6-luna";
     private static final double DEFAULT_TEMPERATURE = 0.1d;
     private static final int DEFAULT_TOP_LOGPROBS = 0;
     private static final boolean DEFAULT_STRICT = false;
-    private static final Set<String> VALID_REASONING_EFFORTS = Set.of("low", "medium", "high");
+    private static final String REASONING_EFFORT_KEY = "reasoning_effort";
+    private static final String NO_REASONING_EFFORT = "none";
+    private static final Set<String> VALID_REASONING_EFFORTS =
+            Set.of(NO_REASONING_EFFORT, "low", "medium", "high");
+
+    // Models whose OpenAI model page states: "Chat Completions supports function calling only with
+    // `reasoning_effort` set to `none`." Source of truth:
+    // https://developers.openai.com/api/docs/models/gpt-6-luna and
+    // https://developers.openai.com/api/docs/models/gpt-6-sol
+    //
+    // Matched exactly rather than by a "gpt-6" prefix: other GPT-6 models reject "none" (for
+    // example gpt-6.2-astra) or call tools through the Responses API only, so "none" would either
+    // fail the request or turn reasoning off without making tool calls possible.
+    private static final Set<String> MODELS_CALLING_TOOLS_ONLY_WITHOUT_REASONING =
+            Set.of("gpt-6-luna", "gpt-6-sol");
 
     private final Double temperature;
-    private final Integer maxTokens;
+    private final Integer maxCompletionTokens;
     private final Boolean logprobs;
     private final Integer topLogprobs;
     private final Boolean strict;
     private final String reasoningEffort;
     private final Map<String, Object> additionalArguments;
+
+    /** The effort {@link #open()} chose because none was configured, or null. */
+    private String defaultReasoningEffort;
 
     public OpenAICompletionsSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
@@ -82,12 +107,12 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
             throw new IllegalArgumentException("temperature must be between 0.0 and 2.0");
         }
 
-        this.maxTokens =
-                Optional.ofNullable(descriptor.<Number>getArgument("max_tokens"))
+        this.maxCompletionTokens =
+                Optional.ofNullable(descriptor.<Number>getArgument("max_completion_tokens"))
                         .map(Number::intValue)
                         .orElse(null);
-        if (this.maxTokens != null && this.maxTokens <= 0) {
-            throw new IllegalArgumentException("max_tokens must be greater than 0");
+        if (this.maxCompletionTokens != null && this.maxCompletionTokens <= 0) {
+            throw new IllegalArgumentException("max_completion_tokens must be greater than 0");
         }
 
         this.logprobs = descriptor.getArgument("logprobs");
@@ -104,11 +129,11 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
                 Optional.ofNullable(descriptor.<Boolean>getArgument("strict"))
                         .orElse(DEFAULT_STRICT);
 
-        this.reasoningEffort = descriptor.getArgument("reasoning_effort");
+        this.reasoningEffort = descriptor.getArgument(REASONING_EFFORT_KEY);
         if (this.reasoningEffort != null
                 && !VALID_REASONING_EFFORTS.contains(this.reasoningEffort)) {
             throw new IllegalArgumentException(
-                    "reasoning_effort must be one of: low, medium, high");
+                    "reasoning_effort must be one of: none, low, medium, high");
         }
 
         Map<String, Object> additional =
@@ -126,7 +151,7 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
     public OpenAICompletionsSetup(
             String model,
             double temperature,
-            Integer maxTokens,
+            Integer maxCompletionTokens,
             Boolean logprobs,
             Integer topLogprobs,
             Boolean strict,
@@ -138,7 +163,7 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
                 createDescriptor(
                         model,
                         temperature,
-                        maxTokens,
+                        maxCompletionTokens,
                         logprobs,
                         topLogprobs,
                         strict,
@@ -148,6 +173,23 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
                 resourceContext);
     }
 
+    /**
+     * Resolves the connection, prompt and tools, then picks the default {@code reasoning_effort}
+     * described on this class. The default depends on the resolved tools, so it is chosen here
+     * rather than in the constructor.
+     */
+    @Override
+    public void open() throws Exception {
+        super.open();
+        boolean configured =
+                reasoningEffort != null || additionalArguments.containsKey(REASONING_EFFORT_KEY);
+        if (!configured
+                && !tools.isEmpty()
+                && MODELS_CALLING_TOOLS_ONLY_WITHOUT_REASONING.contains(model)) {
+            defaultReasoningEffort = NO_REASONING_EFFORT;
+        }
+    }
+
     @Override
     public Map<String, Object> getParameters() {
         Map<String, Object> parameters = new HashMap<>();
@@ -155,8 +197,8 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
             parameters.put("model", model);
         }
         parameters.put("temperature", temperature);
-        if (maxTokens != null) {
-            parameters.put("max_tokens", maxTokens);
+        if (maxCompletionTokens != null) {
+            parameters.put("max_completion_tokens", maxCompletionTokens);
         }
         if (Boolean.TRUE.equals(logprobs)) {
             parameters.put("logprobs", logprobs);
@@ -165,8 +207,10 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
         if (strict) {
             parameters.put("strict", strict);
         }
-        if (reasoningEffort != null) {
-            parameters.put("reasoning_effort", reasoningEffort);
+        String effectiveReasoningEffort =
+                reasoningEffort != null ? reasoningEffort : defaultReasoningEffort;
+        if (effectiveReasoningEffort != null) {
+            parameters.put(REASONING_EFFORT_KEY, effectiveReasoningEffort);
         }
         if (additionalArguments != null && !additionalArguments.isEmpty()) {
             parameters.put("additional_kwargs", additionalArguments);
@@ -177,7 +221,7 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
     private static ResourceDescriptor createDescriptor(
             String model,
             double temperature,
-            Integer maxTokens,
+            Integer maxCompletionTokens,
             Boolean logprobs,
             Integer topLogprobs,
             Boolean strict,
@@ -189,8 +233,8 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
                         .addInitialArgument("model", model)
                         .addInitialArgument("temperature", temperature);
 
-        if (maxTokens != null) {
-            builder.addInitialArgument("max_tokens", maxTokens);
+        if (maxCompletionTokens != null) {
+            builder.addInitialArgument("max_completion_tokens", maxCompletionTokens);
         }
         if (logprobs != null) {
             builder.addInitialArgument("logprobs", logprobs);
