@@ -18,12 +18,18 @@
 
 package org.apache.flink.agents.api.embedding.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 /** Token usage reported by an embedding provider. */
 public class EmbeddingTokenUsage {
     private final long promptTokens;
     private final long totalTokens;
 
-    public EmbeddingTokenUsage(long promptTokens, long totalTokens) {
+    @JsonCreator
+    public EmbeddingTokenUsage(
+            @JsonProperty("promptTokens") long promptTokens,
+            @JsonProperty("totalTokens") long totalTokens) {
         this.promptTokens = promptTokens;
         this.totalTokens = totalTokens;
     }

@@ -18,17 +18,40 @@
 
 package org.apache.flink.agents.api.embedding.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import javax.annotation.Nullable;
 
-/** Embedding provider result with optional token usage metadata. */
+import java.util.List;
+import java.util.stream.Collectors;
+
+/**
+ * Embedding provider result with optional token usage metadata.
+ *
+ * <p>Each vector must be non-empty. A batch may contain no vectors.
+ *
+ * @param <T> {@code float[]} for a single input or {@code List<float[]>} for a batch
+ */
 public class EmbeddingResult<T> {
     private final T embeddings;
 
     @Nullable private final EmbeddingTokenUsage tokenUsage;
 
     public EmbeddingResult(T embeddings, @Nullable EmbeddingTokenUsage tokenUsage) {
+        if (embeddings instanceof List) {
+            ((List<?>) embeddings).forEach(EmbeddingResult::validateVector);
+        } else {
+            validateVector(embeddings);
+        }
         this.embeddings = embeddings;
         this.tokenUsage = tokenUsage;
+    }
+
+    private static void validateVector(Object vector) {
+        if (vector instanceof float[] && ((float[]) vector).length == 0) {
+            throw new IllegalArgumentException("Embedding vectors must be non-empty");
+        }
     }
 
     public T getEmbeddings() {
@@ -38,5 +61,23 @@ public class EmbeddingResult<T> {
     @Nullable
     public EmbeddingTokenUsage getTokenUsage() {
         return tokenUsage;
+    }
+
+    @JsonCreator
+    private static EmbeddingResult<?> fromJson(
+            @JsonProperty("embeddings") List<?> embeddings,
+            @JsonProperty("tokenUsage") @Nullable EmbeddingTokenUsage tokenUsage) {
+        if (embeddings == null) {
+            throw new IllegalArgumentException("EmbeddingResult requires an embeddings array");
+        }
+        // With non-empty vectors, [] unambiguously represents an empty batch.
+        if (embeddings.isEmpty() || embeddings.get(0) instanceof List) {
+            return new EmbeddingResult<>(
+                    embeddings.stream()
+                            .map(vector -> EmbeddingModelUtils.toFloatArray((List<?>) vector))
+                            .collect(Collectors.toList()),
+                    tokenUsage);
+        }
+        return new EmbeddingResult<>(EmbeddingModelUtils.toFloatArray(embeddings), tokenUsage);
     }
 }
