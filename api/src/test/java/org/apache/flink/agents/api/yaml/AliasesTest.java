@@ -79,8 +79,12 @@ class AliasesTest {
                 new String[] {
                     "dashscope_tts", "dashscope_asr", "dashscope_image", "dashscope_video"
                 }) {
-            assertThat(Aliases.resolveClazz(alias, ResourceType.MEDIA_MODEL, Language.JAVA))
-                    .isEqualTo(alias);
+            assertThatThrownBy(
+                            () ->
+                                    Aliases.resolveClazz(
+                                            alias, ResourceType.MEDIA_MODEL, Language.JAVA))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Unknown Java alias '" + alias + "' for media_model");
             assertThat(Aliases.resolveClazz(alias, ResourceType.MEDIA_MODEL, Language.PYTHON))
                     .startsWith(
                             "flink_agents.integrations.media_models.dashscope_media_model.DashScope")

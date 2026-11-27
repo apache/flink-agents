@@ -276,7 +276,10 @@ def test_resolve_clazz_covers_media_and_rerank_dashscope() -> None:
         "dashscope_image",
         "dashscope_video",
     ):
-        assert resolve_clazz(alias, ResourceType.MEDIA_MODEL, "java") == alias
+        with pytest.raises(
+            ValueError, match=rf"Unknown Java alias {alias!r} for media_model"
+        ):
+            resolve_clazz(alias, ResourceType.MEDIA_MODEL, "java")
 
 
 def test_resolve_clazz_covers_embedding_model_openai_in_both_languages() -> None:
