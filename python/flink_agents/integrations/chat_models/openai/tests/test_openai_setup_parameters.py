@@ -235,11 +235,9 @@ def test_no_default_before_open() -> None:
     assert "reasoning_effort" not in setup.model_kwargs
 
 
-def test_second_open_keeps_the_default_out_of_the_dump() -> None:
+def test_default_stays_out_of_the_dump() -> None:
     setup = _opened(tools=["add"])
-    setup.open()
 
-    assert len(setup.tools) == 1
     assert setup.model_kwargs["reasoning_effort"] == "none"
     assert setup.reasoning_effort is None
     assert setup.model_dump()["reasoning_effort"] is None

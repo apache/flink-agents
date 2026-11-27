@@ -500,7 +500,7 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
         ``reasoning_effort`` described on this class.
 
         The default depends on the resolved tools, so it is chosen here rather than
-        at construction, and it is chosen again on every call.
+        at construction.
         """
         super().open()
         configured = (
@@ -513,8 +513,6 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
             and self.model in _MODELS_CALLING_TOOLS_ONLY_WITHOUT_REASONING
         ):
             self._default_reasoning_effort = "none"
-        else:
-            self._default_reasoning_effort = None
 
     @property
     def model_kwargs(self) -> Dict[str, Any]:

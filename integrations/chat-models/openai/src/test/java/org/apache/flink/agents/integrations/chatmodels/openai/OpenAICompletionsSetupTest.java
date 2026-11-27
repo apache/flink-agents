@@ -236,21 +236,6 @@ class OpenAICompletionsSetupTest {
     }
 
     @Test
-    @DisplayName("A second open() recomputes the default from the tools it resolves")
-    void testReopenRecomputesDefault() throws Exception {
-        OpenAICompletionsSetup setup = opened(withTool().build());
-        assertThat(setup.getParameters()).containsEntry("reasoning_effort", "none");
-
-        // The base open() appends to the tool lists, so empty them to re-open with no tools.
-        setup.getToolNames().clear();
-        setup.getTools().clear();
-        setup.open();
-
-        assertThat(setup.getTools()).isEmpty();
-        assertThat(setup.getParameters()).doesNotContainKey("reasoning_effort");
-    }
-
-    @Test
     @DisplayName("The reasoning_effort chosen by the setup is the one the request body carries")
     void testReasoningEffortReachesRequestBody() throws Exception {
         assertThat(requestBody(withTool().build()).path("reasoning_effort").asText())

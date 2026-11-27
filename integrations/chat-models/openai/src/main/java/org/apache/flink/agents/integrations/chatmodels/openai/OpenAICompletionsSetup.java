@@ -180,7 +180,6 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
      */
     @Override
     public void open() throws Exception {
-        defaultReasoningEffort = null;
         super.open();
         boolean configured =
                 reasoningEffort != null || additionalArguments.containsKey(REASONING_EFFORT_KEY);
