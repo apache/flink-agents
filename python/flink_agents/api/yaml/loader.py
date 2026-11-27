@@ -145,7 +145,8 @@ def _build_descriptor(
     spec: DescriptorSpec, resource_type: ResourceType
 ) -> ResourceDescriptor:
     kwargs = dict(spec.model_extra or {})
-    if spec.type == "java":
+    language = spec.type or "python"
+    if language == "java":
         if resource_type not in {
             ResourceType.CHAT_MODEL,
             ResourceType.CHAT_MODEL_CONNECTION,

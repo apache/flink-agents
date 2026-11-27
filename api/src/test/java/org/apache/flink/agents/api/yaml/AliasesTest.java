@@ -29,6 +29,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AliasesTest {
 
@@ -78,8 +79,12 @@ class AliasesTest {
                 new String[] {
                     "dashscope_tts", "dashscope_asr", "dashscope_image", "dashscope_video"
                 }) {
-            assertThat(Aliases.resolveClazz(alias, ResourceType.MEDIA_MODEL, Language.JAVA))
-                    .isEqualTo(alias);
+            assertThatThrownBy(
+                            () ->
+                                    Aliases.resolveClazz(
+                                            alias, ResourceType.MEDIA_MODEL, Language.JAVA))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Unknown Java alias '" + alias + "' for media_model");
             assertThat(Aliases.resolveClazz(alias, ResourceType.MEDIA_MODEL, Language.PYTHON))
                     .startsWith(
                             "flink_agents.integrations.media_models.dashscope_media_model.DashScope")
@@ -188,10 +193,50 @@ class AliasesTest {
                 .isEqualTo(ResourceName.ModelRouter.MODEL_ROUTER);
         assertThat(Aliases.resolveClazz("router", ResourceType.MODEL_ROUTER, Language.PYTHON))
                 .isEqualTo(ResourceName.ModelRouter.Python.MODEL_ROUTER);
-        assertThat(Aliases.resolveClazz("model_router", ResourceType.MODEL_ROUTER, Language.JAVA))
-                .isEqualTo("model_router");
-        assertThat(Aliases.resolveClazz("model_router", ResourceType.MODEL_ROUTER, Language.PYTHON))
-                .isEqualTo("model_router");
+        assertThatThrownBy(
+                        () ->
+                                Aliases.resolveClazz(
+                                        "model_router", ResourceType.MODEL_ROUTER, Language.JAVA))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Java alias 'model_router' for model_router");
+        assertThatThrownBy(
+                        () ->
+                                Aliases.resolveClazz(
+                                        "model_router", ResourceType.MODEL_ROUTER, Language.PYTHON))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Python alias 'model_router' for model_router");
+    }
+
+    @Test
+    void clazzAliasForOtherLanguageIsRejected() {
+        assertThatThrownBy(
+                        () ->
+                                Aliases.resolveClazz(
+                                        "dashscope",
+                                        ResourceType.CHAT_MODEL_CONNECTION,
+                                        Language.JAVA))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Java alias 'dashscope' for chat_model_connection");
+        assertThatThrownBy(
+                        () ->
+                                Aliases.resolveClazz(
+                                        "gemini",
+                                        ResourceType.CHAT_MODEL_CONNECTION,
+                                        Language.PYTHON))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Python alias 'gemini' for chat_model_connection");
+    }
+
+    @Test
+    void clazzAliasTypoIsRejected() {
+        assertThatThrownBy(
+                        () ->
+                                Aliases.resolveClazz(
+                                        "ollmaa",
+                                        ResourceType.CHAT_MODEL_CONNECTION,
+                                        Language.PYTHON))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Python alias 'ollmaa' for chat_model_connection");
     }
 
     @Test

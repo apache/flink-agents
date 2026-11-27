@@ -34,6 +34,8 @@ import org.apache.flink.agents.api.tools.FunctionTool;
 import org.apache.flink.agents.api.yaml.YamlLoader.LoadedFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -260,6 +262,112 @@ class YamlLoaderBuildAgentsTest {
                 .containsEntry("model", "jev-latest");
         assertThat(agent.getActions().get("consume").f0)
                 .containsExactly(DecisionResponseEvent.EVENT_TYPE);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "decision_model_connections,decision_model_connection",
+        "decision_model_setups,decision_model"
+    })
+    void decisionModelJavaDeclarationsLoadCustomImplementations(
+            String section, String resourceType, @TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve(section + ".yaml");
+        Files.writeString(
+                file,
+                String.format(
+                        "%s:\n  - name: dm\n    clazz: com.example.CustomDecision\n"
+                                + "    type: java\n",
+                        section));
+
+        ResourceDescriptor descriptor =
+                (ResourceDescriptor)
+                        YamlLoader.buildAgents(file)
+                                .getSharedResources()
+                                .get(ResourceType.fromValue(resourceType))
+                                .get("dm");
+        assertThat(descriptor.getClazz()).isEqualTo("com.example.CustomDecision");
+        assertThat(descriptor.getInitialArguments()).isEmpty();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "chat_model_connections,chat_model_connection,dashscope",
+        "chat_model_connections,chat_model_connection,openai",
+        "embedding_model_connections,embedding_model_connection,dashscope",
+        "vector_stores,vector_store,chroma"
+    })
+    void javaDeclarationsRejectAliasesThatResolveOnlyInPython(
+            String section, String resourceType, String alias, @TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve(section + ".yaml");
+        Files.writeString(
+                file,
+                String.format("%s:%n  - name: x%n    type: java%n    clazz: %s%n", section, alias));
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Java alias '" + alias + "' for " + resourceType);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "chat_model_connections,chat_model_connection",
+        "embedding_model_connections,embedding_model_connection",
+        "vector_stores,vector_store"
+    })
+    void declarationsRejectUnknownAliases(String section, String resourceType, @TempDir Path tmp)
+            throws Exception {
+        Path file = tmp.resolve(section + "-unknown.yaml");
+        Files.writeString(
+                file,
+                String.format("%s:%n  - name: x%n    type: java%n    clazz: ollmaa%n", section));
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Java alias 'ollmaa' for " + resourceType);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "chat_model_connections,chat_model_connection,gemini",
+        "embedding_model_connections,embedding_model_connection,bedrock",
+        "vector_stores,vector_store,elasticsearch"
+    })
+    void pythonDeclarationsRejectAliasesThatResolveOnlyInJava(
+            String section, String resourceType, String alias, @TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve(section + ".yaml");
+        Files.writeString(
+                file,
+                String.format(
+                        "%s:%n  - name: x%n    type: python%n    clazz: %s%n", section, alias));
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Python alias '" + alias + "' for " + resourceType);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "chat_model_connections,chat_model_connection",
+        "embedding_model_connections,embedding_model_connection",
+        "vector_stores,vector_store"
+    })
+    void javaDeclarationsAcceptCustomFullyQualifiedClasses(
+            String section, String resourceType, @TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve(section + ".yaml");
+        Files.writeString(
+                file,
+                String.format(
+                        "%s:%n  - name: x%n    type: java%n"
+                                + "    clazz: com.example.CustomJavaResource%n",
+                        section));
+
+        ResourceDescriptor descriptor =
+                (ResourceDescriptor)
+                        YamlLoader.buildAgents(file)
+                                .getSharedResources()
+                                .get(ResourceType.fromValue(resourceType))
+                                .get("x");
+        assertThat(descriptor.getClazz()).isEqualTo("com.example.CustomJavaResource");
     }
 
     @Test

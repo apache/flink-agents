@@ -114,6 +114,41 @@ class YamlLoaderBuildersTest {
     }
 
     @Test
+    void descriptorJavaSupportsCustomDecisionImplementations() throws Exception {
+        DescriptorSpec spec =
+                M.readValue(
+                        "name: x\nclazz: com.example.CustomDecision\ntype: java\n",
+                        DescriptorSpec.class);
+
+        ResourceDescriptor connection =
+                YamlLoader.buildDescriptor(spec, ResourceType.DECISION_MODEL_CONNECTION);
+        assertThat(connection.getClazz()).isEqualTo("com.example.CustomDecision");
+
+        ResourceDescriptor setup = YamlLoader.buildDescriptor(spec, ResourceType.DECISION_MODEL);
+        assertThat(setup.getClazz()).isEqualTo("com.example.CustomDecision");
+    }
+
+    @Test
+    void descriptorJavaRejectedForPythonOnlyAlias() throws Exception {
+        DescriptorSpec spec =
+                M.readValue("name: x\nclazz: dashscope\ntype: java\n", DescriptorSpec.class);
+        assertThatThrownBy(
+                        () -> YamlLoader.buildDescriptor(spec, ResourceType.CHAT_MODEL_CONNECTION))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Java alias 'dashscope' for chat_model_connection");
+    }
+
+    @Test
+    void descriptorPythonRejectedForJavaOnlyAlias() throws Exception {
+        DescriptorSpec spec =
+                M.readValue("name: x\nclazz: gemini\ntype: python\n", DescriptorSpec.class);
+        assertThatThrownBy(
+                        () -> YamlLoader.buildDescriptor(spec, ResourceType.CHAT_MODEL_CONNECTION))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown Python alias 'gemini' for chat_model_connection");
+    }
+
+    @Test
     void descriptorPythonRejectedForUnsupportedKind() throws Exception {
         DescriptorSpec spec =
                 M.readValue("name: x\nclazz: anything\ntype: python\n", DescriptorSpec.class);

@@ -715,6 +715,82 @@ agents:
         assert descriptor.target_clazz == "MCPServer"
 
 
+@pytest.mark.parametrize(
+    ("section", "resource_type", "alias"),
+    [
+        ("chat_model_connections", "chat_model_connection", "dashscope"),
+        ("chat_model_connections", "chat_model_connection", "openai"),
+        ("embedding_model_connections", "embedding_model_connection", "dashscope"),
+        ("vector_stores", "vector_store", "chroma"),
+    ],
+)
+def test_build_agents_rejects_python_only_aliases_for_java_declarations(
+    tmp_path: Path, section: str, resource_type: str, alias: str
+) -> None:
+    source = tmp_path / "java-alias-from-python.yaml"
+    source.write_text(f"{section}:\n  - name: x\n    type: java\n    clazz: {alias}\n")
+
+    with pytest.raises(
+        ValueError, match=f"Unknown Java alias '{alias}' for {resource_type}"
+    ):
+        build_agents(source)
+
+
+@pytest.mark.parametrize(
+    ("section", "resource_type", "alias"),
+    [
+        ("chat_model_connections", "chat_model_connection", "gemini"),
+        ("embedding_model_connections", "embedding_model_connection", "bedrock"),
+        ("vector_stores", "vector_store", "elasticsearch"),
+    ],
+)
+def test_build_agents_rejects_java_only_aliases_for_python_declarations(
+    tmp_path: Path, section: str, resource_type: str, alias: str
+) -> None:
+    source = tmp_path / "python-alias-from-java.yaml"
+    source.write_text(f"{section}:\n  - name: x\n    clazz: {alias}\n")
+
+    with pytest.raises(
+        ValueError, match=f"Unknown Python alias '{alias}' for {resource_type}"
+    ):
+        build_agents(source)
+
+
+@pytest.mark.parametrize(
+    ("section", "resource_type"),
+    [
+        ("chat_model_connections", ResourceType.CHAT_MODEL_CONNECTION),
+        ("embedding_model_connections", ResourceType.EMBEDDING_MODEL_CONNECTION),
+        ("vector_stores", ResourceType.VECTOR_STORE),
+    ],
+)
+def test_build_agents_accepts_custom_java_classes(
+    tmp_path: Path, section: str, resource_type: ResourceType
+) -> None:
+    source = tmp_path / "custom-java-class.yaml"
+    source.write_text(
+        f"{section}:\n  - name: x\n    type: java\n"
+        "    clazz: com.example.CustomJavaResource\n"
+    )
+
+    _, resources, _ = build_agents(source)
+    descriptor = resources[resource_type]["x"]
+    assert descriptor.target_clazz == "com.example.CustomJavaResource"
+
+
+def test_build_agents_rejects_unknown_alias(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "java-unknown-alias.yaml"
+    source.write_text(
+        "chat_model_connections:\n  - name: x\n    clazz: ollmaa\n    type: java\n"
+    )
+    with pytest.raises(
+        ValueError, match=r"Unknown Java alias 'ollmaa' for chat_model_connection"
+    ):
+        build_agents(source)
+
+
 def test_build_agents_rejects_type_java_for_unsupported_resource(
     tmp_path: Path,
 ) -> None:

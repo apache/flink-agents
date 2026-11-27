@@ -24,6 +24,12 @@ Two tables:
   implementation language so the same alias (``ollama``) can refer to
   different classes across sections and languages.
 
+A class name that matches an alias resolves to its registered class path.
+A name containing a dot is treated as a fully-qualified custom class name
+and passes through unchanged. Any other alias miss is rejected, which
+catches typos and aliases that belong only to the other language. Java
+classes in the default package are not supported.
+
 For Java resources, the loader resolves the alias to the Java FQN and
 creates a JavaResourceDescriptor. Plan selects the execution wrapper.
 
@@ -206,12 +212,24 @@ def resolve_event_type(name: str) -> str:
 def resolve_clazz(
     name: str, resource_type: ResourceType, language: Language = "python"
 ) -> str:
-    """Look up ``name`` in the alias bucket for ``(resource_type, language)``.
+    """Resolve a YAML ``clazz`` value for ``(resource_type, language)``.
 
-    Returns the fully-qualified class path on hit, or ``name`` unchanged
-    on miss (so users can supply a fully-qualified class path directly).
-    The Java ``router`` alias returns the declaration placeholder instead
-    of a class path; see the module docstring.
+    If ``name`` matches an alias, return the mapped class name. Otherwise, if
+    it contains ``.``, treat it as a fully-qualified custom class name and pass
+    it through. Otherwise reject it as an unknown alias. This also rejects a
+    short alias registered only for the other language. Java classes in the
+    default package are not supported.
+
+    The Java ``router`` alias returns the declaration placeholder instead of a
+    class path; see the module docstring.
     """
     bucket = CLAZZ_ALIASES.get(resource_type, {}).get(language, {})
-    return bucket.get(name, name)
+    resolved = bucket.get(name)
+    if resolved is not None:
+        return resolved
+    if "." in name or name == ResourceName.ModelRouter.Java.MODEL_ROUTER:
+        # The Java router alias resolves to this declaration placeholder; the plan
+        # names the implementation class, so it is not a class path.
+        return name
+    msg = f"Unknown {language.capitalize()} alias {name!r} for {resource_type.value}"
+    raise ValueError(msg)
