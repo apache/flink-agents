@@ -315,8 +315,12 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
                     OpenAIChatCompletionsUtils.toNativeResponseFormat((Class<?>) outputSchema));
         }
 
+        @SuppressWarnings("unchecked")
+        Map<String, Object> additionalKwargs =
+                (Map<String, Object>) modelParams.remove("additional_kwargs");
         Object temperature = modelParams.remove("temperature");
-        if (temperature instanceof Number) {
+        if (temperature instanceof Number
+                && (additionalKwargs == null || !additionalKwargs.containsKey("temperature"))) {
             builder.temperature(((Number) temperature).doubleValue());
         }
 
@@ -342,9 +346,6 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
             builder.reasoningEffort(ReasoningEffort.of((String) reasoningEffort));
         }
 
-        @SuppressWarnings("unchecked")
-        Map<String, Object> additionalKwargs =
-                (Map<String, Object>) modelParams.remove("additional_kwargs");
         if (additionalKwargs != null) {
             additionalKwargs.forEach(
                     (key, value) -> builder.putAdditionalBodyProperty(key, toJsonValue(value)));

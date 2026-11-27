@@ -17,7 +17,9 @@
 #################################################################################
 from unittest.mock import MagicMock
 
+import pytest
 from openai.types.chat import ChatCompletion
+from pydantic import ValidationError
 
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.integrations.chat_models.openai.openai_chat_model import (
@@ -82,3 +84,34 @@ def test_defaults_send_neither_parameter() -> None:
     assert "reasoning_effort" not in request
     assert "strict" not in request
     assert request["tools"][0]["function"]["strict"] is False
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"temperature": None}])
+def test_unset_temperature_is_omitted(kwargs: dict) -> None:
+    request = _request(OpenAIChatModelSetup(connection="conn", **kwargs))
+
+    assert "temperature" not in request
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({"temperature": 0.0}, 0.0),
+        ({"temperature": 0.3}, 0.3),
+        ({"temperature": 2.0}, 2.0),
+        ({"additional_kwargs": {"temperature": 0.0}}, 0.0),
+        ({"temperature": 0.3, "additional_kwargs": {"temperature": 0.7}}, 0.7),
+    ],
+)
+def test_explicit_temperature_reaches_request(kwargs: dict, expected: float) -> None:
+    request = _request(
+        OpenAIChatModelSetup(connection="conn", model="gpt-6-luna", **kwargs)
+    )
+
+    assert request["temperature"] == expected
+
+
+@pytest.mark.parametrize("temperature", [-0.1, 2.1])
+def test_invalid_temperature_is_rejected(temperature: float) -> None:
+    with pytest.raises(ValidationError, match="temperature"):
+        OpenAIChatModelSetup(connection="conn", temperature=temperature)

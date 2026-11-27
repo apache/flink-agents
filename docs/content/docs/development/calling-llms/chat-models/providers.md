@@ -1005,7 +1005,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `model` | str | `"gpt-4o-mini"` | Name of the chat model to use |
-| `temperature` | float | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `temperature` | float | None | Sampling temperature (0.0 to 2.0) |
 | `max_tokens` | int | None | Maximum number of tokens to generate |
 | `logprobs` | bool | None | Whether to return log probabilities per token |
 | `top_logprobs` | int | `0` | Number of top token log probabilities to return (0-20) |
@@ -1020,7 +1020,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `model` | String | `"gpt-4o-mini"` | Name of the chat model to use |
-| `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `temperature` | double | None | Sampling temperature (0.0 to 2.0) |
 | `max_tokens` | int | None | Maximum number of tokens to generate |
 | `logprobs` | boolean | None | Whether to return log probabilities per token |
 | `top_logprobs` | int | `0` | Number of top token log probabilities to return (0-20) |
@@ -1158,7 +1158,7 @@ differ from the Chat Completions integration above, even when both connect to Op
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `model` | String | `"gpt-4o"` | Name of the chat model to use |
-| `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `temperature` | double | None | Sampling temperature (0.0 to 2.0) |
 | `max_tokens` | int | None | Maximum number of tokens to generate |
 | `strict` | boolean | `false` | Enable strict mode for tool calling schemas |
 | `reasoning_effort` | String | None | Reasoning effort level for reasoning models ("low", "medium", "high") |
