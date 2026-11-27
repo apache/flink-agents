@@ -384,9 +384,6 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
                 self._client = None
 
 
-DEFAULT_TEMPERATURE = 0.1
-
-
 class OpenAIChatModelSetup(BaseChatModelSetup):
     """The settings for the OpenAI LLM.
 
@@ -401,7 +398,7 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
         Prompt template or string for the model. (Inherited from BaseChatModelSetup)
     tools : Optional[List[str]]
         List of available tools to use in the chat. (Inherited from BaseChatModelSetup)
-    temperature : float
+    temperature : Optional[float]
         The temperature to use during generation.
     max_tokens : Optional[int]
         The maximum number of tokens to generate.
@@ -417,8 +414,8 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
         The effort to use for reasoning models.
     """
 
-    temperature: float = Field(
-        default=DEFAULT_TEMPERATURE,
+    temperature: float | None = Field(
+        default=None,
         description="The temperature to use during generation.",
         ge=0.0,
         le=2.0,
@@ -453,7 +450,7 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
         self,
         *,
         model: str = DEFAULT_OPENAI_MODEL,
-        temperature: float = DEFAULT_TEMPERATURE,
+        temperature: float | None = None,
         max_tokens: int | None = None,
         additional_kwargs: Dict[str, Any] | None = None,
         strict: bool = False,
@@ -475,7 +472,9 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
     @property
     def model_kwargs(self) -> Dict[str, Any]:
         """Return chat model settings."""
-        base_kwargs = {"model": self.model, "temperature": self.temperature}
+        base_kwargs = {"model": self.model}
+        if self.temperature is not None:
+            base_kwargs["temperature"] = self.temperature
         if self.max_tokens is not None:
             base_kwargs["max_tokens"] = self.max_tokens
         if self.logprobs is not None and self.logprobs is True:

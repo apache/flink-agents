@@ -170,8 +170,12 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
             builder.tools(OpenAIResponsesUtils.convertTools(tools, strictMode));
         }
 
+        @SuppressWarnings("unchecked")
+        Map<String, Object> additionalKwargs =
+                (Map<String, Object>) modelParams.remove("additional_kwargs");
         Object temperature = modelParams.remove("temperature");
-        if (temperature instanceof Number) {
+        if (temperature instanceof Number
+                && (additionalKwargs == null || !additionalKwargs.containsKey("temperature"))) {
             builder.temperature(((Number) temperature).doubleValue());
         }
 
@@ -189,8 +193,9 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
         }
 
         Object store = modelParams.remove("store");
-        if (Boolean.TRUE.equals(store)) {
-            builder.store(true);
+        if (store instanceof Boolean
+                && (additionalKwargs == null || !additionalKwargs.containsKey("store"))) {
+            builder.store((Boolean) store);
         }
 
         Object instructions = modelParams.remove("instructions");
@@ -198,9 +203,6 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
             builder.instructions((String) instructions);
         }
 
-        @SuppressWarnings("unchecked")
-        Map<String, Object> additionalKwargs =
-                (Map<String, Object>) modelParams.remove("additional_kwargs");
         if (additionalKwargs != null) {
             additionalKwargs.forEach(
                     (key, value) ->

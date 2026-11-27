@@ -59,7 +59,6 @@ import java.util.Set;
 public class OpenAICompletionsSetup extends BaseChatModelSetup {
 
     private static final String DEFAULT_MODEL = "gpt-4o-mini";
-    private static final double DEFAULT_TEMPERATURE = 0.1d;
     private static final int DEFAULT_TOP_LOGPROBS = 0;
     private static final boolean DEFAULT_STRICT = false;
     private static final Set<String> VALID_REASONING_EFFORTS = Set.of("low", "medium", "high");
@@ -77,8 +76,8 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
         this.temperature =
                 Optional.ofNullable(descriptor.<Number>getArgument("temperature"))
                         .map(Number::doubleValue)
-                        .orElse(DEFAULT_TEMPERATURE);
-        if (this.temperature < 0.0 || this.temperature > 2.0) {
+                        .orElse(null);
+        if (this.temperature != null && (this.temperature < 0.0 || this.temperature > 2.0)) {
             throw new IllegalArgumentException("temperature must be between 0.0 and 2.0");
         }
 
@@ -154,7 +153,9 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
         if (model != null) {
             parameters.put("model", model);
         }
-        parameters.put("temperature", temperature);
+        if (temperature != null) {
+            parameters.put("temperature", temperature);
+        }
         if (maxTokens != null) {
             parameters.put("max_tokens", maxTokens);
         }

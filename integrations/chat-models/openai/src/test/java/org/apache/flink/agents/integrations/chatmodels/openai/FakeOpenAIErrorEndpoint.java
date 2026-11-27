@@ -23,6 +23,7 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * A loopback HTTP endpoint that answers every request with the provider error envelope OpenAI
@@ -44,17 +45,24 @@ final class FakeOpenAIErrorEndpoint implements AutoCloseable {
                     + "\"}}";
 
     private final HttpServer server;
+    private final AtomicReference<String> requestBody;
 
-    private FakeOpenAIErrorEndpoint(HttpServer server) {
+    private FakeOpenAIErrorEndpoint(HttpServer server, AtomicReference<String> requestBody) {
         this.server = server;
+        this.requestBody = requestBody;
     }
 
     static FakeOpenAIErrorEndpoint rejectingWith400() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         byte[] body = ERROR_BODY.getBytes(StandardCharsets.UTF_8);
+        AtomicReference<String> requestBody = new AtomicReference<>();
         server.createContext(
                 "/",
                 exchange -> {
+                    requestBody.set(
+                            new String(
+                                    exchange.getRequestBody().readAllBytes(),
+                                    StandardCharsets.UTF_8));
                     exchange.getResponseHeaders().add("Content-Type", "application/json");
                     exchange.sendResponseHeaders(400, body.length);
                     exchange.getResponseBody().write(body);
@@ -62,7 +70,11 @@ final class FakeOpenAIErrorEndpoint implements AutoCloseable {
                 });
         server.setExecutor(null);
         server.start();
-        return new FakeOpenAIErrorEndpoint(server);
+        return new FakeOpenAIErrorEndpoint(server, requestBody);
+    }
+
+    String requestBody() {
+        return requestBody.get();
     }
 
     String baseUrl() {
