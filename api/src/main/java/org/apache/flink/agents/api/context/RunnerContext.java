@@ -255,7 +255,7 @@ public interface RunnerContext {
     <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable);
 
     /**
-     * Composes deferred ordinary and/or durable calls into one deferred batch.
+     * Composes ordinary, durable, Chat and built-in subagent calls into one deferred batch.
      *
      * <p>The input order defines result order. Resolving the returned future reuses locally
      * completed outcomes, then reserves slots for unresolved durable calls only before submitting
@@ -269,9 +269,15 @@ public interface RunnerContext {
      * <p>Resolving the returned future executes eligible uncached calls concurrently, bounded by
      * {@link AgentExecutionOptions#ASYNC_BATCH_PARALLELISM} and the shared async worker pool.
      *
-     * <p>On timeout, completed calls keep their outcomes. Started durable calls are finalized as
-     * failures, while unstarted durable calls remain pending for recovery. Running callbacks are
-     * not interrupted and their external effects cannot be undone.
+     * <p>On batch timeout, the returned outcomes preserve completed calls' results and represent
+     * unfinished calls as timeout failures. The timeout itself does not trigger recovery or a
+     * retry. Running work is not guaranteed to stop, and its external effects cannot be undone.
+     *
+     * <p>With an Action State Store enabled, recovery behavior for timed-out calls depends on the
+     * call type. Started durable callables persist the timeout as a failure and replay it on
+     * recovery; unstarted durable callables can execute on recovery. Chat and internal sub-agent
+     * calls do not persist the batch timeout as their result. If the job later recovers, these
+     * calls resume from their recorded state instead of replaying the timeout.
      */
     <T> AsyncFuture<List<Outcome<T>>> gather(List<? extends AsyncFuture<T>> futures);
 

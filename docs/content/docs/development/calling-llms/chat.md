@@ -211,15 +211,14 @@ For prompt arguments or structured output, pass a `ChatRequestEvent` to `ctx.cha
 
 ### Await and Recovery
 
-Await `ctx.chat` directly within the Action execution that created it; do not wrap
-it in `durable_execute_async` / `durableExecuteAsync`. Chat futures do not currently
-support `gather`. For general await behavior and durable execution, see
+Await `ctx.chat` directly or through `gather` within the Action execution that
+created it; do not wrap it in `durable_execute_async` / `durableExecuteAsync`.
+For general await behavior, batch timeouts, and durable execution, see
 [Async Execution]({{< ref "docs/development/create-agent/actions#async-execution" >}})
 and [Durable Execution]({{< ref "docs/development/create-agent/actions#durable-execution" >}}).
 
-With durable execution enabled, chat calls reuse recorded responses by Action
-execution and await order, not by model or message contents. Existing model and
-tool timeouts apply; `ctx.chat` adds no whole-call timeout.
+With an Action State Store enabled, Chat calls reuse their recorded responses
+during recovery.
 
 <span id="java-runtime-requirements"></span>
 
@@ -401,7 +400,7 @@ metadata omitted):
 
 ## Tool Calling {#built-in-events-and-actions}
 
-A chat model can use tools to perform operations while answering a request. To enable this, define or register the tools and reference their names in the model setup's `tools` list. See [Local Function as Tool]({{< ref "docs/development/calling-llms/tool_use#local-function-as-tool" >}}) for declaration and registration examples, [Tool Parameter Injection]({{< ref "docs/development/calling-llms/tool_use#tool-parameter-injection" >}}) for framework-provided arguments, and [Parallel tool-call batches]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}}) for execution settings and concurrency limits.
+A chat model can use tools to perform operations while answering a request. To enable this, define or register the tools and reference their names in the model setup's `tools` list. See [Local Function as Tool]({{< ref "docs/development/calling-llms/tool_use#local-function-as-tool" >}}) for declaration and registration examples, [Tool Parameter Injection]({{< ref "docs/development/calling-llms/tool_use#tool-parameter-injection" >}}) for framework-provided arguments, and [Parallel Tool Calls]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-calls" >}}) for execution settings and concurrency limits.
 
 Send a `ChatRequestEvent` or await `ctx.chat` as usual. Both use the following tool loop, in which the model decides whether to answer directly or request tool calls:
 
