@@ -57,7 +57,7 @@
         "type": "model_router",
         "descriptor": {
           "language": "python",
-          "target_module": "flink_agents.api.chat_models.routing",
+          "target_module": "flink_agents.plan.routing.model_router",
           "target_clazz": "ModelRouter",
           "arguments": {
             "candidates": [

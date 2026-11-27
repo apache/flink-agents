@@ -989,7 +989,7 @@ def test_model_router_declarations_keep_descriptor_arguments(tmp_path: Path) -> 
         "  - name: routed\n"
         "    model_routers:\n"
         "      - name: local_router\n"
-        "        clazz: flink_agents.api.chat_models.routing.ModelRouter\n"
+        "        clazz: MODEL_ROUTER_PLACEHOLDER\n"
         "        candidates: [small, big]\n"
         "        candidate_descriptions:\n"
         "          small: cheap model\n"
@@ -1007,10 +1007,8 @@ def test_model_router_declarations_keep_descriptor_arguments(tmp_path: Path) -> 
     local_router = agents["routed"].resources[ResourceType.MODEL_ROUTER]["local_router"]
     assert shared_router.language == local_router.language == "python"
     for descriptor in (shared_router, local_router):
-        assert (
-            f"{descriptor.target_module}.{descriptor.target_clazz}"
-            == ResourceName.ModelRouter.MODEL_ROUTER
-        )
+        assert descriptor.target_module == ""
+        assert descriptor.target_clazz == ResourceName.ModelRouter.MODEL_ROUTER
     assert shared_router.arguments == {
         "candidates": ["small", "big"],
         "strategy_type": "rule_based",

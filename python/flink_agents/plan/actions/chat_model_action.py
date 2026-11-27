@@ -39,7 +39,6 @@ from flink_agents.api.core_options import (
 )
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event
-from flink_agents.api.events.model_routing_event import ModelRoutingEvent
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.resource import ResourceType
@@ -50,10 +49,17 @@ from flink_agents.api.trace import (
     ExecutionReporters,
     LLMExecutionMetadataKeys,
 )
+from flink_agents.plan.actions import chat_retry_stats
 from flink_agents.plan.actions.action import Action
+from flink_agents.plan.actions.chat_retry_stats import RETRY_STATS_CONTEXT
 from flink_agents.plan.actions.utils import support_async
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.resource.java.java_chat_model import JavaChatModelSetup
+from flink_agents.plan.routing import executor as routing_executor
+from flink_agents.plan.routing.executor import (
+    CandidateAttemptFailed,
+    ModelRoutingExecutionException,
+)
 from flink_agents.plan.routing.resolved_route import ResolvedModelRoute
 from flink_agents.plan.routing.resolver import RoutingFailure, resolve
 
@@ -63,8 +69,6 @@ if TYPE_CHECKING:
 
 _TOOL_CALL_CONTEXT = "_TOOL_CALL_CONTEXT"
 _TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT"
-_RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT"
-_ROUTING_METADATA_CONTEXT = "_ROUTING_METADATA_CONTEXT"
 # The identity of each chat model attempt, the same as the Java chat action's call id
 # for a plain chat model. Without it the identity is a digest of the pickled messages,
 # which can change between Python processes (#1190); attempts are told apart by their
@@ -205,7 +209,7 @@ def _send_failure(
     ctx: RunnerContext,
     user_context: dict[str, Any] | None = None,
 ) -> None:
-    stats = _get_retry_stats(ctx.sensory_memory, request_id)
+    stats = chat_retry_stats.get(ctx.sensory_memory, request_id)
     _clear_request_context(ctx.sensory_memory, request_id)
     ctx.send_event(
         ChatResponseEvent.failed(
@@ -219,10 +223,11 @@ def _send_failure(
 
 
 def _clear_request_context(memory: MemoryObject, request_id: UUID) -> None:
-    for key in (_TOOL_CALL_CONTEXT, _RETRY_STATS_CONTEXT, _ROUTING_METADATA_CONTEXT):
+    for key in (_TOOL_CALL_CONTEXT, RETRY_STATS_CONTEXT):
         context = dict(memory.get(key) or {})
         if context.pop(str(request_id), None) is not None:
             memory.set(key, context)
+    routing_executor.clear_routing_metadata(memory, request_id)
 
 
 # ============================================================================
@@ -353,61 +358,6 @@ def _get_tool_request_event_context(
                 removed_context[_USER_CONTEXT]
             )
     return removed_context
-
-
-def _accumulate_retry_stats(
-    sensory_memory: MemoryObject,
-    initial_request_id: UUID,
-    retry_count: int,
-    retry_wait_ms: int,
-) -> None:
-    """Accumulate retry stats for a given initial request across tool call rounds."""
-    key = str(initial_request_id)
-    retry_stats_context = sensory_memory.get(_RETRY_STATS_CONTEXT) or {}
-    stats = retry_stats_context.get(
-        key,
-        {
-            "total_retry_count": 0,
-            "total_retry_wait_ms": 0,
-        },
-    )
-    stats["total_retry_count"] += retry_count
-    stats["total_retry_wait_ms"] += retry_wait_ms
-    retry_stats_context[key] = stats
-    sensory_memory.set(_RETRY_STATS_CONTEXT, retry_stats_context)
-
-
-def _get_retry_stats(
-    sensory_memory: MemoryObject,
-    initial_request_id: UUID,
-) -> dict:
-    """Get accumulated retry stats for a given initial request."""
-    retry_stats_context = sensory_memory.get(_RETRY_STATS_CONTEXT) or {}
-    return retry_stats_context.get(
-        str(initial_request_id),
-        {
-            "total_retry_count": 0,
-            "total_retry_wait_ms": 0,
-        },
-    )
-
-
-def _record_retry_metrics(
-    ctx: RunnerContext,
-    model_resource: str,
-    retry_count: int,
-    total_retry_wait_ms: int,
-) -> None:
-    """Record retry metrics under the ChatModel resource if retries occurred."""
-    if retry_count <= 0:
-        return
-    metric_group = ctx.action_metric_group
-    if metric_group is not None:
-        model_resource_group = metric_group.get_sub_group(
-            "model_resource", model_resource
-        )
-        model_resource_group.get_counter("retryCount").inc(retry_count)
-        model_resource_group.get_counter("retryWaitMs").inc(total_retry_wait_ms)
 
 
 def _inject_bash_tool_args(
@@ -626,12 +576,8 @@ class _ChatAttemptResult:
     structured_output: Any
 
 
-class _ChatAttemptFailed(Exception):
+class _ChatAttemptFailed(CandidateAttemptFailed):
     """A candidate exhausted its retry budget or could not be prepared."""
-
-    def __init__(self, error: Exception) -> None:
-        super().__init__(str(error))
-        self.error = error
 
 
 async def _chat_with_retries(
@@ -798,10 +744,12 @@ async def _chat_with_retries(
                     break
             break
     finally:
-        _record_retry_metrics(ctx, model, actual_retry_count, total_wait_time_ms)
+        chat_retry_stats.record_metrics(
+            ctx, model, actual_retry_count, total_wait_time_ms
+        )
 
     if actual_retry_count > 0:
-        _accumulate_retry_stats(
+        chat_retry_stats.accumulate(
             ctx.sensory_memory,
             initial_request_id,
             actual_retry_count,
@@ -865,67 +813,46 @@ async def _chat_resolved(
     user_context: dict[str, Any] | None = None,
 ) -> None:
     """Execute an initial selection or an already concrete tool follow-up."""
-    tried = []
-    failures = []
-    for candidate in selection.attempt_order():
-        tried.append(candidate)
-        try:
-            attempt = await _chat_with_retries(
-                initial_request_id,
-                candidate,
-                messages,
-                prompt_args,
-                output_schema,
-                ctx,
-                durable_id=selection.durable_chat_call_id(candidate),
-            )
-        except _ChatAttemptFailed as failure:
-            failures.append(failure.error)
-            continue
-        model = candidate
-        if selection.is_router:
-            if candidate != selection.selected_model:
-                ctx.send_event(
-                    ModelRoutingEvent(
-                        request_id=initial_request_id,
-                        router=selection.requested_model,
-                        candidates=selection.candidates,
-                        selected_model=candidate,
-                        decision_source="fallback",
-                        fallback_enabled=selection.fallback_enabled,
-                        reason=f"fallback after selected model '{selection.selected_model}' failed",
-                        metadata=selection.metadata,
-                    )
-                )
-            routing_context = dict(
-                ctx.sensory_memory.get(_ROUTING_METADATA_CONTEXT) or {}
-            )
-            routing_context[str(initial_request_id)] = (
-                selection.build_response_metadata(candidate, tried)
-            )
-            ctx.sensory_memory.set(_ROUTING_METADATA_CONTEXT, routing_context)
-        break
-    else:
+
+    async def attempt(candidate: str, durable_id: str) -> _ChatAttemptResult:
+        return await _chat_with_retries(
+            initial_request_id,
+            candidate,
+            messages,
+            prompt_args,
+            output_schema,
+            ctx,
+            durable_id=durable_id,
+        )
+
+    try:
+        executed = await routing_executor.execute(
+            initial_request_id, selection, attempt, ctx
+        )
+    except ModelRoutingExecutionException as failure:
         # Keep every candidate's cause in the final failure, in attempt order.
         error = (
-            failures[-1]
-            if len(failures) == 1
+            failure.errors[-1]
+            if len(failure.errors) == 1
             else _InvocationFailure(
                 "; ".join(
                     f"{name}: {_error_text(error)}"
-                    for name, error in zip(tried, failures, strict=True)
+                    for name, error in zip(failure.tried, failure.errors, strict=True)
                 )
             )
         )
         _send_failure(initial_request_id, error, ctx, user_context)
         return
-    response = attempt.response
-    chat_model = attempt.chat_model
-    structured_output = attempt.structured_output
+    model = executed.model
+    attempt_result = executed.attempt
+    response = attempt_result.response
+    chat_model = attempt_result.chat_model
+    structured_output = attempt_result.structured_output
 
     if (
         len(response.tool_calls) > 0
     ):  # generate tool request event according tool calls in response
+        routing_executor.save_routing_metadata(ctx.sensory_memory, executed)
         _handle_tool_calls(
             response,
             initial_request_id,
@@ -938,12 +865,12 @@ async def _chat_resolved(
             user_context,
         )
     else:  # if there is no tool call generated, return chat response directly
-        retry_stats = _get_retry_stats(ctx.sensory_memory, initial_request_id)
+        retry_stats = chat_retry_stats.get(ctx.sensory_memory, initial_request_id)
         total_retry_count = retry_stats["total_retry_count"]
         total_retry_wait_ms = retry_stats["total_retry_wait_ms"]
-        routing_metadata = (
-            ctx.sensory_memory.get(_ROUTING_METADATA_CONTEXT) or {}
-        ).get(str(initial_request_id))
+        routing_metadata = routing_executor.get_and_clear_routing_metadata(
+            ctx.sensory_memory, executed
+        )
         _clear_request_context(ctx.sensory_memory, initial_request_id)
         completed = ChatResponseEvent.success(
             request_id=initial_request_id,

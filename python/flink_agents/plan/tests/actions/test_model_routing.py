@@ -45,6 +45,7 @@ from flink_agents.plan.actions.chat_model_action import (
     process_chat_request_or_tool_response,
 )
 from flink_agents.plan.resource_provider import ResourceProvider
+from flink_agents.plan.routing.model_router import ModelRouter as RouterResource
 from flink_agents.plan.tests.actions.test_chat_model_action_retry import (
     _create_mock_runner_context,
 )
@@ -84,7 +85,7 @@ def setup(strategy=None, *, fallback=False, default=None, retries=0, chat_async=
     )
     if default is not None:
         builder.default_model(default)
-    router = ModelRouter(**builder.build().arguments)
+    router = RouterResource(**builder.build().arguments)
     models = {name: MagicMock(model=name) for name in router.candidates}
     for model in models.values():
         model.chat.return_value = result()
@@ -318,8 +319,8 @@ def test_scoped_model_requests_and_tool_followups(request_model, monkeypatch):
         value.provide.return_value = resource
         return value
 
-    def router(candidate) -> ModelRouter:
-        return ModelRouter(
+    def router(candidate) -> RouterResource:
+        return RouterResource(
             **ModelRouter.of(candidate).strategy(Strategies.rules({})).build().arguments
         )
 

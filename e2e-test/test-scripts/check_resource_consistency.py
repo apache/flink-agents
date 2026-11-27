@@ -79,7 +79,7 @@ def parse_java_resource_name(java_path: Path) -> dict:
             pos = match.end()
         elif kind == "string" and match and class_stack:
             const_name, value = match.group(1), match.group(2)
-            if value and value != "DECIDE_IN_RUNTIME_MCPServer":
+            if value and value != "MCP_SERVER_PLACEHOLDER":
                 path = [c[0] for c in class_stack]
 
                 if len(path) == 2:

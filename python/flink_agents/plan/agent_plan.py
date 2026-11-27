@@ -140,6 +140,16 @@ class AgentPlan(BaseModel):
                                 )
         return self
 
+    @model_validator(mode="after")
+    def __validate_restored_routing(self) -> "AgentPlan":
+        # A plan built by from_agent assigns its providers after construction and
+        # validates them there; a plan restored from JSON arrives with them.
+        if self.resource_providers:
+            from flink_agents.plan.routing.validation import validate_routing
+
+            validate_routing(self.resource_providers, allow_java=True)
+        return self
+
     @staticmethod
     def from_agent(
         agent: Agent, config: AgentConfiguration, agent_name: str | None = None
