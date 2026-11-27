@@ -458,7 +458,8 @@ public final class EscalationEvaluator {
                         Map.of(),
                         "escalate:" + router + ":" + candidate,
                         "escalation signal for router '" + router + "'",
-                        false);
+                        false,
+                        context.getRequestId());
         // Retries count against the routed request, as the decision strategy's do: response-level
         // totals and the model_resource counters both come from this one call.
         ChatRetryStats.recordAttempt(

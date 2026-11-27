@@ -736,14 +736,15 @@ def test_chat_with_schema_and_no_tools_omits_tool_only_params(
     assert setup.setup_params == _params_with_tool_choice()
 
 
-def test_plain_chat_keeps_tool_only_params() -> None:
-    """A plain chat() on a setup without tools sends the tool-only parameters."""
+def test_plain_chat_without_tools_omits_tool_only_params() -> None:
+    """A plain chat() on a setup without tools omits the tool-only parameters."""
     setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
     setup.setup_params = _params_with_tool_choice()
 
-    setup.chat([ChatMessage.of(MessageRole.USER, "hi")])
+    setup.chat([ChatMessage.user("hi")], temperature=0.2, tool_choice="required")
 
-    assert connection.captured_kwargs == _params_with_tool_choice()
+    assert connection.captured_kwargs == {**_STRIPPED_PARAMS, "temperature": 0.2}
+    assert setup.setup_params == _params_with_tool_choice()
 
 
 @pytest.mark.parametrize(
@@ -824,3 +825,14 @@ def test_chat_without_tools_sends_the_prepared_request_and_bound_tools(
     assert connection.captured_tools[0] is bound
     assert connection.captured_output_schema is output_schema
     assert connection.captured_kwargs == {"top_p": 1}
+
+
+def test_empty_tools_drop_tool_only_params_without_schema() -> None:
+    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+    setup.setup_params = _params_with_tool_choice()
+    setup.chat(
+        [ChatMessage.user("finish")], tools=[], temperature=0.2, tool_choice="required"
+    )
+    assert connection.captured_tools == []
+    assert connection.captured_kwargs == {**_STRIPPED_PARAMS, "temperature": 0.2}
+    assert setup.setup_params == _params_with_tool_choice()

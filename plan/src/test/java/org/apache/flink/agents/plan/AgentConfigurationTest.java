@@ -34,6 +34,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -41,6 +42,19 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class AgentConfigurationTest {
+    @Test
+    void genericEnumSurvivesJsonRoundTrip() throws Exception {
+        var modeOption =
+                new ConfigOption<>("custom.mode", ConditionEvaluationFailureStrategy.class, null);
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var config = new AgentConfiguration();
+        config.set(modeOption, ConditionEvaluationFailureStrategy.FAIL);
+        var restored =
+                new AgentConfiguration(
+                        mapper.readValue(
+                                mapper.writeValueAsString(config.getConfData()), Map.class));
+        assertThat(restored.get(modeOption)).isEqualTo(ConditionEvaluationFailureStrategy.FAIL);
+    }
 
     @Test
     void mapValuesRemainIntactThroughPlanJson() throws Exception {

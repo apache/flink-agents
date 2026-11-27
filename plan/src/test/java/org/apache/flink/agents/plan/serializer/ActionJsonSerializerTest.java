@@ -21,10 +21,15 @@ package org.apache.flink.agents.plan.serializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.utils.JsonUtils;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -39,6 +44,38 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Test for {@link ActionJsonSerializer}. */
 public class ActionJsonSerializerTest {
+
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
+
+    @Test
+    public void budgetConfigRestoresTypedObject() throws Exception {
+        var budget =
+                ReActLoopBudget.builder()
+                        .maxTurns(2)
+                        .maxTime(java.time.Duration.ofMillis(60001))
+                        .maxTokens(Long.MAX_VALUE)
+                        .mode(ReActLoopBudget.BudgetMode.HARD)
+                        .build();
+        var function =
+                new JavaFunction(
+                        "org.apache.flink.agents.plan.TestAction",
+                        "legal",
+                        new Class[] {Event.class, RunnerContext.class});
+        var action =
+                new Action(
+                        "budgeted",
+                        function,
+                        List.of(InputEvent.EVENT_TYPE),
+                        Map.of("budget", budget));
+        JsonUtils.checkSerializable(
+                new ChatRequestEvent(
+                        "model", List.of(ChatMessage.user("hi")), null, null, null, budget));
+        var restored = MAPPER.readValue(MAPPER.writeValueAsString(action), Action.class);
+        var actual = assertInstanceOf(ReActLoopBudget.class, restored.getConfig().get("budget"));
+        assertEquals(
+                MAPPER.convertValue(budget, Map.class), MAPPER.convertValue(actual, Map.class));
+    }
+
     @Test
     public void testSerializeJavaFunction() throws Exception {
         // Create a JavaFunction

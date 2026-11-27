@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -44,6 +45,7 @@ import org.apache.flink.agents.api.vectorstores.Document;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -64,6 +66,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Test class for ActionState serialization and deserialization. */
 public class ActionStateSerdeTest {
+
+    @Test
+    void timeBudgetSurvivesSerialization() throws Exception {
+        var budget = ReActLoopBudget.builder().maxTime(Duration.ofMillis(60001)).build();
+        var request =
+                new ChatRequestEvent(
+                        "model", List.of(ChatMessage.user("hi")), null, null, null, budget);
+        var state = new ActionState(occurrence(request));
+        state.addEvent(request);
+        var restored = ActionStateSerde.deserialize(ActionStateSerde.serialize(state));
+        assertEquals(
+                budget.getMaxTime(),
+                ChatRequestEvent.fromEvent(restored.getTaskEvent()).getBudget().getMaxTime());
+        assertEquals(
+                budget.getMaxTime(),
+                ChatRequestEvent.fromEvent(restored.getOutputEvents().get(0))
+                        .getBudget()
+                        .getMaxTime());
+    }
 
     @Test
     public void testActionStateSerializationDeserialization() throws Exception {

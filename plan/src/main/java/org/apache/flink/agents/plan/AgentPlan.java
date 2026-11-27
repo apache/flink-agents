@@ -54,6 +54,7 @@ import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameterInjectionValidator;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ContextRetrievalAction;
@@ -100,6 +101,9 @@ import static org.apache.flink.agents.api.resource.ResourceType.TOOL;
 @JsonSerialize(using = AgentPlanJsonSerializer.class)
 @JsonDeserialize(using = AgentPlanJsonDeserializer.class)
 public class AgentPlan implements Serializable {
+
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
+
     private static final Logger LOG = LoggerFactory.getLogger(AgentPlan.class);
     private static final String JAVA_MCP_SERVER_CLASS_NAME =
             "org.apache.flink.agents.integrations.mcp.MCPServer";
@@ -215,13 +219,13 @@ public class AgentPlan implements Serializable {
     }
 
     private void writeObject(ObjectOutputStream out) throws IOException {
-        String serializedStr = new ObjectMapper().writeValueAsString(this);
+        String serializedStr = MAPPER.writeValueAsString(this);
         out.writeUTF(serializedStr);
     }
 
     private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
         String serializedStr = in.readUTF();
-        AgentPlan agentPlan = new ObjectMapper().readValue(serializedStr, AgentPlan.class);
+        AgentPlan agentPlan = MAPPER.readValue(serializedStr, AgentPlan.class);
         this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(agentPlan.getActions()));
         this.resourceProviders = agentPlan.getResourceProviders();
         this.agentName = agentPlan.getAgentName();

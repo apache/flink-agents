@@ -222,19 +222,42 @@ def test_java_chat_model_setup_native_strategy_without_a_schema_is_false() -> No
 
 @pytest.mark.parametrize(
     "call_kwargs",
-    [{"tools": []}, {"output_schema": OutputSchema(output_schema=_Answer)}],
+    [{"tools": [Mock()]}, {"output_schema": OutputSchema(output_schema=_Answer)}],
     ids=["tools", "output_schema"],
 )
 def test_java_chat_model_setup_refuses_tools_or_output_schema(
     call_kwargs: dict[str, Any],
 ) -> None:
-    """Tools or a schema are refused before anything crosses to Java: the bridge
-    cannot send messages without the Java setup's bound prompt and tools, nor carry
-    a schema.
-    """
+    """Explicit non-empty tools and native schemas are refused before crossing Java."""
     setup, j_resource, adapter = _java_chat_model_setup()
 
-    with pytest.raises(NotImplementedError, match="Java chat model setup"):
+    with pytest.raises(NotImplementedError, match="Java setup bridge"):
         setup.chat([ChatMessage.of(MessageRole.USER, "hi")], **call_kwargs)
     assert j_resource.mock_calls == []
     assert adapter.mock_calls == []
+
+
+def test_empty_tools_forwards_prepared_history_to_java() -> None:
+    setup, resource, adapter = _java_chat_model_setup()
+    history = ChatMessage.user("finish")
+    answer = ChatMessage.assistant("done")
+    adapter.chatWithExplicitTools.return_value.toMap.return_value = {
+        "message": answer.model_dump(mode="json")
+    }
+    assert setup.chat([history], tools=[], temperature=0.2).text == "done"
+    adapter.chatWithExplicitTools.assert_called_once_with(
+        resource, [adapter.fromPythonChatMessage.return_value], [], {"temperature": 0.2}
+    )
+
+
+def test_prepare_request_messages_delegates_prompt_args_to_java() -> None:
+    setup, resource, adapter = _java_chat_model_setup()
+    prepared = Mock()
+    prepared.toMap.return_value = ChatMessage.user("prepared").model_dump(mode="json")
+    resource.prepareRequestMessages.return_value = [prepared]
+    assert setup.prepare_request_messages([ChatMessage.user("hi")], {"k": "v"}) == [
+        ChatMessage.user("prepared")
+    ]
+    resource.prepareRequestMessages.assert_called_once_with(
+        [adapter.fromPythonChatMessage.return_value], {"k": "v"}
+    )

@@ -50,6 +50,7 @@ from flink_agents.api.trace import (
     LLMExecutionMetadataKeys,
 )
 from flink_agents.plan.actions import chat_retry_stats
+from flink_agents.plan.actions import react_loop_budget_utils as budget_utils
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.chat_retry_stats import RETRY_STATS_CONTEXT
 from flink_agents.plan.actions.utils import support_async
@@ -175,19 +176,16 @@ def _invoke_chat(
 
 def _invoke_finalization(
     chat_model: "BaseChatModelSetup",
-    answer_text: str,
-    output_schema: OutputSchema,
+    messages: List[ChatMessage],
+    output_schema: OutputSchema | None,
 ) -> tuple[ChatResult | None, str | None]:
-    # A fresh user message rather than resending the response object: it carries
-    # no provider-specific fields of the loop response, and a single user turn
-    # avoids provider rules on turn order and on empty assistant content.
+    # Both soft finalization and native conversion use prepared messages without tools.
     try:
-        request = [ChatMessage.user(_FINALIZE_DIRECTIVE + answer_text)]
-        return chat_model.chat(request, tools=[], output_schema=output_schema), None
+        return chat_model.chat(messages, tools=[], output_schema=output_schema), None
     except (CancelledError, InterruptedError):
         raise
     except Exception as error:
-        _logger.debug("Structured chat provider failed", exc_info=True)
+        _logger.debug("Finalization provider failed", exc_info=True)
         return None, _error_text(error)
 
 
@@ -222,8 +220,29 @@ def _send_failure(
     )
 
 
+def _handle_hard_limit_exceeded(
+    request_id: UUID,
+    reason: str | None,
+    ctx: RunnerContext,
+    user_context: dict[str, Any] | None,
+) -> bool:
+    if reason is None or budget_utils.is_soft_limit(ctx.sensory_memory, request_id):
+        return False
+    _send_failure(request_id, RuntimeError(reason), ctx, user_context)
+    return True
+
+
+def _closing_messages(messages: List[ChatMessage]) -> List[ChatMessage]:
+    instruction = "Give your final answer now using the information already available. Do not call tools."
+    return [*messages, ChatMessage.user(instruction)]
+
+
 def _clear_request_context(memory: MemoryObject, request_id: UUID) -> None:
-    for key in (_TOOL_CALL_CONTEXT, RETRY_STATS_CONTEXT):
+    for key in (
+        _TOOL_CALL_CONTEXT,
+        RETRY_STATS_CONTEXT,
+        budget_utils.LOOP_BUDGET_CONTEXT,
+    ):
         context = dict(memory.get(key) or {})
         if context.pop(str(request_id), None) is not None:
             memory.set(key, context)
@@ -588,6 +607,8 @@ async def _chat_with_retries(
     output_schema: OutputSchema | None,
     ctx: RunnerContext,
     durable_id: str = _CHAT_DURABLE_ID,
+    *,
+    final_turn: bool = False,
 ) -> _ChatAttemptResult:
     """Attempt one model without sending a response or request failure event.
 
@@ -642,13 +663,32 @@ async def _chat_with_retries(
     ) -> tuple[ChatResult | None, str | None]:
         return _invoke_chat(chat_model, messages, prompt_args)
 
-    def invoke_structured(
-        answer_text: str, output_schema: OutputSchema
+    def invoke_final(
+        prepared_messages: List[ChatMessage], schema: OutputSchema | None
     ) -> tuple[ChatResult | None, str | None]:
-        return _invoke_finalization(chat_model, answer_text, output_schema)
+        return _invoke_finalization(chat_model, prepared_messages, schema)
+
+    async def finalize_response(
+        prepared_messages: List[ChatMessage], schema: OutputSchema | None
+    ) -> tuple[ChatResult | None, str | None, str]:
+        execution_id = ExecutionReporters.started(
+            ctx, ExecutionEntityTypes.LLM, model, llm_metadata
+        )
+        response, failure = await _durable_invoke(
+            ctx,
+            invoke_final,
+            prepared_messages,
+            schema,
+            chat_async=chat_async,
+            durable_id=f"{durable_id}:final",
+        )
+        budget_utils.update_token_budget_state(
+            ctx.sensory_memory, initial_request_id, response
+        )
+        return response, failure, execution_id
 
     def retry_after(attempt: int, error: Exception) -> bool:
-        """Account for a failed attempt; False once the budget is spent."""
+        """Account for a failed attempt; False once the retry budget is spent."""
         nonlocal actual_retry_count, total_wait_time_ms, final_error
         if attempt == num_retries:
             _logger.debug(
@@ -672,19 +712,37 @@ async def _chat_with_retries(
 
     try:
         for attempt in range(num_retries + 1):
-            execution_id = ExecutionReporters.started(
-                ctx, ExecutionEntityTypes.LLM, model, llm_metadata
-            )
             # Persistence/recovery failures must escape the request-failure boundary,
             # so durable calls stay outside the try blocks below.
-            response, failure = await _durable_invoke(
-                ctx,
-                invoke,
-                messages,
-                chat_async=chat_async,
-                prompt_args=prompt_args,
-                durable_id=durable_id,
-            )
+            if final_turn:
+                try:
+                    prepared = chat_model.prepare_request_messages(
+                        messages, prompt_args
+                    )
+                except (CancelledError, InterruptedError):
+                    raise
+                except Exception as error:
+                    if retry_after(attempt, error):
+                        continue
+                    break
+                response, failure, execution_id = await finalize_response(
+                    prepared, output_schema if apply_native_schema else None
+                )
+            else:
+                execution_id = ExecutionReporters.started(
+                    ctx, ExecutionEntityTypes.LLM, model, llm_metadata
+                )
+                response, failure = await _durable_invoke(
+                    ctx,
+                    invoke,
+                    messages,
+                    chat_async=chat_async,
+                    prompt_args=prompt_args,
+                    durable_id=durable_id,
+                )
+                budget_utils.update_token_budget_state(
+                    ctx.sensory_memory, initial_request_id, response
+                )
             try:
                 response = _accept_model_response(
                     ctx,
@@ -697,7 +755,7 @@ async def _chat_with_retries(
                     request_metric_group,
                 )
                 final_answer = output_schema is not None and not response.tool_calls
-                finalize = final_answer and apply_native_schema
+                finalize = final_answer and apply_native_schema and not final_turn
                 if final_answer and not finalize:
                     structured_output = _generate_structured_output_with_report(
                         ctx, response, output_schema
@@ -710,16 +768,10 @@ async def _chat_with_retries(
                 break
 
             if finalize:
-                final_execution_id = ExecutionReporters.started(
-                    ctx, ExecutionEntityTypes.LLM, model, llm_metadata
-                )
-                structured, failure = await _durable_invoke(
-                    ctx,
-                    invoke_structured,
-                    response.text,
+                # Use only the answer text to avoid provider-specific response fields.
+                structured, failure, final_execution_id = await finalize_response(
+                    [ChatMessage.user(_FINALIZE_DIRECTIVE + response.text)],
                     output_schema,
-                    chat_async=chat_async,
-                    durable_id=f"{durable_id}:final",
                 )
                 try:
                     structured = _accept_model_response(
@@ -784,6 +836,9 @@ async def chat(
     The extra call belongs to the same attempt, so its failures, and a failure to
     parse its response, consume the same retry budget.
     """
+    reason = budget_utils.try_start_turn(ctx, initial_request_id)
+    if _handle_hard_limit_exceeded(initial_request_id, reason, ctx, user_context):
+        return
     try:
         selection = await resolve(initial_request_id, model, messages, prompt_args, ctx)
     except RoutingFailure as failure:
@@ -799,7 +854,12 @@ async def chat(
         output_schema,
         ctx,
         user_context=user_context,
+        budget_reason=reason,
     )
+
+
+class _InvalidClosingResponse(Exception):
+    """A closing response requested tools despite finalization."""
 
 
 async def _chat_resolved(
@@ -811,24 +871,37 @@ async def _chat_resolved(
     ctx: RunnerContext,
     *,
     user_context: dict[str, Any] | None = None,
+    budget_reason: str | None = None,
 ) -> None:
     """Execute an initial selection or an already concrete tool follow-up."""
+    invocation_messages = (
+        _closing_messages(messages) if budget_reason is not None else messages
+    )
 
     async def attempt(candidate: str, durable_id: str) -> _ChatAttemptResult:
-        return await _chat_with_retries(
+        result = await _chat_with_retries(
             initial_request_id,
             candidate,
-            messages,
+            invocation_messages,
             prompt_args,
             output_schema,
             ctx,
             durable_id=durable_id,
+            final_turn=budget_reason is not None,
         )
+
+        if budget_reason is not None and result.response.tool_calls:
+            msg = f"Soft finalization returned tool calls (budget reason: {budget_reason})"
+            raise _InvalidClosingResponse(msg)
+        return result
 
     try:
         executed = await routing_executor.execute(
             initial_request_id, selection, attempt, ctx
         )
+    except _InvalidClosingResponse as error:
+        _send_failure(initial_request_id, error, ctx, user_context)
+        return
     except ModelRoutingExecutionException as failure:
         # Keep every candidate's cause in the final failure, in attempt order.
         error = (
@@ -841,6 +914,10 @@ async def _chat_resolved(
                 )
             )
         )
+        if budget_reason is not None:
+            error = RuntimeError(
+                f"Soft finalization failed: {error} (budget reason: {budget_reason})"
+            )
         _send_failure(initial_request_id, error, ctx, user_context)
         return
     model = executed.model
@@ -887,6 +964,7 @@ async def _chat_resolved(
 
 async def _process_chat_request(event: ChatRequestEvent, ctx: RunnerContext) -> None:
     """Process chat request event."""
+    budget_utils.initialize(ctx, event)
     await chat(
         initial_request_id=event.id,
         model=event.model,
@@ -920,6 +998,11 @@ async def _process_tool_response(event: ToolResponseEvent, ctx: RunnerContext) -
         ],
     )
 
+    reason = budget_utils.try_start_turn(ctx, initial_request_id)
+    if _handle_hard_limit_exceeded(
+        initial_request_id, reason, ctx, tool_request_event_context.get(_USER_CONTEXT)
+    ):
+        return
     await _chat_resolved(
         initial_request_id=initial_request_id,
         selection=ResolvedModelRoute.direct(tool_request_event_context["model"]),
@@ -928,6 +1011,7 @@ async def _process_tool_response(event: ToolResponseEvent, ctx: RunnerContext) -
         output_schema=tool_request_event_context["output_schema"],
         ctx=ctx,
         user_context=tool_request_event_context.get(_USER_CONTEXT),
+        budget_reason=reason,
     )
 
 

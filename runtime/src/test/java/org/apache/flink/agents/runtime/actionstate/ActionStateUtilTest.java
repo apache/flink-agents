@@ -19,6 +19,9 @@ package org.apache.flink.agents.runtime.actionstate;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
@@ -27,6 +30,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +52,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class ActionStateUtilTest {
 
     private static final int MAX_PARALLELISM = 128;
+
+    @Test
+    void timeBudgetSurvivesSerialization() throws Exception {
+        var budget = ReActLoopBudget.builder().maxTime(Duration.ofMillis(60001)).build();
+        var request =
+                new ChatRequestEvent(
+                        "model", List.of(ChatMessage.user("hi")), null, null, null, budget);
+        occurrence(request);
+        var action = new NoOpAction("chat");
+        var restored =
+                ChatRequestEvent.fromEvent(
+                        ActionStateSerde.deserialize(
+                                        ActionStateSerde.serialize(new ActionState(request)))
+                                .getTaskEvent());
+        assertEquals(
+                generateKey("key", 1L, action, request, MAX_PARALLELISM),
+                generateKey("key", 1L, action, restored, MAX_PARALLELISM));
+    }
 
     @Test
     public void testGenerateKeyConsistency() throws Exception {

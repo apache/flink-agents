@@ -318,6 +318,8 @@ public class ChatModelAction {
             @Nullable Object outputSchema,
             RunnerContext ctx)
             throws Exception {
+        String reason = ReActLoopBudgetUtils.tryStartTurn(ctx, initialRequestId);
+        if (handleHardLimitExceeded(initialRequestId, reason, null, ctx)) return;
         chat(
                 initialRequestId,
                 ResolvedModelRoute.direct(model),
@@ -325,7 +327,20 @@ public class ChatModelAction {
                 promptArgs,
                 outputSchema,
                 null,
-                ctx);
+                ctx,
+                reason);
+    }
+
+    private static boolean handleHardLimitExceeded(
+            UUID requestId,
+            @Nullable String reason,
+            @Nullable Map<String, Object> userContext,
+            RunnerContext ctx)
+            throws Exception {
+        if (reason == null || ReActLoopBudgetUtils.isSoftLimit(ctx.getSensoryMemory(), requestId))
+            return false;
+        sendFailure(requestId, new IllegalStateException(reason), userContext, ctx);
+        return true;
     }
 
     private static void chat(
@@ -335,7 +350,8 @@ public class ChatModelAction {
             Map<String, Object> promptArgs,
             @Nullable Object outputSchema,
             @Nullable Map<String, Object> userContext,
-            RunnerContext ctx)
+            RunnerContext ctx,
+            @Nullable String reason)
             throws Exception {
         // The routing layer owns the attempts: the strategy's pick, fallback after a failure,
         // escalation after a rejected answer, and the routing events and metrics. This action
@@ -344,9 +360,27 @@ public class ChatModelAction {
         try {
             routed =
                     ModelRoutingExecutor.execute(
-                            initialRequestId, route, messages, promptArgs, outputSchema, ctx);
+                            initialRequestId,
+                            route,
+                            messages,
+                            promptArgs,
+                            outputSchema,
+                            ctx,
+                            reason);
         } catch (ModelRoutingExecutionException e) {
-            sendFailure(initialRequestId, e.error, userContext, ctx);
+            sendFailure(
+                    initialRequestId,
+                    reason == null
+                            ? e.error
+                            : new IllegalStateException(
+                                    "Soft finalization failed: "
+                                            + e.error.getMessage()
+                                            + " (budget reason: "
+                                            + reason
+                                            + ")",
+                                    e.error),
+                    userContext,
+                    ctx);
             return;
         }
         ChatModelInvoker.ChatAttemptResult result = routed.attempt;
@@ -404,16 +438,17 @@ public class ChatModelAction {
                         .withUserContext(userContext));
     }
 
-    /** Removes what the request kept in sensory memory: its tool-call context and retry totals. */
+    /** Clears the request's tool-call, budget, routing and retry state. */
     @SuppressWarnings("unchecked")
     private static void clearRequestContext(MemoryObject memory, UUID requestId) throws Exception {
-        if (memory.isExist(TOOL_CALL_CONTEXT)) {
-            Map<UUID, Object> context =
-                    new HashMap<>((Map<UUID, Object>) memory.get(TOOL_CALL_CONTEXT).getValue());
-            if (context.remove(requestId) != null) {
-                memory.set(TOOL_CALL_CONTEXT, context);
+        for (String key : List.of(TOOL_CALL_CONTEXT, ReActLoopBudgetUtils.LOOP_BUDGET_CONTEXT)) {
+            if (memory.isExist(key)) {
+                Map<UUID, Object> context =
+                        new HashMap<>((Map<UUID, Object>) memory.get(key).getValue());
+                if (context.remove(requestId) != null) memory.set(key, context);
             }
         }
+        ModelRoutingExecutor.clearRoutingMetadata(memory, requestId);
         ChatRetryStats.clear(memory, requestId);
     }
 
@@ -469,6 +504,9 @@ public class ChatModelAction {
 
     private static void processChatRequest(ChatRequestEvent event, RunnerContext ctx)
             throws Exception {
+        ReActLoopBudgetUtils.initialize(ctx, event);
+        String reason = ReActLoopBudgetUtils.tryStartTurn(ctx, event.getId());
+        if (handleHardLimitExceeded(event.getId(), reason, event.getUserContext(), ctx)) return;
         ResolvedModelRoute selection;
         try {
             selection =
@@ -489,7 +527,8 @@ public class ChatModelAction {
                 event.getPromptArgs(),
                 event.getOutputSchema(),
                 event.getUserContext(),
-                ctx);
+                ctx,
+                reason);
     }
 
     @SuppressWarnings("unchecked")
@@ -524,6 +563,8 @@ public class ChatModelAction {
                         Collections.emptyList(),
                         toolResponseMessages);
 
+        String reason = ReActLoopBudgetUtils.tryStartTurn(ctx, initialRequestId);
+        if (handleHardLimitExceeded(initialRequestId, reason, userContext, ctx)) return;
         // Tool rounds reuse the already-selected concrete model (no re-routing). If the initial
         // request was routed, its metadata block waits where the routing layer saved it and is
         // attached when this loop produces its final response. A tiered request keeps its
@@ -536,7 +577,8 @@ public class ChatModelAction {
                 promptArgs,
                 outputSchema,
                 userContext,
-                ctx);
+                ctx,
+                reason);
     }
 
     /**

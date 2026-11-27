@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.logger.TraceLogger;
 import org.apache.flink.agents.api.logger.TraceLoggerConfig;
 import org.apache.flink.agents.api.logger.TraceLoggerOpenParams;
 import org.apache.flink.agents.api.trace.TraceRecord;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.apache.flink.metrics.Counter;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -79,7 +80,9 @@ public class Slf4jTraceLogger implements TraceLogger {
     // Trace-Log-only mapper: content blocks use their sanitized projection
     // (media metadata instead of payload bytes) at every level setting.
     private static final ObjectMapper MAPPER =
-            new ObjectMapper().registerModule(ContentBlockTraceLogSerializer.module());
+            JacksonMapperFactory.builder()
+                    .addModule(ContentBlockTraceLogSerializer.module())
+                    .build();
 
     private final TraceLoggerConfig config;
     private boolean prettyPrint;

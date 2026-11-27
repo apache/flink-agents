@@ -20,10 +20,11 @@ package org.apache.flink.agents.plan.utils;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 
 /** Util class for json. */
 public final class JsonUtils {
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
 
     private JsonUtils() {}
 

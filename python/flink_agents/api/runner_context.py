@@ -28,6 +28,7 @@ from flink_agents.api.configuration import ReadableConfiguration
 from flink_agents.api.events.event import Event
 from flink_agents.api.memory.long_term_memory import BaseLongTermMemory
 from flink_agents.api.metric_group import MetricGroup
+from flink_agents.api.react_loop_budget import ReActLoopBudget
 from flink_agents.api.resource import Resource, ResourceType
 
 __all__ = [
@@ -539,6 +540,7 @@ class RunnerContext(ABC):
         *,
         prompt_args: dict[str, Any] | None = None,
         output_schema: OutputSchema | None = None,
+        budget: ReActLoopBudget | None = None,
     ) -> DurableFuture[ChatResult]:
         """Call the chat/tool event loop using this action's resources and memory.
 

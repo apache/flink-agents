@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.resource.python.PythonObjectScope;
@@ -43,6 +44,8 @@ import static org.apache.flink.util.Preconditions.checkState;
 
 /** Execute the corresponding Python action in the agent. */
 public class PythonActionExecutor implements AutoCloseable {
+
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
 
     // =========== RUNNER CONTEXT ===========
     private static final String CREATE_FLINK_RUNNER_CONTEXT =
@@ -228,7 +231,7 @@ public class PythonActionExecutor implements AutoCloseable {
                         interpreterManager.invoke(
                                 CREATE_FLINK_RUNNER_CONTEXT,
                                 runnerContext,
-                                new ObjectMapper().writeValueAsString(agentPlan),
+                                MAPPER.writeValueAsString(agentPlan),
                                 pythonAsyncThreadPool,
                                 javaResourceAdapter,
                                 jobIdentifier);
@@ -246,7 +249,7 @@ public class PythonActionExecutor implements AutoCloseable {
      */
     public String executePythonFunction(PythonFunction function, Event event) throws Exception {
         runnerContext.checkNoPendingEvents();
-        String eventJson = new ObjectMapper().writeValueAsString(event);
+        String eventJson = MAPPER.writeValueAsString(event);
         try {
             return interpreterManager.withInterpreter(
                     interpreter -> {

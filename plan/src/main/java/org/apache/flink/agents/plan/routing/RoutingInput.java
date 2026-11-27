@@ -34,12 +34,11 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * The request view a model-backed routing strategy works from, shared by the LLM judge and the
@@ -52,7 +51,41 @@ final class RoutingInput {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private RoutingInput() {}
+    final List<ChatMessage> messages;
+    final boolean truncated;
+    final boolean hasRequestContent;
+
+    private RoutingInput(List<ChatMessage> messages, boolean truncated, boolean hasRequestContent) {
+        this.messages = messages;
+        this.truncated = truncated;
+        this.hasRequestContent = hasRequestContent;
+    }
+
+    static RoutingInput prepare(
+            RoutingStrategy strategy,
+            RoutingContext context,
+            RunnerContext ctx,
+            Predicate<DataContentBlock> usable)
+            throws Exception {
+        List<ChatMessage> original = context.getMessages();
+        List<ChatMessage> selected = selectWithinBudget(original, maxContextChars(strategy));
+        List<ChatMessage> prepared = effectiveMessages(context, ctx, selected);
+        Predicate<ChatMessage> hasContent = message -> content(message).stream().anyMatch(usable);
+        boolean hasRequestContent =
+                original.stream()
+                        .anyMatch(
+                                message ->
+                                        message.getRole() == MessageRole.USER
+                                                && hasContent.test(message));
+        // Preparation retains the selected messages with content and can add prompt or skill
+        // messages of any role. Copies produced by a cross-language setup count the same.
+        if (!hasRequestContent && prepared != selected) {
+            hasRequestContent =
+                    prepared.stream().filter(hasContent).count()
+                            > selected.stream().filter(hasContent).count();
+        }
+        return new RoutingInput(prepared, selected.size() < original.size(), hasRequestContent);
+    }
 
     /**
      * A routing strategy judges what the selected model will actually receive. When the target
@@ -63,9 +96,9 @@ final class RoutingInput {
      * anchor can't be resolved or binds no prompt, the raw message list is used unchanged.
      * Cancellation and interruption are not failures of the anchor: they propagate.
      */
-    static List<ChatMessage> effectiveMessages(RoutingContext context, RunnerContext ctx)
+    private static List<ChatMessage> effectiveMessages(
+            RoutingContext context, RunnerContext ctx, List<ChatMessage> messages)
             throws Exception {
-        List<ChatMessage> messages = context.getMessages();
         String anchor =
                 context.getDefaultModel().orElseGet(() -> context.getCandidates().get(0).getName());
         try {
@@ -83,46 +116,16 @@ final class RoutingInput {
         }
     }
 
-    /**
-     * Indices of effective messages that were <i>generated</i> by the anchor's request shaping
-     * (rendered template, skill-discovery prompt) rather than taken from the conversation —
-     * identified by object identity, since {@code prepareRequestMessages} appends the original
-     * message instances unchanged. They carry the task definition, so the context cap pins them.
-     */
-    static Set<Integer> pinnedRenderedIndices(
-            List<ChatMessage> original, List<ChatMessage> effective) {
-        if (effective == original) {
-            return Set.of();
-        }
-        Set<ChatMessage> originals = Collections.newSetFromMap(new IdentityHashMap<>());
-        originals.addAll(original);
-        Set<Integer> pinned = new LinkedHashSet<>();
-        for (int i = 0; i < effective.size(); i++) {
-            if (!originals.contains(effective.get(i))) {
-                pinned.add(i);
-            }
-        }
-        return pinned;
-    }
-
-    static int maxContextChars(RoutingStrategy strategy) {
+    private static int maxContextChars(RoutingStrategy strategy) {
         Object cap = strategy.getArguments().get(RoutingStrategy.ARG_MAX_CONTEXT_CHARS);
         return cap instanceof Number ? ((Number) cap).intValue() : Integer.MAX_VALUE;
     }
 
     /**
      * Applies the opt-in context budget: SYSTEM messages and the newest message are pinned, the
-     * remaining messages fill newest-first, and dropped messages set {@code truncatedOut[0]}.
-     * Without a cap this returns the input unchanged.
+     * remaining messages fill newest-first. Without a cap this returns the input unchanged.
      */
-    static List<ChatMessage> selectWithinBudget(
-            List<ChatMessage> messages,
-            int maxChars,
-            Set<Integer> pinnedIndices,
-            boolean[] truncatedOut) {
-        if (messages == null) {
-            return List.of();
-        }
+    private static List<ChatMessage> selectWithinBudget(List<ChatMessage> messages, int maxChars) {
         if (maxChars == Integer.MAX_VALUE) {
             return messages;
         }
@@ -135,11 +138,9 @@ final class RoutingInput {
         }
         Set<Integer> kept = new LinkedHashSet<>();
         long budget = maxChars;
-        // Pinned first — even if they alone exceed the budget: SYSTEM messages (the task
-        // framing), messages generated by the anchor's request shaping (the rendered template
-        // carries the task definition), and the newest message (the request being routed).
+        // Keep system messages and the newest message even if they exceed the budget.
         for (int i = 0; i < messages.size(); i++) {
-            if (messages.get(i).getRole() == MessageRole.SYSTEM || pinnedIndices.contains(i)) {
+            if (messages.get(i).getRole() == MessageRole.SYSTEM) {
                 kept.add(i);
                 budget -= length(messages.get(i));
             }
@@ -160,7 +161,6 @@ final class RoutingInput {
                 budget -= len;
             }
         }
-        truncatedOut[0] = kept.size() < messages.size();
         List<ChatMessage> selected = new ArrayList<>();
         for (int i = 0; i < messages.size(); i++) {
             if (kept.contains(i)) {

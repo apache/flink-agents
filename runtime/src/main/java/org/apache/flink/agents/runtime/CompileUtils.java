@@ -21,6 +21,8 @@ package org.apache.flink.agents.runtime;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
+import org.apache.flink.agents.api.agents.ReActLoopBudgetOptions;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.apache.flink.agents.api.configuration.DurationUtils;
 import org.apache.flink.agents.plan.AgentConfiguration;
@@ -203,6 +205,13 @@ public class CompileUtils {
     }
 
     private static void validateExecutionOptions(AgentConfiguration config) {
+        ReActLoopBudget.builder()
+                .maxTurns(config.get(ReActLoopBudgetOptions.LOOP_MAX_TURNS))
+                .maxTime(config.get(ReActLoopBudgetOptions.LOOP_MAX_TIME))
+                .maxTokens(config.get(ReActLoopBudgetOptions.LOOP_MAX_TOKENS))
+                .mode(config.get(ReActLoopBudgetOptions.LOOP_BUDGET_MODE))
+                .build();
+
         Duration retry = config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL);
         if (DurationUtils.isPositive(retry)) {
             checkedMillis(AgentExecutionOptions.RETRY_WAIT_INTERVAL, retry);

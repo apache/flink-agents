@@ -220,10 +220,10 @@ public final class RoutingStrategy implements Serializable {
     /**
      * Returns a copy of this {@code LLM_JUDGE} or {@code DECISION_MODEL} declaration with a cap (in
      * characters) on the conversation context included in the judge or decision-model input. Purely
-     * opt-in: without it the model receives the complete message list. When set, the rendered
-     * request and the SYSTEM message are always kept, remaining messages fill newest-first within
-     * the budget, and any truncation is flagged in the decision metadata ({@code
-     * judge_context_truncated} or {@code decision_context_truncated}).
+     * opt-in: without it the model receives the complete message list. When set, SYSTEM messages
+     * and the newest message are always kept. Remaining messages fill newest-first before the
+     * anchor adds its prompt and skill-discovery messages. Truncation is flagged in the decision
+     * metadata ({@code judge_context_truncated} or {@code decision_context_truncated}).
      */
     public RoutingStrategy withMaxContextChars(int maxContextChars) {
         if (type != RoutingStrategyType.LLM_JUDGE && type != RoutingStrategyType.DECISION_MODEL) {

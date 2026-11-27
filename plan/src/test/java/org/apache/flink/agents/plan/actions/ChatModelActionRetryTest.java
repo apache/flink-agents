@@ -22,6 +22,8 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.OutputSchema;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
+import org.apache.flink.agents.api.agents.ReActLoopBudgetOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -42,6 +44,7 @@ import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.LLMExecutionMetadataKeys;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.ChatFixtures;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
@@ -74,6 +77,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
@@ -89,6 +93,8 @@ import static org.mockito.Mockito.withSettings;
  * the finish-reason gate, and tool-response handling.
  */
 class ChatModelActionRetryTest {
+
+    private static final ObjectMapper MAPPER = JacksonMapperFactory.builder().build();
 
     private static final Map<String, Object> LLM_METADATA =
             Map.of(LLMExecutionMetadataKeys.MODEL, "configured-model");
@@ -136,11 +142,414 @@ class ChatModelActionRetryTest {
         when(mockModelMetricGroup.getCounter("retryWaitMs")).thenReturn(mockRetryWaitMsCounter);
     }
 
+    @ParameterizedTest
+    @ValueSource(
+            strings = {"TIME_BUDGET_EXCEEDED", "TOKEN_BUDGET_EXCEEDED", "TURN_BUDGET_EXCEEDED"})
+    void exhaustedBudgetDoesNotConsumeTurn(String reason) throws Exception {
+        UUID id = UUID.randomUUID();
+        Map<String, Object> budgetState =
+                new HashMap<>(
+                        Map.of(
+                                "turns_left",
+                                reason.equals("TURN_BUDGET_EXCEEDED") ? 0L : 2L,
+                                "tokens_left",
+                                reason.equals("TOKEN_BUDGET_EXCEEDED") ? 0L : 10L,
+                                "max_time_ms",
+                                60L,
+                                "started_at_ms",
+                                0L,
+                                "mode",
+                                "HARD"));
+        ReActLoopBudgetUtils.saveBudgetState(sensoryMemory, id, budgetState);
+        Map<String, Object> original = new HashMap<>(budgetState);
+        assertThat(
+                        ReActLoopBudgetUtils.tryStartTurn(
+                                sensoryMemory,
+                                id,
+                                reason.equals("TIME_BUDGET_EXCEEDED") ? 60L : 20L))
+                .isEqualTo(reason);
+        assertThat(budgetState).isEqualTo(original);
+        assertThat(ReActLoopBudgetUtils.getBudgetState(sensoryMemory, id)).isEqualTo(original);
+    }
+
+    @Test
+    void budgetUpdatesReadLatestStateAndPreserveEarlierMemoryValues() throws Exception {
+        UUID id = UUID.randomUUID();
+        UUID other = UUID.randomUUID();
+        ReActLoopBudgetUtils.saveBudgetState(
+                sensoryMemory, id, Map.of("turns_left", 2L, "tokens_left", 20L, "mode", "HARD"));
+        ReActLoopBudgetUtils.saveBudgetState(
+                sensoryMemory, other, Map.of("turns_left", 4L, "tokens_left", 50L, "mode", "SOFT"));
+        Map<?, ?> before =
+                (Map<?, ?>) sensoryMemory.get(ReActLoopBudgetUtils.LOOP_BUDGET_CONTEXT).getValue();
+        assertThat(ReActLoopBudgetUtils.tryStartTurn(sensoryMemory, id, 0L)).isNull();
+        ReActLoopBudgetUtils.updateTokenBudgetState(
+                sensoryMemory,
+                id,
+                ChatFixtures.response("judge", Map.of("promptTokens", 10, "completionTokens", 5)));
+        Map<String, Object> afterJudge = ReActLoopBudgetUtils.getBudgetState(sensoryMemory, id);
+        ReActLoopBudgetUtils.updateTokenBudgetState(
+                sensoryMemory,
+                id,
+                ChatFixtures.response("target", Map.of("promptTokens", 1, "completionTokens", 1)));
+        assertThat(ReActLoopBudgetUtils.getBudgetState(sensoryMemory, id))
+                .containsEntry("turns_left", 1L)
+                .containsEntry("tokens_left", 3L);
+        ReActLoopBudgetUtils.updateTokenBudgetState(
+                sensoryMemory,
+                id,
+                ChatFixtures.response("last", Map.of("promptTokens", 4, "completionTokens", 3)));
+        assertThat(ReActLoopBudgetUtils.getBudgetState(sensoryMemory, id))
+                .containsEntry("turns_left", 1L)
+                .containsEntry("tokens_left", 0L);
+        assertThat(ReActLoopBudgetUtils.tryStartTurn(sensoryMemory, id, 0L))
+                .isEqualTo("TOKEN_BUDGET_EXCEEDED");
+        assertThat(afterJudge).containsEntry("turns_left", 1L).containsEntry("tokens_left", 5L);
+        assertThat(((Map<?, ?>) before.get(id)).get("turns_left")).isEqualTo(2L);
+        assertThat(((Map<?, ?>) before.get(id)).get("tokens_left")).isEqualTo(20L);
+        assertThat(ReActLoopBudgetUtils.getBudgetState(sensoryMemory, other))
+                .containsEntry("tokens_left", 50L)
+                .containsEntry("turns_left", 4L);
+    }
+
+    @Test
+    void unlimitedTurnDoesNotCreateState() throws Exception {
+        UUID id = UUID.randomUUID();
+        assertThat(ReActLoopBudgetUtils.tryStartTurn(sensoryMemory, id, 0L)).isNull();
+        ReActLoopBudgetUtils.updateTokenBudgetState(
+                sensoryMemory,
+                id,
+                ChatFixtures.response(
+                        "unlimited", Map.of("promptTokens", 10, "completionTokens", 5)));
+        assertThat(ReActLoopBudgetUtils.getBudgetState(sensoryMemory, id)).isNull();
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void finalTurnToolCallsFailWithoutAnotherConversion(boolean nativeConversion) throws Exception {
+        configureRetryStrategy(3, 0);
+        UUID id = UUID.randomUUID();
+        ReActLoopBudgetUtils.saveBudgetState(
+                sensoryMemory, id, Map.of("turns_left", 0L, "mode", "SOFT"));
+        ChatResult toolReply =
+                new ChatResult(
+                        ChatMessage.assistant(
+                                List.of(new ToolCallBlock("unexpected", "lookup", Map.of()))));
+        when(mockChatModel.willApplyNativeStructuredOutput(Map.class)).thenReturn(nativeConversion);
+        when(mockChatModel.chat(any(), eq(List.of()), any(), any())).thenReturn(toolReply);
+        ChatModelAction.chat(
+                id, "test-model", List.of(ChatMessage.user("hi")), Map.of(), Map.class, mockCtx);
+        assertThat(sentEvents).hasSize(1);
+        ChatResponseEvent response = ChatResponseEvent.fromEvent(sentEvents.get(0));
+        assertThat(response.isFailed()).isTrue();
+        assertThat(response.getError()).contains("TURN_BUDGET_EXCEEDED");
+        assertThat(response.getError()).contains("returned tool calls");
+        verify(mockChatModel)
+                .chat(any(), eq(List.of()), any(), nativeConversion ? eq(Map.class) : isNull());
+        verify(mockChatModel, never()).chat(any(), any(), any());
+        assertThat(ReActLoopBudgetUtils.getBudgetState(sensoryMemory, id)).isNull();
+    }
+
+    @Test
+    void restoredTimeKeepsStartAndIncludesRecovery() throws Exception {
+        UUID id = UUID.randomUUID();
+        Map<String, Object> budgetState =
+                new HashMap<>(Map.of("max_time_ms", 60L, "started_at_ms", 0L, "mode", "HARD"));
+        ReActLoopBudgetUtils.saveBudgetState(sensoryMemory, id, budgetState);
+        assertThat(ReActLoopBudgetUtils.tryStartTurn(sensoryMemory, id, 20L)).isNull();
+        Map<String, Object> restored =
+                new HashMap<>(ReActLoopBudgetUtils.getBudgetState(sensoryMemory, id));
+        assertThat(ReActLoopBudgetUtils.tryStartTurn(sensoryMemory, id, 60L))
+                .isEqualTo("TIME_BUDGET_EXCEEDED");
+        assertThat(ReActLoopBudgetUtils.tryStartTurn(sensoryMemory, id, 1000L))
+                .isEqualTo("TIME_BUDGET_EXCEEDED");
+        assertThat(restored).isEqualTo(budgetState);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void requestBudgetReplacesAllConfiguredDefaults(boolean override) throws Exception {
+        var conf =
+                new AgentConfiguration(
+                        Map.of(
+                                "react-loop.budget.max-turns", 1,
+                                "react-loop.budget.max-time", "60 s",
+                                "react-loop.budget.mode", "hard"));
+        conf.set(AgentExecutionOptions.CHAT_ASYNC, false);
+        when(mockCtx.getConfig()).thenReturn(conf);
+        var request =
+                new ChatRequestEvent(
+                        "test-model",
+                        List.of(ChatMessage.user("hi")),
+                        null,
+                        null,
+                        null,
+                        override ? ReActLoopBudget.builder().build() : null);
+        when(mockChatModel.chat(any(), any(), any()))
+                .thenReturn(
+                        new ChatResult(
+                                ChatMessage.assistant(
+                                        List.of(new ToolCallBlock("a", "lookup", Map.of())))),
+                        ChatFixtures.response("done"));
+        ChatModelAction.processChatRequestOrToolResponse(request, mockCtx);
+        var batch = ToolRequestEvent.fromEvent(sentEvents.get(0));
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ToolResponseEvent(
+                        batch.getId(),
+                        Map.of("a", ToolResponse.text("42")),
+                        Map.of("a", true),
+                        Map.of()),
+                mockCtx);
+        var end = ChatResponseEvent.fromEvent(sentEvents.get(1));
+        if (override) assertThat(end.isSuccess()).isTrue();
+        else assertThat(end.getError()).contains("TURN_BUDGET_EXCEEDED");
+        verify(mockChatModel, times(override ? 2 : 1)).chat(any(), any(), any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void timeLimitAllowsCurrentRoundRetriesAndConversion(boolean soft) throws Exception {
+        configureRetryStrategy(1, 0);
+        ((AgentConfiguration) mockCtx.getConfig())
+                .set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, Duration.ofMillis(100));
+        UUID id = UUID.randomUUID();
+        var now = new java.util.concurrent.atomic.AtomicLong(0);
+        ReActLoopBudgetUtils.saveBudgetState(
+                sensoryMemory,
+                id,
+                Map.of("max_time_ms", 60L, "started_at_ms", 0L, "mode", soft ? "SOFT" : "HARD"));
+        when(mockChatModel.willApplyNativeStructuredOutput(Map.class)).thenReturn(true);
+        when(mockChatModel.chat(any(), any(), any(), eq(Map.class)))
+                .thenReturn(ChatFixtures.response("{\"answer\":\"42\"}"));
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        when(mockChatModel.chat(any(), any(), any()))
+                .thenAnswer(
+                        inv -> {
+                            now.set(1000);
+                            if (calls.getAndIncrement() == 0) throw new RuntimeException("retry");
+                            return ChatFixtures.response("done");
+                        });
+        try (var state =
+                org.mockito.Mockito.mockStatic(
+                        ReActLoopBudgetUtils.class, org.mockito.Mockito.CALLS_REAL_METHODS)) {
+            state.when(() -> ReActLoopBudgetUtils.tryStartTurn(any(), any()))
+                    .thenAnswer(
+                            inv ->
+                                    ReActLoopBudgetUtils.tryStartTurn(
+                                            ((RunnerContext) inv.getArgument(0)).getSensoryMemory(),
+                                            inv.getArgument(1),
+                                            now.get()));
+            ChatModelAction.chat(
+                    id,
+                    "test-model",
+                    List.of(ChatMessage.user("hi")),
+                    Map.of(),
+                    Map.class,
+                    mockCtx);
+            assertThat(sentEvents).hasSize(1);
+            assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isSuccess()).isTrue();
+            assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).getTotalRetryWaitMs())
+                    .isEqualTo(100L);
+            verify(mockChatModel, times(2)).chat(any(), any(), any());
+            verify(mockChatModel).chat(any(), any(), any(), eq(Map.class));
+        }
+    }
+
+    @Test
+    void budgetDurationUsesWholeMilliseconds() {
+        var budget = ReActLoopBudget.builder().maxTime(java.time.Duration.ofMillis(1)).build();
+        assertThat(MAPPER.convertValue(budget, Map.class).get("max_time")).isEqualTo("PT0.001S");
+        assertThat(
+                        MAPPER.convertValue(
+                                        MAPPER.convertValue(budget, Map.class),
+                                        ReActLoopBudget.class)
+                                .getMaxTime())
+                .isEqualTo(java.time.Duration.ofMillis(1));
+        var config = new AgentConfiguration();
+        config.set(ReActLoopBudgetOptions.LOOP_MAX_TIME, java.time.Duration.ofMillis(1));
+        assertThat(config.get(ReActLoopBudgetOptions.LOOP_MAX_TIME))
+                .isEqualTo(java.time.Duration.ofMillis(1));
+        for (Object value : List.of("1 ms", "PT0.001S", "1", 1)) {
+            var parsedConfig =
+                    new AgentConfiguration(
+                            Map.of(ReActLoopBudgetOptions.LOOP_MAX_TIME.getKey(), value));
+            assertThat(
+                            ReActLoopBudget.builder()
+                                    .maxTime(parsedConfig.get(ReActLoopBudgetOptions.LOOP_MAX_TIME))
+                                    .build()
+                                    .getMaxTime())
+                    .isEqualTo(java.time.Duration.ofMillis(1));
+        }
+        for (long nanos : new long[] {0, -1000, 1000, 1_500_000}) {
+            var duration = java.time.Duration.ofNanos(nanos);
+            config.set(ReActLoopBudgetOptions.LOOP_MAX_TIME, duration);
+            assertThat(config.get(ReActLoopBudgetOptions.LOOP_MAX_TIME)).isEqualTo(duration);
+            when(mockCtx.getConfig()).thenReturn(config);
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                            () ->
+                                    ReActLoopBudgetUtils.initialize(
+                                            mockCtx,
+                                            new ChatRequestEvent(
+                                                    "test-model", List.of(ChatMessage.user("hi")))))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
     @AfterEach
     void tearDown() throws Exception {
         if (mocks != null) {
             mocks.close();
         }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void tokenLimitAllowsCurrentRoundNativeSchemaConversion(boolean soft) throws Exception {
+        configureRetryStrategy(3, 0);
+        Map<String, Object> context = Map.of("task", "budgeted");
+        when(mockChatModel.willApplyNativeStructuredOutput(Map.class)).thenReturn(true);
+        when(mockChatModel.chat(any(), any(), any()))
+                .thenReturn(
+                        ChatFixtures.response(
+                                "the answer is 42",
+                                Map.of("promptTokens", 3, "completionTokens", 2)));
+        when(mockChatModel.chat(any(), any(), any(), eq(Map.class)))
+                .thenReturn(ChatFixtures.response("{\"answer\":\"42\"}"));
+        ChatRequestEvent request =
+                new ChatRequestEvent(
+                        "test-model",
+                        List.of(ChatMessage.user("compute")),
+                        Map.of(),
+                        Map.class,
+                        context,
+                        ReActLoopBudget.builder()
+                                .maxTokens(5L)
+                                .mode(
+                                        soft
+                                                ? ReActLoopBudget.BudgetMode.SOFT
+                                                : ReActLoopBudget.BudgetMode.HARD)
+                                .build());
+        ChatRequestEvent restored =
+                ChatRequestEvent.fromEvent(Event.fromJson(MAPPER.writeValueAsString(request)));
+        // Keep the Java class schema while exercising budget/context wire round-tripping.
+        restored.setAttr("output_schema", Map.class);
+        ChatModelAction.processChatRequestOrToolResponse(restored, mockCtx);
+        assertThat(sentEvents).hasSize(1);
+        ChatResponseEvent event = ChatResponseEvent.fromEvent(sentEvents.get(0));
+        assertThat(event.getUserContext()).isEqualTo(context);
+        assertThat(event.isSuccess()).isTrue();
+        assertThat(event.getStructuredOutput()).isEqualTo(Map.of("answer", "42"));
+        verify(mockChatModel).chat(any(), eq(List.of()), any(), eq(Map.class));
+        verify(mockChatModel).chat(any(), any(), any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void softClosingUsesNormalStructuredOutputValidation(boolean rowSchema) throws Exception {
+        configureRetryStrategy(3, 0);
+        UUID id = UUID.randomUUID();
+        ReActLoopBudgetUtils.saveBudgetState(
+                sensoryMemory, id, Map.of("turns_left", 0, "mode", "SOFT"));
+        Object schema =
+                rowSchema
+                        ? new OutputSchema(
+                                new RowTypeInfo(
+                                        new TypeInformation[] {BasicTypeInfo.STRING_TYPE_INFO},
+                                        new String[] {"answer"}))
+                        : Map.class;
+        ChatResult response = ChatFixtures.response(rowSchema ? "{}" : "null");
+        when(mockChatModel.chat(any(), eq(List.of()), any(), any())).thenReturn(response);
+
+        ChatModelAction.chat(
+                id, "test-model", List.of(ChatMessage.user("finish")), Map.of(), schema, mockCtx);
+
+        assertThat(sentEvents).hasSize(1);
+        var completed = ChatResponseEvent.fromEvent(sentEvents.get(0));
+        if (rowSchema) {
+            assertThat(completed.isSuccess()).isFalse();
+            assertThat(completed.getError())
+                    .contains("missing field 'answer'", "TURN_BUDGET_EXCEEDED");
+            verify(mockChatModel, times(4)).chat(any(), eq(List.of()), any(), any());
+        } else {
+            assertThat(completed.isSuccess()).isTrue();
+            assertThat(completed.getStructuredOutput()).isNull();
+            verify(mockChatModel).chat(any(), eq(List.of()), any(), any());
+        }
+        verify(mockChatModel, never()).chat(any(), any(), any());
+    }
+
+    @Test
+    void softTurnLimitUsesStructuredClosingRound() throws Exception {
+        configureRetryStrategy(3, 0);
+        UUID requestId = UUID.randomUUID();
+        ReActLoopBudgetUtils.saveBudgetState(
+                sensoryMemory,
+                requestId,
+                Map.of("turns_left", 1, "tokens_left", 1L, "mode", "SOFT"));
+        when(mockChatModel.willApplyNativeStructuredOutput(Map.class)).thenReturn(true);
+        when(mockChatModel.chat(any(), any(), any()))
+                .thenReturn(
+                        new ChatResult(
+                                ChatMessage.assistant(
+                                        List.of(new ToolCallBlock("a", "lookup", Map.of())))));
+        when(mockChatModel.chat(any(), eq(List.of()), any(), any()))
+                .thenReturn(
+                        ChatFixtures.response(
+                                "the answer is 42",
+                                Map.of("promptTokens", 3, "completionTokens", 2)));
+        when(mockChatModel.chat(any(), any(), any(), eq(Map.class)))
+                .thenReturn(
+                        ChatFixtures.response("invalid"),
+                        ChatFixtures.response("{\"answer\":\"42\"}"));
+        ChatModelAction.chat(
+                requestId,
+                "test-model",
+                List.of(ChatMessage.user("hi")),
+                Map.of(),
+                Map.class,
+                mockCtx);
+        ToolRequestEvent batch = ToolRequestEvent.fromEvent(sentEvents.get(0));
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ToolResponseEvent(
+                        batch.getId(),
+                        Map.of("a", ToolResponse.text("42")),
+                        Map.of("a", true),
+                        Map.of()),
+                mockCtx);
+        ChatResponseEvent end = ChatResponseEvent.fromEvent(sentEvents.get(1));
+        assertThat(end.getStructuredOutput()).isEqualTo(Map.of("answer", "42"));
+        verify(mockChatModel).chat(any(), any(), any());
+        verify(mockChatModel, times(2)).chat(any(), eq(List.of()), any(), any());
+        verify(mockChatModel, times(2)).chat(any(), any(), any(), eq(Map.class));
+        assertThat(end.getRetryCount()).isEqualTo(1);
+    }
+
+    @Test
+    void hardTurnLimitAllowsLastToolBatchButStopsNextNormalTurn() throws Exception {
+        configureRetryStrategy(3, 0);
+        UUID requestId = UUID.randomUUID();
+        ReActLoopBudgetUtils.saveBudgetState(
+                sensoryMemory, requestId, Map.of("turns_left", 1, "mode", "HARD"));
+        ToolCallBlock first = new ToolCallBlock("a", "lookup", Map.of());
+        ToolCallBlock second = new ToolCallBlock("b", "lookup", Map.of());
+        when(mockChatModel.chat(any(), any(), any()))
+                .thenReturn(new ChatResult(ChatMessage.assistant(List.of(first, second))));
+        ChatModelAction.chat(
+                requestId, "test-model", List.of(ChatMessage.user("hi")), Map.of(), null, mockCtx);
+        ToolRequestEvent batch = ToolRequestEvent.fromEvent(sentEvents.get(0));
+        assertThat(batch.getToolCalls()).containsExactly(first, second);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ToolResponseEvent(
+                        batch.getId(),
+                        Map.of("a", ToolResponse.text("A"), "b", ToolResponse.text("B")),
+                        Map.of("a", true, "b", true),
+                        Map.of()),
+                mockCtx);
+        assertThat(sentEvents).hasSize(2);
+        ChatResponseEvent end = ChatResponseEvent.fromEvent(sentEvents.get(1));
+        assertThat(end.getRequestId()).isEqualTo(requestId);
+        assertThat(end.getError()).contains("TURN_BUDGET_EXCEEDED");
+        verify(mockChatModel).chat(any(), any(), any());
     }
 
     @Test
@@ -1435,12 +1844,9 @@ class ChatModelActionRetryTest {
                 (Map<UUID, Map<String, Object>>)
                         sensoryMemory.get("_TOOL_REQUEST_EVENT_CONTEXT").getValue();
         Object checkpointed =
-                new ObjectMapper()
-                        .readValue(
-                                new ObjectMapper()
-                                        .writeValueAsBytes(
-                                                parked.get(toolB.getId()).get("user_context")),
-                                Object.class);
+                MAPPER.readValue(
+                        MAPPER.writeValueAsBytes(parked.get(toolB.getId()).get("user_context")),
+                        Object.class);
         parked.get(toolB.getId()).put("user_context", checkpointed);
 
         // Finish B before A. Each final response keeps its own request context.
@@ -1479,8 +1885,7 @@ class ChatModelActionRetryTest {
                 new ChatRequestEvent(
                         "test-model", List.of(ChatMessage.user("hi")), null, null, context);
         ChatRequestEvent restored =
-                ChatRequestEvent.fromEvent(
-                        Event.fromJson(new ObjectMapper().writeValueAsString(original)));
+                ChatRequestEvent.fromEvent(Event.fromJson(MAPPER.writeValueAsString(original)));
 
         ChatModelAction.processChatRequestOrToolResponse(restored, mockCtx);
 

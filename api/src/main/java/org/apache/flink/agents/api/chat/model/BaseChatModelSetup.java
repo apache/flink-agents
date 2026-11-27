@@ -285,12 +285,11 @@ public abstract class BaseChatModelSetup extends Resource {
 
     /**
      * Sends the messages and tools exactly as given: the bound prompt, the skill-discovery message
-     * and the bound tools are not added. {@link #chat(List, Map, Map)} prepares the request and
-     * sends it through this method.
+     * and the bound tools are not added.
      *
-     * <p>When {@code outputSchema} is non-null and {@code tools} is empty, the parameters sent to
-     * the connection omit {@code tool_choice}, {@code tool_choice_option} and {@code
-     * parallel_tool_calls}, at the top level and inside a nested {@code additional_kwargs} map.
+     * <p>When {@code tools} is empty, the parameters sent to the connection omit {@code
+     * tool_choice}, {@code tool_choice_option} and {@code parallel_tool_calls}, at the top level
+     * and inside a nested {@code additional_kwargs} map.
      *
      * @param messages the messages to send
      * @param tools the tools to bind to the request
@@ -313,11 +312,11 @@ public abstract class BaseChatModelSetup extends Resource {
         if (modelParams != null) {
             params.putAll(modelParams);
         }
-        if (outputSchema == null) {
-            return connection.chat(messages, tools, params);
-        }
         if (tools.isEmpty()) {
             params = withoutToolOnlyParams(params);
+        }
+        if (outputSchema == null) {
+            return connection.chat(messages, tools, params);
         }
         return connection.chat(messages, tools, params, outputSchema);
     }

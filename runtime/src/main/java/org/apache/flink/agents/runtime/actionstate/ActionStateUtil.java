@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.utils.RuntimeIdentity;
 import org.apache.flink.annotation.Internal;
@@ -47,7 +48,7 @@ import java.util.function.LongPredicate;
 public final class ActionStateUtil {
 
     private static final JsonMapper MAPPER =
-            JsonMapper.builder()
+            JacksonMapperFactory.builder()
                     .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
                     .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
                     .build();

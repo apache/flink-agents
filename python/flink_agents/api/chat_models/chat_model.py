@@ -608,10 +608,9 @@ class BaseChatModelSetup(Resource):
         exactly as given, without the bound prompt, the skill-discovery message or
         the bound tools.
 
-        Either way, when the call carries ``output_schema`` and binds no tools, the
-        parameters sent to the connection omit ``tool_choice``,
-        ``tool_choice_option`` and ``parallel_tool_calls``, at the top level and
-        inside a nested ``additional_kwargs`` dict.
+        When the resolved tool list is empty, the connection parameters omit
+        ``tool_choice``, ``tool_choice_option`` and ``parallel_tool_calls``, both at the
+        top level and inside a nested ``additional_kwargs`` dict.
 
         Args:
             messages: The caller's messages.
@@ -640,17 +639,14 @@ class BaseChatModelSetup(Resource):
 
         if tools is None:
             messages = self.prepare_request_messages(messages, prompt_args)
-
-        # Call chat model connection to execute chat
+            tools = self._get_tools()
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
         connection = self._get_connection()
-        if tools is None:
-            tools = self._get_tools()
-        if output_schema is None:
-            return connection.chat(messages, tools=tools, **merged_kwargs)
         if not tools:
             merged_kwargs = _without_tool_only_params(merged_kwargs)
+        if output_schema is None:
+            return connection.chat(messages, tools=tools, **merged_kwargs)
         return connection.chat(
             messages, tools=tools, output_schema=output_schema, **merged_kwargs
         )

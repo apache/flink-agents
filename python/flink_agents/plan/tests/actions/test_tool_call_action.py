@@ -25,11 +25,14 @@ from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
-from flink_agents.api.chat_message import ToolCallBlock
+from flink_agents.api.chat_message import ChatMessage, ToolCallBlock
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.core_options import AgentExecutionOptions
+from flink_agents.api.events.chat_event import ChatRequestEvent
 from flink_agents.api.events.event import Event
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.memory_object import MemoryObject
+from flink_agents.api.react_loop_budget import ReActLoopBudget
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import Outcome
 from flink_agents.api.tools import (
@@ -45,6 +48,9 @@ from flink_agents.api.trace import (
     ToolExecutionMetadataKeys,
 )
 from flink_agents.plan.actions import tool_call_action
+from flink_agents.plan.actions.chat_model_action import (
+    process_chat_request_or_tool_response,
+)
 from flink_agents.plan.actions.tool_call_action import process_tool_request
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.exceptions import UncapturableException
@@ -1683,3 +1689,69 @@ def test_identical_tool_invocations_have_distinct_trace_ids(asynchronous: bool) 
         report.args[0] for report in ctx.report_execution_succeeded_at.call_args_list
     ] == identities
     assert durable_ids == ["tool-call:call-1", "tool-call:call-1"]
+
+
+@pytest.mark.parametrize("mode", ["soft", "hard"])
+def test_time_expires_while_parallel_tools_are_running(mode: str, monkeypatch) -> None:
+    model = MagicMock()
+    model.get_tool_names.return_value = [
+        call.name for call in tool_request("a", "b").tool_calls
+    ]
+    model.prepare_request_messages.side_effect = lambda messages, args: messages
+    model.chat.side_effect = [
+        ChatResult(message=ChatMessage.assistant(tool_request("a", "b").tool_calls)),
+        ChatResult(message=ChatMessage.assistant("done")),
+    ]
+    now = 0
+    monkeypatch.setattr(
+        "flink_agents.plan.actions.react_loop_budget_utils.time.time_ns",
+        lambda: now * 1_000_000,
+    )
+
+    class Context(_Context):
+        def has_resource(self, name: str, type: ResourceType) -> bool:
+            return type == ResourceType.CHAT_MODEL and name == "model"
+
+        def get_resource(
+            self, name: str, type: ResourceType
+        ) -> FunctionTool | MagicMock:
+            if type == ResourceType.CHAT_MODEL:
+                return model
+            return super().get_resource(name, type)
+
+        async def gather(self, *futures: Any) -> list[Outcome]:
+            nonlocal now
+            now += 1
+            return await super().gather(*futures)
+
+    state = {}
+    memory = MagicMock()
+    memory.get.side_effect = state.get
+    memory.set.side_effect = state.__setitem__
+    ctx = Context(sensory_memory=memory)
+    ctx.action_metric_group = MagicMock()
+    ctx.config.set(AgentExecutionOptions.CHAT_ASYNC, False)
+    ctx.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    ctx.config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2)
+    request = ChatRequestEvent(
+        "model",
+        [ChatMessage.user("hi")],
+        budget=ReActLoopBudget(max_time="1 ms", mode=mode),
+    )
+    asyncio.run(process_chat_request_or_tool_response(request, ctx))
+    (batch,) = ctx.sent_events
+    asyncio.run(process_tool_request(batch, ctx))
+    assert len(ctx.gather_calls) == 1
+    assert len(ctx.gather_calls[0]) == 2
+    tools = ctx.sent_events[1]
+    assert isinstance(tools, ToolResponseEvent)
+    assert tools.success == {"a": True, "b": True}
+    asyncio.run(process_chat_request_or_tool_response(tools, ctx))
+    if mode == "soft":
+        assert model.chat.call_count == 2
+        assert model.chat.call_args.kwargs["tools"] == []
+        assert not ctx.sent_events[-1].is_failed
+    else:
+        assert "TIME_BUDGET_EXCEEDED" in ctx.sent_events[-1].error
+    assert ctx.sent_events[-1].request_id == request.id
+    assert model.chat.call_count == (2 if mode == "soft" else 1)

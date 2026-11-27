@@ -21,10 +21,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.DataContentBlock;
+import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
+import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameters;
@@ -163,6 +165,18 @@ public class JavaResourceAdapter {
     /** Restore a data block from its canonical Python map. */
     public DataContentBlock fromPythonDataContentBlock(Map<String, Object> block) {
         return DATA_BLOCK_MAPPER.convertValue(block, DataContentBlock.class);
+    }
+
+    /**
+     * Forwards a prepared request without a native schema. Pemja cannot match the model's
+     * four-argument overload when Python passes None for its Object schema parameter.
+     */
+    public ChatResult chatWithExplicitTools(
+            BaseChatModelSetup model,
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams) {
+        return model.chat(messages, tools, modelParams, null);
     }
 
     public ChatResult fromPythonChatResult(Map<String, Object> response) {

@@ -23,10 +23,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLoggerConfig;
@@ -52,6 +55,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -131,6 +135,23 @@ class Slf4jTraceLoggerTest {
             loggerConfig.removeAppender(testAppender.getName());
             loggerContext.updateLoggers();
         }
+    }
+
+    @Test
+    void timeBudgetSurvivesSerialization() throws Exception {
+        var budget = ReActLoopBudget.builder().maxTime(Duration.ofMillis(60001)).build();
+        var request =
+                new ChatRequestEvent(
+                        "model", List.of(ChatMessage.user("hi")), null, null, null, budget);
+        logger =
+                new Slf4jTraceLogger(
+                        TraceLoggerConfig.builder().loggerType(LoggerType.SLF4J).build());
+        logger.open(openParams);
+        append(request, null, TraceLogLevel.STANDARD);
+        var json = objectMapper.readTree(testAppender.getMessages().get(0));
+        assertEquals(
+                budget.getMaxTime(),
+                Duration.parse(json.at("/attributes/budget/max_time").asText()));
     }
 
     @Test

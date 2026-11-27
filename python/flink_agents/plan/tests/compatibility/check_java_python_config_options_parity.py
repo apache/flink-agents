@@ -38,6 +38,7 @@ from flink_agents.api.core_options import (
     AgentConfigOptions,
     AgentExecutionOptions,
     MemoryEventOptions,
+    ReActLoopBudgetOptions,
     TraceLogLevel,
     TraceLogScope,
 )
@@ -356,6 +357,13 @@ def main() -> None:
     )
     assert_options_class_matches_java(
         MemoryEventOptions, java_memory_event_options, jvm
+    )
+    assert_options_class_matches_java(
+        ReActLoopBudgetOptions,
+        class_loader.loadClass(
+            "org.apache.flink.agents.api.agents.ReActLoopBudgetOptions"
+        ),
+        jvm,
     )
     assert_options_class_matches_java(SkillOptions, java_skill_options, jvm)
     assert_trace_log_target_factories_match_java(jvm)

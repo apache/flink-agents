@@ -20,6 +20,7 @@ from datetime import timedelta
 from enum import Enum
 
 from flink_agents.api.configuration import ConfigOption
+from flink_agents.api.react_loop_budget import BudgetMode
 from flink_agents.api.trace_log import TraceLogLevel as TraceLogLevel
 from flink_agents.api.trace_log import TraceLogScope as TraceLogScope
 from flink_agents.api.trace_log import TraceLogTarget
@@ -393,4 +394,32 @@ class AgentExecutionOptions:
         key="short-term-memory.state-ttl.visibility",
         config_type=ShortTermMemoryTtlVisibility,
         default=ShortTermMemoryTtlVisibility.NEVER_RETURN_EXPIRED,
+    )
+
+
+class ReActLoopBudgetOptions:
+    """Job-level defaults for per-chat loop budgets."""
+
+    LOOP_MAX_TURNS = ConfigOption(
+        key="react-loop.budget.max-turns",
+        config_type=int,
+        default=None,
+    )
+
+    LOOP_MAX_TOKENS = ConfigOption(
+        key="react-loop.budget.max-tokens",
+        config_type=int,
+        default=None,
+    )
+
+    LOOP_MAX_TIME = ConfigOption(
+        key="react-loop.budget.max-time",
+        config_type=timedelta,
+        default=None,
+    )
+
+    LOOP_BUDGET_MODE = ConfigOption(
+        key="react-loop.budget.mode",
+        config_type=BudgetMode,
+        default=BudgetMode.SOFT,
     )

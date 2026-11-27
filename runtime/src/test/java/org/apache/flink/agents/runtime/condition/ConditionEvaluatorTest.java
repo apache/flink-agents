@@ -25,6 +25,7 @@ import dev.cel.common.values.NullValue;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.agents.ReActLoopBudget;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions.ConditionEvaluationFailureStrategy;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
@@ -37,6 +38,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -167,6 +169,16 @@ class ConditionEvaluatorTest {
 
     static Stream<ConformanceTestCase> conformanceCases() throws IOException {
         return loadConformanceCases().stream();
+    }
+
+    @Test
+    void conditionCanReadTypedTimeBudget() {
+        var budget = ReActLoopBudget.builder().maxTime(Duration.ofSeconds(60)).build();
+        Event event = new Event("ChatRequestEvent", Map.of("budget", budget));
+        String source = "budget.max_time == 'PT1M'";
+        var testEvaluator =
+                new EvaluatorHarness(List.of(source), ConditionEvaluationFailureStrategy.FAIL);
+        assertThat(testEvaluator.evaluate(source, event)).isTrue();
     }
 
     @Test

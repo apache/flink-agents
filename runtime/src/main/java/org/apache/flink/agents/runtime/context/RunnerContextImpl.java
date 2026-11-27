@@ -22,7 +22,6 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
@@ -44,6 +43,7 @@ import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.api.trace.TraceRecords;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.exceptions.UncapturableException;
@@ -106,8 +106,7 @@ import java.util.concurrent.TimeoutException;
  */
 public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
-    protected static final ObjectMapper OBJECT_MAPPER =
-            new ObjectMapper().registerModule(new JavaTimeModule());
+    protected static final ObjectMapper OBJECT_MAPPER = JacksonMapperFactory.builder().build();
 
     public static class MemoryContext {
         private final CachedMemoryStore sensoryMemStore;

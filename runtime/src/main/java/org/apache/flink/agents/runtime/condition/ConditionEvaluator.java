@@ -24,6 +24,7 @@ import dev.cel.runtime.CelEvaluationException;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions.ConditionEvaluationFailureStrategy;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,7 +40,7 @@ import java.util.Set;
 final class ConditionEvaluator {
 
     private static final Logger LOG = LoggerFactory.getLogger(ConditionEvaluator.class);
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final ObjectMapper OBJECT_MAPPER = JacksonMapperFactory.builder().build();
 
     private final ConditionEvaluationFailureStrategy failureStrategy;
 

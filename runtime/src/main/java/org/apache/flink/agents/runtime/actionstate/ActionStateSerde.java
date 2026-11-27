@@ -33,6 +33,7 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.MemoryUpdate;
+import org.apache.flink.agents.api.utils.JacksonMapperFactory;
 import org.apache.flink.agents.runtime.operator.ActionTask;
 import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -108,7 +109,7 @@ public final class ActionStateSerde {
     }
 
     private static ObjectMapper createObjectMapper() {
-        ObjectMapper mapper = new ObjectMapper();
+        ObjectMapper mapper = JacksonMapperFactory.builder().build();
 
         // Add type information for polymorphic Event deserialization
         mapper.addMixIn(Event.class, EventTypeInfoMixin.class);
