@@ -1006,7 +1006,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 |-----------|------|---------|-------------|
 | `model` | str | `"gpt-6-luna"` | Name of the chat model to use |
 | `temperature` | float | `0.1` | Sampling temperature (0.0 to 2.0) |
-| `max_tokens` | int | None | Maximum number of tokens to generate |
+| `max_completion_tokens` | int | None | Maximum number of tokens to generate |
 | `logprobs` | bool | None | Whether to return log probabilities per token |
 | `top_logprobs` | int | `0` | Number of top token log probabilities to return (0-20) |
 | `strict` | bool | `False` | Enable strict mode for tool calling and schemas |
@@ -1021,7 +1021,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 |-----------|------|---------|-------------|
 | `model` | String | `"gpt-6-luna"` | Name of the chat model to use |
 | `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
-| `max_tokens` | int | None | Maximum number of tokens to generate |
+| `max_completion_tokens` | int | None | Maximum number of tokens to generate |
 | `logprobs` | boolean | None | Whether to return log probabilities per token |
 | `top_logprobs` | int | `0` | Number of top token log probabilities to return (0-20) |
 | `strict` | boolean | `false` | Enable strict mode for tool calling and schemas |
@@ -1063,7 +1063,7 @@ class MyAgent(Agent):
             connection="openai_connection",
             model="gpt-4",
             temperature=0.7,
-            max_tokens=1000
+            max_completion_tokens=1000
         )
 
     ...
@@ -1089,7 +1089,7 @@ public class MyAgent extends Agent {
                 .addInitialArgument("connection", "openaiConnection")
                 .addInitialArgument("model", "gpt-4")
                 .addInitialArgument("temperature", 0.7d)
-                .addInitialArgument("max_tokens", 1000)
+                .addInitialArgument("max_completion_tokens", 1000)
                 .build();
     }
 

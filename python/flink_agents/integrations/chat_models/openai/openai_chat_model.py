@@ -337,7 +337,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             fallback.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
-            max_tokens, etc.)
+            max_completion_tokens, etc.)
 
         Returns:
         -------
@@ -417,7 +417,7 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
         List of available tools to use in the chat. (Inherited from BaseChatModelSetup)
     temperature : float
         The temperature to use during generation.
-    max_tokens : Optional[int]
+    max_completion_tokens : Optional[int]
         The maximum number of tokens to generate.
     logprobs : Optional[bool]
         Whether to return logprobs per token.
@@ -443,7 +443,7 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
         ge=0.0,
         le=2.0,
     )
-    max_tokens: int | None = Field(
+    max_completion_tokens: int | None = Field(
         description="The maximum number of tokens to generate.",
         gt=0,
     )
@@ -476,7 +476,7 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
         *,
         model: str = DEFAULT_OPENAI_MODEL,
         temperature: float = DEFAULT_TEMPERATURE,
-        max_tokens: int | None = None,
+        max_completion_tokens: int | None = None,
         additional_kwargs: Dict[str, Any] | None = None,
         strict: bool = False,
         reasoning_effort: _ReasoningEffort | None = None,
@@ -487,7 +487,7 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
         super().__init__(
             model=model,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_completion_tokens=max_completion_tokens,
             additional_kwargs=additional_kwargs,
             strict=strict,
             reasoning_effort=reasoning_effort,
@@ -518,8 +518,8 @@ class OpenAIChatModelSetup(BaseChatModelSetup):
     def model_kwargs(self) -> Dict[str, Any]:
         """Return chat model settings."""
         base_kwargs = {"model": self.model, "temperature": self.temperature}
-        if self.max_tokens is not None:
-            base_kwargs["max_tokens"] = self.max_tokens
+        if self.max_completion_tokens is not None:
+            base_kwargs["max_completion_tokens"] = self.max_completion_tokens
         if self.logprobs is not None and self.logprobs is True:
             base_kwargs["logprobs"] = self.logprobs
             base_kwargs["top_logprobs"] = self.top_logprobs

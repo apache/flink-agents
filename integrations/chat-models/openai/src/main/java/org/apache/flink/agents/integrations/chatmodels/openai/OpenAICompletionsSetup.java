@@ -52,7 +52,7 @@ import java.util.Set;
  *             .addInitialArgument("connection", "myOpenAIConnection")
  *             .addInitialArgument("model", "gpt-4o-mini")
  *             .addInitialArgument("temperature", 0.3d)
- *             .addInitialArgument("max_tokens", 500)
+ *             .addInitialArgument("max_completion_tokens", 500)
  *             .addInitialArgument("strict", true)
  *             .addInitialArgument("reasoning_effort", "medium")
  *             .addInitialArgument("tools", List.of("convertTemperature", "calculateBMI"))
@@ -87,7 +87,7 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
             Set.of("gpt-6-luna", "gpt-6-sol");
 
     private final Double temperature;
-    private final Integer maxTokens;
+    private final Integer maxCompletionTokens;
     private final Boolean logprobs;
     private final Integer topLogprobs;
     private final Boolean strict;
@@ -107,12 +107,12 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
             throw new IllegalArgumentException("temperature must be between 0.0 and 2.0");
         }
 
-        this.maxTokens =
-                Optional.ofNullable(descriptor.<Number>getArgument("max_tokens"))
+        this.maxCompletionTokens =
+                Optional.ofNullable(descriptor.<Number>getArgument("max_completion_tokens"))
                         .map(Number::intValue)
                         .orElse(null);
-        if (this.maxTokens != null && this.maxTokens <= 0) {
-            throw new IllegalArgumentException("max_tokens must be greater than 0");
+        if (this.maxCompletionTokens != null && this.maxCompletionTokens <= 0) {
+            throw new IllegalArgumentException("max_completion_tokens must be greater than 0");
         }
 
         this.logprobs = descriptor.getArgument("logprobs");
@@ -151,7 +151,7 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
     public OpenAICompletionsSetup(
             String model,
             double temperature,
-            Integer maxTokens,
+            Integer maxCompletionTokens,
             Boolean logprobs,
             Integer topLogprobs,
             Boolean strict,
@@ -163,7 +163,7 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
                 createDescriptor(
                         model,
                         temperature,
-                        maxTokens,
+                        maxCompletionTokens,
                         logprobs,
                         topLogprobs,
                         strict,
@@ -197,8 +197,8 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
             parameters.put("model", model);
         }
         parameters.put("temperature", temperature);
-        if (maxTokens != null) {
-            parameters.put("max_tokens", maxTokens);
+        if (maxCompletionTokens != null) {
+            parameters.put("max_completion_tokens", maxCompletionTokens);
         }
         if (Boolean.TRUE.equals(logprobs)) {
             parameters.put("logprobs", logprobs);
@@ -221,7 +221,7 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
     private static ResourceDescriptor createDescriptor(
             String model,
             double temperature,
-            Integer maxTokens,
+            Integer maxCompletionTokens,
             Boolean logprobs,
             Integer topLogprobs,
             Boolean strict,
@@ -233,8 +233,8 @@ public class OpenAICompletionsSetup extends BaseChatModelSetup {
                         .addInitialArgument("model", model)
                         .addInitialArgument("temperature", temperature);
 
-        if (maxTokens != null) {
-            builder.addInitialArgument("max_tokens", maxTokens);
+        if (maxCompletionTokens != null) {
+            builder.addInitialArgument("max_completion_tokens", maxCompletionTokens);
         }
         if (logprobs != null) {
             builder.addInitialArgument("logprobs", logprobs);

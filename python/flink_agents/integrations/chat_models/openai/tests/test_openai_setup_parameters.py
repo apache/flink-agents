@@ -157,6 +157,20 @@ def test_defaults_send_neither_parameter() -> None:
     assert request["tools"][0]["function"]["strict"] is False
 
 
+def test_max_completion_tokens_reaches_request() -> None:
+    setup = OpenAIChatModelSetup(connection="conn", max_completion_tokens=256)
+
+    request = _request(setup)
+
+    assert request["max_completion_tokens"] == 256
+    assert "max_tokens" not in request
+
+
+def test_max_tokens_rejected() -> None:
+    with pytest.raises(ValidationError, match="max_tokens"):
+        OpenAIChatModelSetup(connection="conn", max_tokens=256)
+
+
 def test_default_model_with_tool_sends_none() -> None:
     request = _opened_request(tools=["add"])
 

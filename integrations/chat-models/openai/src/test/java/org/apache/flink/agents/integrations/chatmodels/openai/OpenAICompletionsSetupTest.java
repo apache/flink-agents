@@ -117,6 +117,26 @@ class OpenAICompletionsSetupTest {
                 .hasMessage("Chat model setup model must not be blank.");
     }
 
+    @Test
+    @DisplayName("max_completion_tokens reaches the request body under the same name")
+    void testMaxCompletionTokensReachesRequestBody() throws Exception {
+        JsonNode body =
+                requestBody(base().addInitialArgument("max_completion_tokens", 256).build());
+
+        assertThat(body.path("max_completion_tokens").asInt()).isEqualTo(256);
+        assertThat(body.has("max_tokens")).isFalse();
+    }
+
+    @Test
+    @DisplayName("Constructor rejects a max_completion_tokens that is not positive")
+    void testNonPositiveMaxCompletionTokensRejected() {
+        ResourceDescriptor desc = base().addInitialArgument("max_completion_tokens", 0).build();
+
+        assertThatThrownBy(() -> new OpenAICompletionsSetup(desc, NOOP))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("max_completion_tokens must be greater than 0");
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"none", "low", "medium", "high"})
     @DisplayName("Each accepted reasoning_effort, none included, is sent as configured")

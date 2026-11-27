@@ -327,9 +327,9 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
             builder.temperature(((Number) temperature).doubleValue());
         }
 
-        Object maxTokens = modelParams.remove("max_tokens");
-        if (maxTokens instanceof Number) {
-            builder.maxCompletionTokens(((Number) maxTokens).longValue());
+        Object maxCompletionTokens = modelParams.remove("max_completion_tokens");
+        if (maxCompletionTokens instanceof Number) {
+            builder.maxCompletionTokens(((Number) maxCompletionTokens).longValue());
         }
 
         Object logprobs = modelParams.remove("logprobs");
