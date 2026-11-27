@@ -227,7 +227,9 @@ def resolve_clazz(
     resolved = bucket.get(name)
     if resolved is not None:
         return resolved
-    if "." in name:
+    if "." in name or name == ResourceName.ModelRouter.Java.MODEL_ROUTER:
+        # The Java router alias resolves to this declaration placeholder; the plan
+        # names the implementation class, so it is not a class path.
         return name
     msg = f"Unknown {language.capitalize()} alias {name!r} for {resource_type.value}"
     raise ValueError(msg)

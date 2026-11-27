@@ -299,6 +299,26 @@ def test_resolve_clazz_covers_embedding_model_openai_in_both_languages() -> None
     assert java_setup.endswith("OpenAIEmbeddingModelSetup")
 
 
+def test_java_router_placeholder_passes_through() -> None:
+    """The Java router alias value is a declaration placeholder, not a class path."""
+    assert (
+        resolve_clazz(
+            ResourceName.ModelRouter.Java.MODEL_ROUTER,
+            ResourceType.MODEL_ROUTER,
+            "python",
+        )
+        == ResourceName.ModelRouter.Java.MODEL_ROUTER
+    )
+    assert (
+        resolve_clazz(
+            ResourceName.ModelRouter.Java.MODEL_ROUTER,
+            ResourceType.MODEL_ROUTER,
+            "java",
+        )
+        == ResourceName.ModelRouter.Java.MODEL_ROUTER
+    )
+
+
 def test_resolve_clazz_covers_model_router_in_both_languages() -> None:
     assert (
         resolve_clazz("router", ResourceType.MODEL_ROUTER, "python")
