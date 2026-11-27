@@ -109,6 +109,12 @@ public class JavaResourceAdapter {
         return resourceContext.generateAvailableSkillsPrompt(skillNames);
     }
 
+    /** Tool metadata for Python models bound to Java-owned subagents. Execution stays in Java. */
+    public String getSubagentToolMetadata(String name) throws Exception {
+        return DATA_BLOCK_MAPPER.writeValueAsString(
+                resourceContext.getSubagentTool(name).getMetadata());
+    }
+
     /** Return absolute directory paths for the given skill names. */
     public List<String> getSkillDirs(List<String> skillNames) throws Exception {
         return resourceContext.getSkillDirs(skillNames);

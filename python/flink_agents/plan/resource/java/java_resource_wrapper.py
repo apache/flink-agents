@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 from typing import TYPE_CHECKING, Any, List
 
 from pydantic import ConfigDict, Field
@@ -99,6 +100,18 @@ class JavaResourceContextWrapper(ResourceContext):
     def get_resource(self, name: str, type: ResourceType) -> Resource:
         """Get a resource by name and type."""
         return self._j_resource_adapter.getResource(name, type.value)
+
+    @override
+    def get_subagent_tool(self, name: str) -> Tool:
+        """Expose Java-owned metadata; Java ToolCallAction executes the call."""
+        metadata = json.loads(self._j_resource_adapter.getSubagentToolMetadata(name))
+        return JavaTool(
+            metadata=ToolMetadata(
+                name=metadata["name"],
+                description=metadata["description"],
+                args_schema=json.loads(metadata["inputSchema"]),
+            )
+        )
 
     @override
     def generate_available_skills_prompt(self, *skill_names: str) -> str:

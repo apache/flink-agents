@@ -28,7 +28,9 @@ import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
+import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterSource;
+import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -42,6 +44,21 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class JavaResourceAdapterTest {
+
+    @Test
+    void exposesSubagentToolMetadataWithoutPassingTheExecutableAcrossTheBridge() throws Exception {
+        ResourceContext context = mock(ResourceContext.class);
+        FunctionTool tool = mock(FunctionTool.class);
+        when(tool.getMetadata())
+                .thenReturn(
+                        new ToolMetadata("_subagent_child", "Delegate", "{\"type\":\"object\"}"));
+        when(context.getSubagentTool("child")).thenReturn(tool);
+        JavaResourceAdapter adapter = new JavaResourceAdapter(context, getClass().getClassLoader());
+        JsonNode metadata = new ObjectMapper().readTree(adapter.getSubagentToolMetadata("child"));
+        assertThat(metadata.get("name").asText()).isEqualTo("_subagent_child");
+        assertThat(metadata.get("description").asText()).isEqualTo("Delegate");
+        assertThat(metadata.get("inputSchema").asText()).isEqualTo("{\"type\":\"object\"}");
+    }
 
     @Test
     void buildsJavaChatResultFromPythonAssistantMessage() {

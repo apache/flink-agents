@@ -41,6 +41,7 @@ from flink_agents.api.media import (
 from flink_agents.api.rerank_models.rerank_model import RerankHit, RerankResult
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
+from flink_agents.api.tools.tool import Tool
 from flink_agents.runtime.durable_execution import durable_identity_for_call
 from flink_agents.runtime.python_java_utils import (
     call_media_model_cancel,
@@ -369,6 +370,9 @@ class _FakeCtx(ResourceContext):
         self, name: str, resource_type: ResourceType, metric_group: Any = None
     ) -> Resource:
         return self._resources[(name, resource_type)]
+
+    def get_subagent_tool(self, name: str) -> Tool:
+        raise NotImplementedError
 
     def generate_available_skills_prompt(self, *skill_names: str) -> str:
         return ""

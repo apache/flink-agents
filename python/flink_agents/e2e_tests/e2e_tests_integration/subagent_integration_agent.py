@@ -33,10 +33,9 @@ from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
-from flink_agents.api.subagent import SubagentResult
+from flink_agents.api.subagent import SubagentCall, SubagentResult
 from flink_agents.runtime.deferred_subagent import (
     DeferredSubagentSetup,
-    PreparedTriple,
 )
 
 
@@ -54,14 +53,14 @@ class EchoSubagentSetup(DeferredSubagentSetup):
         prompt: Any,
         session_id: str,
         call_id: str,
-    ) -> PreparedTriple:
+    ) -> SubagentCall:
         """Return a durable call echoing the prompt, keyed by the identity."""
         name = self.subagent_name
 
         def call() -> SubagentResult:
             return SubagentResult.ok(f"reviewed[{name}]:{prompt}")
 
-        return (f"{session_id}#{call_id}", call, None)
+        return SubagentCall(call)
 
 
 class SubagentIntegrationAgent(Agent):

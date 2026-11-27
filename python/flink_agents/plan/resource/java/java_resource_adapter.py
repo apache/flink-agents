@@ -56,6 +56,10 @@ class JavaResourceAdapter(Protocol):
         """Generate skill discovery text."""
         ...
 
+    def getSubagentToolMetadata(self, name: str) -> str:
+        """Serialize the model-visible tool metadata of a Java-owned subagent."""
+        ...
+
     def getSkillDirs(self, skill_names: list[str]) -> list[str]:
         """Resolve materialized skill directories."""
         ...

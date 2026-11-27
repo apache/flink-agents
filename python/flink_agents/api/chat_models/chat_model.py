@@ -29,13 +29,11 @@ from flink_agents.api.chat_message import (
     MessageRole,
     find_first_system_message,
 )
-from flink_agents.api.chat_models.subagent_tool import SubagentTool
 from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.skills import LOAD_SKILL_TOOL, SkillSourceSpec
-from flink_agents.api.subagent import CALLABLE_NAME_PREFIX, SubagentSetup
 from flink_agents.api.tools.tool import Tool
 
 
@@ -425,6 +423,7 @@ class BaseChatModelSetup(Resource):
     connection: str = Field(description="The referenced connection name.")
     model: str = Field(description="Name of the chat model to use.")
     _resolved_connection: BaseChatModelConnection | None = PrivateAttr(default=None)
+    _subagent_tools: list[Tool] = PrivateAttr(default_factory=list)
     prompt: Prompt | str | None = None
     tools: List[str] | List[Tool] = Field(default_factory=list)
     subagents: List[str] = Field(
@@ -524,7 +523,9 @@ class BaseChatModelSetup(Resource):
         # ``subagents`` rather than declared under ``tools``, so a previous build of
         # them is dropped here instead of being read back as a declaration.
         declared: List[str | Tool] = [
-            entry for entry in self.tools if not isinstance(entry, SubagentTool)
+            entry
+            for entry in self.tools
+            if not any(entry is bound for bound in self._subagent_tools)
         ]
         declared_names = [
             entry if isinstance(entry, str) else entry.name for entry in declared
@@ -548,42 +549,16 @@ class BaseChatModelSetup(Resource):
                     self.resource_context.get_resource(name, ResourceType.TOOL),
                 )
             )
+        subagent_tools = []
         for name in self.subagents:
-            # Tools are forbidden to carry the reserved prefix at registration, so a
-            # prefixed callable name can only come from this loop and a clash with a
-            # tool is impossible. Checked before the schema below, because a name
-            # declared twice is a mistake in the declaration whether or not it ends
-            # up registered.
-            callable_name = CALLABLE_NAME_PREFIX + name
-            if callable_name in callable_names:
-                msg = f"Duplicate callable name: {callable_name}"
-                raise ValueError(msg)
-            callable_names.add(callable_name)
-            setup = self.resource_context.get_resource(name, ResourceType.AGENT)
-            # A sub-agent owned by the other language resolves to a bridge handle
-            # here, which carries no schema to declare, so it is rejected instead
-            # of silently dropped.
-            if not isinstance(setup, SubagentSetup):
-                msg = (
-                    f"Sub-agent {name} must resolve to a SubagentSetup, "
-                    f"but was {type(setup).__name__}"
-                )
-                raise TypeError(msg)
-            # A sub-agent that declares neither an input schema nor an input type
-            # gives the model no arguments to build a call from, so the declaration
-            # is a mistake rather than something to skip: fail the job at setup
-            # time, consistent with the duplicate-name and bridge-handle checks
-            # above.
-            if setup.input_schema is None:
-                msg = (
-                    f"Sub-agent {name} declares neither an input schema nor an "
-                    f"input type, so there are no arguments for the model to "
-                    f"build a call from."
-                )
-                raise ValueError(msg)
-            callables.append(
-                SubagentTool.of(name, setup.description, setup.input_schema)
-            )
+            tool = self.resource_context.get_subagent_tool(name)
+            if tool.name in callable_names:
+                message = f"Duplicate callable name: {tool.name}"
+                raise ValueError(message)
+            callable_names.add(tool.name)
+            subagent_tools.append(tool)
+            callables.append(tool)
+        self._subagent_tools = subagent_tools
         self.tools = callables
 
     def prepare_request_messages(

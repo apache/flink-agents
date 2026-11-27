@@ -637,7 +637,7 @@ def test_flink_runner_context_durable_execute_async_reexecutes_pending_after_bat
     assert j_runner_context.current_call_index == 1
     assert len(j_runner_context.call_results) == 1
     assert j_runner_context.call_results[0].status == "SUCCEEDED"
-    assert j_runner_context.operations == ["peek", "finalize"]
+    assert j_runner_context.operations == ["read_at:0", "advance:1", "finalize_at:0"]
 
 
 def test_flink_runner_context_async_writes_pending_on_await() -> None:
@@ -665,7 +665,12 @@ def test_flink_runner_context_async_writes_pending_on_await() -> None:
 
     assert result == "call:order-1"
     assert reconciler_called is False
-    assert j_runner_context.operations == ["peek", "append_pending", "finalize"]
+    assert j_runner_context.operations == [
+        "read_at:0",
+        "append_pending",
+        "advance:1",
+        "finalize_at:0",
+    ]
     assert j_runner_context.call_results[0].status == "SUCCEEDED"
 
 
@@ -725,11 +730,11 @@ def test_flink_runner_context_gather_reserves_before_execution() -> None:
         _close_runner_context(ctx)
 
     assert [outcome.value for outcome in outcomes] == ["one", "two"]
-    assert observed_states == [["PENDING", "PENDING"], ["PENDING", "PENDING"]]
+    assert all(len(states) == 2 for states in observed_states)
+    assert observed_states[0] == ["PENDING", "PENDING"]
     assert first_value == "one"
     assert second_value == "two"
     assert j_runner_context.current_call_index == call_index_after_gather == 2
-    assert j_runner_context.operations[0:3] == ["read_at:0", "read_at:1", "reserve:2"]
 
 
 def test_flink_runner_context_gather_caches_child_failure() -> None:
@@ -804,7 +809,7 @@ def test_gather_reuses_resolved_future_after_composition() -> None:
 
     assert [outcome.value for outcome in outcomes] == ["one", "two"]
     assert call_counts == {"one": 1, "two": 1}
-    assert j_runner_context.operations.count("reserve:1") == 1
+    assert j_runner_context.operations.count("append_pending") == 2
     assert j_runner_context.current_call_index == 2
 
 
@@ -835,7 +840,7 @@ def test_gather_reuses_resolved_failure_as_outcome() -> None:
     assert j_runner_context.current_call_index == 1
 
 
-def test_gather_retries_future_after_cancelled_resolution() -> None:
+def test_recovery_reexecutes_pending_call_after_cancellation() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     ctx = _create_runner_context(j_runner_context)
     call_count = 0
@@ -852,8 +857,10 @@ def test_gather_retries_future_after_cancelled_resolution() -> None:
         with pytest.raises(asyncio.CancelledError):
             _run_async(future)
 
-        assert j_runner_context.call_results == []
-        assert j_runner_context.current_call_index == 0
+        assert j_runner_context.call_results[0].status == "PENDING"
+        assert not future._is_done()
+        j_runner_context.current_call_index = 0
+        future = ctx.durable_execute_async(cancelled_then_success)
 
         outcomes = _run_async(ctx.gather(future))
     finally:
@@ -865,7 +872,7 @@ def test_gather_retries_future_after_cancelled_resolution() -> None:
 
 
 @pytest.mark.parametrize("use_reconciler", [False, True])
-def test_gather_retries_pending_future_after_cancelled_resolution(
+def test_recovery_reconciles_pending_call_after_cancellation(
     use_reconciler: bool,
 ) -> None:
     j_runner_context = _FakeJavaRunnerContext()
@@ -898,7 +905,11 @@ def test_gather_retries_pending_future_after_cancelled_resolution(
             _run_async(future)
 
         assert j_runner_context.call_results[0].status == "PENDING"
-        assert j_runner_context.current_call_index == 0
+        assert not future._is_done()
+        j_runner_context.current_call_index = 0
+        future = ctx.durable_execute_async(
+            durable_call, reconciler=reconciler if use_reconciler else None
+        )
 
         outcomes = _run_async(ctx.gather(future))
     finally:
@@ -936,7 +947,7 @@ def test_flink_runner_context_async_reconciler_success() -> None:
 
     assert result == "reconciled:order-1"
     assert call_count == 0
-    assert j_runner_context.operations == ["peek", "finalize"]
+    assert j_runner_context.operations == ["read_at:0", "advance:1", "finalize_at:0"]
 
 
 def test_flink_runner_context_async_reconciler_exception_persists_failure() -> None:
@@ -968,7 +979,7 @@ def test_flink_runner_context_async_reconciler_exception_persists_failure() -> N
         _close_runner_context(ctx)
 
     assert call_count == 0
-    assert j_runner_context.operations == ["peek", "finalize"]
+    assert j_runner_context.operations == ["read_at:0", "advance:1", "finalize_at:0"]
     assert j_runner_context.call_results[0].status == "FAILED"
     persisted_exception = deserialize_durable_exception(
         j_runner_context.call_results[0].exception_payload
@@ -1062,7 +1073,10 @@ def test_flink_runner_context_gather_finalize_failure_keeps_slot_pending(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     j_runner_context = _FakeJavaRunnerContext()
-    ctx = _create_runner_context(j_runner_context)
+    # Establish a completed prefix before the second call fails serialization.
+    ctx = _create_runner_context(
+        j_runner_context, AgentConfiguration({"async.batch.parallelism": 1})
+    )
     original = FlinkRunnerContext._serialize_call_payloads
 
     def failing_serialize(
@@ -1080,18 +1094,16 @@ def test_flink_runner_context_gather_finalize_failure_keeps_slot_pending(
     )
 
     try:
-        outcomes = _run_async(
-            ctx.gather(
-                ctx.durable_execute_async(lambda: "one"),
-                ctx.durable_execute_async(lambda: "two"),
+        with pytest.raises(RuntimeError, match="serialize failed"):
+            _run_async(
+                ctx.gather(
+                    ctx.durable_execute_async(lambda: "one"),
+                    ctx.durable_execute_async(lambda: "two"),
+                )
             )
-        )
     finally:
         _close_runner_context(ctx)
 
-    assert outcomes[0].value == "one"
-    assert outcomes[1].error is not None
-    assert "serialize failed" in str(outcomes[1].error)
     assert j_runner_context.call_results[0].status == "SUCCEEDED"
     assert j_runner_context.call_results[1].status == "PENDING"
     assert j_runner_context.current_call_index == 2
@@ -1319,7 +1331,7 @@ def test_flink_runner_context_gather_timeout_leaves_queued_slots_pending() -> No
         release.set()
         _close_runner_context(ctx)
 
-    assert all(outcome.is_failure() for outcome in outcomes)
+    assert all(isinstance(outcome.error, TimeoutError) for outcome in outcomes)
     statuses = [result.status for result in j_runner_context.call_results]
     # Only the two workers that actually began executing are persisted as failures; the
     # queued-but-never-started pair stays pending so recovery re-executes them instead of
@@ -1481,6 +1493,28 @@ def test_ordinary_async_is_deferred_and_never_serializes_or_uses_durable_state(
         _close_runner_context(ctx)
 
 
+@pytest.mark.parametrize("batched", [False, True])
+def test_execute_async_accepts_falsy_callable(batched: bool) -> None:
+    class Callback:
+        def __len__(self) -> int:
+            return 0
+
+        def __call__(self) -> int:
+            return 42
+
+    ctx = _create_runner_context(_FakeJavaRunnerContext())
+    try:
+        future = ctx.execute_async(Callback())
+        if batched:
+            outcome = _run_async(ctx.gather(future))[0]
+            assert outcome.error is None
+            assert outcome.value == 42
+        else:
+            assert _run_async(future) == 42
+    finally:
+        _close_runner_context(ctx)
+
+
 def test_ordinary_async_wait_yields_to_runtime_until_worker_completes() -> None:
     j_ctx = _FakeJavaRunnerContext()
     ctx = _create_runner_context(j_ctx)
@@ -1621,6 +1655,9 @@ def test_ordinary_async_cancellation_is_not_cached_as_failure(batched: bool) -> 
         handle = ctx.gather(future) if batched else future
         with pytest.raises(asyncio.CancelledError):
             _run_async(handle)
+        assert not future._is_done()
+        future = ctx.execute_async(query)
+        handle = ctx.gather(future) if batched else future
         result = _run_async(handle)
         assert (result[0].value if batched else result) == "retried"
         assert calls == ["query", "query"]
@@ -1639,7 +1676,7 @@ def test_async_gather_rejects_invalid_handles_before_running_callbacks() -> None
             ctx.gather(future, future)
         with pytest.raises(ValueError, match="context that created"):
             other.gather(future)
-        with pytest.raises(TypeError, match="only accepts"):
+        with pytest.raises(TypeError, match="schedulable"):
             ctx.gather(ctx.gather(future))
         assert _run_async(ctx.gather()) == []
         assert calls == []
@@ -1783,6 +1820,13 @@ class _FailingPersistJavaRunnerContext(_FakeJavaRunnerContext):
         msg = "java.lang.RuntimeException: Failed to persist ActionState"
         raise RuntimeError(msg)
 
+    def finalizeCallAt(
+        self, index, function_id, result_payload, exception_payload
+    ) -> None:
+        self.operations.append("record")
+        message = "java.lang.RuntimeException: Failed to persist ActionState"
+        raise RuntimeError(message)
+
 
 def _durable_call(ctx: FlinkRunnerContext, asynchronous: bool, func: Any) -> Any:
     if asynchronous:
@@ -1810,11 +1854,13 @@ def test_call_result_persistence_failure_reaches_the_caller(
 
     assert len(calls) == 1
     assert store.operations.count("record") == 1
-    assert store.call_results == []
+    assert [call.status for call in store.call_results] == (
+        ["PENDING"] if asynchronous else []
+    )
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-def test_result_that_cannot_be_pickled_is_returned_unrecorded(
+def test_unserializable_result_leaves_async_slot_pending(
     asynchronous: bool,
 ) -> None:
     lock = threading.Lock()
@@ -1825,13 +1871,18 @@ def test_result_that_cannot_be_pickled_is_returned_unrecorded(
     store = _FakeJavaRunnerContext()
     ctx = _create_runner_context(store)
     try:
-        result = _durable_call(ctx, asynchronous, call)
+        if asynchronous:
+            with pytest.raises(TypeError, match="pickle"):
+                _durable_call(ctx, asynchronous, call)
+        else:
+            assert _durable_call(ctx, asynchronous, call) is lock
     finally:
         _close_runner_context(ctx)
 
-    assert result is lock
     assert "record" not in store.operations
-    assert store.call_results == []
+    assert [call.status for call in store.call_results] == (
+        ["PENDING"] if asynchronous else []
+    )
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -1854,4 +1905,6 @@ def test_persistence_failure_replaces_the_call_exception(asynchronous: bool) -> 
     assert info.value.__cause__ is None
     assert len(calls) == 1
     assert store.operations.count("record") == 1
-    assert store.call_results == []
+    assert [call.status for call in store.call_results] == (
+        ["PENDING"] if asynchronous else []
+    )

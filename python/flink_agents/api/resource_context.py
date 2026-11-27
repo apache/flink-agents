@@ -27,10 +27,15 @@ from typing import TYPE_CHECKING, List
 if TYPE_CHECKING:
     from flink_agents.api.resource import Resource, ResourceType
     from flink_agents.api.skills import SkillSourceSpec
+    from flink_agents.api.tools.tool import Tool
 
 
 class ResourceContext(ABC):
     """Base abstract class for Resource Context."""
+
+    @abstractmethod
+    def get_subagent_tool(self, name: str) -> "Tool":
+        """Build the executable tool for a registered subagent."""
 
     @abstractmethod
     def get_resource(self, name: str, resource_type: "ResourceType") -> "Resource":

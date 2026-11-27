@@ -320,6 +320,7 @@ class ActionTaskContextManagerTest {
                     context.prepareChatCall(
                             new ObjectMapper()
                                     .writeValueAsString(new ChatRequestEvent("model", List.of())));
+            context.startSubgraphCall(callId);
             ActionTask chatTask =
                     new JavaActionTask("k", context.getPendingEvents().get(0), action, 2L);
             invokeCreateAndSetRunnerContext(mgr, chatTask);

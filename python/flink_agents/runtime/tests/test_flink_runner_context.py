@@ -71,18 +71,12 @@ class _FakeJavaRunnerContext:
     def __init__(self) -> None:
         self.sensory_memory = _FakeJavaSensoryMemory()
         self.sent_event_json: str | None = None
-        self.subagent_result_json: str | None = None
 
     def getSensoryMemory(self) -> _FakeJavaSensoryMemory:
         return self.sensory_memory
 
     def sendEventJson(self, event_json: str) -> None:
         self.sent_event_json = event_json
-
-    def tryCompleteInternalSubagentCall(
-        self, session_id: str, call_id: str
-    ) -> str | None:
-        return self.subagent_result_json
 
 
 def _bridge_context() -> tuple[FlinkRunnerContext, _FakeJavaRunnerContext]:
@@ -120,44 +114,34 @@ def test_send_event_preserves_identity_and_payload() -> None:
     assert forwarded.get_attr("source") == "user"
 
 
-# What the Java bridge hands over: byte for byte the payload
-# ``InternalSubagentBridgeTest`` pins, so both halves of the bridge are asserted
-# against one representation.
+# Java SubagentResult JSON uses string object keys and preserves nested nulls.
 _SUBAGENT_RESULT_JSON = (
     '{"success":true,"result":[{"1":"answer","nested":{"7":[1,null]},'
     '"absent":null}],"errorMessage":null}'
 )
 
 
-def test_internal_subagent_poll_reports_a_running_call_as_none() -> None:
-    ctx, _ = _bridge_context()
-
-    assert ctx.try_complete_internal_subagent_call("session", "call") is None
-
-
-def test_internal_subagent_poll_decodes_the_bridge_json() -> None:
-    ctx, java_context = _bridge_context()
-    java_context.subagent_result_json = _SUBAGENT_RESULT_JSON
-
-    result = ctx.try_complete_internal_subagent_call("session", "call")
-
-    assert result is not None
-    assert result.success
-    assert result.error_message is None
-    assert result.result == [
-        {"1": "answer", "nested": {"7": [1, None]}, "absent": None}
-    ]
-
-
-def test_internal_subagent_poll_decodes_a_child_failure() -> None:
-    ctx, java_context = _bridge_context()
-    java_context.subagent_result_json = (
-        '{"success":false,"result":null,"errorMessage":"child refused"}'
+def test_subgraph_future_decodes_internal_payload():
+    from flink_agents.runtime.subgraph_future import SubgraphFuture
+    from flink_agents.runtime.tests.future_test_utils import (
+        RuntimeContext,
+        SubgraphBridge,
+    )
+    from flink_agents.runtime.tests.test_base_subagent import _run
+    from flink_agents.runtime.tests.test_flink_runner_context_reconcilable import (
+        _close_runner_context,
     )
 
-    result = ctx.try_complete_internal_subagent_call("session", "call")
-
-    assert result is not None
-    assert not result.success
-    assert result.result is None
-    assert result.error_message == "child refused"
+    bridge = SubgraphBridge()
+    ctx = RuntimeContext(bridge)
+    try:
+        bridge.responses["session#call"] = _SUBAGENT_RESULT_JSON
+        result = _run(SubgraphFuture.subagent(ctx, "scope", "session", "call", "hello"))
+        assert result.success
+        assert result.error_message is None
+        assert result.result == [
+            {"1": "answer", "nested": {"7": [1, None]}, "absent": None}
+        ]
+    finally:
+        _close_runner_context(ctx)
+        RuntimeContext.instances.remove(ctx)

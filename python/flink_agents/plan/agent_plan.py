@@ -33,7 +33,6 @@ from flink_agents.api.skills import (
     LOAD_SKILL_TOOL,
     Skills,
 )
-from flink_agents.api.subagent import CALLABLE_NAME_PREFIX
 from flink_agents.api.tools.function_tool import FunctionTool as ApiFunctionTool
 from flink_agents.api.tools.tool import Tool
 from flink_agents.plan import subagent as _subagent
@@ -51,6 +50,7 @@ from flink_agents.plan.resource_provider import (
     PythonSerializableResourceProvider,
     ResourceProvider,
 )
+from flink_agents.plan.subagent_constants import TOOL_NAME_PREFIX
 from flink_agents.plan.tools.bash.bash_tool import BashTool
 from flink_agents.plan.tools.function_tool import FunctionTool
 
@@ -349,10 +349,10 @@ def _check_tool_name_not_reserved(name: str) -> None:
     registered under the prefix could never be called. Fail clearly at
     plan-construction time rather than at call time.
     """
-    if name.startswith(CALLABLE_NAME_PREFIX):
+    if name.startswith(TOOL_NAME_PREFIX):
         msg = (
             f"Tool name '{name}' must not start with the reserved prefix "
-            f"'{CALLABLE_NAME_PREFIX}', which identifies sub-agent callables."
+            f"'{TOOL_NAME_PREFIX}', which identifies sub-agent callables."
         )
         raise ValueError(msg)
 

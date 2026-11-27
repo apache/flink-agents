@@ -32,7 +32,6 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.exceptions.UncapturableException;
 import org.apache.flink.agents.plan.subagent.InternalSubagentPlans;
-import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.condition.ActionMatcher;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -165,30 +164,10 @@ public class InternalSubagentSetup extends BaseSubagentSetup {
     }
 
     /** The call one action issues against this scope's child plan under the assigned identity. */
-    SubgraphInvocation<SubagentResult> invocation(
+    public SubgraphInvocation<SubagentResult> invocation(
             RunnerContextImpl ctx, String sessionId, String callId) {
         return definition.newInvocation(
                 ctx, InternalSubagentDefinition.identity(sessionId, callId), ctx.getRecordKey());
-    }
-
-    /**
-     * Prepares one call for a bridge that polls it afterwards: the common chain registers the call
-     * and either installs the result its durable slot recorded or emits its bootstrap envelope.
-     *
-     * <p>The identity is supplied rather than minted here so it is reproducible after failover: a
-     * replayed call sends an envelope with the same attributes, which is what lets the child action
-     * resolve to its persisted action state instead of running again.
-     */
-    public void bootstrap(RunnerContext ctx, String sessionId, String callId, Object prompt) {
-        try {
-            RunnerContextImpl runner = (RunnerContextImpl) ctx;
-            SubgraphExecution.prepare(runner, invocation(runner, sessionId, callId), prompt);
-        } catch (Exception e) {
-            if (CancellationUtils.isCancellation(e)) {
-                ExceptionUtils.rethrow(e);
-            }
-            throw UncapturableException.wrap(e);
-        }
     }
 
     /**

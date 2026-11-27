@@ -15,14 +15,26 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-"""Internal framework faults shared by plan and runtime execution."""
+"""Framework fault and cancellation handling shared by plan and runtime."""
 
+import asyncio
 import traceback
 from collections.abc import Callable, Mapping
+from concurrent.futures import CancelledError
 from typing import Any
 
 _MAX_CAUSE_DEPTH = 64
 _JAVA_FRAMEWORK_FAULT = "org.apache.flink.agents.plan.exceptions.UncapturableException"
+
+# InterruptedIOException also represents ordinary network timeouts, so it must
+# not classify an attempt as cancelled.
+_JAVA_CANCELLATION_CLASSES = frozenset(
+    {
+        "java.lang.InterruptedException",
+        "java.nio.channels.ClosedByInterruptException",
+        "java.util.concurrent.CancellationException",
+    }
+)
 
 
 class UncapturableException(RuntimeError):
@@ -99,6 +111,31 @@ def is_uncapturable(exception: BaseException | None) -> bool:
 def raise_if_uncapturable(exception: BaseException | None) -> None:
     """Keep a marked fault out of an application failure conversion or recording."""
     if is_uncapturable(exception):
+        raise exception
+
+
+def is_cancellation(exception: BaseException | None) -> bool:
+    """Recognize Python or Java cancellation through explicit causes.
+
+    Ignore messages and implicit contexts: an unrelated failure raised while
+    handling a cancellation is not itself a cancellation.
+    """
+    current = exception
+    for _ in range(_MAX_CAUSE_DEPTH):
+        if current is None:
+            break
+        if isinstance(
+            current, CancelledError | asyncio.CancelledError | InterruptedError
+        ):
+            return True
+        current = current.__cause__
+    return find_java_exception(exception, _JAVA_CANCELLATION_CLASSES) is not None
+
+
+def raise_if_framework_fault_or_cancellation(exception: BaseException | None) -> None:
+    """Propagate the original failure before converting or recording an outcome."""
+    raise_if_uncapturable(exception)
+    if is_cancellation(exception):
         raise exception
 
 

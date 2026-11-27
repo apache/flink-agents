@@ -19,7 +19,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -29,18 +29,13 @@ from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceType,
 )
+from flink_agents.api.runner_context import AsyncFuture
 
 if TYPE_CHECKING:
     from flink_agents.api.agents.agent import Agent
     from flink_agents.api.runner_context import RunnerContext
 
 _LOG = logging.getLogger(__name__)
-
-# Prefix of the callable name a sub-agent is exposed to a chat model under.
-# Tools are forbidden to register under this prefix, so a prefixed callable
-# name unambiguously addresses a sub-agent and the executing side routes it to
-# the AGENT namespace.
-CALLABLE_NAME_PREFIX = "_subagent_"
 
 
 def _input_schema_from(input_type: type) -> str | None:
@@ -136,13 +131,27 @@ class SubagentResult:
         return None if self.success else RuntimeError(self.error_message)
 
 
-class SubagentFuture(ABC):
+@dataclass(frozen=True)
+class SubagentCall:
+    """Deferred subagent execution with optional reconciliation of pending calls.
+
+    The framework supplies the durable identity and result serialization. A terminal
+    recorded outcome skips both callbacks; a pending call uses ``reconciler`` when
+    supplied, otherwise repeats ``call``.
+    """
+
+    call: Callable[[], SubagentResult]
+    reconciler: Callable[[], SubagentResult] | None = None
+
+
+class SubagentFuture(AsyncFuture[SubagentResult]):
     """Handle for one sub-agent invocation, identified by the
     ``(session_id, call_id)`` pair that keys the invocation.
     """
 
     def __init__(self, session_id: str, call_id: str) -> None:
         """Initialize with the invocation identity."""
+        super().__init__()
         self._session_id = session_id
         self._call_id = call_id
 
@@ -165,7 +174,7 @@ class SubagentFuture(ABC):
     def done(self) -> bool:
         """Whether the invocation has been resolved."""
 
-    def cancel(self) -> None:  # noqa: B027 - deliberate no-op default
+    def cancel(self) -> None:
         """Request cancellation of the invocation."""
 
     @abstractmethod
@@ -185,6 +194,10 @@ class SubagentFuture(ABC):
         exits, including exceptionally, so
         callers need no extra cleanup after handling an await failure.
         """
+
+    def _resolve(self) -> Any:
+        message = "SubagentFuture implementations must provide __await__"
+        raise NotImplementedError(message)
 
 
 class SubagentFutures(ABC):

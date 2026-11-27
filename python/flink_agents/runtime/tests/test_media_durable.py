@@ -27,8 +27,8 @@ from flink_agents.api.chat_message import VideoBlock
 from flink_agents.api.media import MediaJob, MediaResult
 from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
 from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.plan.exceptions import is_cancellation
 from flink_agents.plan.resource_provider import PythonResourceProvider
-from flink_agents.runtime.durable_exception import is_java_interruption
 from flink_agents.runtime.durable_execution import (
     durable_identity_for_call,
     with_durable_id,
@@ -158,14 +158,16 @@ def test_interrupted_wait_replays_the_submitted_job(
         _close_runner_context(ctx)
         cache.close()
 
-    assert is_java_interruption(raised.value)
+    assert is_cancellation(raised.value)
     assert service.submits == 1
     assert service.queries == ["/tasks/job-1", "/tasks/job-1"]
-    assert [slot.status for slot in store.call_results] == ["SUCCEEDED"]
+    assert [slot.status for slot in store.call_results] == (
+        ["SUCCEEDED", "PENDING"] if asynchronous else ["SUCCEEDED"]
+    )
     assert store.call_results[0].exception_payload is None
     stored_job = cloudpickle.loads(store.call_results[0].result_payload)
     assert stored_job == job
-    assert store.current_call_index == 1
+    assert store.current_call_index == (2 if asynchronous else 1)
 
     store.current_call_index = 0
     cache = _resource_cache()
@@ -271,7 +273,7 @@ def test_named_media_model_setup_replays_submitted_job(
         _close_runner_context(ctx)
         cache.close()
 
-    assert is_java_interruption(raised.value)
+    assert is_cancellation(raised.value)
     assert service.submits == 1
 
     store.current_call_index = 0

@@ -20,8 +20,6 @@ package org.apache.flink.agents.runtime.context;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.junit.jupiter.api.Test;
 
-import javax.annotation.Nullable;
-
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -50,40 +48,35 @@ class PythonBridgeContractTest {
             Paths.get("..", "python", "flink_agents", "runtime", "flink_runner_context.py");
 
     private static final Path CHAT_FUTURE_PY =
-            Paths.get("..", "python", "flink_agents", "runtime", "chat_future.py");
+            Paths.get("..", "python", "flink_agents", "runtime", "subgraph_future.py");
 
     private static final Pattern RUNNER_CONTEXT_CALL =
             Pattern.compile("_j_runner_context\\.([A-Za-z_][A-Za-z0-9_]*)");
 
     private static final Pattern CHAT_FUTURE_CALL =
-            Pattern.compile("self\\._ctx\\.([A-Za-z_][A-Za-z0-9_]*)");
+            Pattern.compile("(?:self\\._java|ctx\\._j_runner_context)\\.([A-Za-z_][A-Za-z0-9_]*)");
 
-    /**
-     * The internal sub-agent poll and the chat poll both report "still running" as a Java {@code
-     * null}, which is what lets the bridge yield the mailbox instead of blocking it. Both return a
-     * terminal outcome as JSON, the wire format the bridge converts.
-     */
+    /** Python drives all graphs through the same non-blocking lifecycle. */
     @Test
     void graphCallEntryPointsKeepTheSignaturesTheBridgeCalls() throws Exception {
         assertThat(
                         method(
-                                        "bootstrapInternalSubagentCallForScope",
+                                        "prepareInternalSubagentCall",
                                         String.class,
                                         String.class,
                                         String.class,
                                         Object.class)
                                 .getReturnType())
-                .isEqualTo(void.class);
-
-        Method subagentPoll = method("tryCompleteInternalSubagentCall", String.class, String.class);
-        assertThat(subagentPoll.getReturnType()).isEqualTo(String.class);
-        assertThat(subagentPoll.isAnnotationPresent(Nullable.class)).isTrue();
-
+                .isEqualTo(String.class);
         assertThat(method("prepareChatCall", String.class).getReturnType()).isEqualTo(String.class);
-
-        Method chatPoll = method("tryCompleteChatCall", String.class);
-        assertThat(chatPoll.getReturnType()).isEqualTo(String.class);
-        assertThat(chatPoll.isAnnotationPresent(Nullable.class)).isTrue();
+        assertThat(method("startSubgraphCall", String.class).getReturnType()).isEqualTo(void.class);
+        assertThat(method("isSubgraphCallReady", String.class).getReturnType())
+                .isEqualTo(boolean.class);
+        assertThat(method("finishSubgraphCall", String.class).getReturnType())
+                .isEqualTo(String.class);
+        assertThat(method("cancelSubgraphCall", String.class).getReturnType())
+                .isEqualTo(void.class);
+        assertThat(method("closeSubgraphCall", String.class).getReturnType()).isEqualTo(void.class);
     }
 
     /**
@@ -107,12 +100,7 @@ class PythonBridgeContractTest {
         called.addAll(callSites(RUNNER_CONTEXT_PY, RUNNER_CONTEXT_CALL));
         called.addAll(callSites(CHAT_FUTURE_PY, CHAT_FUTURE_CALL));
 
-        assertThat(called)
-                .contains(
-                        "bootstrapInternalSubagentCallForScope",
-                        "tryCompleteInternalSubagentCall",
-                        "prepareChatCall",
-                        "tryCompleteChatCall");
+        assertThat(called).contains("prepareInternalSubagentCall");
         assertThat(methodNames(PythonRunnerContextImpl.class)).containsAll(called);
     }
 

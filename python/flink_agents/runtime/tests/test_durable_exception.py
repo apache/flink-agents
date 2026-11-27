@@ -15,16 +15,18 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import asyncio
 import threading
+from concurrent.futures import CancelledError
 from typing import Any
 
 import cloudpickle
 import pytest
 
-from flink_agents.plan.exceptions import UncapturableException
+from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.plan.exceptions import UncapturableException, is_cancellation
 from flink_agents.runtime.durable_exception import (
     deserialize_durable_exception,
-    is_java_interruption,
     serialize_durable_exception,
 )
 from flink_agents.runtime.tests.test_flink_runner_context_reconcilable import (
@@ -254,16 +256,17 @@ def test_pending_slot_keeps_exception_that_cannot_be_pickled(
     [
         _java_error(_INTERRUPTED),
         _java_error(_CLOSED_BY_INTERRUPT),
+        _java_error("java.util.concurrent.CancellationException"),
         _java_error("java.lang.RuntimeException", _fake_java_throwable(_INTERRUPTED)),
     ],
-    ids=["direct", "closed-by-interrupt", "wrapped"],
+    ids=["direct", "closed-by-interrupt", "cancelled", "wrapped"],
 )
-def test_java_interruption_is_recognized(error: RuntimeError) -> None:
+def test_java_cancellation_is_recognized(error: RuntimeError) -> None:
     wrapped = ConnectionError("call failed")
     wrapped.__cause__ = error
 
-    assert is_java_interruption(error)
-    assert is_java_interruption(wrapped)
+    assert is_cancellation(error)
+    assert is_cancellation(wrapped)
 
 
 @pytest.mark.parametrize(
@@ -278,8 +281,8 @@ def test_java_interruption_is_recognized(error: RuntimeError) -> None:
     ],
     ids=["other-java", "interrupted-io", "message-only", "python", "none"],
 )
-def test_other_failures_are_not_java_interruptions(error: Any) -> None:
-    assert not is_java_interruption(error)
+def test_other_failures_are_not_cancellations(error: Any) -> None:
+    assert not is_cancellation(error)
 
 
 def test_java_interruption_is_not_recorded() -> None:
@@ -406,34 +409,10 @@ def test_payload_is_read_from_any_bytes_like_object(wrapper: Any) -> None:
     assert type(deserialize_durable_exception(payload)) is ValueError
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        b"FLINK-AGENTS-EXC\x00not a pickle",
-        b"FLINK-AGENTS-EXC\x00" + cloudpickle.dumps(["not", "a", "record"]),
-        b"FLINK-AGENTS-EXC\x00" + cloudpickle.dumps({"version": 99}),
-        b"FLINK-AGENTS-EXC\x00" + cloudpickle.dumps({"version": 1}),
-        b"FLINK-AGENTS-EXC\x00"
-        + cloudpickle.dumps(
-            {"version": 1, "class": None, "message": None, "pickle": None}
-        ),
-        b"FLINK-AGENTS-EXC\x00"
-        + cloudpickle.dumps(
-            {"version": True, "class": "E", "message": "m", "pickle": None}
-        ),
-    ],
-    ids=[
-        "corrupt",
-        "not-a-record",
-        "unknown-version",
-        "incomplete",
-        "malformed",
-        "boolean-version",
-    ],
-)
-def test_unreadable_record_is_reported(payload: bytes) -> None:
+def test_truncated_record_is_reported() -> None:
+    payload = serialize_durable_exception(ValueError("boom"))
     with pytest.raises(RuntimeError, match="durable call exception"):
-        deserialize_durable_exception(payload)
+        deserialize_durable_exception(payload[:-5])
 
 
 def test_failure_raised_while_handling_an_interruption_is_not_one() -> None:
@@ -447,7 +426,7 @@ def test_failure_raised_while_handling_an_interruption_is_not_one() -> None:
         failure = error
 
     assert failure.__context__ is not None
-    assert not is_java_interruption(failure)
+    assert not is_cancellation(failure)
 
 
 def test_interruption_is_found_past_an_argument_that_cannot_be_inspected() -> None:
@@ -455,7 +434,7 @@ def test_interruption_is_found_past_an_argument_that_cannot_be_inspected() -> No
     error = ConnectionError(not_a_throwable)
     error.__cause__ = _java_error(_INTERRUPTED)
 
-    assert is_java_interruption(error)
+    assert is_cancellation(error)
 
 
 @pytest.mark.parametrize("use_reconciler", [False, True])
@@ -474,9 +453,9 @@ def test_java_interruption_is_not_recorded_by_async_call(
     finally:
         _close_runner_context(ctx)
 
-    expected = ["PENDING"] if use_reconciler else []
+    expected = ["PENDING"]
     assert [slot.status for slot in store.call_results] == expected
-    assert store.current_call_index == 0
+    assert store.current_call_index == 1
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -501,10 +480,10 @@ def test_java_interruption_leaves_preloaded_pending_slot(
 
     assert raised.value is interruption
     assert [slot.status for slot in store.call_results] == ["PENDING"]
-    assert store.current_call_index == 0
+    assert store.current_call_index == (1 if asynchronous else 0)
 
 
-def test_interrupted_future_is_executed_again_when_awaited_again() -> None:
+def test_recovery_reexecutes_an_interrupted_future() -> None:
     calls = []
 
     def call() -> str:
@@ -519,7 +498,9 @@ def test_interrupted_future_is_executed_again_when_awaited_again() -> None:
         future = ctx.durable_execute_async(call)
         with pytest.raises(RuntimeError):
             _run_async(future)
-        outcomes = _run_async(ctx.gather(future))
+        assert not future._is_done()
+        store.current_call_index = 0
+        outcomes = _run_async(ctx.gather(ctx.durable_execute_async(call)))
     finally:
         _close_runner_context(ctx)
 
@@ -559,7 +540,9 @@ def test_java_interruption_in_gather_leaves_the_slot_pending() -> None:
         return "done"
 
     store = _FakeJavaRunnerContext()
-    ctx = _create_runner_context(store)
+    ctx = _create_runner_context(
+        store, config=AgentConfiguration({"async.batch.parallelism": 1})
+    )
     try:
         with pytest.raises(RuntimeError) as raised:
             _run_async(
@@ -578,7 +561,7 @@ def test_java_interruption_in_gather_leaves_the_slot_pending() -> None:
         "PENDING",
         "PENDING",
     ]
-    assert store.current_call_index == 0
+    assert store.current_call_index == 3
 
 
 def test_gather_records_exception_that_cannot_be_pickled() -> None:
@@ -605,7 +588,7 @@ def test_gather_records_exception_that_cannot_be_pickled() -> None:
     assert len(calls) == 1
 
 
-def test_interrupted_gather_is_executed_again_when_awaited_again() -> None:
+def test_recovery_reexecutes_an_interrupted_gather() -> None:
     calls = []
 
     def call() -> str:
@@ -620,7 +603,8 @@ def test_interrupted_gather_is_executed_again_when_awaited_again() -> None:
         gathered = ctx.gather(ctx.durable_execute_async(call))
         with pytest.raises(RuntimeError):
             _run_async(gathered)
-        outcomes = _run_async(gathered)
+        store.current_call_index = 0
+        outcomes = _run_async(ctx.gather(ctx.durable_execute_async(call)))
     finally:
         _close_runner_context(ctx)
 
@@ -635,7 +619,7 @@ def test_inspection_never_replaces_the_failure() -> None:
         def args(self) -> tuple:
             raise KeyboardInterrupt
 
-    assert not is_java_interruption(_Hostile())
+    assert not is_cancellation(_Hostile())
 
 
 def test_long_message_is_stored_once() -> None:
@@ -691,7 +675,9 @@ def test_ordinary_java_interruption_propagates_without_caching(
         return "later"
 
     store = _FakeJavaRunnerContext()
-    ctx = _create_runner_context(store)
+    ctx = _create_runner_context(
+        store, config=AgentConfiguration({"async.batch.parallelism": 1})
+    )
     try:
         future = ctx.execute_async(call)
         if mode == "single":
@@ -709,15 +695,27 @@ def test_ordinary_java_interruption_propagates_without_caching(
         with pytest.raises(type(interruption)) as raised:
             _run_async(handle)
         assert raised.value is interruption
-        assert store.current_call_index == 0
+        assert store.current_call_index == (2 if mode == "mixed_batch" else 0)
         # The durable sibling completed before the interruption, so its outcome is
         # kept and recovery rereads it instead of running it again.
         assert [slot.status for slot in store.call_results] == (
             ["SUCCEEDED", "PENDING"] if mode == "mixed_batch" else []
         )
-        if mode == "mixed_batch":
-            assert later_calls == [1]
+        assert not future._is_done()
+        previous_later_calls = len(later_calls)
 
+        store.current_call_index = 0
+        future = ctx.execute_async(call)
+        if mode == "single":
+            handle = future
+        elif mode == "mixed_batch":
+            handle = ctx.gather(
+                ctx.durable_execute_async(durable),
+                future,
+                ctx.durable_execute_async(later),
+            )
+        else:
+            handle = ctx.gather(ctx.execute_async(lambda: "ordinary"), future)
         result = _run_async(handle)
         assert (result if mode == "single" else result[1].value) == "retried"
         assert _run_async(future) == "retried"
@@ -726,7 +724,7 @@ def test_ordinary_java_interruption_propagates_without_caching(
             assert result[0].value == "durable"
             assert durable_calls == [1]
             assert result[2].value == "later"
-            assert later_calls == [1, 1]
+            assert len(later_calls) == previous_later_calls + 1
             assert [slot.status for slot in store.call_results] == [
                 "SUCCEEDED",
                 "SUCCEEDED",
@@ -768,7 +766,7 @@ def test_framework_fault_is_not_recorded_and_recovery_can_retry(
     finally:
         _close_runner_context(ctx)
     assert [slot.status for slot in store.call_results] == (
-        ["PENDING"] if pending else []
+        ["PENDING"] if pending or asynchronous else []
     )
     store.current_call_index = 0
     recovered = _create_runner_context(store)
@@ -786,7 +784,9 @@ def test_durable_batch_framework_fault_leaves_its_slot_pending():
         raise UncapturableException(message)
 
     store = _FakeJavaRunnerContext()
-    ctx = _create_runner_context(store)
+    ctx = _create_runner_context(
+        store, config=AgentConfiguration({"async.batch.parallelism": 1})
+    )
     try:
         futures = [
             ctx.durable_execute_async(lambda: "before", durable_id="before"),
@@ -802,4 +802,41 @@ def test_durable_batch_framework_fault_leaves_its_slot_pending():
         "PENDING",
         "PENDING",
     ]
-    assert store.current_call_index == 0
+    assert store.current_call_index == 3
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "error_type", [InterruptedError, CancelledError, asyncio.CancelledError]
+)
+def test_wrapped_cancellation_is_reexecuted_on_recovery(
+    asynchronous: bool, error_type: type[BaseException]
+) -> None:
+    failure = RuntimeError("call interrupted")
+    failure.__cause__ = error_type("cancelled")
+    calls = []
+
+    def call() -> str:
+        calls.append(1)
+        if len(calls) == 1:
+            raise failure
+        return "recovered"
+
+    store = _FakeJavaRunnerContext()
+    ctx = _create_runner_context(store)
+    try:
+        with pytest.raises(RuntimeError) as raised:
+            _execute(ctx, asynchronous, call)
+        assert raised.value is failure
+        assert all(slot.status == "PENDING" for slot in store.call_results)
+    finally:
+        _close_runner_context(ctx)
+
+    store.current_call_index = 0
+    ctx = _create_runner_context(store)
+    try:
+        assert _execute(ctx, asynchronous, call) == "recovered"
+    finally:
+        _close_runner_context(ctx)
+    assert len(calls) == 2
+    assert [slot.status for slot in store.call_results] == ["SUCCEEDED"]

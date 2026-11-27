@@ -164,3 +164,82 @@ def test_python_chat_inside_internal_subagent(tmp_path: Path) -> None:
     """Nested chat keeps child resources and private routing on the shared runtime."""
     result = _run_and_collect(ChatAgent(), tmp_path)
     assert result.strip() == "answer:hello"
+
+
+class MixedCallsAgent(Agent):
+    """Exercise one gather across all built-in execution modes."""
+
+    @chat_model_setup
+    @staticmethod
+    def model() -> ResourceDescriptor:
+        """Reuse the deterministic chat model declaration."""
+        return ChatAgent.model()
+
+    @tool(injected_args={"caller": InjectedArg.from_short_term_memory("caller")})
+    @staticmethod
+    def echo(value: str, caller: str) -> str:
+        """Exercise an ordinary tool inside the concurrently running chat."""
+        return ChatAgent.echo(value, caller)
+
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    async def run(event: Event, ctx: RunnerContext) -> None:
+        ctx.short_term_memory.set("caller", "visible")
+        internal = await ctx.get_resource("child", ResourceType.AGENT).submit(
+            ctx, "hello"
+        )
+        deferred = await ctx.get_resource("deferred", ResourceType.AGENT).submit(
+            ctx, "hello"
+        )
+        remote = await ctx.get_resource("remote", ResourceType.AGENT).submit(
+            ctx, "hello"
+        )
+        results = await ctx.gather(
+            ctx.execute_async(lambda: "ordinary"),
+            ctx.chat("model", [ChatMessage.user("hello")]),
+            internal,
+            ctx.durable_execute_async(lambda: "durable", durable_id="mixed-durable"),
+            deferred,
+            remote,
+        )
+        assert all(result.is_success() for result in results), results
+        assert results[0].value == "ordinary"
+        assert results[1].value.text == "answer:hello"
+        assert results[2].value.result == ["echo:hello"]
+        assert results[3].value == "durable"
+        assert results[4].value.success
+        assert results[5].value.success
+        assert await internal is results[2].value
+        assert (
+            await ctx.durable_execute_async(lambda: "after", durable_id="after")
+            == "after"
+        )
+        ctx.send_event(OutputEvent(output="mixed-ok"))
+
+
+def test_python_mixed_gather_end_to_end(tmp_path: Path) -> None:
+    from flink_agents.api.subagent import InternalSubagentResourceDescriptorBuilder
+    from flink_agents.e2e_tests.e2e_tests_integration.internal_subagent_test import (
+        EchoChildAgent,
+    )
+    from flink_agents.e2e_tests.e2e_tests_integration.subagent_external_integration_agent import (
+        InMemoryAsyncSubagentSetup,
+        InMemoryDeferredSubagentSetup,
+    )
+
+    agent = MixedCallsAgent()
+    agent.add_resource(
+        "child",
+        ResourceType.AGENT,
+        InternalSubagentResourceDescriptorBuilder().agent(EchoChildAgent()).build(),
+    )
+    for name, setup in (
+        ("deferred", InMemoryDeferredSubagentSetup),
+        ("remote", InMemoryAsyncSubagentSetup),
+    ):
+        agent.add_resource(
+            name,
+            ResourceType.AGENT,
+            ResourceDescriptor(clazz=f"{setup.__module__}.{setup.__name__}"),
+        )
+    assert _run_and_collect(agent, tmp_path).strip() == "mixed-ok"

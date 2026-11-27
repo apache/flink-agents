@@ -30,6 +30,26 @@ import java.util.Objects;
  */
 public final class SubgraphCallManager {
     private final Map<String, SubgraphInvocation<?>> calls = new HashMap<>();
+    private final Map<String, SubgraphFuture<?, ?>> pythonCalls = new HashMap<>();
+
+    /** Python keeps opaque ids across yields, rather than holding Java future objects. */
+    public void registerPythonCall(SubgraphFuture<?, ?> future) {
+        String id = future.getInvocation().getId();
+        if (pythonCalls.putIfAbsent(id, future) != null) {
+            throw new IllegalStateException("Duplicate Python subgraph call: " + id);
+        }
+    }
+
+    public SubgraphFuture<?, ?> getPythonCall(String id) {
+        return Objects.requireNonNull(pythonCalls.get(id), "Missing Python subgraph call: " + id);
+    }
+
+    public void closePythonCall(String id) {
+        SubgraphFuture<?, ?> future = pythonCalls.remove(id);
+        if (future != null) {
+            future.close();
+        }
+    }
 
     public void register(SubgraphInvocation<?> invocation) {
         if (calls.putIfAbsent(invocation.getId(), invocation) != null) {
@@ -52,6 +72,17 @@ public final class SubgraphCallManager {
 
     /** A record cannot finish while one of its actions is still awaiting a child. */
     public void finishRecord(Object key) {
+        pythonCalls
+                .values()
+                .removeIf(
+                        future -> {
+                            if (!Objects.equals(key, future.getInvocation().getKey())) {
+                                return false;
+                            }
+                            future.cancel();
+                            future.close();
+                            return true;
+                        });
         calls.values()
                 .removeIf(
                         call -> {
@@ -66,6 +97,8 @@ public final class SubgraphCallManager {
     }
 
     public void clear() {
+        pythonCalls.values().forEach(SubgraphFuture::cancel);
+        pythonCalls.clear();
         calls.values().forEach(SubgraphInvocation::cancel);
         calls.clear();
     }

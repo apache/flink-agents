@@ -15,169 +15,44 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-"""The framework-level deferred execution mode for sub-agent setups."""
+"""Deferred subagents share the ordinary durable-future execution path."""
 
 from abc import ABC, abstractmethod
-from concurrent.futures import CancelledError
-from typing import Any, Callable
+from typing import Any
+
+from typing_extensions import override
 
 from flink_agents.api.runner_context import RunnerContext
-from flink_agents.api.subagent import (
-    SubagentFuture,
-    SubagentFutures,
-    SubagentResult,
-)
+from flink_agents.api.subagent import SubagentCall, SubagentFuture
+from flink_agents.runtime.async_future import SingleDurableFuture
 from flink_agents.runtime.base_subagent import BaseSubagentSetup
-from flink_agents.runtime.subagent_handles import (
-    PendingSubagentCallRegistry,
-    SubagentFutureGroup,
-)
-
-#: The (durable id, call, reconcile) triple returned by
-#: :meth:`DeferredSubagentSetup.prepare`.
-PreparedTriple = tuple[Any, Any, Any]
-
-
-class DeferredSubagentFuture(SubagentFuture):
-    """Deferred handle to one sub-agent invocation."""
-
-    def __init__(
-        self,
-        session_id: str,
-        call_id: str,
-        ctx: RunnerContext,
-        prepared_factory: Callable[[], PreparedTriple],
-        registry: PendingSubagentCallRegistry | None = None,
-    ) -> None:
-        """Initialize with the identity and the factory preparing the call."""
-        super().__init__(session_id, call_id)
-        self._ctx = ctx
-        self._prepared_factory = prepared_factory
-        self._registry = registry
-        self._prepared: PreparedTriple | None = None
-        self._done = False
-        self._cancelled = False
-        self._value: SubagentResult | None = None
-        if registry is not None:
-            registry.track_pending_subagent_call(self.identity)
-
-    def done(self) -> bool:
-        """Whether the invocation has been resolved or cancelled."""
-        return self._done or self._cancelled
-
-    def cancel(self) -> None:
-        """Cancel before the request is prepared: the request is discarded.
-
-        Resolving a cancelled handle raises :class:`CancelledError`. An
-        already resolved handle ignores the cancellation request.
-        """
-        if self._done:
-            return
-        self._cancelled = True
-        if self._registry is not None:
-            self._registry.untrack_pending_subagent_call(self.identity)
-
-    def prepare(self) -> PreparedTriple:
-        """Prepare the request if it has not been prepared yet.
-
-        Mailbox-confined: must run on the mailbox thread.
-        """
-        if self._cancelled:
-            msg = f"Sub-agent call cancelled: {self.identity}"
-            raise CancelledError(msg)
-        if self._prepared is None:
-            self._prepared = self._prepared_factory()
-        return self._prepared
-
-    def execute(self) -> Any:
-        """Run the prepared request through durable execution and record
-        the outcome; awaitable, releasing the mailbox while waiting.
-
-        A system-level failure escaping durable execution propagates and fails
-        the action instead of being folded into an error result.
-        """
-        try:
-            durable_id, call, reconcile = self.prepare()
-            value = yield from self._ctx.durable_execute_async(
-                call,
-                reconciler=reconcile,
-                durable_id=durable_id,
-            ).__await__()
-            self._resolve(value)
-        finally:
-            # The dispatcher may handle the exception and finish the action.
-            if self._registry is not None:
-                self._registry.untrack_pending_subagent_call(self.identity)
-
-    def combine(self, *others: SubagentFuture) -> SubagentFutures:
-        """Group this handle with others for a batched resolve."""
-        return SubagentFutureGroup((self, *others))
-
-    def __await__(self) -> Any:
-        """Resolve the invocation, releasing the mailbox while waiting."""
-        if self._cancelled:
-            msg = f"Sub-agent call cancelled: {self.identity}"
-            raise CancelledError(msg)
-        if not self._done:
-            yield from self.execute()
-        return self._value
-
-    def _resolve(self, value: SubagentResult) -> None:
-        self._value = value
-        self._done = True
+from flink_agents.runtime.subagent_handles import SubagentFutureImpl
 
 
 class DeferredSubagentSetup(BaseSubagentSetup, ABC):
-    """The framework-level deferred execution mode for sub-agent setups.
+    """Prepare on the mailbox, then execute or reconcile on the async pool."""
 
-    ``submit`` registers the invocation and returns a deferred handle
-    without sending anything; the actual request is issued lazily when
-    the handle is first resolved, and runs through one durable async
-    callable keyed by a failover-reproducible id, so the invocation
-    participates in the task's durable execution.
-    """
-
+    @override
     async def submit_with_identity(
-        self,
-        ctx: RunnerContext,
-        prompt: Any,
-        session_id: str,
-        call_id: str,
+        self, ctx: RunnerContext, prompt: Any, session_id: str, call_id: str
     ) -> SubagentFuture:
-        """Register the invocation under the given identity and return its handle."""
-        return DeferredSubagentFuture(
-            session_id,
-            call_id,
-            ctx,
-            prepared_factory=lambda: self.prepare(ctx, prompt, session_id, call_id),
-            registry=self.pending_call_registry(),
+        def preparation() -> tuple:
+            prepared = self.prepare(ctx, prompt, session_id, call_id)
+            return prepared.call, prepared.reconciler
+
+        delegate = SingleDurableFuture(ctx, f"{session_id}#{call_id}", preparation)
+        return SubagentFutureImpl(
+            session_id, call_id, delegate, self.pending_call_registry()
         )
 
     @abstractmethod
     def prepare(
-        self,
-        ctx: RunnerContext,
-        prompt: Any,
-        session_id: str,
-        call_id: str,
-    ) -> PreparedTriple:
-        """Prepare one invocation and return its ``(id, call, reconcile)``
-        triple; ids are supplied.
+        self, ctx: RunnerContext, prompt: Any, session_id: str, call_id: str
+    ) -> SubagentCall:
+        """Build execution and optional reconciliation callbacks on the mailbox.
 
-        The durable id MUST be derived solely from the
-        ``(session_id, call_id)`` pair so it is reproducible after
-        failover.
-
-        Called exactly once per invocation, when the deferred handle is
-        first resolved, on the mailbox thread; implementations may
-        therefore perform the mailbox-confined part of issuing the request
-        here, leaving only the off-mailbox part in the returned call.
-
-        The returned call folds its own comprehensible failures into the
-        :class:`SubagentResult` it returns; an exception escaping the call
-        is a system-level failure that propagates and fails the action.
-
-        Skipping ``reconcile`` has a cost: a crash between the call landing
-        and its result being persisted re-invokes the sub-agent on replay,
-        possibly duplicating external side effects.
+        The framework reserves the durable slot before calling this method. A
+        recorded terminal outcome skips preparation entirely. Recovery of a pending
+        call may repeat preparation, so any request sent here must be safe to repeat.
+        The framework owns the durable id; implementations only provide the work.
         """

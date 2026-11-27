@@ -559,7 +559,9 @@ def test_parallel_tool_calls_report_independent_occurrences() -> None:
     ctx.get_resource = MagicMock(
         side_effect=lambda name, kind: SimpleNamespace(
             get_tool_names=lambda: {"search", "load_skill"}
-        ) if kind == ResourceType.CHAT_MODEL else tool
+        )
+        if kind == ResourceType.CHAT_MODEL
+        else tool
     )
     sent_events = []
     ctx.send_event = MagicMock(side_effect=sent_events.append)
@@ -664,7 +666,10 @@ def test_parallel_tool_calls_report_their_own_completion_timestamps() -> None:
         ],
     )
 
-    with patch.object(tool_call_action, "datetime") as datetime_mock:
+    with (
+        patch.object(tool_call_action, "datetime") as datetime_mock,
+        patch("flink_agents.plan.tools.async_tool.datetime", datetime_mock),
+    ):
         datetime_mock.now.side_effect = lambda tz: clock[0]
         asyncio.run(process_tool_request(request, ctx))
 
@@ -886,6 +891,7 @@ def test_parallel_timeout_timestamp_precedes_response_processing_and_reporting(
     with (
         ThreadPoolExecutor(max_workers=2) as workers,
         patch.object(tool_call_action, "datetime") as datetime_mock,
+        patch("flink_agents.plan.tools.async_tool.datetime", datetime_mock),
         patch.object(tool_call_action, "_record_outcome", side_effect=process_response),
     ):
         datetime_mock.now.side_effect = lambda tz: clock[0]
@@ -967,7 +973,10 @@ def test_parallel_timeout_omits_starts_after_result_observation(
 
     _stub_gather(ctx, execute_all)
     ctx.report_execution_started_at.side_effect = report_started
-    with patch.object(tool_call_action, "datetime") as datetime_mock:
+    with (
+        patch.object(tool_call_action, "datetime") as datetime_mock,
+        patch("flink_agents.plan.tools.async_tool.datetime", datetime_mock),
+    ):
         datetime_mock.now.side_effect = lambda tz: clock[0]
         asyncio.run(process_tool_request(parallel_trace_request(), ctx))
 
@@ -1381,6 +1390,7 @@ def test_missing_tool_reports_creation_and_failure_without_start() -> None:
     ctx = MagicMock(spec=ExecutionReporter)
     ctx.config = AgentConfiguration({})
     ctx.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, False)
+
     def get_resource(name: str, kind: ResourceType) -> SimpleNamespace:
         if kind == ResourceType.CHAT_MODEL:
             return SimpleNamespace(get_tool_names=lambda: {"search"})
@@ -1552,7 +1562,9 @@ def trace_context(tool: object) -> tuple[MagicMock, list[ToolResponseEvent]]:
     ctx.get_resource = MagicMock(
         side_effect=lambda name, kind: SimpleNamespace(
             get_tool_names=lambda: {"search", "load_skill"}
-        ) if kind == ResourceType.CHAT_MODEL else tool
+        )
+        if kind == ResourceType.CHAT_MODEL
+        else tool
     )
     ctx.durable_execute = MagicMock(side_effect=lambda fn, **kwargs: fn(**kwargs))
     ctx.send_event = MagicMock(side_effect=lambda event: sent_events.append(event))
@@ -1572,7 +1584,14 @@ def test_call_scope_is_checked_before_resource_lookup(enabled: bool, name: str) 
     """A registered callable is not implicitly enabled for every model."""
     tool = MagicMock()
     ctx, events = trace_context(tool)
-    model = SimpleNamespace(get_tool_names=lambda: {name} if enabled else set())
+    model = SimpleNamespace(
+        get_tool_names=lambda: {name} if enabled else set(),
+        resource_context=SimpleNamespace(
+            get_subagent_tool=lambda resource_name: ctx.get_resource(
+                resource_name, ResourceType.AGENT
+            )
+        ),
+    )
 
     def resolve(resource_name: str, kind: ResourceType) -> SimpleNamespace:
         if kind == ResourceType.CHAT_MODEL:
@@ -1595,7 +1614,9 @@ def test_call_scope_is_checked_before_resource_lookup(enabled: bool, name: str) 
         assert response.error["id"] == (
             f"Tool '{name}' is not enabled for model 'selected-model'."
         )
-        ctx.get_resource.assert_called_once_with("selected-model", ResourceType.CHAT_MODEL)
+        ctx.get_resource.assert_called_once_with(
+            "selected-model", ResourceType.CHAT_MODEL
+        )
     tool.assert_not_called()
     ctx.durable_execute.assert_not_called()
 
@@ -1606,7 +1627,9 @@ def test_disallowed_call_does_not_block_allowed_calls() -> None:
         "model-a",
         [
             ToolCallBlock(call_id="denied", name="delete_order", input={}),
-            ToolCallBlock(call_id="allowed", name="query_order", input={"order_id": "1"}),
+            ToolCallBlock(
+                call_id="allowed", name="query_order", input={"order_id": "1"}
+            ),
         ],
     )
     asyncio.run(process_tool_request(request, ctx))

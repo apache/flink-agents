@@ -22,35 +22,27 @@ import pytest
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_result import ChatResult, TokenUsage
 from flink_agents.api.events.chat_event import ChatResponseError, ChatResponseEvent
-from flink_agents.api.events.event import Event
 from flink_agents.api.runner_context import DurableFuture
-from flink_agents.runtime.flink_runner_context import FlinkRunnerContext
+from flink_agents.runtime.tests.future_test_utils import (  # noqa: F401
+    RuntimeContext,
+    SubgraphBridge,
+    close_runtime_contexts,
+)
 
 
-class Bridge:
-    """Only the narrow mailbox-confined chat bridge; no executor available."""
+class Bridge(SubgraphBridge):
+    @property
+    def response(self):
+        return self.responses.get("chat:0")
 
-    def __init__(self) -> None:
-        self.request = None
-        self.response = None
-        self.starts = 0
-        self.polls = 0
-
-    def prepareChatCall(self, request_json):
-        self.starts += 1
-        self.request = Event.from_json(request_json)
-        return "call-1"
-
-    def tryCompleteChatCall(self, call_id):
-        assert call_id == "call-1"
-        self.polls += 1
-        return self.response.model_dump_json() if self.response else None
+    @response.setter
+    def response(self, value) -> None:
+        self.responses["chat:0"] = value.model_dump_json()
 
 
 def context():
-    ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)
-    ctx._j_runner_context = Bridge()
-    return ctx, ctx._j_runner_context
+    bridge = Bridge()
+    return RuntimeContext(bridge), bridge
 
 
 def test_lazy_snapshot_yield_and_repeated_await():
@@ -58,8 +50,9 @@ def test_lazy_snapshot_yield_and_repeated_await():
     messages = [ChatMessage.user("hello")]
     future = ctx.chat("model", messages, prompt_args={"name": "Ada"})
     assert isinstance(future, DurableFuture)
+    ctx.gather(future)
     messages.clear()
-    assert bridge.starts == 0
+    assert bridge.preparations == 0
     waiter = future.__await__()
     assert next(waiter) is None
     assert bridge.request.messages[0].text == "hello"
@@ -77,12 +70,12 @@ def test_lazy_snapshot_yield_and_repeated_await():
     with pytest.raises(StopIteration) as result:
         next(waiter)
     assert result.value.value == expected
-    polls = bridge.polls
+    operations = list(bridge.operations)
     with pytest.raises(StopIteration) as repeated:
         next(future.__await__())
     assert repeated.value.value is result.value.value
-    assert bridge.starts == 1
-    assert bridge.polls == polls
+    assert bridge.preparations == 1
+    assert bridge.operations == operations
     assert future._is_done()
 
 
@@ -93,8 +86,7 @@ def test_failed_response_raises_on_each_await_without_restarting():
     for _ in range(2):
         with pytest.raises(ChatResponseError, match="provider refused"):
             next(future.__await__())
-    assert bridge.starts == 1
-    assert bridge.polls == 1
+    assert bridge.preparations == 1
     assert future._is_done()
 
 
@@ -109,14 +101,6 @@ def test_cancelled_wait_does_not_synthesize_a_failed_response():
     assert bridge.response is None
 
 
-def test_gather_rejects_chat_handle_before_bootstrap():
-    ctx, bridge = context()
-    future = ctx.chat("model", [])
-    with pytest.raises(TypeError, match="gather only accepts"):
-        ctx.gather(future)
-    assert bridge.starts == 0
-
-
 def test_bridge_failure_is_not_cached_as_chat_outcome(monkeypatch):
     ctx, bridge = context()
     future = ctx.chat("model", [])
@@ -125,8 +109,8 @@ def test_bridge_failure_is_not_cached_as_chat_outcome(monkeypatch):
         msg = "state unavailable"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(bridge, "tryCompleteChatCall", fail_poll)
-    with pytest.raises(RuntimeError, match="state unavailable"):
+    monkeypatch.setattr(bridge, "isSubgraphCallReady", fail_poll)
+    with pytest.raises(RuntimeError, match="Subgraph call failed"):
         next(future.__await__())
     assert not future._is_done()
-    assert bridge.starts == 1
+    assert bridge.preparations == 1

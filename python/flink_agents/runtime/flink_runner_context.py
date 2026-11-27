@@ -19,7 +19,6 @@ import itertools
 import json
 import logging
 import os
-import time
 from collections.abc import Mapping
 from concurrent.futures import CancelledError, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -34,8 +33,6 @@ from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.configuration import ReadableConfiguration
-from flink_agents.api.core_options import AgentExecutionOptions
-from flink_agents.api.duration import format_duration, positive_seconds
 from flink_agents.api.events.chat_event import ChatRequestEvent
 from flink_agents.api.events.event import Event
 from flink_agents.api.memory.long_term_memory import (
@@ -52,15 +49,17 @@ from flink_agents.api.runner_context import (
     RunnerContext,
     TimerMode,
 )
-from flink_agents.api.subagent import SubagentResult
 from flink_agents.api.trace import ExecutionReporter
-from flink_agents.plan.exceptions import raise_if_uncapturable
-from flink_agents.runtime.chat_future import _ChatFuture
+from flink_agents.plan.exceptions import is_cancellation, raise_if_uncapturable
+from flink_agents.runtime.async_future import (
+    GatherAsyncFuture,
+    SingleAsyncFuture,
+    SingleDurableFuture,
+    validate_futures,
+)
 from flink_agents.runtime.close_utils import failure_of, first_or_logged
 from flink_agents.runtime.durable_exception import (
     deserialize_durable_exception,
-    durable_exception_message,
-    is_java_interruption,
     serialize_durable_exception,
 )
 from flink_agents.runtime.durable_execution import (
@@ -79,6 +78,7 @@ from flink_agents.runtime.memory.mem0.mem0_long_term_memory import (
     Mem0LongTermMemory,
 )
 from flink_agents.runtime.resource_cache import ResourceCache
+from flink_agents.runtime.subgraph_future import SubgraphFuture
 from flink_agents.runtime.task_lifecycle_listener import TaskLifecycleListener
 
 logger = logging.getLogger(__name__)
@@ -101,34 +101,6 @@ def _root_cause(error: BaseException) -> BaseException:
 
 
 @dataclass(frozen=True)
-class _DurableCall:
-    """Internal description of a deferred durable call."""
-
-    func: Callable[..., Any]
-    args: tuple[Any, ...] = ()
-    kwargs: dict[str, Any] | None = None
-    reconciler: Callable[[], Any] | None = None
-
-
-class _AsyncExecutionResult:
-    """Internal awaitable that submits a callable only when awaited."""
-
-    def __init__(
-        self, executor: Any, func: Callable, args: tuple, kwargs: dict
-    ) -> None:
-        self._executor = executor
-        self._func = func
-        self._args = args
-        self._kwargs = kwargs
-
-    def __await__(self) -> Any:
-        future = self._executor.submit(self._func, *self._args, **self._kwargs)
-        while not future.done():
-            yield
-        return future.result()
-
-
-@dataclass(frozen=True)
 class _PersistedCallResult:
     function_id: str
     status: str
@@ -142,505 +114,6 @@ class _ReconcilerExecutionPlan:
     callable: Callable[[], Any] | None = None
     needs_clear: bool = False
     needs_append_pending: bool = False
-
-
-@dataclass(frozen=True)
-class _BatchExecutionPlan:
-    outcomes: list[Outcome]
-    suppliers: list[tuple[int, Callable[[], Any]]]
-    needs_reservation: bool = False
-    execution_start: int = -1
-
-
-class _DurableExecutionResult:
-    """Wrapper that holds result and triggers recording when unwrapped."""
-
-    def __init__(
-        self,
-        func: Callable,
-        args: tuple,
-        kwargs: dict,
-        result: Any,
-        record_callback: Callable,
-    ) -> None:
-        self.func = func
-        self.args = args
-        self.kwargs = kwargs
-        self.result = result
-        self.record_callback = record_callback
-        self._recorded = False
-
-    def get_result(self) -> Any:
-        """Get the result and record completion if not already recorded."""
-        if not self._recorded:
-            self.record_callback(self.func, self.args, self.kwargs, self.result, None)
-            self._recorded = True
-        return self.result
-
-
-class _DurableExecutionException(Exception):
-    """Wrapper exception that holds exception info and triggers recording."""
-
-    def __init__(
-        self,
-        func: Callable,
-        args: tuple,
-        kwargs: dict,
-        result: Any,
-        exception: BaseException,
-        record_callback: Callable,
-    ) -> None:
-        super().__init__(durable_exception_message(exception))
-        self.func = func
-        self.args = args
-        self.kwargs = kwargs
-        self.original_exception = exception
-        self.record_callback = record_callback
-        self._recorded = False
-
-    def record_and_raise(self) -> None:
-        """Record completion and raise the original exception."""
-        if not self._recorded:
-            self.record_callback(
-                self.func, self.args, self.kwargs, None, self.original_exception
-            )
-            self._recorded = True
-        raise self.original_exception from None
-
-
-class _CachedAsyncExecutionResult(_AsyncExecutionResult):
-    """An internal awaitable that returns a cached value immediately."""
-
-    def __init__(self, cached_result: Any) -> None:
-        # Don't call super().__init__ as we don't need executor/func/args/kwargs
-        self._cached_result = cached_result
-
-    def __await__(self) -> Any:
-        """Return the cached result immediately.
-
-        This is a generator that yields nothing and returns the cached result.
-        """
-        if False:
-            yield  # Make this a generator function
-        return self._cached_result
-
-
-class _DurableAsyncExecutionResult(_AsyncExecutionResult):
-    """An internal awaitable that records completion after execution."""
-
-    def __init__(
-        self, executor: Any, func: Callable, args: tuple, kwargs: dict
-    ) -> None:
-        super().__init__(executor, func, args, kwargs)
-
-    def __await__(self) -> Any:
-        """Execute and record completion when awaited."""
-        future = self._executor.submit(self._func, *self._args, **self._kwargs)
-        while not future.done():
-            yield
-        try:
-            result = future.result()
-        except _DurableExecutionException as exc:
-            # Record and re-raise the original exception for better diagnostics.
-            exc.record_and_raise()
-
-        # Handle the wrapped result/exception
-        if isinstance(result, _DurableExecutionResult):
-            return result.get_result()
-        elif isinstance(result, _DurableExecutionException):
-            error_message = (
-                "Unexpected _DurableExecutionException returned from executor; "
-                "it should have been raised via future.result()."
-            )
-            raise TypeError(error_message) from result.original_exception
-        else:
-            return result
-
-
-class _PendingFinalizeAsyncExecutionResult(_AsyncExecutionResult):
-    """An internal awaitable that finalizes a matching pending slot on await."""
-
-    def __init__(
-        self,
-        ctx: "FlinkRunnerContext",
-        executor: Any,
-        func: Callable,
-        args: tuple,
-        kwargs: dict,
-    ) -> None:
-        super().__init__(executor, func, args, kwargs)
-        self._ctx = ctx
-
-    def __await__(self) -> Any:
-        future = self._executor.submit(self._func, *self._args, **self._kwargs)
-        while not future.done():
-            yield
-
-        exception = None
-        result = None
-        try:
-            result = future.result()
-        except Exception as e:
-            exception = e
-
-        self._ctx._finalize_current_call(
-            self._func,
-            self._args,
-            self._kwargs,
-            result,
-            exception,
-        )
-
-        if exception is not None:
-            raise exception
-        return result
-
-
-class _ReconcilerDurableAsyncExecutionResult(_AsyncExecutionResult):
-    """An internal awaitable that resolves reconciler state on await."""
-
-    def __init__(
-        self,
-        ctx: "FlinkRunnerContext",
-        executor: Any,
-        func: Callable,
-        args: tuple,
-        reconciler: Callable[[], Any],
-        kwargs: dict,
-    ) -> None:
-        super().__init__(executor, func, args, kwargs)
-        self._ctx = ctx
-        self._reconciler = reconciler
-
-    def __await__(self) -> Any:
-        plan = self._ctx._plan_reconciler_execution(
-            self._func,
-            self._args,
-            self._reconciler,
-            self._kwargs,
-        )
-
-        if plan.mode == "replay":
-            result = self._ctx._replay_terminal_call(
-                self._func, self._args, self._kwargs
-            )
-            if False:
-                yield
-            return result
-
-        self._ctx._prepare_reconciler_execution(
-            plan,
-            self._func,
-            self._args,
-            self._kwargs,
-        )
-
-        future = self._executor.submit(plan.callable)
-        while not future.done():
-            yield
-
-        exception = None
-        result = None
-        try:
-            result = future.result()
-        except Exception as e:
-            exception = e
-
-        self._ctx._finalize_current_call(
-            self._func,
-            self._args,
-            self._kwargs,
-            result,
-            exception,
-        )
-
-        if exception is not None:
-            raise exception
-        return result
-
-
-class _BatchAsyncExecutionResult:
-    def __init__(
-        self,
-        ctx: "FlinkRunnerContext",
-        futures: list["_SingleAsyncFuture | _SingleDurableFuture"],
-    ) -> None:
-        self._ctx = ctx
-        self._futures = futures
-
-    def __await__(self) -> Any:
-        durable_calls = [
-            future._call
-            for future in self._futures
-            if isinstance(future, _SingleDurableFuture)
-        ]
-        # Ordinary-only batches never read or mutate the durable state bridge.
-        plan = (
-            self._ctx._prepare_batch_execution(durable_calls) if durable_calls else None
-        )
-        durable_suppliers = dict(plan.suppliers) if plan else {}
-        suppliers = []
-        execution_indexes = []
-        durable_execution_indexes = []
-        outcomes = [None] * len(self._futures)
-        durable_index = 0
-        for index, future in enumerate(self._futures):
-            if isinstance(future, _SingleDurableFuture):
-                if durable_index in durable_suppliers:
-                    durable_execution_indexes.append(len(suppliers))
-                    execution_indexes.append(index)
-                    suppliers.append(durable_suppliers[durable_index])
-                else:
-                    outcomes[index] = plan.outcomes[durable_index]
-                durable_index += 1
-            else:
-                execution_indexes.append(index)
-                suppliers.append(future._callable)
-
-        parallelism = self._ctx.config.get(
-            AgentExecutionOptions.ASYNC_BATCH_PARALLELISM
-        )
-        timeout = self._ctx.config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT)
-        timeout_seconds = positive_seconds(timeout)
-        deadline = (
-            time.monotonic() + timeout_seconds if timeout_seconds is not None else None
-        )
-        batch_futures: list[Any | None] = [None] * len(suppliers)
-        started: list[bool] = [False] * len(suppliers)
-        try:
-            executed = yield from _execute_sliding_window_batch(
-                self._ctx.executor,
-                suppliers,
-                parallelism,
-                deadline,
-                timeout,
-                batch_futures,
-                started,
-            )
-        except _BatchTimeoutError as exception:
-            executed = _collect_sliding_window_outcomes_on_timeout(
-                batch_futures, exception
-            )
-        # An ordinary interruption must not be cached as a business failure either.
-        # Durable children before it in input order are still finalized, as in a
-        # durable-only batch, so recovery does not run a call whose outcome is known.
-        interrupted = next(
-            (
-                position
-                for position, (index, outcome) in enumerate(
-                    zip(execution_indexes, executed, strict=True)
-                )
-                if isinstance(self._futures[index], _SingleAsyncFuture)
-                and is_java_interruption(outcome.error)
-            ),
-            None,
-        )
-        if interrupted is not None:
-            if plan is not None:
-                prefix = [
-                    position
-                    for position in durable_execution_indexes
-                    if position < interrupted
-                ]
-                # The call index stays at the batch base, so re-awaiting rereads
-                # the saved prefix.
-                self._ctx._finalize_batch_execution(
-                    durable_calls,
-                    plan,
-                    [started[position] for position in prefix],
-                    [executed[position] for position in prefix],
-                    advance_call_index=False,
-                )
-            raise executed[interrupted].error
-        for index, outcome in zip(execution_indexes, executed, strict=True):
-            outcomes[index] = outcome
-        if plan is not None:
-            durable_outcomes = self._ctx._finalize_batch_execution(
-                durable_calls,
-                plan,
-                [started[index] for index in durable_execution_indexes],
-                [executed[index] for index in durable_execution_indexes],
-            )
-            durable_index = 0
-            for index, future in enumerate(self._futures):
-                if isinstance(future, _SingleDurableFuture):
-                    outcomes[index] = durable_outcomes[durable_index]
-                    durable_index += 1
-        return outcomes
-
-
-class _SingleAsyncFuture(AsyncFuture[Any]):
-    def __init__(
-        self, ctx: "FlinkRunnerContext", func: Callable, args: tuple, kwargs: dict
-    ) -> None:
-        super().__init__()
-        self._ctx = ctx
-        self._callable = partial(func, *args, **kwargs)
-
-    @override
-    def _is_cancellation(self, error: Exception) -> bool:
-        return is_java_interruption(error)
-
-    def _resolve(self) -> Any:
-        result = _AsyncExecutionResult(self._ctx.executor, self._callable, (), {})
-        return (yield from result.__await__())
-
-
-class _SingleDurableFuture(DurableFuture[Any]):
-    def __init__(self, ctx: "FlinkRunnerContext", call: _DurableCall) -> None:
-        super().__init__()
-        self._ctx = ctx
-        self._call = call
-
-    @override
-    def _is_cancellation(self, error: Exception) -> bool:
-        return is_java_interruption(error)
-
-    def _resolve(self) -> Any:
-        return (yield from self._ctx._resolve_durable_call(self._call).__await__())
-
-
-class _GatherAsyncFuture(AsyncFuture[list[Outcome]]):
-    def __init__(
-        self,
-        ctx: "FlinkRunnerContext",
-        futures: tuple[_SingleAsyncFuture | _SingleDurableFuture, ...],
-    ) -> None:
-        super().__init__()
-        self._ctx = ctx
-        self._futures = futures
-
-    @override
-    def _is_cancellation(self, error: Exception) -> bool:
-        return is_java_interruption(error)
-
-    def _resolve(self) -> Any:
-        outcomes_by_index: dict[int, Outcome] = {}
-        unresolved_futures = []
-        unresolved_indexes = []
-        for index, future in enumerate(self._futures):
-            if future._is_done():
-                outcomes_by_index[index] = future._get_completed_outcome()
-            else:
-                unresolved_futures.append(future)
-                unresolved_indexes.append(index)
-
-        if unresolved_futures:
-            unresolved_outcomes = yield from _BatchAsyncExecutionResult(
-                self._ctx, unresolved_futures
-            ).__await__()
-            for index, future, outcome in zip(
-                unresolved_indexes,
-                unresolved_futures,
-                unresolved_outcomes,
-                strict=True,
-            ):
-                future._complete(outcome)
-                outcomes_by_index[index] = outcome
-
-        return [outcomes_by_index[index] for index in range(len(self._futures))]
-
-
-class _BatchTimeoutError(TimeoutError):
-    """Raised when an async batch exceeds its deadline."""
-
-
-def _mark_started_on_run(
-    supplier: Callable[[], Any], started: list[bool], index: int
-) -> Callable[[], Any]:
-    """Wrap a supplier so ``started[index]`` flips only when the worker truly runs.
-
-    A task queued in a saturated pool but cancelled before it executes keeps
-    ``started[index] == False``, so it is treated as never-run and stays
-    re-executable on recovery instead of being recorded as a timeout failure.
-    """
-
-    def _run() -> Any:
-        started[index] = True
-        return supplier()
-
-    return _run
-
-
-def _execute_sliding_window_batch(
-    executor: ThreadPoolExecutor,
-    suppliers: list[Any],
-    parallelism: int,
-    deadline: float | None,
-    timeout: timedelta | None,
-    futures: list[Any | None],
-    started: list[bool],
-) -> Any:
-    batch_size = len(suppliers)
-    if batch_size == 0:
-        return []
-
-    parallelism_limit = min(max(parallelism, 1), batch_size)
-    next_to_submit = 0
-    completed = 0
-    counted = [False] * batch_size
-
-    def in_flight() -> int:
-        return sum(
-            1
-            for i in range(next_to_submit)
-            if futures[i] is not None and not futures[i].done()
-        )
-
-    while completed < batch_size:
-        if deadline is not None and time.monotonic() >= deadline:
-            timeout_message = (
-                f"Async batch execution timed out after {format_duration(timeout)}"
-            )
-            raise _BatchTimeoutError(timeout_message)
-
-        while next_to_submit < batch_size and in_flight() < parallelism_limit:
-            index = next_to_submit
-            futures[index] = executor.submit(
-                _mark_started_on_run(suppliers[index], started, index)
-            )
-            next_to_submit += 1
-
-        for i in range(next_to_submit):
-            if not counted[i] and futures[i].done():
-                counted[i] = True
-                completed += 1
-
-        if completed < batch_size:
-            yield
-
-    return _collect_outcomes(futures)
-
-
-def _collect_sliding_window_outcomes_on_timeout(
-    futures: list[Any | None],
-    timeout_exception: BaseException,
-) -> list[Outcome]:
-    outcomes = []
-    for future in futures:
-        if future is None:
-            outcomes.append(Outcome.failure(timeout_exception))
-            continue
-        if not future.done():
-            future.cancel()
-        if future.done() and not future.cancelled():
-            try:
-                outcomes.append(Outcome.success(future.result()))
-            except Exception as e:
-                outcomes.append(Outcome.failure(e))
-        else:
-            outcomes.append(Outcome.failure(timeout_exception))
-    return outcomes
-
-
-def _collect_outcomes(futures: list[Any]) -> list[Outcome]:
-    outcomes = []
-    for future in futures:
-        try:
-            outcomes.append(Outcome.success(future.result()))
-        except Exception as e:  # noqa: PERF203
-            outcomes.append(Outcome.failure(e))
-    return outcomes
 
 
 class FlinkRunnerContext(RunnerContext, ExecutionReporter):
@@ -1354,7 +827,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             The exception raised by the function (None if successful).
         """
         raise_if_uncapturable(exception)
-        if is_java_interruption(exception):
+        if is_cancellation(exception):
             # The attempt was cancelled: record nothing, so recovery executes the
             # call again instead of replaying the interruption.
             return
@@ -1434,7 +907,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         exception: BaseException | None,
     ) -> None:
         raise_if_uncapturable(exception)
-        if is_java_interruption(exception):
+        if is_cancellation(exception):
             # The attempt was cancelled: leave the slot pending, so recovery
             # executes or reconciles the call instead of replaying the interruption.
             return
@@ -1579,52 +1052,6 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
         return self._execute_and_record_completion_only(func, args, kwargs)
 
-    def _wrap_completion_only_func(
-        self,
-        func: Callable,
-        args: tuple,
-        kwargs: dict,
-    ) -> Callable[..., Any]:
-        def record_call_completion(
-            call_func: Callable,
-            call_args: tuple,
-            call_kwargs: dict,
-            result: Any,
-            exception: BaseException | None,
-        ) -> None:
-            self._record_call_completion(
-                call_func,
-                call_args,
-                call_kwargs,
-                result,
-                exception,
-            )
-
-        def wrapped_func(*a: Any, **kw: Any) -> Any:
-            exception = None
-            result = None
-            try:
-                result = func(*a, **kw)
-            except Exception as e:
-                exception = e
-
-            if exception:
-                raise _DurableExecutionException(
-                    func, args, kwargs, result, exception, record_call_completion
-                )
-            return _DurableExecutionResult(
-                func, args, kwargs, result, record_call_completion
-            )
-
-        return wrapped_func
-
-    def _durable_identity(self, call: _DurableCall) -> str:
-        return durable_identity_for_call(call.func, call.args, call.kwargs)
-
-    def _call_matches(self, current: _PersistedCallResult, call: _DurableCall) -> bool:
-        function_id = self._durable_identity(call)
-        return current.function_id == function_id
-
     def _read_terminal_outcome(self, current: _PersistedCallResult) -> Outcome:
         try:
             if current.exception_payload is not None:
@@ -1637,137 +1064,10 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         except Exception as e:
             return Outcome.failure(e)
 
-    def _callable_for_durable_call(self, call: _DurableCall) -> Callable[[], Any]:
-        kwargs = call.kwargs or {}
-        return partial(call.func, *call.args, **kwargs)
-
-    def _prepare_batch_execution(
-        self, calls: list[_DurableCall]
-    ) -> _BatchExecutionPlan:
-        base = self._j_runner_context.getCurrentCallIndex()
-        outcomes: list[Outcome | None] = []
-        suppliers: list[tuple[int, Callable[[], Any]]] = []
-        needs_reservation = False
-        execution_start = -1
-
-        for index, call in enumerate(calls):
-            function_id = self._durable_identity(call)
-            current = self._read_call_result_at(base + index)
-            if current is None:
-                needs_reservation = True
-                if execution_start < 0:
-                    execution_start = index
-                outcomes.append(None)
-                suppliers.append((index, self._callable_for_durable_call(call)))
-                continue
-
-            if not self._call_matches(current, call):
-                self._j_runner_context.clearCallResultsFromAndPersist(base + index)
-                needs_reservation = True
-                execution_start = index
-                outcomes.append(None)
-                suppliers.append((index, self._callable_for_durable_call(call)))
-                for remaining_index in range(index + 1, len(calls)):
-                    outcomes.append(None)
-                    suppliers.append(
-                        (
-                            remaining_index,
-                            self._callable_for_durable_call(calls[remaining_index]),
-                        )
-                    )
-                break
-
-            if current.status == "PENDING":
-                outcomes.append(None)
-                suppliers.append(
-                    (
-                        index,
-                        call.reconciler or self._callable_for_durable_call(call),
-                    )
-                )
-            else:
-                outcomes.append(self._read_terminal_outcome(current))
-
-        if needs_reservation:
-            function_ids = []
-            for call in calls[execution_start:]:
-                function_id = self._durable_identity(call)
-                function_ids.append(function_id)
-            self._j_runner_context.reservePendingBatch(function_ids)
-
-        return _BatchExecutionPlan(
-            outcomes=outcomes,
-            suppliers=suppliers,
-            needs_reservation=needs_reservation,
-            execution_start=execution_start,
-        )
-
-    def _finalize_batch_execution(
-        self,
-        calls: list[_DurableCall],
-        plan: _BatchExecutionPlan,
-        started: list[bool],
-        executed: list[Outcome],
-        *,
-        advance_call_index: bool = True,
-    ) -> list[Outcome]:
-        # ``executed`` may be a prefix of ``plan.suppliers`` when an ordinary
-        # child in the same batch was interrupted.
-        base = self._j_runner_context.getCurrentCallIndex()
-        outcomes = list(plan.outcomes)
-        for i, ((call_index, _), outcome) in enumerate(
-            zip(plan.suppliers[: len(executed)], executed, strict=True)
-        ):
-            call = calls[call_index]
-            function_id = self._durable_identity(call)
-            if not started[i]:
-                outcomes[call_index] = outcome
-                continue
-            raise_if_uncapturable(outcome.error)
-            if is_java_interruption(outcome.error):
-                # The attempt was cancelled: leave this slot and the ones after it
-                # pending and propagate, as the Java batch does. Slots finalized
-                # earlier in this loop keep their outcome.
-                raise outcome.error
-            try:
-                result_payload, exception_payload = self._serialize_call_payloads(
-                    outcome.value,
-                    outcome.error,
-                )
-                self._j_runner_context.finalizeCallAt(
-                    base + call_index,
-                    function_id,
-                    result_payload,
-                    exception_payload,
-                )
-            except Exception as e:
-                raise_if_uncapturable(e)
-                outcome = Outcome.failure(e)
-            outcomes[call_index] = outcome
-        if advance_call_index:
-            self._j_runner_context.advanceCallIndexBy(len(calls))
-        return outcomes
-
     @override
     def gather(self, *futures: AsyncFuture[Any]) -> AsyncFuture[list[Outcome]]:
-        seen: set[int] = set()
-        singles = []
-        for future in futures:
-            if id(future) in seen:
-                msg = "The same async future cannot appear more than once in gather"
-                raise ValueError(msg)
-            seen.add(id(future))
-            if not isinstance(future, _SingleAsyncFuture | _SingleDurableFuture):
-                msg = (
-                    "gather only accepts futures returned by execute_async "
-                    "or durable_execute_async"
-                )
-                raise TypeError(msg)
-            if future._ctx is not self:
-                msg = "An async future must be gathered by the context that created it"
-                raise ValueError(msg)
-            singles.append(future)
-        return _GatherAsyncFuture(self, tuple(singles))
+        validate_futures(self, futures)
+        return GatherAsyncFuture(self, futures)
 
     @override
     def durable_execute(
@@ -1817,7 +1117,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         self, func: Callable[..., Any], *args: Any, **kwargs: Any
     ) -> AsyncFuture[Any]:
         """Create an ordinary deferred call owned by this runner context."""
-        return _SingleAsyncFuture(self, func, args, kwargs)
+        return SingleAsyncFuture(self, func, args, kwargs)
 
     @override
     def chat(
@@ -1829,9 +1129,8 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         output_schema: OutputSchema | None = None,
     ) -> DurableFuture[ChatResult]:
         """Create a lazy chat call driven by the operator's event scheduler."""
-        return _ChatFuture(
-            self._j_runner_context,
-            ChatRequestEvent(model, messages, prompt_args, output_schema),
+        return SubgraphFuture.chat(
+            self, ChatRequestEvent(model, messages, prompt_args, output_schema)
         )
 
     @override
@@ -1858,99 +1157,10 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         if durable_id is not None:
             func = with_durable_id(func, durable_id)
 
-        return _SingleDurableFuture(
+        return SingleDurableFuture(
             self,
-            _DurableCall(
-                func=func,
-                args=args,
-                kwargs=kwargs,
-                reconciler=validated_reconciler,
-            ),
-        )
-
-    def _resolve_durable_call(self, call: _DurableCall) -> _AsyncExecutionResult:
-        """Build the single-call resolver at consumption time.
-
-        Recovery matching and durable slot mutation must happen here instead of when
-        the public handle is created, otherwise multiple deferred handles would all
-        inspect the same current slot.
-        """
-        func = call.func
-        args = call.args
-        kwargs = call.kwargs or {}
-        validated_reconciler = call.reconciler
-
-        if validated_reconciler is not None:
-            return _ReconcilerDurableAsyncExecutionResult(
-                self,
-                self.executor,
-                func,
-                args,
-                validated_reconciler,
-                kwargs,
-            )
-
-        if self._matches_current_pending_call(func, args, kwargs):
-            return _PendingFinalizeAsyncExecutionResult(
-                self,
-                self.executor,
-                func,
-                args,
-                kwargs,
-            )
-
-        is_hit, cached_result = self._try_get_cached_result(func, args, kwargs)
-        if is_hit:
-            return _CachedAsyncExecutionResult(cached_result)
-
-        return _DurableAsyncExecutionResult(
-            self.executor,
-            self._wrap_completion_only_func(func, args, kwargs),
-            args,
-            kwargs,
-        )
-
-    def bootstrap_internal_subagent_call(
-        self, scope: str, session_id: str, call_id: str, prompt: Any
-    ) -> None:
-        """Issue an internal sub-agent call under the assigned identity.
-
-        Implements
-        :class:`~flink_agents.runtime.internal_subagent.InternalSubagentCallFactory`.
-        Delegates to the Java
-        ``RunnerContextImpl.bootstrapInternalSubagentCallForScope``, which
-        resolves the materialized sub-agent setup by ``scope``, reads the
-        caller's durable slot, and sends the bootstrap event only on a miss.
-        Must run on the mailbox thread.
-        """
-        self._j_runner_context.bootstrapInternalSubagentCallForScope(
-            scope, session_id, call_id, prompt
-        )
-
-    def try_complete_internal_subagent_call(
-        self, session_id: str, call_id: str
-    ) -> SubagentResult | None:
-        """Take an issued internal sub-agent call's result, if it has one.
-
-        Implements
-        :class:`~flink_agents.runtime.internal_subagent.InternalSubagentCallFactory`.
-        Delegates to the Java ``RunnerContextImpl.tryCompleteInternalSubagentCall``,
-        which returns ``None`` while the child graph still runs and the result as
-        JSON once it does not, so the payload's types come from the bridge rather
-        than from the child. A child failure rides inside the result rather than
-        being raised, so anything raised here belongs to the call itself. Must run
-        on the mailbox thread.
-        """
-        result_json = self._j_runner_context.tryCompleteInternalSubagentCall(
-            session_id, call_id
-        )
-        if result_json is None:
-            return None
-        payload = json.loads(result_json)
-        return SubagentResult(
-            success=payload["success"],
-            result=payload["result"],
-            error_message=payload["errorMessage"],
+            durable_identity_for_call(func, args, kwargs),
+            lambda: (partial(func, *args, **kwargs), validated_reconciler),
         )
 
     @property

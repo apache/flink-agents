@@ -18,8 +18,8 @@
 from typing import TYPE_CHECKING, Dict
 
 from flink_agents.api.resource import ResourceType
-from flink_agents.api.subagent import CALLABLE_NAME_PREFIX
 from flink_agents.plan.resource_provider import is_python_owned
+from flink_agents.plan.subagent_constants import TOOL_NAME_PREFIX
 
 if TYPE_CHECKING:
     from flink_agents.integrations.mcp.mcp import MCPServer
@@ -66,11 +66,11 @@ def discover_mcp_resources(cache: "ResourceCache") -> None:
             # The remote server picks the tool names, so the reserved prefix has
             # to be checked here: dispatch routes any ``_subagent_*`` call to the
             # AGENT namespace, so such a tool could never be called.
-            if tool.name.startswith(CALLABLE_NAME_PREFIX):
+            if tool.name.startswith(TOOL_NAME_PREFIX):
                 msg = (
                     f"MCP server '{server_name}' advertised a tool with a reserved "
                     f"name: Tool name '{tool.name}' must not start with the reserved "
-                    f"prefix '{CALLABLE_NAME_PREFIX}', which identifies sub-agent "
+                    f"prefix '{TOOL_NAME_PREFIX}', which identifies sub-agent "
                     f"callables."
                 )
                 raise ValueError(msg)

@@ -19,10 +19,9 @@
 
 import time
 from abc import ABC, abstractmethod
-from concurrent.futures import CancelledError
 from datetime import timedelta
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
 
 from pydantic import field_validator
 
@@ -30,13 +29,12 @@ from flink_agents.api.duration import parse_duration
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.subagent import (
     SubagentFuture,
-    SubagentFutures,
     SubagentResult,
 )
+from flink_agents.runtime.async_future import SingleDurableFuture
 from flink_agents.runtime.base_subagent import BaseSubagentSetup
 from flink_agents.runtime.subagent_handles import (
-    PendingSubagentCallRegistry,
-    SubagentFutureGroup,
+    SubagentFutureImpl,
 )
 
 
@@ -96,96 +94,6 @@ class RunStatus:
         return self._error
 
 
-class AsyncSubagentFuture(SubagentFuture):
-    """The sub side of an async-job invocation.
-
-    The run was already started by the durable POST of ``submit``, so the
-    handle only subscribes to it.
-    """
-
-    def __init__(
-        self,
-        setup: "BaseAsyncSubagentSetup",
-        ctx: RunnerContext,
-        session_id: str,
-        call_id: str,
-        registry: PendingSubagentCallRegistry | None = None,
-    ) -> None:
-        """Initialize with the owning setup, the context, and the identity."""
-        super().__init__(session_id, call_id)
-        self._setup = setup
-        self._ctx = ctx
-        self._registry = registry
-        self._consumed = False
-        self._cancelled = False
-        self._value: SubagentResult | None = None
-        if registry is not None:
-            registry.track_pending_subagent_call(self.identity)
-
-    def done(self) -> bool:
-        """Probe the remote status directly.
-
-        The probe runs outside durable execution, so a failover replay may
-        probe a different number of times than the original execution. A
-        probe failure propagates and fails the action.
-        """
-        if self._consumed or self._cancelled:
-            return True
-        probe = self._setup.query_status(self.session_id, self.call_id)
-        return probe.state in (
-            RunStatus.State.COMPLETED,
-            RunStatus.State.FAILED,
-        )
-
-    def __await__(self) -> Any:
-        """Wait for the run through the durable await composition, releasing
-        the mailbox while waiting.
-
-        A cancelled handle raises :class:`CancelledError`.
-        """
-        if self._cancelled:
-            msg = f"Sub-agent call cancelled: {self.identity}"
-            raise CancelledError(msg)
-        if not self._consumed:
-            try:
-                # Build the durable awaitable first, then yield from it, so the
-                # await composition and its durable execution cannot be misread
-                # as one serial call.
-                awaitable = self._ctx.durable_execute_async(
-                    self._setup._await_until_terminal,
-                    self.session_id,
-                    self.call_id,
-                    durable_id=f"{self.identity}#await",
-                )
-                self._value = yield from awaitable.__await__()
-                self._consumed = True
-            finally:
-                if self._registry is not None:
-                    self._registry.untrack_pending_subagent_call(self.identity)
-        return self._value
-
-    def cancel(self) -> None:
-        """Propagate the cancellation through the setup's
-        ``call_cancel_request`` hook.
-
-        The propagation runs synchronously through the hook and is replayed
-        with the enclosing action, so a failover may propagate the same
-        cancellation again. A repeated cancel on the same handle and a
-        cancel after the resolve are local no-ops. A hook failure
-        propagates and fails the action.
-        """
-        if self._consumed or self._cancelled:
-            return
-        self._setup.cancel_request(self._ctx, self.session_id, self.call_id)
-        self._cancelled = True
-        if self._registry is not None:
-            self._registry.untrack_pending_subagent_call(self.identity)
-
-    def combine(self, *others: SubagentFuture) -> SubagentFutures:
-        """Group this handle with others for a batched resolve."""
-        return SubagentFutureGroup((self, *others))
-
-
 class BaseAsyncSubagentSetup(BaseSubagentSetup, ABC):
     """Production base for sub-agents whose protocol is an asynchronous job,
     run in durable pub/sub mode.
@@ -224,35 +132,43 @@ class BaseAsyncSubagentSetup(BaseSubagentSetup, ABC):
         The POST runs through async durable execution and lands before the
         handle is returned; a POST failure raises and fails the action.
         """
-        await self.submit_request(ctx, session_id, call_id, prompt)
-        return AsyncSubagentFuture(
-            self, ctx, session_id, call_id, self.pending_call_registry()
+        await SingleDurableFuture(
+            ctx,
+            f"{session_id}#{call_id}",
+            lambda: (
+                self.submit_request(ctx, session_id, call_id, prompt),
+                lambda: self.reconcile_submit_request(session_id, call_id, prompt),
+            ),
+        )
+        delegate = ctx.durable_execute_async(
+            self._await_until_terminal,
+            session_id,
+            call_id,
+            durable_id=f"{session_id}#{call_id}#await",
+        )
+        return SubagentFutureImpl(
+            session_id,
+            call_id,
+            delegate,
+            self.pending_call_registry(),
+            probe=lambda: self.query_status(session_id, call_id).state
+            in (RunStatus.State.COMPLETED, RunStatus.State.FAILED),
+            remote_cancel=lambda: self.cancel_request(ctx, session_id, call_id),
         )
 
     # --------------------------------------------------------------------------------
     # Framework wrappers: defaults composing the primitives, overridable
     # --------------------------------------------------------------------------------
 
-    async def submit_request(
-        self,
-        ctx: RunnerContext,
-        session_id: str,
-        call_id: str,
-        prompt: Any,
-    ) -> None:
-        """Run the durable POST of one invocation. It is the only wrapper
-        wired to a reconciler.
+    def submit_request(
+        self, ctx: RunnerContext, session_id: str, call_id: str, prompt: Any
+    ) -> Callable[[], None]:
+        """Prepare the POST callback on the mailbox after its durable slot is reserved.
+
+        Terminal replay skips preparation. Recovery of a pending POST may repeat
+        this method, then invokes ``reconcile_submit_request`` on the async pool.
         """
-        await ctx.durable_execute_async(
-            self._post_submit_request,
-            session_id,
-            call_id,
-            prompt,
-            durable_id=f"{session_id}#{call_id}",
-            reconciler=lambda: self.reconcile_submit_request(
-                session_id, call_id, prompt
-            ),
-        )
+        return lambda: self._post_submit_request(session_id, call_id, prompt)
 
     def query_status(self, session_id: str, call_id: str) -> RunStatus:
         """Probe the remote status. The probe is a direct read-only query,
