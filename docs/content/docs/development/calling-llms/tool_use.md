@@ -377,16 +377,15 @@ The built-in `tool_call_action` resolves injection before invoking a function to
 This resolution is part of the built-in tool-call flow. When calling a function
 tool directly, supply its required arguments yourself.
 
-## Parallel tool-call batches
+## Parallel Tool Calls
 
 A model may request several tool calls in one `ToolRequestEvent`. The built-in
-`tool_call_action` can execute the tools registered by the agent, possibly
-including ordinary functions or MCP tool calls, as parallel operations. Use the
-following settings on the agent execution environment:
+`tool_call_action` can execute multiple tools in parallel. Use the following
+settings on the agent execution environment:
 
 | Option | Default | Effect on tool execution |
 | --- | --- | --- |
-| `tool-call.async` | `true` | Enables durable async tool calls. With `false`, tools execute synchronously, one at a time. |
+| `tool-call.async` | `true` | Enables asynchronous tool execution. With `false`, tool calls execute sequentially. |
 | `async.batch.parallelism` | Available CPU count | Maximum concurrent calls in one async batch. `1` executes tools one at a time while keeping async execution enabled. |
 
 For example, allow up to four concurrent calls per batch:
@@ -411,12 +410,7 @@ agentsEnv.getConfig().set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 4);
 {{< /tabs >}}
 
 With async execution enabled and `async.batch.parallelism` greater than `1`,
-multiple tool calls can run concurrently. This limit also applies to batches
-created with `ctx.gather(...)`. The `num-async-threads` setting further limits
-available concurrency. Tool batches share execution capacity with other external
-calls, so a large batch may delay other model calls or retrieval requests. Lower
-the batch limit to leave capacity for other calls or avoid overwhelming an
-external service. Actual concurrency can be lower than the batch limit.
+multiple tool calls can run concurrently.
 
 {{< hint warning >}}
 Calls in a parallel batch must be independent: a tool must not wait for another
@@ -427,25 +421,18 @@ on another's result, request it in a later step instead of the same batch.
 
 ### Timeouts and external effects
 
-`async.batch.timeout` sets an overall timeout for a parallel batch of ordinary
-tool calls. Its default is `-1 ms`; a zero or negative duration disables it.
-Effective precision is 1 µs on Java and Python: the deadline uses the full
-duration and is not truncated to milliseconds. When it expires,
-completed calls keep their results and unfinished calls are reported to the model
-as failed tool calls.
+`async.batch.timeout` limits the total time for a parallel tool batch. On timeout,
+completed calls keep their results; unfinished calls are reported to the model as
+failed tool calls. This setting applies only when `tool-call.async` is enabled,
+`async.batch.parallelism` is greater than `1`, and the request contains multiple
+tool calls. Configure timeouts within individual tools for single or sequential
+calls.
 
-For requests containing only ordinary tools, the batch timeout is not used when
-`tool-call.async` is `false`, when `async.batch.parallelism` is `1` or less, or when
-the request has a single tool call. Configure timeouts for blocking operations
-inside each tool, such as an HTTP client read timeout.
-
-A batch timeout does not undo external effects or guarantee that an already
-running tool stops. Tools that change external systems should be idempotent,
-because a call may run again after recovery. See
-[Configuration]({{< ref "docs/operations/configuration#runtime-and-async-execution" >}}) for the full async batch
-and execution-capacity options, and
+A timeout does not guarantee that running tools stop or undo their external effects.
+See [Batch Timeouts]({{< ref "docs/development/create-agent/actions#batch-timeouts" >}})
+for timeout and recovery behavior, and
 [Consistency]({{< ref "docs/operations/consistency#recovery-guarantees-and-user-responsibilities" >}})
-for recovery guarantees.
+for handling external side effects.
 
 ## Tool response content and metadata
 
@@ -571,9 +558,17 @@ See [MCP]({{< ref "docs/development/calling-llms/mcp" >}}) for details.
 
 ## Built-in Events and Actions
 
-The built-in `tool_call_action` listens to `ToolRequestEvent`. For each tool call, it looks up the tool resource by function name, executes it through durable execution, and records whether it succeeded. After all tool calls in the batch have been processed, it sends a `ToolResponseEvent`.
+The built-in `tool_call_action` executes the tool calls requested by a
+`ToolRequestEvent` and emits a `ToolResponseEvent` containing the results.
+Each result retains its original tool call ID.
 
-Ordinary tool return values are converted to successful text responses as described in [Tool response content and metadata](#tool-response-content-and-metadata). A tool that completes normally but cannot perform the requested operation can return `ToolResponse.error("reason")`; an exception still represents an invocation failure. Both failure forms are recorded as failed tool calls in `ToolResponseEvent`.
+Tool return values are converted to responses as described in
+[Tool response content and metadata](#tool-response-content-and-metadata).
+A tool can return `ToolResponse.error("reason")` when it cannot perform the
+requested operation. Both this response and ordinary tool exceptions are reported
+as failed tool calls in `ToolResponseEvent`, allowing the model to handle the failure.
+Cancellation, interruption, and framework faults propagate to the runtime instead
+of being returned to the model as tool failures.
 
 When the tool request comes from `chat_model_action`, that Action automatically handles the emitted `ToolResponseEvent` to continue the chat. See [Tool Calling in Chat with Models]({{< ref "docs/development/calling-llms/chat#built-in-events-and-actions" >}}) for details on how `chat_model_action` handles tool responses.
 

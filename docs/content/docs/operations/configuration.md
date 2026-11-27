@@ -217,7 +217,7 @@ for trigger condition examples.
 See [Chat]({{< ref "docs/development/calling-llms/chat#handle-success-and-failure" >}})
 and [Decision Models]({{< ref "docs/development/decision_models#event-driven-calls" >}})
 for model-call outcomes and retries, and [Context Retrieval]({{< ref "docs/development/vector-search/vector_stores#built-in-events-and-actions" >}})
-for vector-store queries. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}})
+for vector-store queries. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-calls" >}})
 for tool-call batches and timeout behavior, and [Execution Metrics]({{< ref "docs/operations/monitoring#execution-metrics" >}})
 for retry metrics.
 
@@ -228,7 +228,7 @@ for retry metrics.
 | `max-retries` | 0 | int | Maximum retries after the initial attempt of a built-in Chat or Decision Model call, including routing judge calls. Non-positive values disable retries. |
 | `rag.async` | true | boolean | Enable durable async execution for vector-store queries made by the built-in context retrieval Action. `false` selects synchronous execution. |
 | `retry-wait-interval` | `1 s` | duration | Initial wait between retries controlled by `max-retries`, doubled for each subsequent retry. Truncated to milliseconds. Non-positive values and values below `1 ms` retry without waiting. |
-| `tool-call.async` | true | boolean | Enable durable async execution for ordinary tools handled by the built-in Tool Call Action. With `false`, these calls run synchronously, one at a time. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}}) for batch behavior. |
+| `tool-call.async` | true | boolean | Enable asynchronous tool execution in the built-in Tool Call Action. With `false`, tool calls execute sequentially. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-calls" >}}) for batch behavior. |
 
 These async switches select how built-in calls execute. Synchronous calls still
 use durable execution; saving outcomes for recovery requires an
@@ -245,12 +245,12 @@ removed. Configure retries with `max-retries`; see Chat for terminal failure han
 
 See [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}})
 for JDK, scheduling, and cross-language requirements. Batch limits also apply to
-the built-in [parallel tool-call batches]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}}).
+the built-in [parallel tool calls]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-calls" >}}).
 
 | Key | Default | Type | Description |
 | --- | --- | --- | --- |
-| `async.batch.parallelism` | os cpu count | int | Maximum concurrent calls in one `ctx.gather(...)` batch, including ordinary, durable, and built-in tool calls. Values of `1` or less run calls sequentially. Worker-pool capacity can further limit concurrency. |
-| `async.batch.timeout` | `-1 ms` (disabled) | duration | Overall timeout for one `ctx.gather(...)` batch. Effective precision is 1 µs on Java and Python: the deadline uses the full duration, and a positive value is not truncated to milliseconds. A zero or negative duration disables it. A timeout does not guarantee that running calls stop and cannot undo their external effects. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use#timeouts-and-external-effects" >}}) for built-in tool-batch behavior. |
+| `async.batch.parallelism` | os cpu count | int | Maximum concurrent calls in a `ctx.gather(...)` or built-in tool-call batch. Values of `1` or less run calls sequentially. Available worker threads may further limit concurrency. |
+| `async.batch.timeout` | `-1 ms` (disabled) | duration | Overall timeout for a `ctx.gather(...)` batch. Zero or negative values disable it. A timeout does not guarantee that running calls stop. |
 | `job-identifier` | none | String | Stable job identifier used to scope Mem0 long-term memory. Keep an explicit value unchanged across restores. If unset, the initial Flink JobID is stored in operator state and reused when restoring a checkpoint or savepoint. |
 | `max-in-flight-input-records` | 100 | int | Maximum unfinished input records per Agent operator subtask, including records queued for a busy key. Must be positive. At the limit, the operator waits for an input record to finish before admitting another, applying backpressure upstream. See [Execution Requirements]({{< ref "docs/development/create-agent/actions#execution-requirements" >}}). |
 | `num-async-threads` | os cpu count * 2 | int | Controls the thread capacity for asynchronous execution per Agent operator subtask. Must be positive. Increasing this value may improve throughput for concurrent external calls, at the cost of higher resource usage and load on external services. Use `max-in-flight-input-records` to limit unfinished inputs and `async.batch.parallelism` to limit concurrent calls within a batch. |

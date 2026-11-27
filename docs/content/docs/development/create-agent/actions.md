@@ -440,9 +440,10 @@ public class ProfileAgent extends Agent {
 {{< /tab >}}
 {{< /tabs >}}
 
-Creating an `AsyncFuture` does not start the call. Awaiting it starts the work and waits
-for its result. A future that is never awaited performs no work. Awaiting the same future
-again reuses its result or exception within the current Action execution.
+Creating a handle with `execute_async` / `executeAsync` does not start the call.
+Awaiting it starts the work and waits for its result. A future that is never awaited
+performs no work. Awaiting the same future again reuses its completed result or
+ordinary call exception within the current Action execution.
 
 In Python, the Action uses `async def`, but the function passed to `execute_async` must
 be synchronous. Use the framework's futures and `gather`; standard `asyncio` functions
@@ -498,18 +499,38 @@ Awaiting the futures individually, one after another, runs these calls sequentia
 Awaiting the gathered future allows them to run concurrently, subject to
 `async.batch.parallelism` and the available worker threads.
 
+`ctx.gather(...)` supports futures returned by `execute_async` / `executeAsync`,
+`durable_execute_async` / `durableExecuteAsync`, `ctx.chat(...)`, and
+[built-in sub-agent calls]({{< ref "docs/development/multi-agent/subagents#fan-out-to-several-sub-agents" >}}).
+
 #### Results and Failures
 
 - Awaiting a single call returns its result or throws its exception.
 - `gather` returns an `Outcome` for each call in input order, regardless of completion
   order. An individual call's failure is represented by a failed `Outcome`. Inspect the
   outcomes before using their values; the example propagates any individual failure.
-- A batch may itself fail, for example because of a timeout or cancellation. It does not
-  always return a list of outcomes.
+- Cancellation, interruption, and framework faults propagate from `gather` instead
+  of becoming individual failure outcomes. A batch does not always return a list.
+- A successful `Outcome` means the call returned normally; the returned value may
+  still indicate an application-level failure.
 
 Keep futures within the Action execution that created them. Do not pass them to another
-Action or await them inside a submitted function. `gather` accepts distinct single-call
-futures from the same context; nested gathered futures are not supported.
+Action or await them inside a submitted function. `gather` accepts distinct
+framework-provided single-call handles from the same context; nested gathered
+futures are not supported.
+
+#### Batch Timeouts
+
+`async.batch.timeout` limits one awaited `gather` batch, including a batch with only
+one call. It does not apply to an individual future awaited directly. When the
+batch deadline expires, completed calls keep their outcomes and unfinished calls
+return failed outcomes with a timeout exception. The timeout itself does not
+trigger recovery or a retry.
+
+A timeout does not guarantee that running work stops or undo its external effects.
+See [Durable Async Execution](#durable-async-execution) for recovery after a batch
+timeout and [Consistency]({{< ref "docs/operations/consistency#recovery-guarantees-and-user-responsibilities" >}})
+for handling external side effects.
 
 #### Using Resources and Memory
 
@@ -770,9 +791,24 @@ public class ProfileAgent extends Agent {
 
 As with ordinary async calls, creating a future does not start work; await it directly
 or include it in an awaited `ctx.gather(...)` batch. A future that is never awaited does
-not execute or save a result. A batch may mix ordinary and durable calls; only the durable
-calls persist their outcomes for recovery. The optional Python `reconciler` argument and
-Java `reconciler()` method work with durable async calls too.
+not execute or save a result. Batches can also include Chat and sub-agent handles;
+each call retains its own recovery behavior. The optional Python `reconciler`
+argument and Java `reconciler()` method work with durable async calls too.
+
+When an unresolved durable call is awaited, the runtime reserves a pending record
+before starting its work. In a batch, these records follow the handles' input
+order. On recovery, recorded terminal outcomes are reused; pending calls run their
+reconciler when supplied, or execute again. Cancellation and interruption are not
+recorded as terminal failures.
+
+With an Action State Store enabled, recovery after a [batch timeout](#batch-timeouts)
+depends on the kind of unfinished call:
+
+| Call at the deadline | Behavior on recovery |
+| --- | --- |
+| `durable_execute_async` / `durableExecuteAsync` call that has started | Replays the timeout failure without executing the function again |
+| `durable_execute_async` / `durableExecuteAsync` call that has not started | Can execute when awaited again |
+| Chat or internal sub-agent call | Resumes from its recorded state instead of replaying the batch timeout |
 
 ### Execution Requirements
 
@@ -791,9 +827,11 @@ worker and batch limits. Concurrency between Actions has additional requirements
   calls can run before later records' first calls. Running calls are not preempted.
 - **Java on JDK 11–20:** the experimental parallel execution engine is enabled by default
   for plans whose Actions are all Java. Setting `parallel-execution.enabled` to `false`,
-  or including Python Actions, disables it. A Java single-call await then runs synchronously;
-  use `gather` for concurrent calls within an Action. Plans using Python Resources also need
-  the cross-language Flink versions below.
+  or including Python Actions, disables it. Without the parallel engine, awaiting
+  an ordinary async call blocks the Action thread until it completes. `gather` can
+  still execute multiple calls concurrently while the Action thread waits.
+  Awaiting Java Chat or internal sub-agent calls throws an exception. Plans using
+  Python Resources also need the cross-language Flink versions below.
 - **Python Actions:** use `async def` and the framework's futures and `gather` APIs.
 
 See [Runtime and async execution]({{< ref "docs/operations/configuration#runtime-and-async-execution" >}})

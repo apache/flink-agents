@@ -519,11 +519,17 @@ class RunnerContext(ABC):
         batches are rejected before work starts. Mixed batches persist only durable
         children, in their relative input order.
 
-        On timeout, completed calls keep their outcomes. Started durable calls are
-        finalized as failures; unstarted calls and cancelled subgraph waits remain
-        pending for recovery. Subgraph timeouts are not persisted as child results.
-        Running callbacks are not interrupted and their external effects cannot be
-        undone.
+        On batch timeout, the returned outcomes preserve completed calls' results
+        and represent unfinished calls as timeout failures. The timeout itself does
+        not trigger recovery or a retry. Running work is not guaranteed to stop,
+        and its external effects cannot be undone.
+
+        With an Action State Store enabled, recovery behavior for timed-out calls
+        depends on the call type. Started durable callables persist the timeout as
+        a failure and replay it on recovery; unstarted durable callables can execute
+        on recovery. Chat and internal sub-agent calls do not persist the batch
+        timeout as their result. If the job later recovers, these calls resume from
+        their recorded state instead of replaying the timeout.
         """
 
     def chat(
@@ -544,7 +550,7 @@ class RunnerContext(ABC):
         checked at runtime. Suspending and resuming the creating action is still
         the same execution.
         Repeated awaits return the same ChatResult or raise ChatResponseError for
-        a FAILED response. Parallel composition with gather is not supported yet.
+        a FAILED response.
         """
         msg = "Chat calls require an event-backed runtime"
         raise NotImplementedError(msg)

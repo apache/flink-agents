@@ -430,24 +430,27 @@ Choose between *deferred* and *async (pub/sub)* based on the interface you are c
 
 | | Deferred | Async (pub/sub) |
 |---|---|---|
-| Work starts | When the caller first awaits the result | When the caller submits |
+| Work starts | When the handle is awaited directly or through `gather` / `combine` | When the caller submits |
 | You implement | `prepare` | `call_submit_request`, `call_query_status`, `call_fetch_result` |
 | Choose it when | One request returns the result | The remote hands back a run you query later |
 
 #### Deferred execution
 
-A deferred sub-agent starts its request when the caller first awaits the result.
-Submitting the call alone does not send a request. Cancelling it before the first
-await therefore prevents the request from being sent.
+A deferred sub-agent starts when its handle is first awaited directly or included
+in an awaited `gather` / `combine`. Submitting the call alone does not send a
+request. Cancelling it before the first await prevents the request from being sent.
 
-Implement `prepare` to define the function that sends the request and returns a
-`SubagentResult`. In Python, return `(key, call, reconcile)`; in Java, return a
-`DurableCallable<SubagentResult>`. The example below performs one request and leaves
-out the optional reconciler.
+Implement `prepare` to return a `SubagentCall` in both languages. It supplies the
+function that returns a `SubagentResult` and an optional reconciler. The example
+below performs one request without a reconciler.
 
-Build the call's key from the supplied `session_id` and `call_id`, as shown below,
-so it stays the same during recovery. You can also pass this key to your service
-so it can recognize repeated requests for the same work.
+Use the supplied `session_id` and `call_id` to build an idempotency key for your
+service, so it can recognize repeated requests for the same work.
+
+Recovery may call `prepare` again, so any external effects it causes must be safe
+to repeat. Put blocking work in the returned function; do not await another
+framework future inside it. See [Durability and failover](#durability-and-failover)
+for recovery behavior.
 
 {{< tabs "Deferred Sub-agent Setup" >}}
 
@@ -456,11 +459,8 @@ so it can recognize repeated requests for the same work.
 from typing import Any
 
 from flink_agents.api.runner_context import RunnerContext
-from flink_agents.api.subagent import SubagentResult
-from flink_agents.runtime.deferred_subagent import (
-    DeferredSubagentSetup,
-    PreparedTriple,
-)
+from flink_agents.api.subagent import SubagentCall, SubagentResult
+from flink_agents.runtime.deferred_subagent import DeferredSubagentSetup
 
 
 def post_review(endpoint: str, prompt: Any, key: str) -> str:
@@ -476,42 +476,35 @@ class RemoteReviewSetup(DeferredSubagentSetup):
 
     def prepare(
         self, ctx: RunnerContext, prompt: Any, session_id: str, call_id: str
-    ) -> PreparedTriple:
+    ) -> SubagentCall:
         key = f"{session_id}#{call_id}"
 
         def call() -> SubagentResult:
-            try:
-                return SubagentResult.ok(post_review(self.endpoint, prompt, key))
-            except Exception as e:
-                # An expected failure is a value; only a system fault should escape.
-                return SubagentResult.error(e)
+            return SubagentResult.ok(post_review(self.endpoint, prompt, key))
 
-        # The first value is the key recovery matches a recorded result against, so
-        # it is built from the two ids alone. The third is the reconciler.
-        return (key, call, None)
+        return SubagentCall(call)
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```java
-import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.subagent.SubagentCall;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.runtime.subagent.BaseDeferredSubagentSetup;
 
-/**
- * Your own call to the review service; not part of Flink Agents. Keying the work lets
- * the service treat a re-issued request as the same one.
- */
-static String postReview(String endpoint, Object prompt, String key) {
-    ...
-}
+import java.util.concurrent.Callable;
 
 public class RemoteReviewSetup extends BaseDeferredSubagentSetup {
 
     private final String endpoint;
+
+    // Supply your own client. The service should deduplicate requests with this key.
+    private static String postReview(String endpoint, Object prompt, String key) {
+        throw new UnsupportedOperationException("Implement the review service client");
+    }
 
     public RemoteReviewSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
@@ -519,32 +512,10 @@ public class RemoteReviewSetup extends BaseDeferredSubagentSetup {
     }
 
     @Override
-    protected DurableCallable<SubagentResult> prepare(
+    protected SubagentCall prepare(
             RunnerContext ctx, Object prompt, String sessionId, String callId) {
-        // Built from the two ids alone, so a replay reproduces it.
         String key = sessionId + "#" + callId;
-        return new DurableCallable<SubagentResult>() {
-            @Override
-            public String getId() {
-                // The key recovery matches a recorded result against.
-                return key;
-            }
-
-            @Override
-            public Class<SubagentResult> getResultClass() {
-                return SubagentResult.class;
-            }
-
-            @Override
-            public SubagentResult call() {
-                try {
-                    return SubagentResult.ok(postReview(endpoint, prompt, key));
-                } catch (Exception e) {
-                    // An expected failure is a value; only a system fault should escape.
-                    return SubagentResult.error(e);
-                }
-            }
-        };
+        return () -> SubagentResult.ok(postReview(endpoint, prompt, key));
     }
 }
 ```
@@ -644,16 +615,14 @@ The following code adds a reconciler to the setup above:
 ```python
 def prepare(
     self, ctx: RunnerContext, prompt: Any, session_id: str, call_id: str
-) -> PreparedTriple:
+) -> SubagentCall:
     key = f"{session_id}#{call_id}"
 
     def call() -> SubagentResult:
         return SubagentResult.ok(post_review(self.endpoint, prompt, key))
 
-    # Consulted only during recovery, when this call is revisited and no result was
-    # recorded for it. It takes no arguments. Return the recovered outcome, because
-    # an exception here is a system-level failure that fails the action instead of
-    # reaching the caller.
+    # Used during recovery of a pending call, instead of call().
+    # Return the recovered outcome, or let an invocation failure propagate.
     def reconcile() -> SubagentResult:
         # fetch_review_by_key is your own lookup; not part of Flink Agents.
         found = fetch_review_by_key(self.endpoint, key)
@@ -661,28 +630,32 @@ def prepare(
             return SubagentResult.error("the review service has no record of this call")
         return SubagentResult.ok(found)
 
-    return (key, call, reconcile)
+    return SubagentCall(call, reconciler=reconcile)
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```java
-// Inside the DurableCallable that prepare returns, alongside getId() and call().
+// Inside prepare(), return a SubagentCall with both callbacks.
+String key = sessionId + "#" + callId;
+return new SubagentCall() {
+    @Override
+    public SubagentResult call() {
+        return SubagentResult.ok(postReview(endpoint, prompt, key));
+    }
 
-// Consulted only during recovery, when this call is revisited and no result was
-// recorded for it. Return the recovered outcome, because an exception here is a
-// system-level failure that fails the action instead of reaching the caller.
-@Override
-public Callable<SubagentResult> reconciler() {
-    return () -> {
-        // fetchReviewByKey is your own lookup; not part of Flink Agents.
-        String found = fetchReviewByKey(endpoint, key);
-        if (found == null) {
-            return SubagentResult.error("the review service has no record of this call");
-        }
-        return SubagentResult.ok(found);
-    };
-}
+    @Override
+    public Callable<SubagentResult> reconciler() {
+        return () -> {
+            // fetchReviewByKey is your own lookup; not part of Flink Agents.
+            String found = fetchReviewByKey(endpoint, key);
+            if (found == null) {
+                return SubagentResult.error("the review service has no record of this call");
+            }
+            return SubagentResult.ok(found);
+        };
+    }
+};
 ```
 {{< /tab >}}
 
@@ -1008,19 +981,17 @@ your own records.
 
 ### Fan out to several sub-agents
 
-Use `combine` to wait for several sub-agent calls together. Results are returned in
-the order the calls were added, regardless of completion order. Whether their work
-can overlap depends on the sub-agent type:
+Submit the calls to obtain their handles, then await `ctx.gather(...)`. It returns
+one `Outcome` per call in input order.
 
 | Sub-agent type | Execution behavior |
 |---|---|
-| Internal | Child agents can run concurrently. |
-| External deferred | Requests run one at a time; `combine` does not make them concurrent. |
-| External async | Tasks start when submitted and can run concurrently if the remote service supports it. |
+| Internal | Calls can run concurrently. |
+| External deferred | Calls can run concurrently. |
+| External async | Remote tasks start during `submit`; the batch limits concurrent result waits, not already submitted tasks. |
 
-In Python, use `combine` to await `SubagentFuture` objects together.
-`ctx.gather` does not accept these objects, and `asyncio.gather` is not supported
-in agent actions.
+Configure `async.batch.parallelism` and `async.batch.timeout` for these batches.
+Standard `asyncio.gather` is not supported in agent Actions.
 
 {{< tabs "Fan Out to Several Sub-agents" >}}
 
@@ -1031,7 +1002,7 @@ reviewer = ctx.get_resource("reviewer", ResourceType.AGENT)
 first = await reviewer.submit(ctx, "review the diff")
 second = await reviewer.submit(ctx, "review the tests")
 
-outcomes = await first.combine(second)
+outcomes = await ctx.gather(first, second)
 ```
 {{< /tab >}}
 
@@ -1042,11 +1013,21 @@ SubagentSetup reviewer = (SubagentSetup) ctx.getResource("reviewer", ResourceTyp
 SubagentFuture first = reviewer.submit(ctx, "review the diff");
 SubagentFuture second = reviewer.submit(ctx, "review the tests");
 
-List<SubagentResult> outcomes = first.combine(second).awaitAll();
+List<Outcome<SubagentResult>> outcomes = ctx.gather(List.of(first, second)).await();
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
+
+Inspect each outer `Outcome` for an invocation failure, then inspect the contained
+`SubagentResult.success` / `isSuccess()` for an application failure. See
+[Results and failures](#results-and-failures).
+
+`combine` remains a convenience for batches containing only sub-agent handles:
+`await first.combine(second)` in Python, or `first.combine(second).awaitAll()` in
+Java. It uses the same batch limits and returns `SubagentResult` values directly;
+an invocation exception or timeout is thrown instead of returned as an `Outcome`.
+Do not put a combined group inside another `gather`.
 
 ### Continue a session
 
@@ -1136,7 +1117,7 @@ try {
 
 {{< /tabs >}}
 
-`cancel()` on a deferred handle takes effect only before the request is issued.
+For a deferred call, cancellation cannot interrupt a request that is already running.
 
 ## Results and failures
 
@@ -1265,12 +1246,11 @@ If you supply your own IDs, keep them unchanged when the same call is retried.
 
 - **Internal**: recovery reuses the child's persisted action state and outputs.
   Work not yet recorded may run again.
-- **External deferred**: build the key returned by `prepare` from `session_id` and
-  `call_id`. Adding a timestamp or another changing value prevents recovery from
-  finding the original result. If the service completed the work but the result
-  was not persisted, a reconciler can look up the outcome. Without one, recovery
-  repeats the request. Use a reconciler or service-side deduplication when repeating
-  the work would cause duplicate effects. See [Optional reconciler](#optional-reconciler).
+- **External deferred**: a recorded success or failure is reused without calling
+  `prepare` again. Otherwise, recovery calls `prepare` again and uses the reconciler
+  to retrieve the result, or repeats the call if no reconciler is supplied. Use a
+  reconciler or service-side deduplication to avoid duplicate effects. See
+  [Optional reconciler](#optional-reconciler).
 - **External async**: if submission completed but was not recorded, recovery queries
   the task's status and resubmits only when it reports `NOT_STARTED`. The service
   must reliably identify the existing task using the same IDs. If a submitted task
@@ -1341,11 +1321,9 @@ Trace Log selection does not affect metrics collection.
   keeps its worker thread, so concurrent or nested internal calls can exhaust the
   worker pool. See
   [Runtime and async execution]({{< ref "docs/operations/configuration#runtime-and-async-execution" >}}).
-- There is no per-call sub-agent timeout setting.
-- For multiple model-driven calls, enabling `tool-call.async` with
-  `async.batch.parallelism` above 1 allows external async tasks to overlap if the
-  remote service supports concurrent execution. Internal and external deferred
-  calls still run one at a time on this path. Results are returned in the model's
-  call order. For concurrent internal calls from an action, see
-  [Fan out to several sub-agents](#fan-out-to-several-sub-agents). See
-  [Configuration]({{< ref "docs/operations/configuration" >}}) for these settings.
+- There is no per-call sub-agent timeout setting. Direct await has no batch
+  deadline; `gather` and `combine` use `async.batch.timeout`. A timed-out wait
+  does not guarantee that a remote task or a started child Action stops. See
+  [Batch Timeouts]({{< ref "docs/development/create-agent/actions#batch-timeouts" >}}).
+- Sub-agents support [parallel tool calls]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-calls" >}}).
+  The batch concurrency limit is not a global limit on all nested calls.
