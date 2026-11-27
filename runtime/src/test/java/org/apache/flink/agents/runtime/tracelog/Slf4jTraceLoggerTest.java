@@ -52,6 +52,8 @@ import org.apache.logging.log4j.core.layout.PatternLayout;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -336,11 +338,12 @@ class Slf4jTraceLoggerTest {
                 () -> objectMapper.readTree(json), "Pretty-printed output should be valid JSON");
     }
 
-    @Test
-    void testPrettyPrintAcceptsStringValue() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"true", "false"})
+    void testPrettyPrintAcceptsStringValue(String prettyPrint) throws Exception {
         // Legacy flink-conf.yaml values reach the logger as strings.
         Map<String, Object> agentConfig = new HashMap<>();
-        agentConfig.put(AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getKey(), "true");
+        agentConfig.put(AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getKey(), prettyPrint);
         TraceLoggerConfig config =
                 TraceLoggerConfig.builder()
                         .loggerType(LoggerType.SLF4J)
@@ -353,7 +356,10 @@ class Slf4jTraceLoggerTest {
 
         List<String> messages = testAppender.getMessages();
         assertEquals(1, messages.size());
-        assertTrue(messages.get(0).contains("\n"), "Pretty-printed output should span lines");
+        assertEquals(
+                Boolean.parseBoolean(prettyPrint),
+                messages.get(0).contains("\n"),
+                "Only pretty-printed output should span lines");
     }
 
     @Test
