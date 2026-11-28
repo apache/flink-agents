@@ -15,10 +15,10 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from types import SimpleNamespace
+import json
 from typing import Any, Callable, List, Mapping
-from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from pydantic import BaseModel
 from pyflink.common.typeinfo import Types
@@ -26,9 +26,13 @@ from pyflink.common.typeinfo import Types
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import NativeStructuredOutputSupport
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.dashscope_chat_model import (
     DashScopeChatModelConnection,
+)
+from flink_agents.integrations.tests.dashscope_http import (
+    record_dashscope_requests as record_dashscope_requests,
 )
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
@@ -80,54 +84,25 @@ def _messages() -> list[ChatMessage]:
     return [ChatMessage.of(role=MessageRole.USER, content="hi")]
 
 
-def _mocked_response() -> SimpleNamespace:
-    """The minimum response shape the connection reads back after the call."""
-    return SimpleNamespace(
-        status_code=200,
-        output={
-            "choices": [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": "ok",
-                        "tool_calls": None,
-                    }
-                }
-            ]
+def _mocked_response() -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "output": {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
         },
-        usage=SimpleNamespace(input_tokens=1, output_tokens=2),
     )
 
 
-def _patched_call(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Stand a mock in for the provider call and hand it back to the caller.
-
-    Returned rather than kept private so a test can assert on whether the provider
-    was reached at all, not only on what it received.
-    """
-    mock_call = MagicMock(return_value=_mocked_response())
-    monkeypatch.setattr(
-        "flink_agents.integrations.chat_models.dashscope_chat_model.Generation.call",
-        mock_call,
-    )
-    return mock_call
-
-
-def _chat(
-    monkeypatch: pytest.MonkeyPatch, **chat_kwargs: Any
-) -> tuple[ChatMessage, dict[str, Any]]:
-    """Drive one chat call against a mocked provider, so no server is contacted.
-
-    Returns the response together with the keyword arguments the provider call
-    received, which is the whole request: every argument reaches the provider
-    entry point as a keyword.
-    """
-    mock_call = _patched_call(monkeypatch)
+def _chat(http_calls, **chat_kwargs: Any) -> tuple[ChatResult, dict[str, Any]]:
+    """Issue a chat request and return the parameters received by the service."""
+    requests, responses = http_calls
+    responses.append(_mocked_response())
     response = _connection().chat(_messages(), **chat_kwargs)
-    return response, mock_call.call_args.kwargs
+    body = json.loads(requests[-1].content)
+    return response, {"model": body["model"], **body["parameters"]}
 
 
-def test_native_response_format_applied_on_capable_model(monkeypatch) -> None:
+def test_native_response_format_applied_on_capable_model(http_calls) -> None:
     """A BaseModel schema reaches a capable model as a json_schema response format.
 
     The document is the renderer's output as produced, so the equality assertion
@@ -136,7 +111,7 @@ def test_native_response_format_applied_on_capable_model(monkeypatch) -> None:
     response-parsing path depends on it staying ``message``.
     """
     _, kwargs = _chat(
-        monkeypatch,
+        http_calls,
         model=_CAPABLE_MODEL,
         output_schema=OutputSchema(output_schema=Person),
     )
@@ -149,7 +124,7 @@ def test_native_response_format_applied_on_capable_model(monkeypatch) -> None:
 
 
 def test_unlisted_model_answers_feasible_and_still_carries_the_schema(
-    monkeypatch,
+    http_calls,
 ) -> None:
     """An unlisted model is merely feasible, yet its request carries the full schema.
 
@@ -166,14 +141,14 @@ def test_unlisted_model_answers_feasible_and_still_carries_the_schema(
         is NativeStructuredOutputSupport.FEASIBLE
     )
 
-    _, listed = _chat(monkeypatch, model=_CAPABLE_MODEL, output_schema=schema)
-    response, kwargs = _chat(monkeypatch, output_schema=schema)
+    _, listed = _chat(http_calls, model=_CAPABLE_MODEL, output_schema=schema)
+    response, kwargs = _chat(http_calls, output_schema=schema)
     assert response.text == "ok"
     assert kwargs["response_format"] == listed["response_format"]
 
 
 def test_non_string_model_answers_feasible_and_still_carries_the_schema(
-    monkeypatch,
+    http_calls,
 ) -> None:
     """A model that is not a string is answered ``FEASIBLE`` rather than with an error.
 
@@ -189,23 +164,23 @@ def test_non_string_model_answers_feasible_and_still_carries_the_schema(
         is NativeStructuredOutputSupport.FEASIBLE
     )
 
-    response, kwargs = _chat(monkeypatch, model=123, output_schema=schema)
+    response, kwargs = _chat(http_calls, model=123, output_schema=schema)
     assert response.text == "ok"
     assert kwargs["model"] == 123
     assert kwargs["response_format"]["type"] == "json_schema"
 
 
-def test_native_not_applied_when_schema_none(monkeypatch) -> None:
+def test_native_not_applied_when_schema_none(http_calls) -> None:
     """A call without a schema carries no response format key at all.
 
     The key must be absent rather than present with a ``None`` value, which the
     provider would read as a parameter it was given.
     """
-    _, kwargs = _chat(monkeypatch, model=_CAPABLE_MODEL, output_schema=None)
+    _, kwargs = _chat(http_calls, model=_CAPABLE_MODEL, output_schema=None)
     assert "response_format" not in kwargs
 
 
-def test_native_not_applied_for_row_type_info(monkeypatch) -> None:
+def test_native_not_applied_for_row_type_info(http_calls) -> None:
     """A RowTypeInfo schema falls back to prompting rather than raising.
 
     There is no native translation for it, so the request is left unchanged and
@@ -213,7 +188,7 @@ def test_native_not_applied_for_row_type_info(monkeypatch) -> None:
     """
     row_type = Types.ROW_NAMED(["name"], [Types.STRING()])
     response, kwargs = _chat(
-        monkeypatch,
+        http_calls,
         model=_CAPABLE_MODEL,
         output_schema=OutputSchema(output_schema=row_type),
     )
@@ -221,11 +196,11 @@ def test_native_not_applied_for_row_type_info(monkeypatch) -> None:
     assert "response_format" not in kwargs
 
 
-def test_unrenderable_schema_raises_naming_the_model(monkeypatch) -> None:
+def test_unrenderable_schema_raises_naming_the_model(http_calls) -> None:
     """A schema that cannot be rendered fails here, named, not at the provider."""
     with pytest.raises(TypeError, match="Unrenderable cannot be rendered"):
         _chat(
-            monkeypatch,
+            http_calls,
             model=_CAPABLE_MODEL,
             output_schema=OutputSchema(output_schema=Unrenderable),
         )
@@ -257,7 +232,7 @@ def test_query_reports_incapable_models_feasible(model: str | None) -> None:
     )
 
 
-def test_caller_supplied_response_format_conflicts(monkeypatch) -> None:
+def test_caller_supplied_response_format_conflicts(http_calls) -> None:
     """A caller's own response format and a schema collide, and the call is refused.
 
     Silently resolving the collision would either drop the caller's parameter or
@@ -265,7 +240,7 @@ def test_caller_supplied_response_format_conflicts(monkeypatch) -> None:
     asserted to reach the provider never, because raising after the call would
     still bill the caller for a response nothing reads.
     """
-    mock_call = _patched_call(monkeypatch)
+    requests, _ = http_calls
     with pytest.raises(ValueError, match="response_format must not also be passed"):
         _connection().chat(
             _messages(),
@@ -273,17 +248,17 @@ def test_caller_supplied_response_format_conflicts(monkeypatch) -> None:
             output_schema=OutputSchema(output_schema=Person),
             response_format={"type": "json_object"},
         )
-    mock_call.assert_not_called()
+    assert not requests
 
 
-def test_unrenderable_schema_conflicts_before_it_is_rendered(monkeypatch) -> None:
+def test_unrenderable_schema_conflicts_before_it_is_rendered(http_calls) -> None:
     """A caller's response format collides even with a schema that cannot render.
 
     The conflict is settled from the schema class, which is known without rendering,
     so it is reported ahead of a render failure the caller had already steered the
     request away from. Rendering first would report the wrong problem.
     """
-    mock_call = _patched_call(monkeypatch)
+    requests, _ = http_calls
     with pytest.raises(ValueError, match="response_format must not also be passed"):
         _connection().chat(
             _messages(),
@@ -291,10 +266,10 @@ def test_unrenderable_schema_conflicts_before_it_is_rendered(monkeypatch) -> Non
             output_schema=OutputSchema(output_schema=Unrenderable),
             response_format={"type": "json_object"},
         )
-    mock_call.assert_not_called()
+    assert not requests
 
 
-def test_row_type_info_leaves_a_caller_response_format_alone(monkeypatch) -> None:
+def test_row_type_info_leaves_a_caller_response_format_alone(http_calls) -> None:
     """A payload with no native translation is no conflict, so the caller wins.
 
     Nothing is derived from a RowTypeInfo, so there is no second response format to
@@ -304,7 +279,7 @@ def test_row_type_info_leaves_a_caller_response_format_alone(monkeypatch) -> Non
     caller_format = {"type": "json_object"}
     row_type = Types.ROW_NAMED(["name"], [Types.STRING()])
     response, kwargs = _chat(
-        monkeypatch,
+        http_calls,
         model=_CAPABLE_MODEL,
         output_schema=OutputSchema(output_schema=row_type),
         response_format=caller_format,
@@ -373,7 +348,7 @@ def test_query_does_not_consume_the_model() -> None:
     ids=["capable", "incapable", "blank", "absent"],
 )
 def test_query_judges_the_model_the_request_is_issued_against(
-    monkeypatch, model_kwargs: dict[str, Any]
+    http_calls, model_kwargs: dict[str, Any]
 ) -> None:
     """The query asks about exactly the model the request is issued against.
 
@@ -382,13 +357,14 @@ def test_query_judges_the_model_the_request_is_issued_against(
     drifting apart.
     """
     conn, judged = _judging_connection()
-    mock_call = _patched_call(monkeypatch)
+    requests, responses = http_calls
     schema = OutputSchema(output_schema=Person)
 
     conn.supports_native_structured_output(schema, [], model_kwargs)
+    responses.append(_mocked_response())
     conn.chat(_messages(), output_schema=schema, **model_kwargs)
 
-    assert judged[0] == mock_call.call_args.kwargs["model"]
+    assert judged[0] == json.loads(requests[-1].content)["model"]
 
 
 def _add(a: int, b: int) -> int:
@@ -409,7 +385,7 @@ def _add(a: int, b: int) -> int:
     return a + b
 
 
-def test_query_agrees_with_the_native_branch(monkeypatch) -> None:
+def test_query_agrees_with_the_native_branch(http_calls) -> None:
     """The answer is INFEASIBLE exactly when the request carries no response_format.
 
     Comparing the answer against what the request carries, rather than only against a
@@ -418,7 +394,7 @@ def test_query_agrees_with_the_native_branch(monkeypatch) -> None:
     well, so capability can only separate FEASIBLE from NATIVE_RECOMMENDED.
     """
     conn = _connection()
-    mock_call = _patched_call(monkeypatch)
+    requests, responses = http_calls
     tool = FunctionTool(func=PythonFunction.from_callable(_add))
     row_type = Types.ROW_NAMED(["name"], [Types.STRING()])
 
@@ -433,6 +409,7 @@ def test_query_agrees_with_the_native_branch(monkeypatch) -> None:
                     schema, tools, {"model": model}
                 )
 
+                responses.append(_mocked_response())
                 conn.chat(_messages(), tools=tools, output_schema=schema, model=model)
 
                 label = f"schema {schema}, tools {tools}, model {model}"
@@ -442,7 +419,9 @@ def test_query_agrees_with_the_native_branch(monkeypatch) -> None:
                     expected = NativeStructuredOutputSupport.NATIVE_RECOMMENDED
                 else:
                     expected = NativeStructuredOutputSupport.FEASIBLE
-                carried = "response_format" in mock_call.call_args.kwargs
+                carried = (
+                    "response_format" in json.loads(requests[-1].content)["parameters"]
+                )
                 assert support is expected, label
                 assert carried == (
                     support is not NativeStructuredOutputSupport.INFEASIBLE
@@ -466,7 +445,7 @@ def test_query_ignores_a_caller_response_format() -> None:
     )
 
 
-def test_feasibility_is_asked_with_the_unstripped_kwargs(monkeypatch) -> None:
+def test_feasibility_is_asked_with_the_unstripped_kwargs(http_calls) -> None:
     """Feasibility sees the parameters as they arrived, not a copy ``chat`` stripped.
 
     ``chat`` removes ``model``, ``api_key`` and ``extract_reasoning`` from its own
@@ -488,7 +467,7 @@ def test_feasibility_is_asked_with_the_unstripped_kwargs(monkeypatch) -> None:
                 output_schema, tools, model_kwargs
             )
 
-    _patched_call(monkeypatch)
+    http_calls[1].append(_mocked_response())
     _CapturingConnection(api_key="fake-key").chat(
         _messages(),
         model=_CAPABLE_MODEL,

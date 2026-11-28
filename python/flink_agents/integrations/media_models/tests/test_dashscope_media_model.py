@@ -24,7 +24,7 @@ from unittest.mock import Mock
 
 import httpx
 import pytest
-from dashscope.errors import DashScopeError
+from dashscope.errors import APIConnectionError, DashScopeError
 from pydantic import ValidationError
 
 from flink_agents.api.chat_message import AudioBlock, VideoBlock
@@ -75,6 +75,19 @@ def model_factory(
         )
 
     return create
+
+
+@pytest.fixture(
+    params=[
+        (DashScopeTranscriptionModelSetup, "fun-asr"),
+        (DashScopeImageGenerationModelSetup, "qwen-image-3.0"),
+        (DashScopeVideoGenerationModelSetup, "happyhorse-1.1-t2v"),
+    ],
+    ids=["transcription", "image", "video"],
+)
+def async_model(request: pytest.FixtureRequest, setup_factory) -> AsyncJobModel:
+    setup_cls, model = request.param
+    return setup_factory(setup_cls, model=model)
 
 
 def test_api_key_is_resolved_when_the_resource_opens(
@@ -183,8 +196,8 @@ def test_invalid_region_is_rejected(
 
 @pytest.mark.parametrize("fields_at_top", [False, True])
 def test_fetch_returns_failed_state(
-    model_factory: Callable[..., BaseTranscriptionModelSetup],
-    task_responses: Callable[..., list[dict[str, Any]]],
+    async_model: AsyncJobModel,
+    http_calls,
     fields_at_top: bool,
 ) -> None:
     error = {"code": "InvalidParameter", "message": "bad input"}
@@ -194,78 +207,83 @@ def test_fetch_returns_failed_state(
         body.update(error)
     else:
         output.update(error)
-    model = model_factory()
-    task_responses(model, httpx.Response(200, json=body))
+    calls, responses = http_calls
+    responses.append(httpx.Response(200, json=body))
 
-    state = model.fetch(_JOB)
+    state = async_model.fetch(_JOB)
 
+    [request] = calls
+    assert request.method == "GET"
+    assert request.url.path == "/api/v1/tasks/job-1"
     assert state.status is MediaJobStatus.FAILED
     assert state.result is None
     assert state.error_code == "InvalidParameter"
     assert state.error_message == "bad input"
 
 
-def test_fetch_maps_suspended_to_pending(
+@pytest.mark.parametrize(
+    ("status", "code", "message"),
+    [
+        (MediaJobStatus.RUNNING, None, None),
+        (MediaJobStatus.CANCELED, "TaskCanceled", "Canceled by user"),
+    ],
+)
+def test_fetch_keeps_task_error_when_gateway_error_fields_are_empty(
     model_factory: Callable[..., BaseTranscriptionModelSetup],
-    task_responses: Callable[..., list[dict[str, Any]]],
+    http_calls,
+    status: MediaJobStatus,
+    code: str | None,
+    message: str | None,
 ) -> None:
     model = model_factory()
-    task_responses(
-        model, httpx.Response(200, json={"output": {"task_status": "SUSPENDED"}})
+    _, responses = http_calls
+    output = {"task_status": status.value.upper()}
+    if code is not None:
+        output.update(code=code, message=message)
+    responses.append(
+        httpx.Response(200, json={"code": "", "message": "", "output": output})
     )
+
+    state = model.fetch(_JOB)
+
+    assert state.status is status
+    assert state.error_code == code
+    assert state.error_message == message
+
+
+def test_fetch_maps_suspended_to_pending(
+    model_factory: Callable[..., BaseTranscriptionModelSetup],
+    http_calls,
+) -> None:
+    model = model_factory()
+    _, responses = http_calls
+    responses.append(httpx.Response(200, json={"output": {"task_status": "SUSPENDED"}}))
 
     assert model.fetch(_JOB).status is MediaJobStatus.PENDING
 
 
-def test_fetch_falls_back_to_output_error_and_omits_empty_error_fields(
-    model_factory: Callable[..., BaseTranscriptionModelSetup],
-    task_responses: Callable[..., list[dict[str, Any]]],
+def test_fetch_propagates_network_error(
+    async_model: AsyncJobModel,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    model = model_factory()
-    task_responses(
-        model,
-        httpx.Response(
-            200,
-            json={
-                "code": "",
-                "message": "",
-                "request_id": "",
-                "output": {
-                    "task_status": "FAILED",
-                    "code": "OutputError",
-                    "message": "nested error",
-                },
-            },
-        ),
-        httpx.Response(
-            200,
-            json={"code": "", "message": "", "output": {"task_status": "RUNNING"}},
-        ),
-    )
-
-    failed = model.fetch(_JOB)
-    assert failed.status is MediaJobStatus.FAILED
-    assert failed.error_code == "OutputError"
-    assert failed.error_message == "nested error"
-
-    running = model.fetch(_JOB)
-    assert running.status is MediaJobStatus.RUNNING
-    assert running.error_code is None
-    assert running.error_message is None
+    send = Mock(side_effect=httpx.ConnectError("connection refused"))
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", send)
+    with pytest.raises(APIConnectionError):
+        async_model.fetch(_JOB)
+    send.assert_called_once()
 
 
 def test_fetch_raises_the_query_error(
-    model_factory: Callable[..., BaseTranscriptionModelSetup],
-    task_responses: Callable[..., list[dict[str, Any]]],
+    async_model: AsyncJobModel,
+    http_calls,
 ) -> None:
-    model = model_factory()
-    task_responses(
-        model,
-        httpx.Response(401, json={"code": "InvalidApiKey", "message": "bad key"}),
+    _, responses = http_calls
+    responses.append(
+        httpx.Response(401, json={"code": "InvalidApiKey", "message": "bad key"})
     )
 
     with pytest.raises(DashScopeError) as exc_info:
-        model.fetch(_JOB)
+        async_model.fetch(_JOB)
 
     assert exc_info.value.code == "InvalidApiKey"
     assert exc_info.value.status_code == 401
@@ -273,43 +291,38 @@ def test_fetch_raises_the_query_error(
 
 def test_cancel_uses_the_task_api(
     model_factory: Callable[..., BaseTranscriptionModelSetup],
-    task_responses: Callable[..., list[dict[str, Any]]],
+    http_calls,
 ) -> None:
     model = model_factory()
-    calls = task_responses(
-        model, httpx.Response(200, json={"output": {"task_status": "CANCELED"}})
-    )
+    calls, responses = http_calls
+    responses.append(httpx.Response(200, json={"output": {"task_status": "CANCELED"}}))
 
     model.cancel(_JOB)
 
-    assert calls == [
-        {
-            "method": "POST",
-            "path": "/tasks/job-1/cancel",
-            "json": None,
-            "headers": None,
-        }
-    ]
+    [request] = calls
+    assert request.method == "POST"
+    assert request.url.path == "/api/v1/tasks/job-1/cancel"
 
 
 def test_task_paths_url_quote_job_id(
-    model_factory: Callable[..., BaseTranscriptionModelSetup],
-    task_responses: Callable[..., list[dict[str, Any]]],
+    async_model: AsyncJobModel,
+    http_calls,
 ) -> None:
-    model = model_factory()
     special_job = _JOB.model_copy(update={"job_id": "job/1?a=b"})
-    calls = task_responses(
-        model,
-        httpx.Response(200, json={"output": {"task_status": "RUNNING"}}),
-        httpx.Response(200, json={"output": {"task_status": "CANCELED"}}),
+    calls, responses = http_calls
+    responses.extend(
+        [
+            httpx.Response(200, json={"output": {"task_status": "RUNNING"}}),
+            httpx.Response(200, json={"output": {"task_status": "CANCELED"}}),
+        ]
     )
 
-    assert model.fetch(special_job).status is MediaJobStatus.RUNNING
-    model.cancel(special_job)
+    assert async_model.fetch(special_job).status is MediaJobStatus.RUNNING
+    async_model.cancel(special_job)
 
-    assert [(call["method"], call["path"]) for call in calls] == [
-        ("GET", "/tasks/job%2F1%3Fa%3Db"),
-        ("POST", "/tasks/job%2F1%3Fa%3Db/cancel"),
+    assert [(call.method, call.url.raw_path.decode()) for call in calls] == [
+        ("GET", "/api/v1/tasks/job%2F1%3Fa%3Db"),
+        ("POST", "/api/v1/tasks/job%2F1%3Fa%3Db/cancel"),
     ]
 
 
@@ -327,51 +340,55 @@ def test_task_paths_url_quote_job_id(
     ],
 )
 def test_cancel_rejection_reports_the_observed_status(
-    model_factory: Callable[..., BaseTranscriptionModelSetup],
-    task_responses: Callable[..., list[dict[str, Any]]],
+    async_model: AsyncJobModel,
+    http_calls,
     query_response: httpx.Response,
     status: MediaJobStatus,
 ) -> None:
-    model = model_factory()
-    calls = task_responses(
-        model,
-        httpx.Response(
-            400,
-            json={"code": "UnsupportedOperation", "message": "task is running"},
-        ),
-        query_response,
+    calls, responses = http_calls
+    responses.extend(
+        [
+            httpx.Response(
+                400,
+                json={"code": "UnsupportedOperation", "message": "task is running"},
+            ),
+            query_response,
+        ]
     )
 
     with pytest.raises(MediaJobError) as exc_info:
-        model.cancel(_JOB)
+        async_model.cancel(_JOB)
 
     assert exc_info.value.status is status
     assert exc_info.value.code == "UnsupportedOperation"
     assert isinstance(exc_info.value.__cause__, DashScopeError)
-    assert [(call["method"], call["path"]) for call in calls] == [
-        ("POST", "/tasks/job-1/cancel"),
-        ("GET", "/tasks/job-1"),
+    assert [(call.method, call.url.path) for call in calls] == [
+        ("POST", "/api/v1/tasks/job-1/cancel"),
+        ("GET", "/api/v1/tasks/job-1"),
     ]
 
 
 def test_generate_submits_once_and_waits(
     setup_factory: Callable[..., DashScopeVideoGenerationModelSetup],
-    sdk_jobs: SimpleNamespace,
-    task_responses: Callable[..., list[dict[str, Any]]],
+    http_calls,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = setup_factory(
         DashScopeVideoGenerationModelSetup, model="happyhorse-1.1-t2v"
     )
-    model._client().videos.jobs = sdk_jobs
     video_url = "https://oss.example/out.mp4"
-    calls = task_responses(
-        model,
-        httpx.Response(200, json={"output": {"task_status": "PENDING"}}),
-        httpx.Response(
-            200,
-            json={"output": {"task_status": "SUCCEEDED", "video_url": video_url}},
-        ),
+    calls, responses = http_calls
+    responses.extend(
+        [
+            httpx.Response(
+                200, json={"output": {"task_id": "job-1", "task_status": "PENDING"}}
+            ),
+            httpx.Response(200, json={"output": {"task_status": "PENDING"}}),
+            httpx.Response(
+                200,
+                json={"output": {"task_status": "SUCCEEDED", "video_url": video_url}},
+            ),
+        ]
     )
     monkeypatch.setattr(
         "flink_agents.api.media.async_job_model.time.sleep", lambda _seconds: None
@@ -380,12 +397,12 @@ def test_generate_submits_once_and_waits(
     result = model.generate("a cat")
 
     assert isinstance(result, MediaResult[VideoBlock])
-    assert len(sdk_jobs.created) == 1
     assert result.content[0].source.url == video_url
     assert result.expires_at_ms is None
-    assert [(call["method"], call["path"]) for call in calls] == [
-        ("GET", "/tasks/job-1"),
-        ("GET", "/tasks/job-1"),
+    assert [(call.method, call.url.path) for call in calls] == [
+        ("POST", "/api/v1/services/aigc/video-generation/video-synthesis"),
+        ("GET", "/api/v1/tasks/job-1"),
+        ("GET", "/api/v1/tasks/job-1"),
     ]
 
 

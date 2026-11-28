@@ -16,12 +16,11 @@
 # limitations under the License.
 #################################################################################
 import json
-import os
 import uuid
 from typing import Any, Dict, List, Literal, Mapping, Sequence, get_args
 from urllib.parse import urlsplit
 
-from dashscope import Generation, MultiModalConversation
+from dashscope.types.completions import ChatCompletion, ChatCompletionMessage
 from pydantic import Field
 from typing_extensions import override
 
@@ -50,6 +49,13 @@ from flink_agents.api.chat_models.chat_model import (
 )
 from flink_agents.api.chat_result import ChatResult, TokenUsage
 from flink_agents.api.tools.tool import Tool, ToolMetadata
+from flink_agents.integrations.dashscope_utils import (
+    DashScopeClientMixin,
+    DashScopeRequestTimeout,
+    dashscope_request_errors,
+    split_request_options,
+    usage_counters,
+)
 
 DEFAULT_REQUEST_TIMEOUT = 60.0
 DEFAULT_MODEL = "qwen-plus"
@@ -216,15 +222,22 @@ def _validate_image_generation_request(
         raise ValueError(msg)
 
 
-def _generated_image_blocks(content: Any) -> list[ImageBlock]:
+def _is_empty_text_part(part: object) -> bool:
+    # The native SDK keeps explicit empty text in content_parts alongside media.
+    return part in ({"text": ""}, {"type": "text", "text": ""})
+
+
+def _generated_image_blocks(message: ChatCompletionMessage) -> list[ImageBlock]:
     """Decode the ordered PNG URLs returned by the synchronous image models."""
     msg = (
         "DashScope image generation must return a non-empty list of HTTP(S) image URLs."
     )
-    if not isinstance(content, list) or not content:
+    if message.content:
         raise RuntimeError(msg)
     blocks = []
-    for part in content:
+    for part in message.content_parts or []:
+        if _is_empty_text_part(part):
+            continue
         source = part.get("image") if isinstance(part, dict) else None
         if not isinstance(source, str) or not source:
             raise RuntimeError(msg)
@@ -232,7 +245,78 @@ def _generated_image_blocks(content: Any) -> list[ImageBlock]:
         if url.scheme not in {"http", "https"} or not url.netloc:
             raise RuntimeError(msg)
         blocks.append(ImageBlock.from_url("image/png", source))
+    if not blocks:
+        raise RuntimeError(msg)
     return blocks
+
+
+def _chat_result(
+    completion: ChatCompletion,
+    *,
+    model: str | None,
+    task: _DashScopeTask | None,
+    api_type: str,
+    extract_reasoning: bool,
+) -> ChatResult:
+    """Convert a typed DashScope completion to the result of the requested task."""
+    is_asr = task == "asr"
+    if not completion.choices:
+        msg = (
+            "DashScope ASR response did not contain a transcript."
+            if is_asr
+            else "DashScope chat response did not contain any choices."
+        )
+        raise RuntimeError(msg)
+    choice = completion.choices[0]
+    message = choice.message
+    blocks = []
+    if extract_reasoning and message.reasoning_content:
+        blocks.append(ReasoningBlock(text=message.reasoning_content))
+    if task == "image_generation":
+        blocks.extend(_generated_image_blocks(message))
+    else:
+        parts = message.content_parts or []
+        if api_type == "multimodal" and any(
+            not _is_empty_text_part(part) for part in parts
+        ):
+            msg = "DashScope multimodal chat only supports text response content."
+            if is_asr:
+                msg = "DashScope ASR requires a text-only transcript."
+            raise RuntimeError(msg)
+        if is_asr and message.content is None and not parts:
+            msg = "DashScope ASR response did not contain a transcript."
+            raise RuntimeError(msg)
+        if message.content or parts or is_asr:
+            blocks.append(TextBlock(text=message.content or ""))
+    for call in message.tool_calls or []:
+        try:
+            arguments = json.loads(call.function.arguments)
+        except json.JSONDecodeError as exc:
+            msg = f"DashScope tool {call.function.name!r} returned invalid JSON arguments."
+            raise ValueError(msg) from exc
+        if not isinstance(arguments, dict):
+            msg = f"DashScope tool {call.function.name!r} arguments must be a JSON object."
+            raise ValueError(msg)  # noqa: TRY004 - invalid JSON argument value
+        blocks.append(
+            ToolCallBlock(
+                call_id=call.id or str(uuid.uuid4()),
+                name=call.function.name,
+                input=arguments,
+            )
+        )
+    counts = usage_counters(completion.usage)
+    token_usage = None
+    if "input_tokens" in counts or "output_tokens" in counts:
+        token_usage = TokenUsage(
+            prompt_tokens=counts.get("input_tokens"),
+            completion_tokens=counts.get("output_tokens"),
+        )
+    return ChatResult(
+        message=ChatMessage.assistant(blocks),
+        model=model,
+        usage=token_usage,
+        finish_reason=choice.finish_reason,
+    )
 
 
 def _native_response_format(
@@ -284,19 +368,11 @@ def to_dashscope_tool(
     }
 
 
-class _MultiModalConversation(MultiModalConversation):
-    @classmethod
-    @override
-    def _preprocess_messages(
-        cls, model: str, messages: List[Dict[str, Any]], api_key: str
-    ) -> bool:
-        # Media are already HTTP(S) URLs or inline data. SDK preprocessing also
-        # treats text parts as local paths, which can change text or upload files.
-        return False
-
-
-class DashScopeChatModelConnection(BaseChatModelConnection):
+class DashScopeChatModelConnection(DashScopeClientMixin, BaseChatModelConnection):
     """Manage the connection to the DashScope API server.
+
+    Direct callers can issue requests immediately and should call ``close()``
+    after the last request. The FA runtime manages registered connections.
 
     Attributes:
     ----------
@@ -306,14 +382,7 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         The timeout for making http request to DashScope API server.
     """
 
-    api_key: str = Field(
-        default_factory=lambda: os.environ.get("DASHSCOPE_API_KEY"),
-        description="Your DashScope API key.",
-    )
-    request_timeout: float = Field(
-        default=DEFAULT_REQUEST_TIMEOUT,
-        description="The timeout for making http request to DashScope API server.",
-    )
+    request_timeout: DashScopeRequestTimeout = DEFAULT_REQUEST_TIMEOUT
 
     def __init__(
         self,
@@ -321,20 +390,8 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
         **kwargs: Any,
     ) -> None:
-        """Init method."""
-        resolved_api_key = api_key or os.environ.get("DASHSCOPE_API_KEY")
-        if not resolved_api_key:
-            msg = (
-                "DashScope API key is not provided. "
-                "Please pass it as an argument or set the 'DASHSCOPE_API_KEY' environment variable."
-            )
-            raise ValueError(msg)
-
-        super().__init__(
-            api_key=resolved_api_key,
-            request_timeout=request_timeout,
-            **kwargs,
-        )
+        """Create a connection with the configured per-request timeout."""
+        super().__init__(api_key=api_key, request_timeout=request_timeout, **kwargs)
 
     @override
     def supports_native_structured_output(
@@ -466,15 +523,15 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
             otherwise. Both interfaces accept text messages and tool calls. The
             multimodal interface accepts user images and video files from HTTP(S)
             URLs or Base64 sources. Set ``task="asr"`` with a Qwen-Audio-ASR model
-            to transcribe one user AudioBlock through MMC. The audio format is
-            inferred from the media type unless ``format`` is supplied. ASR does
-            not accept tools or structured output.
+            to transcribe one user AudioBlock. The audio format is inferred from the
+            media type unless ``format`` is supplied. ASR does not accept tools or
+            structured output.
             Set ``task="image_generation"`` with a Qwen-Image model to generate
-            or edit images through MMC. This task accepts a single user prompt
+            or edit images. This task accepts a single user prompt
             with optional image blocks and returns images. It does not accept
             tools or structured output. Media inputs in assistant or tool messages
-            are unsupported. Multimodal calls must be non-streaming.
-            Other parameters are passed to the model service.
+            are unsupported. Chat returns one non-streaming response.
+            Additional model parameters are passed to the model service.
 
         Returns:
         -------
@@ -486,8 +543,6 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
 
         extract_reasoning = bool(kwargs.pop("extract_reasoning", False))
 
-        req_api_key = kwargs.pop("api_key", self.api_key)
-
         task = kwargs.pop("task", None)
         if task is not None and task not in get_args(_DashScopeTask):
             msg = (
@@ -495,16 +550,26 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
                 "expected 'asr', 'image_generation', or None."
             )
             raise ValueError(msg)
-        is_asr = task == "asr"
-        is_image_generation = task == "image_generation"
         model_name = kwargs.pop("model", DEFAULT_MODEL)
         api_type = _resolve_api_type(
             kwargs.pop("api_type", "text"), model_name, task=task
         )
-        if api_type == "multimodal" and kwargs.get("stream"):
-            msg = "DashScope multimodal chat requires stream=False."
+        if "history" in kwargs:
+            msg = "Pass the full conversation in messages; history is unsupported."
             raise ValueError(msg)
-        if is_asr:
+        if api_type == "text":
+            removed = {"prompt", "plugins"}.intersection(kwargs)
+            if (
+                "customized_model_id" in kwargs
+                and isinstance(model_name, str)
+                and model_name.startswith("bailian")
+            ):
+                removed.add("customized_model_id")
+            if removed:
+                names = ", ".join(sorted(removed))
+                msg = f"Unsupported DashScope text chat option(s): {names}"
+                raise ValueError(msg)
+        if task == "asr":
             audio = _validate_asr_request(
                 messages, tools, output_schema, kwargs.get("response_format")
             )
@@ -512,7 +577,7 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
                 media_type = audio.media_type.partition(";")[0].strip().lower()
                 subtype = media_type.rpartition("/")[2].removeprefix("x-")
                 kwargs["format"] = _ASR_FORMAT_ALIASES.get(media_type, subtype)
-        elif is_image_generation:
+        elif task == "image_generation":
             _validate_image_generation_request(
                 messages, tools, output_schema, kwargs.get("response_format")
             )
@@ -548,79 +613,47 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
                 raise ValueError(msg)
             kwargs["response_format"] = _native_response_format(output_schema)
 
-        api = Generation if api_type == "text" else _MultiModalConversation
-        chat_options = (
-            {} if is_asr else {"tools": dashscope_tools, "result_format": "message"}
+        completion = self._request_completion(
+            model_name, dashscope_messages, api_type, task, dashscope_tools, kwargs
         )
-        kwargs.setdefault("request_timeout", self.request_timeout)
-        response = api.call(
-            model=model_name,
-            messages=dashscope_messages,
-            api_key=req_api_key,
-            **chat_options,
-            **kwargs,
-        )
-
-        if response.status_code != 200:
-            msg = f"DashScope call failed: {response.message}"
-            raise RuntimeError(msg)
-
-        blocks = []
-        if is_asr:
-            text = (response.output or {}).get("text")
-            if not isinstance(text, str):
-                msg = "DashScope ASR response did not contain a transcript in output.text."
-                raise RuntimeError(msg)
-            blocks.append(TextBlock(text=text))
-            finish_reason = response.output.get("finish_reason")
-        else:
-            choice = response.output["choices"][0]
-            finish_reason = choice.get("finish_reason")
-            message = choice["message"]
-            if extract_reasoning and message.get("reasoning_content"):
-                blocks.append(ReasoningBlock(text=message["reasoning_content"]))
-            content = message.get("content")
-            if is_image_generation:
-                blocks.extend(_generated_image_blocks(content))
-            elif api_type == "multimodal" and isinstance(content, list):
-                for part in content:
-                    if (
-                        not isinstance(part, dict)
-                        or set(part) != {"text"}
-                        or not isinstance(part["text"], str)
-                    ):
-                        msg = "DashScope multimodal chat only supports text response content."
-                        raise RuntimeError(msg)
-                    blocks.append(TextBlock(text=part["text"]))
-            elif content:
-                blocks.append(TextBlock(text=content))
-            for call in message.get("tool_calls") or []:
-                function = call["function"]
-                arguments = function.get("arguments") or {}
-                if isinstance(arguments, str):
-                    arguments = json.loads(arguments)
-                blocks.append(
-                    ToolCallBlock(
-                        call_id=call.get("id") or str(uuid.uuid4()),
-                        name=function["name"],
-                        input=arguments,
-                    )
-                )
-        usage = response.usage
-        token_usage = None
-        # The SDK fills absent token counts with zeros when a task reports only
-        # audio duration or image count.
-        if usage and (task is None or usage.input_tokens or usage.output_tokens):
-            token_usage = TokenUsage(
-                prompt_tokens=usage.input_tokens,
-                completion_tokens=usage.output_tokens,
-            )
-        return ChatResult(
-            message=ChatMessage.assistant(blocks),
+        return _chat_result(
+            completion,
             model=str(model_name) if model_name is not None else None,
-            usage=token_usage,
-            finish_reason=finish_reason,
+            task=task,
+            api_type=api_type,
+            extract_reasoning=extract_reasoning,
         )
+
+    def _request_completion(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        api_type: str,
+        task: _DashScopeTask | None,
+        tools: list[dict[str, Any]] | None,
+        kwargs: dict[str, Any],
+    ) -> ChatCompletion:
+        options = split_request_options(kwargs, default_timeout=self.request_timeout)
+        client = self._get_client()
+        resource = (
+            client.multimodal.chat
+            if api_type == "multimodal"
+            else client.chat.completions
+        )
+        if task != "asr":
+            # Keep the native SDK's message format for chat and generated images.
+            # ASR also accepts an explicit text format from the caller.
+            kwargs.pop("result_format", None)
+        with dashscope_request_errors("DashScope call failed"):
+            return resource.create(
+                model=model,
+                messages=messages,
+                tools=tools,
+                temperature=kwargs.pop("temperature", None),
+                response_format=kwargs.pop("response_format", None),
+                parameters=kwargs,
+                **options,
+            )
 
     @staticmethod
     def __convert_to_dashscope_messages(
@@ -672,12 +705,7 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
                                 block,
                                 "media sources must be HTTP(S) URLs or Base64 data",
                             )
-                    if isinstance(block, AudioBlock):
-                        content.append(
-                            {"type": "input_audio", "input_audio": {"data": source}}
-                        )
-                    else:
-                        content.append({block.type: source})
+                    content.append({block.type: source})
                     has_media = True
                 elif not isinstance(block, ReasoningBlock | ToolCallBlock):
                     raise UnsupportedContentBlockError.for_block(
@@ -733,7 +761,7 @@ class DashScopeChatModelSetup(BaseChatModelSetup):
         Interface selection. Defaults to text generation. Auto selects the
         multimodal interface only for documented model names.
     task : Literal["asr", "image_generation"] | None
-        Select synchronous transcription or image generation and editing through MMC.
+        Select synchronous transcription or image generation and editing.
     """
 
     temperature: float = Field(

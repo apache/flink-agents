@@ -105,18 +105,51 @@ The DashScope integration currently has a Python implementation only. To use it 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `api_key` | str | `$DASHSCOPE_API_KEY` | DashScope API key for authentication |
+| `region` | str | `"cn-beijing"` | Region used to select the gateway. Set this field for a different region. |
+| `workspace` | str | `None` | Selects the workspace's gateway in `region` when `base_url` is unset. |
+| `base_url` | str | `None` | Custom HTTP API root, including the native API path (usually `/api/v1`). Overrides the gateway URL. |
 | `request_timeout` | float | `60.0` | HTTP request timeout in seconds |
+
+If you omit `workspace` or `base_url`, the SDK checks `dashscope.settings`
+first, then the corresponding environment variable (`DASHSCOPE_WORKSPACE`
+or `DASHSCOPE_BASE_URL`). Flink Agents ignores the local DashScope `config.toml`.
+A resolved `base_url` takes precedence even when you set `region` explicitly.
+If both `base_url` and `workspace` are unset, requests use the region's shared gateway.
+
+A single Chat or Embedding request can override `api_key`, `workspace` and
+`request_timeout`, and supply HTTP `headers`. Use a separate connection to change
+the gateway URL. The provider rejects SDK request options such as `api_protocol`,
+`timeout`, `max_retries`, `extra_body`, `extra_headers`, and `extra_query`.
+
+Requests use HTTP with automatic retries disabled. Flink Agents closes
+registered connections. If you create a connection directly in Python, call
+`close()` after its last request. The next request after `close()` creates a new connection pool.
+A connection failure raises
+`dashscope.errors.APIConnectionError`, and a timeout raises its subclass
+`APITimeoutError`. A service error raises `RuntimeError` with the SDK error
+as its cause.
+
+A tool call must contain arguments encoded as a JSON object, including `{}`
+for a tool with no arguments. Missing or malformed arguments fail the chat call
+before Flink Agents invokes the tool.
+
+For multi-turn chat, pass the previous user and assistant messages in order,
+followed by the new user message, in `messages`.
+
+For image and video understanding, read the answer from `ChatResult.text`.
+In Python, `ChatResult.usage` is `None` when the service reports no token counts.
+Individual counts can also be `None`.
 
 #### DashScopeChatModelSetup Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `model` | str | `"qwen-plus"` | Name of the chat model to use. See [Structured Output](#dashscope-structured-output) for native `output_schema` support. |
-| `api_type` | str | `"text"` | SDK interface for chat: `text` uses `Generation`; `multimodal` uses `MultiModalConversation`; `auto` selects by model name. See [Interface Selection](#interface-selection). |
-| `task` | str | `None` | Omit for chat and media understanding. Set `asr` for speech recognition or `image_generation` for image generation and editing; both select `MultiModalConversation`, so `api_type` can be omitted. |
+| `api_type` | str | `"text"` | Selects the text or multimodal chat API. Use `auto` to select by model name. See [Interface Selection](#interface-selection). |
+| `task` | str | `None` | Omit for chat and media understanding. Set `asr` for speech recognition or `image_generation` for image generation and editing. Both select the multimodal API. |
 | `temperature` | float | `0.7` | Sampling temperature (0.0 to 2.0) |
 | `extract_reasoning` | bool | `False` | Extract reasoning content from response |
-| `additional_kwargs` | dict | `{}` | Additional parameters passed to the DashScope API. |
+| `additional_kwargs` | dict | `{}` | Additional model parameters passed to DashScope, such as `top_p`. |
 
 #### Usage Example
 
@@ -162,11 +195,10 @@ inputs require the multimodal interface and a compatible model, such as
 `qwen3.7-plus`. Select `api_type="multimodal"` explicitly, or use `auto` when
 the model name matches the [multimodal routing rules](#automatic-routing).
 
-Setting `task="asr"` or `task="image_generation"` selects `MultiModalConversation`,
+Setting `task="asr"` or `task="image_generation"` selects the multimodal API,
 even when `api_type` is set to `text` or `auto`.
 
-This integration supports only non-streaming calls to `MultiModalConversation`.
-Models or configurations that require streaming cannot be used. See
+DashScope chat requires a model that supports non-streaming requests. See
 [DashScope streaming output](https://help.aliyun.com/en/model-studio/stream)
 and [deep thinking](https://help.aliyun.com/en/model-studio/deep-thinking) for
 model-specific requirements.
@@ -213,7 +245,9 @@ Set `task="asr"` with a Qwen-Audio-ASR model such as
 `qwen-audio-3.1-asr-flash`; `api_type` can be omitted. Send one user message
 containing only an `AudioBlock`. Provide the audio as an HTTP(S) URL or inline
 Base64 data. Read the transcript from
-`ChatResult.text` in Python or `ChatResult.getText()` in Java.
+`ChatResult.text` in Python or `ChatResult.getText()` in Java. An explicit empty
+transcript returns an empty string. A response with no transcript raises
+`RuntimeError`.
 
 For this task, leave `prompt`, `tools`, `skills`, and `subagents` unset on
 the setup and omit `output_schema` and `response_format`.
@@ -234,9 +268,11 @@ values with HTTP(S) URLs or inline Base64 data.
 For this task, leave `prompt`, `tools`, `skills`, and `subagents` unset on
 the setup and omit `output_schema` and `response_format`.
 
-The result contains `ImageBlock` values in the order returned by DashScope.
-Read them from `ChatResult.blocks` in Python or `ChatResult.getBlocks()` in Java. You can reuse
-the blocks as editing references. DashScope's image URLs expire after 24 hours,
+The result contains an `ImageBlock` for each image, in response order.
+Empty captions are ignored. A non-empty caption or a response without any
+images raises `RuntimeError`.
+Read the blocks from `ChatResult.blocks` in Python or `ChatResult.getBlocks()`
+in Java. You can reuse them as editing references. DashScope's image URLs expire after 24 hours,
 so save any images you need to keep. See the
 [DashScope synchronous image API](https://help.aliyun.com/en/model-studio/qwen-image-generation-and-editing-api-reference#dashscope-synchronous-api-recommended).
 

@@ -15,14 +15,11 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-import os
-from http import HTTPStatus
 from typing import Any, Dict, Literal, Sequence, get_args
 from urllib.parse import urlsplit
 
-import dashscope
+from dashscope.resources.embeddings import Embedding
 from pydantic import Field
-from typing_extensions import override
 
 from flink_agents.api.chat_message import (
     Base64Source,
@@ -42,11 +39,28 @@ from flink_agents.api.embedding_models.embedding_model import (
     EmbeddingTokenUsage,
     _text_embedding_input,
 )
+from flink_agents.integrations.dashscope_utils import (
+    DashScopeClientMixin,
+    DashScopeRequestTimeout,
+    dashscope_request_errors,
+    split_request_options,
+    usage_counters,
+)
 
 DEFAULT_REQUEST_TIMEOUT = 30.0
 DEFAULT_MODEL = "text-embedding-v4"
 DEFAULT_MULTIMODAL_MODEL = "qwen3-vl-embedding"
 _DashScopeApiType = Literal["text", "multimodal"]
+_TEXT_PARAMETERS = ("text_type", "dimension", "output_type", "instruct")
+_MULTIMODAL_PARAMETERS = (
+    "dimension",
+    "output_type",
+    "instruct",
+    "fps",
+    "enable_fusion",
+    "res_level",
+    "max_video_frames",
+)
 
 
 def _encode_embedding_content(content: str | DataContentBlock) -> dict[str, str]:
@@ -75,55 +89,49 @@ def _encode_embedding_content(content: str | DataContentBlock) -> dict[str, str]
     raise UnsupportedContentBlockError.for_block(provider, content, reason)
 
 
-def _order_multimodal_embeddings(
-    entries: list[dict[str, Any]], expected: int
+def _order_embeddings(
+    entries: list[Embedding], expected: int, provider: str, *, require_index: bool
 ) -> list[list[float]]:
     if len(entries) != expected:
-        msg = (
-            f"DashScope MultiModalEmbedding returned {len(entries)} vectors "
-            f"for {expected} inputs"
-        )
+        msg = f"{provider} returned {len(entries)} vectors for {expected} inputs"
         raise RuntimeError(msg)
     vectors: dict[int, list[float]] = {}
-    for entry in entries:
-        index = entry.get("index")
-        if (
-            not isinstance(index, int)
-            or isinstance(index, bool)
-            or not 0 <= index < expected
-            or index in vectors
-        ):
-            msg = "DashScope MultiModalEmbedding returned invalid or duplicate indices"
+    for position, entry in enumerate(entries):
+        # A text response without an index uses response order. The SDK defaults
+        # absent indices to zero, so distinguish an explicit zero from its default.
+        if "index" in entry.model_fields_set:
+            index = entry.index
+        elif require_index:
+            msg = (
+                f"{provider} returned a vector without an index at position {position}"
+            )
             raise RuntimeError(msg)
-        vectors[index] = entry["embedding"]
+        else:
+            index = position
+        if not 0 <= index < expected or index in vectors:
+            msg = f"{provider} returned invalid or duplicate indices"
+            raise RuntimeError(msg)
+        if not entry.embedding:
+            msg = f"{provider} response is missing an embedding vector at position {position}"
+            raise RuntimeError(msg)
+        vectors[index] = entry.embedding
     return [vectors[index] for index in range(expected)]
 
 
-def _get_usage_value(obj: Any, *names: str) -> int | None:
-    """Read a token usage value from dict-like or object-like provider responses."""
-    if obj is None:
-        return None
-    for name in names:
-        if isinstance(obj, dict) and name in obj:
-            return int(obj[name])
-        value = getattr(obj, name, None)
-        if value is not None:
-            return int(value)
-    return None
+def _token_count(value: int | float | str | None) -> int | None:
+    if isinstance(value, str):
+        try:
+            value = int(value)
+        except ValueError:
+            return None
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return value if isinstance(value, int) and value >= 0 else None
 
 
-class _MultiModalEmbedding(dashscope.MultiModalEmbedding):
-    @classmethod
-    @override
-    def _preprocess_message_inputs(
-        cls, model: str, input: list[dict[str, str]], api_key: str
-    ) -> bool:
-        # Sources are already HTTP(S) URLs or inline images. The SDK otherwise
-        # treats text fields that match local paths as files to upload.
-        return False
-
-
-class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
+class DashScopeEmbeddingModelConnection(
+    DashScopeClientMixin, BaseEmbeddingModelConnection
+):
     """DashScope Embedding Model Connection which manages connection to DashScope API.
 
     Visit https://dashscope.console.aliyun.com/ to get your API key.
@@ -136,14 +144,7 @@ class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
         The timeout for making http request to DashScope API server.
     """
 
-    api_key: str | None = Field(
-        default=None,
-        description="Your DashScope API key.",
-    )
-    request_timeout: float = Field(
-        default=DEFAULT_REQUEST_TIMEOUT,
-        description="The timeout for making http request to DashScope API server.",
-    )
+    request_timeout: DashScopeRequestTimeout = DEFAULT_REQUEST_TIMEOUT
 
     def __init__(
         self,
@@ -151,20 +152,8 @@ class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
         **kwargs: Any,
     ) -> None:
-        """Init method."""
-        resolved_api_key = api_key or os.environ.get("DASHSCOPE_API_KEY")
-        if not resolved_api_key:
-            msg = (
-                "DashScope API key is not provided. "
-                "Please pass it as an argument or set the 'DASHSCOPE_API_KEY' environment variable."
-            )
-            raise ValueError(msg)
-
-        super().__init__(
-            api_key=resolved_api_key,
-            request_timeout=request_timeout,
-            **kwargs,
-        )
+        """Create a connection with the configured per-request timeout."""
+        super().__init__(api_key=api_key, request_timeout=request_timeout, **kwargs)
 
     def embed(
         self, content: EmbeddingContent, **kwargs: Any
@@ -180,6 +169,10 @@ class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
         if api_type not in get_args(_DashScopeApiType):
             msg = "DashScope embedding api_type must be 'text' or 'multimodal'"
             raise ValueError(msg)
+        if "input" in kwargs:
+            msg = "Pass the embedding input as content"
+            raise ValueError(msg)
+        options = split_request_options(kwargs, default_timeout=self.request_timeout)
         single = isinstance(content, str | TextBlock | MediaBlock)
         if not single and not isinstance(content, Sequence):
             msg = (
@@ -194,75 +187,58 @@ class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
         )
         default_model = DEFAULT_MULTIMODAL_MODEL if multimodal else DEFAULT_MODEL
         model = kwargs.pop("model", default_model)
-        text_type = kwargs.pop("text_type", None)
-        dimension = kwargs.pop("dimension", None)
-        req_api_key = kwargs.pop("api_key", self.api_key)
-
-        call_params: Dict[str, Any] = {
-            "model": model,
-            "api_key": req_api_key,
-            "request_timeout": self.request_timeout,
-        }
-
-        if dimension is not None:
-            call_params["dimension"] = dimension
+        named = _MULTIMODAL_PARAMETERS if multimodal else _TEXT_PARAMETERS
+        sdk_parameters = {name: kwargs.pop(name) for name in named if name in kwargs}
         sdk_input: str | Sequence[str] | list[dict[str, str]]
         if multimodal:
-            if text_type is not None:
+            if kwargs.pop("text_type", None) is not None:
                 msg = "DashScope text_type is only supported by the text embedding API"
                 raise ValueError(msg)
-            if kwargs.pop("enable_fusion", False) is not False:
+            if sdk_parameters.setdefault("enable_fusion", False) is not False:
                 msg = "DashScope requires enable_fusion=False to return one vector per input"
-                raise ValueError(msg)
-            if "input" in kwargs:
-                msg = "Pass the embedding input as content"
                 raise ValueError(msg)
             items = [content] if single else content
             # DashScope requires every item in a mixed batch to use the object form.
             sdk_input = [_encode_embedding_content(item) for item in items]
-            if not sdk_input:
-                return EmbeddingResult(embeddings=[])
-            call_params["enable_fusion"] = False
-            api = _MultiModalEmbedding
         else:
             sdk_input = _text_embedding_input(content, provider)
             if not single and any(not isinstance(item, str) for item in sdk_input):
                 msg = "Each embedding input must be a string or a data content block"
                 raise TypeError(msg)
-            if text_type is not None:
-                call_params["text_type"] = text_type
-            api = dashscope.TextEmbedding
 
-        call_params["input"] = sdk_input
-        call_params.update(kwargs)
+        expected = 1 if single else len(sdk_input)
+        if expected == 0:
+            return EmbeddingResult(embeddings=[])
+        client = self._get_client()
+        api = client.multimodal.embeddings if multimodal else client.embeddings
+        with dashscope_request_errors(f"{provider} call failed"):
+            response = api.create(
+                model=model,
+                input=sdk_input,
+                parameters=kwargs,
+                **sdk_parameters,
+                **options,
+            )
 
-        response = api.call(**call_params)
-
-        if response.status_code != HTTPStatus.OK:
-            msg = f"{provider} call failed: {response.message}"
-            raise RuntimeError(msg)
-
-        usage = getattr(response, "usage", None)
-        if usage is None and isinstance(response.output, dict):
-            usage = response.output.get("usage")
-        prompt_tokens = _get_usage_value(usage, "input_tokens", "prompt_tokens")
-        total_tokens = _get_usage_value(usage, "total_tokens")
+        # Native models may report input_tokens, prompt_tokens, or just total_tokens.
+        usage = usage_counters(response.usage)
+        total_tokens = _token_count(usage.get("total_tokens"))
+        prompt_tokens = _token_count(usage.get("input_tokens"))
+        if prompt_tokens is None:
+            prompt_tokens = _token_count(usage.get("prompt_tokens"))
         if prompt_tokens is None:
             prompt_tokens = total_tokens
         token_usage = None
-        if prompt_tokens is not None or total_tokens is not None:
+        if prompt_tokens is not None:
             token_usage = EmbeddingTokenUsage(
-                prompt_tokens=int(prompt_tokens or 0),
-                total_tokens=int(
-                    total_tokens if total_tokens is not None else prompt_tokens
-                ),
+                prompt_tokens=prompt_tokens,
+                total_tokens=total_tokens
+                if total_tokens is not None
+                else prompt_tokens,
             )
 
-        entries = response.output["embeddings"]
-        embeddings = (
-            _order_multimodal_embeddings(entries, len(sdk_input))
-            if multimodal
-            else [entry["embedding"] for entry in entries]
+        embeddings = _order_embeddings(
+            response.embeddings, expected, provider, require_index=multimodal
         )
         return EmbeddingResult(
             embeddings=embeddings[0] if single else embeddings,
