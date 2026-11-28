@@ -19,15 +19,16 @@ from collections.abc import Callable, Iterator
 from types import SimpleNamespace
 from typing import Any
 
-import httpx
 import pytest
 
-from flink_agents.api.media import AsyncJobModel
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.media_models.dashscope_media_model import (
     DashScopeMediaModelConnection,
+)
+from flink_agents.integrations.tests.dashscope_http import (
+    record_dashscope_requests as record_dashscope_requests,
 )
 
 
@@ -113,21 +114,3 @@ def sdk_jobs() -> SimpleNamespace:
         return SimpleNamespace(task_id="job-1")
 
     return SimpleNamespace(created=created, create=create)
-
-
-@pytest.fixture
-def task_responses(
-    monkeypatch: pytest.MonkeyPatch,
-) -> Callable[..., list[dict[str, Any]]]:
-    def queue(model: AsyncJobModel, *responses: httpx.Response) -> list[dict[str, Any]]:
-        pending = list(responses)
-        calls: list[dict[str, Any]] = []
-
-        def request(method: str, path: str, **kwargs: Any) -> httpx.Response:
-            calls.append({"method": method, "path": path, **kwargs})
-            return pending.pop(0)
-
-        monkeypatch.setattr(model._client().transport, "request", request)
-        return calls
-
-    return queue

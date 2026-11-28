@@ -99,18 +99,24 @@ for accepted inputs and return values.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `api_key` | str | `$DASHSCOPE_API_KEY` | DashScope API key for authentication |
+| `region` | str | `"cn-beijing"` | Region used to select the gateway. Set this field for a different region. |
+| `workspace` | str | `None` | Selects the workspace's gateway in `region` when `base_url` is unset. |
+| `base_url` | str | `None` | Custom HTTP API root, including the native API path (usually `/api/v1`). Overrides the gateway URL. |
 | `request_timeout` | float | `30.0` | HTTP request timeout in seconds |
+
+For gateway configuration, retries, connection and service errors, and when to call `close()`, see
+[DashScope connection settings]({{< ref "docs/development/calling-llms/chat-models/providers#dashscopechatmodelconnection-parameters" >}}).
 
 #### DashScopeEmbeddingModelSetup Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | str | Required | Registered connection Resource name |
-| `api_type` | str | `"text"` | SDK interface: `text` uses `TextEmbedding`; `multimodal` uses `MultiModalEmbedding` |
+| `api_type` | str | `"text"` | Selects the text or multimodal embedding API |
 | `model` | str | `"text-embedding-v4"` for text, `"qwen3-vl-embedding"` for multimodal | Embedding model name |
 | `text_type` | str | None | `"query"` or `"document"` for the text API |
 | `dimension` | int | None | Output vector dimensions (model-dependent) |
-| `additional_kwargs` | dict | `{}` | Additional DashScope API parameters |
+| `additional_kwargs` | dict | `{}` | Additional DashScope model parameters |
 
 #### Available Models
 

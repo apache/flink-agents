@@ -15,9 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 from collections.abc import Callable
-from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -33,6 +32,7 @@ from flink_agents.api.chat_message import (
 )
 from flink_agents.api.media import (
     BaseVideoGenerationModelSetup,
+    MediaJob,
     MediaJobStatus,
     MediaResult,
 )
@@ -58,23 +58,22 @@ def model_factory(
 
 def test_text_submission_forwards_model_and_parameters(
     model_factory: Callable[..., BaseVideoGenerationModelSetup],
-    sdk_jobs: SimpleNamespace,
+    http_calls,
 ) -> None:
     model = model_factory(resolution="720P", duration=3)
-    model._client().videos.jobs = sdk_jobs
+    requests, responses = http_calls
+    responses.append(httpx.Response(200, json={"output": {"task_id": "job-1"}}))
 
     job = model.submit("a cat", model_parameters={"duration": 5})
 
     assert job.job_id == "job-1"
     assert job.expires_at_ms == job.submitted_at_ms + 24 * 60 * 60 * 1000
-    assert sdk_jobs.created == [
-        {
-            "model": "custom-video-deployment",
-            "prompt": "a cat",
-            "media": None,
-            "parameters": {"resolution": "720P", "duration": 5},
-        }
-    ]
+    [request] = requests
+    assert json.loads(request.content) == {
+        "model": "custom-video-deployment",
+        "input": {"prompt": "a cat"},
+        "parameters": {"resolution": "720P", "duration": 5},
+    }
     assert model.model_kwargs == {
         "model": "custom-video-deployment",
         "resolution": "720P",
@@ -87,37 +86,50 @@ def test_text_submission_forwards_model_and_parameters(
     [
         (None, "reference_image"),
         ({"video_media_roles": ("first_frame",)}, "first_frame"),
+        # Only a media URL can request OSS resolution; role strings are opaque.
+        ({"video_media_roles": ["oss://role"]}, "oss://role"),
     ],
 )
 def test_media_roles_use_configuration_or_call_override(
     model_factory: Callable[..., BaseVideoGenerationModelSetup],
-    sdk_jobs: SimpleNamespace,
+    http_calls,
     call_parameters: dict[str, Any] | None,
     role: str,
 ) -> None:
     model = model_factory(
-        video_media_roles=["reference_image"], additional_kwargs={"format": "mp4"}
+        model="wan2.7-i2v",
+        video_media_roles=["reference_image"],
+        additional_kwargs={"format": "mp4"},
     )
-    model._client().videos.jobs = sdk_jobs
+    requests, responses = http_calls
+    responses.append(httpx.Response(200, json={"output": {"task_id": "job-1"}}))
 
     model.submit(
         media=[ImageBlock.from_url("image/png", _IMAGE)],
         model_parameters=call_parameters,
     )
 
-    assert sdk_jobs.created[0]["prompt"] is None
-    assert sdk_jobs.created[0]["media"] == [{"type": role, "url": _IMAGE}]
-    assert sdk_jobs.created[0]["parameters"] == {"format": "mp4"}
+    [request] = requests
+    assert request.method == "POST"
+    assert request.url.path == "/api/v1/services/aigc/video-generation/video-synthesis"
+    assert request.headers["X-DashScope-Async"] == "enable"
+    assert "X-DashScope-OssResourceResolve" not in request.headers
+    assert json.loads(request.content) == {
+        "model": "wan2.7-i2v",
+        "input": {"media": [{"type": role, "url": _IMAGE}]},
+        "parameters": {"format": "mp4"},
+    }
     assert model.video_media_roles == ["reference_image"]
     assert model.additional_kwargs == {"format": "mp4"}
 
 
 def test_mixed_media_preserves_sources_order_and_roles(
     model_factory: Callable[..., BaseVideoGenerationModelSetup],
-    sdk_jobs: SimpleNamespace,
+    http_calls,
 ) -> None:
     model = model_factory()
-    model._client().videos.jobs = sdk_jobs
+    requests, responses = http_calls
+    responses.append(httpx.Response(200, json={"output": {"task_id": "job-1"}}))
     audio = "https://example.test/drive.mp3"
     clip = "https://example.test/clip.mp4"
     document = "oss://dashscope-instant/demo/notes.pdf"
@@ -147,9 +159,11 @@ def test_mixed_media_preserves_sources_order_and_roles(
         },
     )
 
-    assert sdk_jobs.created == [
-        {
-            "model": "custom-video-deployment",
+    [request] = requests
+    assert request.headers["X-DashScope-OssResourceResolve"] == "enable"
+    assert json.loads(request.content) == {
+        "model": "custom-video-deployment",
+        "input": {
             "prompt": "Animate these references.",
             "media": [
                 {"type": "reference_image", "url": _IMAGE},
@@ -160,22 +174,21 @@ def test_mixed_media_preserves_sources_order_and_roles(
                 {"type": "file", "url": document},
                 {"type": "custom-provider-role", "url": page},
             ],
-            "parameters": None,
-        }
-    ]
+        },
+    }
 
 
 def test_empty_request_is_rejected_before_submission(
     model_factory: Callable[..., BaseVideoGenerationModelSetup],
-    sdk_jobs: SimpleNamespace,
+    http_calls,
 ) -> None:
     model = model_factory()
-    model._client().videos.jobs = sdk_jobs
+    requests, _ = http_calls
 
     with pytest.raises(ValueError, match="requires a prompt or at least one media"):
         model.submit()
 
-    assert sdk_jobs.created == []
+    assert requests == []
 
 
 @pytest.mark.parametrize(
@@ -188,12 +201,12 @@ def test_empty_request_is_rejected_before_submission(
 )
 def test_submit_rejects_invalid_inputs_before_request(
     model_factory: Callable[..., BaseVideoGenerationModelSetup],
-    sdk_jobs: SimpleNamespace,
+    http_calls,
     prompt: Any,
     media: Any,
 ) -> None:
     model = model_factory()
-    model._client().videos.jobs = sdk_jobs
+    requests, _ = http_calls
 
     with pytest.raises(TypeError):
         model.submit(
@@ -202,7 +215,7 @@ def test_submit_rejects_invalid_inputs_before_request(
             model_parameters={"video_media_roles": ["reference_image"]},
         )
 
-    assert sdk_jobs.created == []
+    assert requests == []
 
 
 @pytest.mark.parametrize(
@@ -214,18 +227,18 @@ def test_submit_rejects_invalid_inputs_before_request(
 )
 def test_media_requires_one_role_per_block(
     model_factory: Callable[..., BaseVideoGenerationModelSetup],
-    sdk_jobs: SimpleNamespace,
+    http_calls,
     roles: list[str] | None,
     message: str,
 ) -> None:
     model = model_factory()
-    model._client().videos.jobs = sdk_jobs
+    requests, _ = http_calls
     media = [ImageBlock.from_url("image/png", _IMAGE)]
 
     with pytest.raises(ValueError, match=message):
         model.submit(media=media, model_parameters={"video_media_roles": roles})
 
-    assert sdk_jobs.created == []
+    assert requests == []
 
 
 @pytest.mark.parametrize(
@@ -234,11 +247,11 @@ def test_media_requires_one_role_per_block(
 )
 def test_roles_require_an_ordered_sequence_of_nonempty_strings(
     model_factory: Callable[..., BaseVideoGenerationModelSetup],
-    sdk_jobs: SimpleNamespace,
+    http_calls,
     roles: Any,
 ) -> None:
     model = model_factory()
-    model._client().videos.jobs = sdk_jobs
+    requests, _ = http_calls
 
     with pytest.raises(TypeError, match="video_media_roles"):
         model.submit(
@@ -246,18 +259,16 @@ def test_roles_require_an_ordered_sequence_of_nonempty_strings(
             model_parameters={"video_media_roles": roles},
         )
 
-    assert sdk_jobs.created == []
+    assert requests == []
 
 
 def test_fetch_reads_the_video_result(
     model_factory: Callable[..., BaseVideoGenerationModelSetup],
-    sdk_jobs: SimpleNamespace,
-    task_responses: Callable[..., list[dict[str, Any]]],
+    http_calls,
 ) -> None:
     model = model_factory()
-    model._client().videos.jobs = sdk_jobs
-    calls = task_responses(
-        model,
+    calls, responses = http_calls
+    responses.append(
         httpx.Response(
             200,
             json={
@@ -265,14 +276,14 @@ def test_fetch_reads_the_video_result(
                 "usage": {"duration": 5},
                 "output": {"task_status": "SUCCEEDED", "video_url": _VIDEO},
             },
-        ),
+        )
     )
-    job = model.submit("a cat")
+    job = MediaJob(job_id="job-1", submitted_at_ms=0)
 
     state = model.fetch(job)
 
-    assert [(call["method"], call["path"]) for call in calls] == [
-        ("GET", "/tasks/job-1")
+    assert [(call.method, call.url.path) for call in calls] == [
+        ("GET", "/api/v1/tasks/job-1")
     ]
     assert state.status is MediaJobStatus.SUCCEEDED
     assert isinstance(state.result, MediaResult[VideoBlock])
@@ -288,61 +299,50 @@ def test_fetch_reads_the_video_result(
     assert state.result.request_id == "req-1"
 
 
-def test_submit_rejects_local_file_and_file_uri_before_sdk_upload(
+@pytest.mark.parametrize("source", ["/tmp/frame.png", "file:///tmp/frame.png"])
+def test_submit_rejects_local_media_before_request(
     model_factory: Callable[..., BaseVideoGenerationModelSetup],
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    http_calls,
+    source: str,
 ) -> None:
-    local_file = tmp_path / "secret.png"
-    local_file.write_bytes(b"secret")
-
-    def forbid_call(*_args: Any, **_kwargs: Any) -> Any:
-        msg = "SDK upload or HTTP transport must not run for disallowed schemes"
-        raise AssertionError(msg)
-
     model = model_factory()
-    monkeypatch.setattr("dashscope.resources.videos.upload_media_value", forbid_call)
-    monkeypatch.setattr(model._client().transport, "request", forbid_call)
-    monkeypatch.setattr(
-        model._client().transport, "request_api", forbid_call, raising=False
-    )
+    requests, _ = http_calls
 
-    for source in (f"file://{local_file}", str(local_file)):
-        with pytest.raises(UnsupportedContentBlockError):
-            model.submit(
-                "Animate this.",
-                media=[ImageBlock.from_url("image/png", source)],
-                model_parameters={"video_media_roles": ["first_frame"]},
-            )
+    with pytest.raises(UnsupportedContentBlockError):
+        model.submit(
+            "Animate this.",
+            media=[ImageBlock.from_url("image/png", source)],
+            model_parameters={"video_media_roles": ["first_frame"]},
+        )
+
+    assert requests == []
 
 
 def test_text_submission_ignores_configured_video_media_roles_without_media(
     model_factory: Callable[..., BaseVideoGenerationModelSetup],
-    sdk_jobs: SimpleNamespace,
+    http_calls,
 ) -> None:
     model = model_factory(video_media_roles=["first_frame"])
-    model._client().videos.jobs = sdk_jobs
+    requests, responses = http_calls
+    responses.append(httpx.Response(200, json={"output": {"task_id": "job-1"}}))
 
     model.submit("a cat")
 
-    assert sdk_jobs.created == [
-        {
-            "model": "custom-video-deployment",
-            "prompt": "a cat",
-            "media": None,
-            "parameters": None,
-        }
-    ]
+    [request] = requests
+    assert json.loads(request.content) == {
+        "model": "custom-video-deployment",
+        "input": {"prompt": "a cat"},
+    }
 
 
 def test_explicit_call_video_media_roles_without_media_is_rejected(
     model_factory: Callable[..., BaseVideoGenerationModelSetup],
-    sdk_jobs: SimpleNamespace,
+    http_calls,
 ) -> None:
     model = model_factory()
-    model._client().videos.jobs = sdk_jobs
+    requests, _ = http_calls
 
     with pytest.raises(ValueError, match="video_media_roles requires media blocks"):
         model.submit("a cat", model_parameters={"video_media_roles": ["first_frame"]})
 
-    assert sdk_jobs.created == []
+    assert requests == []

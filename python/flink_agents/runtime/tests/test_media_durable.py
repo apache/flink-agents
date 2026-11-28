@@ -15,9 +15,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #################################################################################
-from types import SimpleNamespace
-from typing import Any
-from unittest.mock import Mock
+from typing import TYPE_CHECKING, Any
 
 import cloudpickle
 import httpx
@@ -26,6 +24,7 @@ import pytest
 from flink_agents.api.chat_message import VideoBlock
 from flink_agents.api.media import MediaJob, MediaResult
 from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
+from flink_agents.integrations.dashscope_utils import create_client
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.exceptions import is_cancellation
 from flink_agents.plan.resource_provider import PythonResourceProvider
@@ -46,6 +45,9 @@ from flink_agents.runtime.tests.test_flink_runner_context_reconcilable import (
     _run_async,
 )
 
+if TYPE_CHECKING:
+    from dashscope import Client
+
 
 class _Service:
     """External job state survives client and resource recreation."""
@@ -53,22 +55,20 @@ class _Service:
     def __init__(self) -> None:
         self.submits = 0
         self.queries: list[str] = []
-        self.clients: list[Mock] = []
+        self.clients: list[httpx.Client] = []
 
-    def create_client(self, **kwargs: Any) -> Mock:
-        client = Mock()
-        client.videos.jobs.create.side_effect = self.submit
-        client.transport.request.side_effect = self.query
-        self.clients.append(client)
+    def create_client(self, **kwargs: Any) -> "Client":
+        client = create_client(**kwargs)
+        self.clients.append(client.transport.http_client)
         return client
 
-    def submit(self, **kwargs: Any) -> SimpleNamespace:
-        self.submits += 1
-        return SimpleNamespace(task_id="job-1")
-
-    def query(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        assert method == "GET"
-        self.queries.append(path)
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            assert request.url.path.endswith("/video-generation/video-synthesis")
+            self.submits += 1
+            return httpx.Response(200, json={"output": {"task_id": "job-1"}})
+        assert request.method == "GET"
+        self.queries.append(request.url.path)
         if len(self.queries) == 1:
             output = {"task_status": "PENDING"}
         elif len(self.queries) == 2:
@@ -79,6 +79,21 @@ class _Service:
                 "video_url": "https://example.test/out.mp4",
             }
         return httpx.Response(200, json={"output": output})
+
+
+@pytest.fixture
+def service(monkeypatch: pytest.MonkeyPatch) -> _Service:
+    service = _Service()
+
+    def send(_transport: httpx.HTTPTransport, request: httpx.Request) -> httpx.Response:
+        return service.handle_request(request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", send)
+    monkeypatch.setattr(
+        "flink_agents.integrations.media_models.dashscope_media_model.create_client",
+        service.create_client,
+    )
+    return service
 
 
 def _resource_cache() -> ResourceCache:
@@ -93,7 +108,7 @@ def _resource_cache() -> ResourceCache:
     video_descriptor = ResourceDescriptor(
         clazz=ResourceName.MediaModel.DASHSCOPE_VIDEO_GENERATION_SETUP,
         connection="media",
-        model="wan2.7-i2v",
+        model="happyhorse-1.1-t2v",
     )
     video_provider = PythonResourceProvider.get(
         "video", video_descriptor, ResourceType.MEDIA_MODEL
@@ -126,17 +141,12 @@ def _execute(ctx: FlinkRunnerContext, asynchronous: bool, func: Any, *args: Any)
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 def test_interrupted_wait_replays_the_submitted_job(
-    asynchronous: bool, monkeypatch: pytest.MonkeyPatch
+    asynchronous: bool, monkeypatch: pytest.MonkeyPatch, service: _Service
 ) -> None:
     """A recreated provider resumes the persisted job after an interrupted wait."""
     monkeypatch.setattr(
         "flink_agents.api.media.async_job_model.time",
         _Clock(),
-    )
-    service = _Service()
-    monkeypatch.setattr(
-        "flink_agents.integrations.media_models.dashscope_media_model.create_client",
-        service.create_client,
     )
     cache = _resource_cache()
     connection = cache.get_resource("media", ResourceType.MEDIA_MODEL_CONNECTION)
@@ -160,7 +170,7 @@ def test_interrupted_wait_replays_the_submitted_job(
 
     assert is_cancellation(raised.value)
     assert service.submits == 1
-    assert service.queries == ["/tasks/job-1", "/tasks/job-1"]
+    assert service.queries == ["/api/v1/tasks/job-1", "/api/v1/tasks/job-1"]
     assert [slot.status for slot in store.call_results] == (
         ["SUCCEEDED", "PENDING"] if asynchronous else ["SUCCEEDED"]
     )
@@ -189,10 +199,10 @@ def test_interrupted_wait_replays_the_submitted_job(
     assert service.submits == 1
     assert recovered == job
     assert recovered is not job
-    assert service.queries == ["/tasks/job-1"] * 3
+    assert service.queries == ["/api/v1/tasks/job-1"] * 3
     assert len(service.clients) == 2
     for client in service.clients:
-        client.close.assert_called_once_with()
+        assert client.is_closed
     assert result == MediaResult[VideoBlock](
         content=[VideoBlock.from_url("video/mp4", "https://example.test/out.mp4")]
     )
@@ -206,7 +216,7 @@ def _setup_resource_cache(
     image_setup_name: str = "poster_a",
     image_model: str = "wanx2.1-t2i-turbo",
     video_setup_name: str = "video_a",
-    video_model: str = "wan2.7-i2v",
+    video_model: str = "happyhorse-1.1-t2v",
     connection_name: str = "media",
 ) -> ResourceCache:
     connection_desc = ResourceDescriptor(
@@ -248,17 +258,12 @@ def _setup_resource_cache(
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 def test_named_media_model_setup_replays_submitted_job(
-    asynchronous: bool, monkeypatch: pytest.MonkeyPatch
+    asynchronous: bool, monkeypatch: pytest.MonkeyPatch, service: _Service
 ) -> None:
     """Named setups replay bound submit/wait methods and honor explicit durable ids."""
     monkeypatch.setattr(
         "flink_agents.api.media.async_job_model.time",
         _Clock(),
-    )
-    service = _Service()
-    monkeypatch.setattr(
-        "flink_agents.integrations.media_models.dashscope_media_model.create_client",
-        service.create_client,
     )
 
     cache = _setup_resource_cache()

@@ -22,7 +22,7 @@ import time
 from abc import ABC
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, ClassVar, NoReturn, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
 from urllib.parse import parse_qs, quote, urlparse
 
 import dashscope
@@ -63,6 +63,10 @@ from flink_agents.integrations.dashscope_utils import (
     usage_counters,
 )
 
+if TYPE_CHECKING:
+    from dashscope.resources._jobs import Job
+
+
 DEFAULT_REQUEST_TIMEOUT = 60.0
 DEFAULT_REGION = "cn-beijing"
 _DAY_MS = 24 * 60 * 60 * 1000
@@ -76,6 +80,16 @@ _AUDIO_MEDIA_TYPES = {
     "pcm": "audio/pcm",
 }
 _DEFAULT_AUDIO_FORMAT = "mp3"
+# In SDK 2.1 these model families submit messages to image-generation. Other
+# model names default to text2image, which takes a different input format.
+_IMAGE_JOB_MODEL_PREFIXES = (
+    "wan2.6-t2i",
+    "wan2.6-image",
+    "wan2.7-image",
+    "kling-image",
+    "vidu-image",
+    "z-image",
+)
 _TASK_STATUS = {
     "PENDING": MediaJobStatus.PENDING,
     "SUSPENDED": MediaJobStatus.PENDING,
@@ -326,25 +340,6 @@ class DashScopeSpeechSynthesisModelSetup(
         )
 
 
-def _request_json(
-    client: dashscope.Client,
-    method: str,
-    path: str,
-    *,
-    body: Mapping[str, Any] | None = None,
-    headers: Mapping[str, str] | None = None,
-) -> dict[str, Any]:
-    """Send one JSON request and return its object body."""
-    response = client.transport.request(
-        method,
-        path,
-        json=body,
-        headers=headers,
-    )
-    check_response(response)
-    return response_json(response)
-
-
 def _submitted_job(task_id: str) -> MediaJob:
     submitted_at_ms = int(time.time() * 1000)
     return MediaJob(
@@ -355,26 +350,47 @@ def _submitted_job(task_id: str) -> MediaJob:
 
 
 def _fetch_task(
-    client: dashscope.Client,
+    fetch: Callable[[str], "Job"],
     job: MediaJob,
     *,
     normalize: Callable[["_TaskSnapshot"], "_TaskSnapshot"] | None = None,
 ) -> "_TaskSnapshot":
-    """Read and normalize one task observation from DashScope."""
-    task_id = quote(job.job_id, safe="")
+    """Read one task snapshot, keeping task failures distinct from query failures."""
     try:
-        body = _request_json(client, "GET", f"/tasks/{task_id}")
+        observed = fetch(quote(job.job_id, safe=""))
     except DashScopeError as exc:
-        snapshot = _task_snapshot_if_failed(exc)
-        if snapshot is None:
+        # The SDK raises for a failed task even when the GET itself succeeded.
+        body = exc.body if isinstance(exc.body, dict) else {}
+        output = body.get("output")
+        if not isinstance(output, dict) or (
+            _media_job_status(output.get("task_status")) is not MediaJobStatus.FAILED
+        ):
             raise
+        status = MediaJobStatus.FAILED
+        code = body.get("code")
+        message = body.get("message")
+        request_id = exc.request_id
+        usage = body.get("usage")
     else:
-        snapshot = _task_snapshot(body)
+        status = _media_job_status(observed.status)
+        output = observed.output or {}
+        code = observed.code
+        message = observed.message
+        request_id = observed.request_id
+        usage = observed.usage
+    snapshot = _TaskSnapshot(
+        status=status,
+        output=output,
+        code=code or output.get("code") or None,
+        message=message or output.get("message") or None,
+        usage=usage,
+        request_id=request_id or None,
+    )
     return snapshot if normalize is None else normalize(snapshot)
 
 
 def _fetch_job_state(
-    client: dashscope.Client,
+    fetch: Callable[[str], "Job"],
     job: MediaJob,
     state_type: type[MediaJobState[ResultT]],
     media_result: Callable[["_TaskSnapshot"], ResultT],
@@ -382,7 +398,7 @@ def _fetch_job_state(
     normalize: Callable[["_TaskSnapshot"], "_TaskSnapshot"] | None = None,
 ) -> MediaJobState[ResultT]:
     """Query the common task endpoint and decode a completed result."""
-    snapshot = _fetch_task(client, job, normalize=normalize)
+    snapshot = _fetch_task(fetch, job, normalize=normalize)
     if snapshot.status is MediaJobStatus.SUCCEEDED:
         return state_type(
             job=job,
@@ -397,40 +413,31 @@ def _fetch_job_state(
     )
 
 
-def _raise_cancel_failure(
-    client: dashscope.Client,
-    job: MediaJob,
-    exc: DashScopeError,
-    *,
-    normalize: Callable[["_TaskSnapshot"], "_TaskSnapshot"] | None = None,
-) -> NoReturn:
-    """Raise ``MediaJobError`` for a cancel the provider rejected."""
-    try:
-        snapshot = _fetch_task(client, job, normalize=normalize)
-    except (DashScopeError, httpx.HTTPError) as query_error:
-        reason = "only a pending task can be canceled, and its status could not be read"
-        raise MediaJobError(
-            job, MediaJobStatus.UNKNOWN, exc.code, reason
-        ) from query_error
-    status = snapshot.status
-    reason = f"only a pending task can be canceled, got {status.value}"
-    raise MediaJobError(job, status, exc.code, reason) from exc
-
-
 def _cancel_task(
-    client: dashscope.Client,
+    cancel: Callable[[str], "Job"],
+    fetch: Callable[[str], "Job"],
     job: MediaJob,
     *,
     normalize: Callable[["_TaskSnapshot"], "_TaskSnapshot"] | None = None,
 ) -> None:
-    """Cancel a task that is still pending."""
-    task_id = quote(job.job_id, safe="")
+    """Cancel a pending task, reporting its observed status if it cannot be canceled."""
     try:
-        _request_json(client, "POST", f"/tasks/{task_id}/cancel")
+        cancel(quote(job.job_id, safe=""))
     except DashScopeError as exc:
         if exc.code != "UnsupportedOperation":
             raise
-        _raise_cancel_failure(client, job, exc, normalize=normalize)
+        try:
+            snapshot = _fetch_task(fetch, job, normalize=normalize)
+        except (DashScopeError, httpx.HTTPError) as query_error:
+            reason = (
+                "only a pending task can be canceled, and its status could not be read"
+            )
+            raise MediaJobError(
+                job, MediaJobStatus.UNKNOWN, exc.code, reason
+            ) from query_error
+        status = snapshot.status
+        reason = f"only a pending task can be canceled, got {status.value}"
+        raise MediaJobError(job, status, exc.code, reason) from exc
 
 
 def _normalize_transcription_snapshot(snapshot: "_TaskSnapshot") -> "_TaskSnapshot":
@@ -561,7 +568,7 @@ class DashScopeTranscriptionModelSetup(
     def fetch(self, job: MediaJob) -> MediaJobState[MediaResult[TextBlock]]:
         """Query the transcription task status once."""
         return _fetch_job_state(
-            self._client(),
+            self._client().audio.asr.jobs.fetch,
             job,
             self._state_type,
             self._media_result,
@@ -571,7 +578,14 @@ class DashScopeTranscriptionModelSetup(
     @override
     def cancel(self, job: MediaJob) -> None:
         """Cancel a pending transcription task."""
-        _cancel_task(self._client(), job, normalize=_normalize_transcription_snapshot)
+        client = self._client()
+        # DashScope exposes the common task cancellation endpoint on images.jobs.
+        _cancel_task(
+            client.images.jobs.cancel,
+            client.audio.asr.jobs.fetch,
+            job,
+            normalize=_normalize_transcription_snapshot,
+        )
 
     def _media_result(self, snapshot: "_TaskSnapshot") -> MediaResult[TextBlock]:
         url = _transcription_result_url(snapshot.output)
@@ -669,28 +683,38 @@ class DashScopeImageGenerationModelSetup(
     ) -> MediaJob:
         """Submit a prompt and optional reference images for image generation."""
         parameters = self._request_parameters(model_parameters)
-        body: dict[str, Any] = {
-            "model": self.model,
-            "input": {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": _image_generation_content(prompt, images),
-                    }
-                ]
-            },
+        image_input = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": _image_generation_content(prompt, images),
+                }
+            ],
         }
-        if parameters:
-            body["parameters"] = parameters
-        created = _request_json(
-            self._client(),
-            "POST",
-            "/services/aigc/image-generation/generation",
-            body=body,
-            headers={"X-DashScope-Async": "enable"},
-        )
-        task_id = _task_id(created)
-        if task_id is None:
+        client = self._client()
+        if self.model.startswith(_IMAGE_JOB_MODEL_PREFIXES):
+            # Applying the complete input after SDK media preprocessing keeps a
+            # prompt that looks like a local filename literal and preserves order.
+            created = client.images.jobs.create(
+                model=self.model,
+                extra_body={"input": image_input},
+                parameters=parameters or None,
+            )
+            task_id = created.task_id
+        else:
+            body: dict[str, Any] = {"model": self.model, "input": image_input}
+            if parameters:
+                body["parameters"] = parameters
+            response = client.transport.request(
+                "POST",
+                "/services/aigc/image-generation/generation",
+                json=body,
+                headers={"X-DashScope-Async": "enable"},
+            )
+            check_response(response)
+            output = response_json(response).get("output")
+            task_id = output.get("task_id") if isinstance(output, dict) else None
+        if not isinstance(task_id, str) or not task_id:
             msg = "Image generation did not return a task id."
             raise ValueError(msg)
         return _submitted_job(task_id)
@@ -699,13 +723,14 @@ class DashScopeImageGenerationModelSetup(
     def fetch(self, job: MediaJob) -> MediaJobState[MediaResult[ImageBlock]]:
         """Query the image generation task status once."""
         return _fetch_job_state(
-            self._client(), job, self._state_type, _image_media_result
+            self._client().images.jobs.fetch, job, self._state_type, _image_media_result
         )
 
     @override
     def cancel(self, job: MediaJob) -> None:
         """Cancel a pending image generation task."""
-        _cancel_task(self._client(), job)
+        jobs = self._client().images.jobs
+        _cancel_task(jobs.cancel, jobs.fetch, job)
 
 
 class DashScopeVideoGenerationModelSetup(
@@ -815,7 +840,13 @@ class DashScopeVideoGenerationModelSetup(
         created = self._client().videos.jobs.create(
             model=self.model,
             prompt=prompt,
-            media=media_parts,
+            # SDK 2.1 inspects every string in media as an upload candidate.
+            # Give it just the URLs for validation and OSS resolution, then
+            # attach each role to its URL in the outgoing request.
+            media=[{"url": part["url"]} for part in media_parts]
+            if media_parts
+            else None,
+            extra_body={"input": {"media": media_parts}} if media_parts else None,
             parameters=parameters or None,
         )
         return _submitted_job(created.task_id)
@@ -824,13 +855,14 @@ class DashScopeVideoGenerationModelSetup(
     def fetch(self, job: MediaJob) -> MediaJobState[MediaResult[VideoBlock]]:
         """Query the video generation task status once."""
         return _fetch_job_state(
-            self._client(), job, self._state_type, _video_media_result
+            self._client().videos.jobs.fetch, job, self._state_type, _video_media_result
         )
 
     @override
     def cancel(self, job: MediaJob) -> None:
         """Cancel a pending video generation task."""
-        _cancel_task(self._client(), job)
+        jobs = self._client().videos.jobs
+        _cancel_task(jobs.cancel, jobs.fetch, job)
 
 
 @dataclass(frozen=True)
@@ -843,54 +875,6 @@ class _TaskSnapshot:
     message: str | None
     usage: Any
     request_id: str | None
-
-
-def _task_snapshot(body: Mapping[str, Any]) -> _TaskSnapshot:
-    """Read one task response body into a snapshot."""
-    output = body.get("output")
-    output = output if isinstance(output, dict) else {}
-    status = output.get("task_status") or body.get("task_status")
-    raw_request_id = body.get("request_id")
-    return _TaskSnapshot(
-        status=_media_job_status(status),
-        output=output,
-        code=body.get("code") or output.get("code") or None,
-        message=body.get("message") or output.get("message") or None,
-        usage=body.get("usage"),
-        request_id=(
-            raw_request_id
-            if isinstance(raw_request_id, str) and raw_request_id
-            else None
-        ),
-    )
-
-
-def _task_snapshot_if_failed(exc: DashScopeError) -> _TaskSnapshot | None:
-    """Read a snapshot when ``exc`` reports that the task failed.
-
-    Connection, authentication, and other query failures carry no failed
-    ``task_status``. Those stay exceptions.
-    """
-    if not isinstance(exc.body, dict):
-        return None
-    snapshot = _task_snapshot(exc.body)
-    if snapshot.status is not MediaJobStatus.FAILED:
-        return None
-    return replace(
-        snapshot,
-        code=exc.code or snapshot.code,
-        message=exc.message or snapshot.message,
-        request_id=exc.request_id or snapshot.request_id,
-    )
-
-
-def _task_id(body: Mapping[str, Any]) -> str | None:
-    output = body.get("output")
-    output = output if isinstance(output, dict) else {}
-    task_id = output.get("task_id", body.get("task_id"))
-    if not isinstance(task_id, str) or not task_id:
-        return None
-    return task_id
 
 
 def _media_job_status(status: object) -> MediaJobStatus:
@@ -1032,14 +1016,23 @@ def _generated_image_urls(output: Mapping[str, Any]) -> list[str]:
         if not isinstance(choice, dict):
             continue
         message = choice.get("message") or {}
-        parts = message.get("content") or []
-        if isinstance(parts, dict):
-            parts = [parts]
-        urls.extend(
-            str(part["image"])
-            for part in parts
-            if isinstance(part, dict) and part.get("image")
-        )
+        parts = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(parts, list) or not parts:
+            msg = "Image generation content must be a non-empty array of parts."
+            raise ValueError(msg)
+        for part in parts:
+            if not isinstance(part, dict) or "image" not in part:
+                continue
+            url = part["image"]
+            parsed = urlparse(url) if isinstance(url, str) else None
+            if (
+                parsed is None
+                or parsed.scheme not in {"http", "https"}
+                or not parsed.netloc
+            ):
+                msg = "Image generation result URL must be an http or https URL."
+                raise ValueError(msg)
+            urls.append(url)
     return urls
 
 

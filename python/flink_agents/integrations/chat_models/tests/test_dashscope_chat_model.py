@@ -16,22 +16,14 @@
 # limitations under the License.
 #################################################################################
 import asyncio
+import json
 import os
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
-from dashscope import Generation, MultiModalConversation
-from dashscope.api_entities.dashscope_response import (
-    DashScopeAPIResponse,
-    MultiModalConversationResponse,
-)
-from dashscope.api_entities.http_request import HttpRequest
-from dashscope.api_entities.websocket_request import WebSocketRequest
-from dashscope.client.base_api import BaseApi
-from dashscope.utils.oss_utils import OssUtils
 from pydantic import BaseModel
 
 from flink_agents.api.agents.types import OutputSchema
@@ -53,6 +45,9 @@ from flink_agents.integrations.chat_models.dashscope_chat_model import (
     DEFAULT_MODEL,
     DashScopeChatModelConnection,
     DashScopeChatModelSetup,
+)
+from flink_agents.integrations.tests.dashscope_http import (
+    record_dashscope_requests as record_dashscope_requests,
 )
 from flink_agents.plan.actions.chat_model_action import (
     process_chat_request_or_tool_response,
@@ -144,7 +139,7 @@ def test_dashscope_chat_with_tools() -> None:
     assert add(**tool_call.input) == 3
 
 
-def test_dashscope_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dashscope_chat_with_extract_reasoning(http_calls) -> None:
     """Test that extract_reasoning functionality works correctly (mock DashScope)."""
     content = "The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
     reasoning_content = (
@@ -152,28 +147,23 @@ def test_dashscope_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) 
         "The question is often associated with the number 42 from Hitchhiker's Guide to the Galaxy."
     )
 
-    mocked_response = SimpleNamespace(
-        status_code=200,
-        output={
-            "choices": [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": content,
-                        "reasoning_content": reasoning_content,
-                        "tool_calls": None,
+    requests, responses = http_calls
+    responses.append(
+        _response(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": content,
+                            "reasoning_content": reasoning_content,
+                            "tool_calls": None,
+                        }
                     }
-                }
-            ]
-        },
-        usage=SimpleNamespace(input_tokens=100, output_tokens=50),
-    )
-
-    mock_call = MagicMock(return_value=mocked_response)
-
-    monkeypatch.setattr(
-        "flink_agents.integrations.chat_models.dashscope_chat_model.Generation.call",
-        mock_call,
+                ]
+            },
+            {"input_tokens": 100, "output_tokens": 50},
+        )
     )
 
     connection = DashScopeChatModelConnection(
@@ -199,7 +189,7 @@ def test_dashscope_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) 
         [ChatMessage.of(MessageRole.USER, "What's the meaning of life?")]
     )
 
-    mock_call.assert_called_once()
+    assert len(requests) == 1
 
     assert (
         response.text
@@ -228,18 +218,18 @@ def test_default_model_when_omitted() -> None:
 @pytest.mark.parametrize(
     ("api_type", "model"), [("text", test_model), ("multimodal", "qwen3-vl-plus")]
 )
-def test_tool_call_ids_round_trip(
-    monkeypatch: pytest.MonkeyPatch, api_type: str, model: str
-) -> None:
+def test_tool_call_ids_round_trip(http_calls, api_type: str, model: str) -> None:
     """The DashScope call ID reaches both the assistant call and the tool result."""
-    tool_call_response = SimpleNamespace(
-        status_code=200,
-        output={
+    requests, responses = http_calls
+    tool_call_response = _response(
+        {
             "choices": [
                 {
                     "message": {
                         "role": "assistant",
-                        "content": [] if api_type == "multimodal" else "",
+                        "content": [{"type": "text", "text": ""}]
+                        if api_type == "multimodal"
+                        else "",
                         "tool_calls": [
                             {
                                 "id": "call_abc",
@@ -254,11 +244,9 @@ def test_tool_call_ids_round_trip(
                 }
             ]
         },
-        usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+        {"input_tokens": 10, "output_tokens": 5},
     )
-    mock_call = MagicMock(return_value=tool_call_response)
-    api = MultiModalConversation if api_type == "multimodal" else Generation
-    monkeypatch.setattr(api, "call", mock_call)
+    responses.extend([tool_call_response, _response(_assistant_output("Done."))])
     connection = DashScopeChatModelConnection(api_key="fake-key")
     prompt = "What is 1 + 2?"
     message = ChatMessage.user(prompt)
@@ -268,6 +256,7 @@ def test_tool_call_ids_round_trip(
         )
 
     response = connection.chat([message], model=model, api_type=api_type)
+    assert response.tool_calls[0].input == {"a": 1, "b": 2}
     # The tool result uses the same call ID as the model's tool call.
     assert response.tool_calls[0].call_id == "call_abc"
 
@@ -281,9 +270,35 @@ def test_tool_call_ids_round_trip(
         [message, response.message, tool_result], model=model, api_type=api_type
     )
 
-    sent = mock_call.call_args.kwargs["messages"]
+    sent = json.loads(requests[-1].content)["input"]["messages"]
     assert sent[1]["tool_calls"][0]["id"] == "call_abc"
     assert sent[2] == {"role": "tool", "content": "3", "tool_call_id": "call_abc"}
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param({}, id="missing"),
+        pytest.param({"arguments": ""}, id="empty-string"),
+        pytest.param({"arguments": "{"}, id="incomplete-json"),
+        pytest.param({"arguments": "[]"}, id="non-object"),
+        pytest.param({"arguments": "{}"}, id="no-parameters"),
+    ],
+)
+def test_tool_arguments_require_an_explicit_json_object(http_calls, arguments) -> None:
+    _, responses = http_calls
+    output = _assistant_output("")
+    output["choices"][0]["message"]["tool_calls"] = [
+        {"id": "call_1", "function": {"name": "now", **arguments}}
+    ]
+    responses.append(_response(output))
+    setup = _open_setup()
+    messages = [ChatMessage.user("What time is it?")]
+    if arguments.get("arguments") == "{}":
+        assert setup.chat(messages).tool_calls[0].input == {}
+    else:
+        with pytest.raises(ValueError, match="now.*arguments"):
+            setup.chat(messages)
 
 
 def _open_setup(**options: Any) -> DashScopeChatModelSetup:
@@ -296,35 +311,17 @@ def _open_setup(**options: Any) -> DashScopeChatModelSetup:
     return setup
 
 
-def _multimodal_response(
+def _response(
     output: dict[str, Any], usage: dict[str, int] | None = None
-) -> MultiModalConversationResponse:
-    return MultiModalConversationResponse.from_api_response(
-        DashScopeAPIResponse(status_code=200, output=output, usage=usage)
-    )
+) -> httpx.Response:
+    body = {"output": output}
+    if usage is not None:
+        body["usage"] = usage
+    return httpx.Response(200, json=body)
 
 
 def _assistant_output(content: str | list[dict[str, str]]) -> dict[str, Any]:
     return {"choices": [{"message": {"role": "assistant", "content": content}}]}
-
-
-@pytest.fixture
-def chat_calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
-    text_call = MagicMock(
-        return_value=SimpleNamespace(
-            status_code=200,
-            output=_assistant_output("text response"),
-            usage=None,
-        )
-    )
-    multimodal_call = MagicMock(
-        return_value=_multimodal_response(
-            _assistant_output([{"text": "multimodal response"}])
-        )
-    )
-    monkeypatch.setattr(Generation, "call", text_call)
-    monkeypatch.setattr(MultiModalConversation, "call", multimodal_call)
-    return {"text": text_call, "multimodal": multimodal_call}
 
 
 @pytest.mark.parametrize(
@@ -337,24 +334,99 @@ def chat_calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     ],
 )
 def test_dashscope_chat_selects_interface(
-    chat_calls: dict[str, MagicMock],
+    http_calls,
     model: str,
     options: dict[str, str],
     interface: str,
 ) -> None:
+    requests, responses = http_calls
+    responses.append(_response(_assistant_output("ok")))
     setup = _open_setup(model=model, **options)
 
     result = setup.chat([ChatMessage.user("Hello")])
 
-    assert result.text == f"{interface} response"
-    chat_calls[interface].assert_called_once()
-    assert chat_calls[interface].call_args.kwargs["model"] == model
-    assert sum(call.call_count for call in chat_calls.values()) == 1
+    assert result.text == "ok"
+    assert len(requests) == 1
+    assert requests[0].url.path.endswith(f"/{interface}-generation/generation")
+    assert json.loads(requests[0].content)["model"] == model
+
+
+@pytest.mark.parametrize("task", [None, "asr"])
+def test_result_format_text_applies_only_to_asr(http_calls, task) -> None:
+    requests, responses = http_calls
+    if task == "asr":
+        message = ChatMessage.user([AudioBlock.from_url("audio/mpeg", _AUDIO_URL)])
+        output = {"text": "Hello"}
+    else:
+        message = ChatMessage.user("Hello")
+        output = _assistant_output("Hello")
+    responses.append(_response(output))
+
+    result = _open_setup(task=task).chat([message], result_format="text")
+
+    assert result.text == "Hello"
+    expected = "text" if task == "asr" else "message"
+    assert json.loads(requests[0].content)["parameters"]["result_format"] == expected
+
+
+def test_text_chat_sends_the_full_conversation_in_order(http_calls) -> None:
+    requests, responses = http_calls
+    responses.append(_response(_assistant_output("Blue")))
+    messages = [
+        ChatMessage.user("Remember blue."),
+        ChatMessage.assistant("OK"),
+        ChatMessage.user("Which color?"),
+    ]
+
+    _open_setup().chat(messages)
+
+    assert json.loads(requests[0].content)["input"] == {
+        "messages": [
+            {"role": "user", "content": "Remember blue."},
+            {"role": "assistant", "content": "OK"},
+            {"role": "user", "content": "Which color?"},
+        ]
+    }
+
+
+def test_multimodal_chat_forwards_model_parameters(http_calls) -> None:
+    requests, responses = http_calls
+    responses.append(_response(_assistant_output("ok")))
+    parameters = {"voice": "Cherry", "text": "spoken text", "language_type": "Chinese"}
+    setup = _open_setup(api_type="multimodal", additional_kwargs=parameters)
+
+    setup.chat([ChatMessage.user("Hello")])
+
+    body = json.loads(requests[0].content)
+    assert set(body["input"]) == {"messages"}
+    assert {name: body["parameters"][name] for name in parameters} == parameters
+
+
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        (None, None),
+        ({"input_tokens": 12}, TokenUsage(prompt_tokens=12)),
+        (
+            {"input_tokens": 12, "output_tokens": 0},
+            TokenUsage(prompt_tokens=12, completion_tokens=0),
+        ),
+    ],
+)
+def test_chat_usage_reports_only_measured_tokens(http_calls, usage, expected) -> None:
+    _, responses = http_calls
+    responses.append(_response(_assistant_output("hello"), usage))
+    result = _open_setup().chat([ChatMessage.user("Hello")])
+    assert result.usage == expected
 
 
 def test_dashscope_multimodal_chat_preserves_user_content_order(
-    chat_calls: dict[str, MagicMock],
+    http_calls,
 ) -> None:
+    requests, responses = http_calls
+    responses.append(
+        _response(_assistant_output([{"text": "multimodal "}, {"text": "response"}]))
+    )
     setup = _open_setup(model="qwen3-vl-plus", api_type="multimodal")
     image = ImageBlock.from_url("image/png", _IMAGE_URL)
     video = VideoBlock.from_base64("video/mp4", "dmlkZW8=")
@@ -364,7 +436,8 @@ def test_dashscope_multimodal_chat_preserves_user_content_order(
     )
 
     assert result.text == "multimodal response"
-    assert chat_calls["multimodal"].call_args.kwargs["messages"] == [
+    assert result.blocks == (TextBlock(text="multimodal response"),)
+    assert json.loads(requests[0].content)["input"]["messages"] == [
         {
             "role": "user",
             "content": [
@@ -377,27 +450,21 @@ def test_dashscope_multimodal_chat_preserves_user_content_order(
 
 
 def test_dashscope_multimodal_chat_keeps_local_path_text_at_sdk_boundary(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    http_calls, tmp_path: Path
 ) -> None:
     local_file = tmp_path / "fixture.txt"
     local_file.write_text("This file must stay local.", encoding="utf-8")
-    call = MagicMock(
-        return_value=DashScopeAPIResponse(
-            status_code=200, output=_assistant_output([{"text": "response"}])
-        )
-    )
-    upload = MagicMock(side_effect=AssertionError("Unexpected upload"))
-    monkeypatch.setattr(BaseApi, "call", call)
-    monkeypatch.setattr(OssUtils, "upload", upload)
+    requests, responses = http_calls
+    responses.append(_response(_assistant_output([{"text": "response"}])))
     setup = _open_setup(model="qwen3-vl-plus", api_type="multimodal")
     image = ImageBlock.from_url("image/png", _IMAGE_URL)
 
     result = setup.chat([ChatMessage.user([image, TextBlock(text=str(local_file))])])
 
     assert result.text == "response"
-    call.assert_called_once()
-    upload.assert_not_called()
-    assert call.call_args.kwargs["input"]["messages"][0]["content"] == [
+    assert len(requests) == 1
+    assert requests[0].url.path.endswith("/multimodal-generation/generation")
+    assert json.loads(requests[0].content)["input"]["messages"][0]["content"] == [
         {"image": _IMAGE_URL},
         {"text": str(local_file)},
     ]
@@ -417,7 +484,7 @@ def test_dashscope_multimodal_chat_keeps_local_path_text_at_sdk_boundary(
     ],
 )
 def test_dashscope_chat_rejects_unsupported_media_before_request(
-    chat_calls: dict[str, MagicMock], role: MessageRole, api_type: str, error: str
+    http_calls, role: MessageRole, api_type: str, error: str
 ) -> None:
     model = "qwen-plus" if api_type == "auto" else "qwen3-vl-plus"
     setup = _open_setup(model=model, api_type=api_type)
@@ -431,8 +498,7 @@ def test_dashscope_chat_rejects_unsupported_media_before_request(
     with pytest.raises(UnsupportedContentBlockError, match=error):
         setup.chat([message])
 
-    chat_calls["text"].assert_not_called()
-    chat_calls["multimodal"].assert_not_called()
+    assert not http_calls[0]
 
 
 @pytest.mark.parametrize(
@@ -455,7 +521,7 @@ def test_dashscope_chat_rejects_unsupported_media_before_request(
     ],
 )
 def test_dashscope_asr_transcribes_one_recording(
-    chat_calls: dict[str, MagicMock],
+    http_calls,
     model: str,
     audio: AudioBlock,
     encoded_audio: str,
@@ -463,53 +529,107 @@ def test_dashscope_asr_transcribes_one_recording(
     expected_usage: TokenUsage | None,
 ) -> None:
     setup = _open_setup(model=model, task="asr")
-    multimodal_call = chat_calls["multimodal"]
-    multimodal_call.return_value = _multimodal_response({"text": "Hello."}, usage)
+    requests, responses = http_calls
+    responses.append(_response({"text": "Hello."}, usage))
 
     result = setup.chat([ChatMessage.user([audio])])
 
     assert result.blocks == (TextBlock(text="Hello."),)
     assert result.usage == expected_usage
-    chat_calls["text"].assert_not_called()
-    multimodal_call.assert_called_once()
-    request = multimodal_call.call_args.kwargs
-    assert request["format"] == "mp3"
-    assert request["messages"] == [
+    assert len(requests) == 1
+    assert requests[0].url.path.endswith("/multimodal-generation/generation")
+    request = json.loads(requests[0].content)
+    assert request["parameters"]["format"] == "mp3"
+    assert request["parameters"]["result_format"] == "message"
+    assert request["input"]["messages"] == [
         {
             "role": "user",
-            "content": [
-                {"type": "input_audio", "input_audio": {"data": encoded_audio}}
-            ],
+            "content": [{"audio": encoded_audio}],
         }
     ]
 
 
-def test_dashscope_image_generation_can_edit_returned_image(
-    chat_calls: dict[str, MagicMock],
+@pytest.mark.parametrize(
+    ("output", "has_transcript"),
+    [
+        ({"text": ""}, True),
+        (_assistant_output([{"text": ""}]), True),
+        (_assistant_output([{"type": "text", "text": ""}]), True),
+        ({}, False),
+        (_assistant_output([]), False),
+        (_assistant_output([{"image": _IMAGE_URL}]), False),
+        (_assistant_output([{"text": "speech"}, {"image": _IMAGE_URL}]), False),
+    ],
+)
+def test_asr_preserves_silence_and_rejects_a_missing_transcript(
+    http_calls, output, has_transcript
 ) -> None:
-    setup = _open_setup(model="qwen-image-3.0", task="image_generation")
+    requests, responses = http_calls
+    responses.append(_response(output, {"input_tokens": 0, "output_tokens": 0}))
+    setup = _open_setup(model="qwen-audio-3.1-asr-flash", task="asr")
+    messages = [ChatMessage.user([AudioBlock.from_url("audio/mpeg", _AUDIO_URL)])]
+    if not has_transcript:
+        with pytest.raises(RuntimeError, match="transcript"):
+            setup.chat(messages)
+    else:
+        result = setup.chat(messages)
+        assert result.blocks == (TextBlock(text=""),)
+        assert result.usage == TokenUsage(prompt_tokens=0, completion_tokens=0)
+    assert len(requests) == 1
+
+
+def test_dashscope_image_generation_can_edit_returned_image(
+    http_calls,
+) -> None:
+    setup = _open_setup(
+        model="qwen-image-3.0",
+        task="image_generation",
+        additional_kwargs={"size": "1024*1024", "n": 2},
+    )
     generated_url = "https://example.invalid/generated.png"
     edited_url = "https://example.invalid/edited.png"
-    multimodal_call = chat_calls["multimodal"]
-    multimodal_call.side_effect = [
-        _multimodal_response(
-            _assistant_output([{"image": url}]),
+    requests, responses = http_calls
+    responses.extend(
+        _response(
+            _assistant_output([{"type": "image", "image": url}]),
             {"image_count": 1},
         )
         for url in (generated_url, edited_url)
-    ]
+    )
 
-    generated = setup.chat([ChatMessage.user("Draw a circle.")])
+    generated = setup.chat(
+        [ChatMessage.user("Draw a circle.")],
+        n=1,
+        request_timeout=2.5,
+        headers={"x-example": "once"},
+        api_key="one-call-key",
+    )
     edited = setup.chat(
         [ChatMessage.user([generated.blocks[0], TextBlock(text="Make it blue.")])]
     )
 
+    first, second = requests
+    assert first.headers["authorization"] == "Bearer one-call-key"
+    assert first.headers["x-example"] == "once"
+    assert set(first.extensions["timeout"].values()) == {2.5}
+    assert "x-example" not in second.headers
+    assert second.headers["authorization"] == "Bearer fake-key"
+    assert set(second.extensions["timeout"].values()) == {60.0}
+    assert json.loads(first.content)["parameters"] == {
+        "size": "1024*1024",
+        "n": 1,
+        "result_format": "message",
+        "temperature": 0.7,
+    }
+    assert json.loads(second.content)["parameters"]["n"] == 2
     assert generated.blocks == (ImageBlock.from_url("image/png", generated_url),)
     assert edited.blocks == (ImageBlock.from_url("image/png", edited_url),)
     assert generated.usage is None
     assert edited.usage is None
-    chat_calls["text"].assert_not_called()
-    assert [call.kwargs["messages"] for call in multimodal_call.call_args_list] == [
+    assert all(
+        r.url.path.endswith("/multimodal-generation/generation") for r in requests
+    )
+    assert [json.loads(r.content)["input"]["messages"] for r in requests] == [
         [{"role": "user", "content": [{"text": "Draw a circle."}]}],
         [
             {
@@ -518,6 +638,43 @@ def test_dashscope_image_generation_can_edit_returned_image(
             }
         ],
     ]
+
+
+@pytest.mark.parametrize("caption", [None, "same-part", "separate-part"])
+def test_image_generation_requires_and_preserves_ordered_images(
+    http_calls, caption
+) -> None:
+    first = "https://example.invalid/first.png"
+    second = "http://example.invalid/second.png"
+    parts = [
+        {"type": "image", "image": first},
+        {"text": ""},
+        {"image": second},
+        {"type": "text", "text": ""},
+    ]
+    if caption == "same-part":
+        parts[0]["text"] = "Caption"
+    elif caption == "separate-part":
+        parts.insert(1, {"text": "Separate caption"})
+    output = _assistant_output(parts)
+    output["choices"][0]["finish_reason"] = "stop"
+    usage = {"input_tokens": 6, "image_count": 2}
+    requests, responses = http_calls
+    responses.append(_response(output, usage))
+
+    setup = _open_setup(model="qwen-image-3.0", task="image_generation")
+    messages = [ChatMessage.user("Generate two pictures.")]
+    if caption is not None:
+        with pytest.raises(RuntimeError, match=r"HTTP\(S\) image URLs"):
+            setup.chat(messages)
+    else:
+        result = setup.chat(messages)
+        assert result.blocks == tuple(
+            ImageBlock.from_url("image/png", url) for url in (first, second)
+        )
+        assert result.usage == TokenUsage(prompt_tokens=6)
+        assert result.finish_reason == "stop"
+    assert len(requests) == 1
 
 
 @pytest.mark.parametrize(
@@ -530,29 +687,59 @@ def test_dashscope_image_generation_can_edit_returned_image(
             "must return a non-empty list",
         ),
         (
+            "qwen-image-3.0",
+            "image_generation",
+            [{"text": ""}],
+            "must return a non-empty list",
+        ),
+        (
             "qwen3-vl-plus",
             None,
-            [{"text": "Description", "image": _IMAGE_URL}],
+            [{"text": "Description"}, {"image": _IMAGE_URL}],
             "only supports text response content",
         ),
     ],
 )
 def test_dashscope_chat_reports_invalid_multimodal_response(
-    chat_calls: dict[str, MagicMock],
+    http_calls,
     model: str,
     task: str | None,
     content: list[dict[str, str]],
     error: str,
 ) -> None:
     setup = _open_setup(model=model, task=task, api_type="multimodal")
-    chat_calls["multimodal"].return_value = _multimodal_response(
-        _assistant_output(content)
-    )
+    requests, responses = http_calls
+    responses.append(_response(_assistant_output(content)))
 
     with pytest.raises(RuntimeError, match=error):
         setup.chat([ChatMessage.user("Draw a circle.")])
 
-    chat_calls["multimodal"].assert_called_once()
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("task", "user_message"),
+    [
+        (None, ChatMessage.user("Hello")),
+        ("image_generation", ChatMessage.user("Draw a circle.")),
+        ("asr", ChatMessage.user([AudioBlock.from_url("audio/mpeg", _AUDIO_URL)])),
+    ],
+)
+def test_chat_service_errors_preserve_message_and_cause(
+    http_calls, task, user_message
+) -> None:
+    requests, responses = http_calls
+    responses.append(
+        httpx.Response(
+            429,
+            json={"code": "Throttling", "message": "Slow down", "request_id": "req-1"},
+        )
+    )
+    with pytest.raises(RuntimeError, match="DashScope call failed: .*Slow down") as err:
+        _open_setup(task=task).chat([user_message])
+    assert err.value.__cause__.status_code == 429
+    assert err.value.__cause__.request_id == "req-1"
+    assert len(requests) == 1
 
 
 class _StructuredResponse(BaseModel):
@@ -590,15 +777,14 @@ class _StructuredResponse(BaseModel):
     ],
 )
 def test_dashscope_task_rejects_invalid_input_before_request(
-    chat_calls: dict[str, MagicMock], task: str, message: ChatMessage, error: str
+    http_calls, task: str, message: ChatMessage, error: str
 ) -> None:
     setup = _open_setup(task=task)
 
     with pytest.raises(ValueError, match=error):
         setup.chat([message])
 
-    chat_calls["text"].assert_not_called()
-    chat_calls["multimodal"].assert_not_called()
+    assert not http_calls[0]
 
 
 @pytest.mark.parametrize(
@@ -613,7 +799,7 @@ def test_dashscope_task_rejects_invalid_input_before_request(
     ],
 )
 def test_dashscope_task_rejects_output_schema_in_chat_event(
-    chat_calls: dict[str, MagicMock], model: str, task: str, message: ChatMessage
+    http_calls, model: str, task: str, message: ChatMessage
 ) -> None:
     setup = _open_setup(model=model, task=task)
     ctx = MagicMock()
@@ -635,12 +821,37 @@ def test_dashscope_task_rejects_output_schema_in_chat_event(
     assert response.request_id == request.id
     assert response.status == ChatResponseEvent.FAILED
     assert f"task {task!r} does not support output_schema" in response.error
-    chat_calls["text"].assert_not_called()
-    chat_calls["multimodal"].assert_not_called()
+    assert not http_calls[0]
+
+
+@pytest.mark.parametrize(
+    ("api_type", "model", "option", "value"),
+    [
+        ("text", "qwen-plus", "api_protocol", "websocket"),
+        ("text", "qwen-plus", "timeout", 2.5),
+        ("multimodal", "qwen3-vl-plus", "extra_headers", {}),
+        ("text", "qwen-plus", "extra_body", {}),
+        ("text", "qwen-plus", "raw", True),
+        ("multimodal", "qwen3-vl-plus", "session", object()),
+        ("text", "qwen-plus", "history", [{"user": "hi", "bot": "hello"}]),
+        ("text", "qwen-plus", "prompt", "hi"),
+        ("text", "qwen-plus", "plugins", {"test": {}}),
+        ("text", "bailian-v1", "customized_model_id", "my-model"),
+        ("multimodal", "qwen3-vl-plus", "history", []),
+    ],
+)
+def test_unsupported_sdk_option_fails_before_chat_request(
+    http_calls, api_type, model, option, value
+) -> None:
+    setup = _open_setup(
+        model=model, api_type=api_type, additional_kwargs={option: value}
+    )
+    with pytest.raises(ValueError, match=option):
+        setup.chat([ChatMessage.user("hello")])
+    assert not http_calls[0]
 
 
 @pytest.mark.parametrize("api_type", ["text", "multimodal"])
-@pytest.mark.parametrize("protocol", ["http", "websocket"])
 @pytest.mark.parametrize(
     ("connection_options", "call_options", "expected"),
     [
@@ -650,25 +861,15 @@ def test_dashscope_task_rejects_output_schema_in_chat_event(
     ],
 )
 def test_request_timeout_reaches_sdk_transport(
-    monkeypatch: pytest.MonkeyPatch,
+    http_calls,
     api_type: str,
-    protocol: str,
     connection_options: dict,
     call_options: dict,
     expected: float,
 ) -> None:
-    """Use real SDK request construction, stopping before network I/O."""
-    captured = []
-
-    def capture(request: HttpRequest | WebSocketRequest) -> None:
-        captured.append(request.timeout)
-        message = "request captured"
-        raise RuntimeError(message)
-
-    transport = HttpRequest if protocol == "http" else WebSocketRequest
-    monkeypatch.setattr(transport, "call", capture)
     connection = DashScopeChatModelConnection(api_key="fake-key", **connection_options)
-    options = {"api_type": api_type, "api_protocol": protocol, **call_options}
-    with pytest.raises(RuntimeError, match="request captured"):
-        connection.chat([ChatMessage.user("Hello")], **options)
-    assert captured == [expected]
+    requests, responses = http_calls
+    responses.append(_response(_assistant_output("ok")))
+    connection.chat([ChatMessage.user("Hello")], api_type=api_type, **call_options)
+    assert set(requests[0].extensions["timeout"].values()) == {expected}
+    connection.close()

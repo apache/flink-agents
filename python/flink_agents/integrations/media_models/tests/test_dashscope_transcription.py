@@ -30,6 +30,7 @@ from flink_agents.api.chat_message import (
 )
 from flink_agents.api.media import (
     BaseTranscriptionModelSetup,
+    MediaJob,
     MediaJobError,
     MediaJobState,
     MediaJobStatus,
@@ -163,14 +164,12 @@ def test_submit_accepts_a_video_recording(
 
 def test_fetch_downloads_transcription_without_dashscope_credentials(
     model_factory: Callable[..., BaseTranscriptionModelSetup],
-    sdk_jobs: SimpleNamespace,
-    task_responses: Callable[..., list[dict[str, Any]]],
+    http_calls,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = model_factory(request_timeout=12)
-    model._client().audio.asr.jobs = sdk_jobs
-    calls = task_responses(
-        model,
+    calls, responses = http_calls
+    responses.append(
         httpx.Response(
             200,
             json=_task_body(
@@ -184,7 +183,7 @@ def test_fetch_downloads_transcription_without_dashscope_credentials(
                     ]
                 },
             ),
-        ),
+        )
     )
     downloads: list[tuple[str, float]] = []
 
@@ -196,13 +195,13 @@ def test_fetch_downloads_transcription_without_dashscope_credentials(
         "flink_agents.integrations.media_models.dashscope_media_model.httpx.get",
         download,
     )
-    job = model.submit(_audio())
+    job = MediaJob(job_id="job-1", submitted_at_ms=0)
 
     state = model.fetch(job)
 
-    assert calls == [
-        {"method": "GET", "path": "/tasks/job-1", "json": None, "headers": None}
-    ]
+    [request] = calls
+    assert request.method == "GET"
+    assert request.url.path == "/api/v1/tasks/job-1"
     assert downloads == [(_RESULT_URL, 12)]
     assert state.status is MediaJobStatus.SUCCEEDED
     assert isinstance(state.result, MediaResult[TextBlock])
@@ -217,11 +216,9 @@ def test_fetch_downloads_transcription_without_dashscope_credentials(
 
 def test_fetch_and_cancel_report_failed_transcription_subtask(
     model_factory: Callable[..., BaseTranscriptionModelSetup],
-    sdk_jobs: SimpleNamespace,
-    task_responses: Callable[..., list[dict[str, Any]]],
+    http_calls,
 ) -> None:
     model = model_factory()
-    model._client().audio.asr.jobs = sdk_jobs
     failed_transcription = _task_body(
         "SUCCEEDED",
         {
@@ -234,16 +231,18 @@ def test_fetch_and_cancel_report_failed_transcription_subtask(
             ]
         },
     )
-    calls = task_responses(
-        model,
-        httpx.Response(200, json=failed_transcription),
-        httpx.Response(
-            400,
-            json={"code": "UnsupportedOperation", "message": "task has ended"},
-        ),
-        httpx.Response(200, json=failed_transcription),
+    calls, responses = http_calls
+    responses.extend(
+        [
+            httpx.Response(200, json=failed_transcription),
+            httpx.Response(
+                400,
+                json={"code": "UnsupportedOperation", "message": "task has ended"},
+            ),
+            httpx.Response(200, json=failed_transcription),
+        ]
     )
-    job = model.submit(_audio())
+    job = MediaJob(job_id="job-1", submitted_at_ms=0)
 
     state = model.fetch(job)
     with pytest.raises(MediaJobError) as exc_info:
@@ -256,10 +255,10 @@ def test_fetch_and_cancel_report_failed_transcription_subtask(
     assert state.error_message == "FILE_DOWNLOAD_FAILED"
     assert exc_info.value.status is state.status
     assert exc_info.value.code == "UnsupportedOperation"
-    assert [(call["method"], call["path"]) for call in calls] == [
-        ("GET", "/tasks/job-1"),
-        ("POST", "/tasks/job-1/cancel"),
-        ("GET", "/tasks/job-1"),
+    assert [(call.method, call.url.path) for call in calls] == [
+        ("GET", "/api/v1/tasks/job-1"),
+        ("POST", "/api/v1/tasks/job-1/cancel"),
+        ("GET", "/api/v1/tasks/job-1"),
     ]
 
 
@@ -269,15 +268,13 @@ def test_fetch_and_cancel_report_failed_transcription_subtask(
 )
 def test_fetch_rejects_non_http_transcription_result_url(
     model_factory: Callable[..., BaseTranscriptionModelSetup],
-    sdk_jobs: SimpleNamespace,
-    task_responses: Callable[..., list[dict[str, Any]]],
+    http_calls,
     monkeypatch: pytest.MonkeyPatch,
     bad_url: str,
 ) -> None:
     model = model_factory()
-    model._client().audio.asr.jobs = sdk_jobs
-    task_responses(
-        model,
+    _, responses = http_calls
+    responses.append(
         httpx.Response(
             200,
             json=_task_body(
@@ -291,7 +288,7 @@ def test_fetch_rejects_non_http_transcription_result_url(
                     ]
                 },
             ),
-        ),
+        )
     )
 
     def forbid_get(*_args: Any, **_kwargs: Any) -> httpx.Response:
@@ -302,7 +299,7 @@ def test_fetch_rejects_non_http_transcription_result_url(
         "flink_agents.integrations.media_models.dashscope_media_model.httpx.get",
         forbid_get,
     )
-    job = model.submit(_audio())
+    job = MediaJob(job_id="job-1", submitted_at_ms=0)
 
     with pytest.raises(ValueError, match="http or https URL"):
         model.fetch(job)

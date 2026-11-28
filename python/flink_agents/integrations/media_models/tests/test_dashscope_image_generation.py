@@ -15,8 +15,11 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -28,6 +31,7 @@ from flink_agents.api.chat_message import (
 )
 from flink_agents.api.media import (
     BaseImageGenerationModelSetup,
+    MediaJob,
     MediaJobStatus,
     MediaResult,
 )
@@ -51,16 +55,35 @@ def model_factory(
     return create
 
 
+@pytest.mark.parametrize(
+    ("model_name", "use_image_jobs"),
+    [
+        ("qwen-image-3.0", False),
+        ("custom-image", False),
+        ("wan2.6-t2i", True),
+        ("wan2.6-image", True),
+        ("wan2.7-image-pro", True),
+        ("kling-image", True),
+        ("vidu-image", True),
+        ("z-image", True),
+    ],
+)
 def test_submit_sends_text_and_images_in_order(
     model_factory: Callable[..., BaseImageGenerationModelSetup],
-    task_responses: Callable[..., list[dict[str, Any]]],
+    http_calls,
+    model_name: str,
+    use_image_jobs: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    model = model_factory(n=1, watermark=False)
-    calls = task_responses(
-        model,
+    model = model_factory(model=model_name, n=1, watermark=False)
+    jobs = model._client().images.jobs
+    create = Mock(wraps=jobs.create)
+    monkeypatch.setattr(jobs, "create", create)
+    calls, responses = http_calls
+    responses.append(
         httpx.Response(
             200, json={"output": {"task_id": "job-1", "task_status": "PENDING"}}
-        ),
+        )
     )
 
     job = model.submit(
@@ -73,12 +96,13 @@ def test_submit_sends_text_and_images_in_order(
     )
 
     assert job.job_id == "job-1"
+    assert create.call_count == int(use_image_jobs)
     (call,) = calls
-    assert call["method"] == "POST"
-    assert call["path"] == "/services/aigc/image-generation/generation"
-    assert call["headers"] == {"X-DashScope-Async": "enable"}
-    assert call["json"] == {
-        "model": "qwen-image-3.0",
+    assert call.method == "POST"
+    assert call.url.path == "/api/v1/services/aigc/image-generation/generation"
+    assert call.headers["X-DashScope-Async"] == "enable"
+    assert json.loads(call.content) == {
+        "model": model_name,
         "input": {
             "messages": [
                 {
@@ -121,13 +145,13 @@ def test_submit_sends_text_and_images_in_order(
 )
 def test_submit_rejects_invalid_inputs_before_request(
     model_factory: Callable[..., BaseImageGenerationModelSetup],
-    task_responses: Callable[..., list[dict[str, Any]]],
+    http_calls,
     prompt: Any,
     images: Any,
     error: type[Exception],
 ) -> None:
     model = model_factory()
-    calls = task_responses(model)
+    calls, _ = http_calls
 
     with pytest.raises(error):
         model.submit(prompt, images=images)
@@ -145,34 +169,37 @@ def test_submit_rejects_invalid_inputs_before_request(
 )
 def test_fetch_reads_image_urls(
     model_factory: Callable[..., BaseImageGenerationModelSetup],
-    task_responses: Callable[..., list[dict[str, Any]]],
+    http_calls,
     second_url: str,
     expires_at_ms: int | None,
 ) -> None:
     model = model_factory()
-    task_responses(
-        model,
-        httpx.Response(200, json={"output": {"task_id": "job-1"}}),
-        httpx.Response(
-            200,
-            json={
-                "request_id": "req-1",
-                "usage": {"output_image_count": 2},
-                "output": {
-                    "task_status": "SUCCEEDED",
-                    "choices": [
-                        {
-                            "message": {
-                                "content": [
-                                    {"image": _RESULT},
-                                    {"image": second_url},
-                                ]
+    _, responses = http_calls
+    responses.extend(
+        [
+            httpx.Response(200, json={"output": {"task_id": "job-1"}}),
+            httpx.Response(
+                200,
+                json={
+                    "request_id": "req-1",
+                    "usage": {"output_image_count": 2},
+                    "output": {
+                        "task_status": "SUCCEEDED",
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": [
+                                        {"text": "caption"},
+                                        {"image": _RESULT},
+                                        {"image": second_url},
+                                    ]
+                                }
                             }
-                        }
-                    ],
+                        ],
+                    },
                 },
-            },
-        ),
+            ),
+        ]
     )
     job = model.submit("A line drawing of a cat.")
 
@@ -187,3 +214,69 @@ def test_fetch_reads_image_urls(
     assert state.result.expires_at_ms == expires_at_ms
     assert state.result.usage == {"output_image_count": 2}
     assert state.result.request_id == "req-1"
+
+
+def test_image_jobs_preserves_file_uri_as_prompt(
+    model_factory: Callable[..., BaseImageGenerationModelSetup],
+    http_calls,
+    tmp_path: Path,
+) -> None:
+    prompt_file = tmp_path / "prompt.txt"
+    prompt_file.write_text("local text", encoding="utf-8")
+    prompt = prompt_file.as_uri()
+    model = model_factory(model="wan2.6-t2i")
+    requests, responses = http_calls
+    responses.append(httpx.Response(200, json={"output": {"task_id": "job-1"}}))
+    assert model.submit(prompt).job_id == "job-1"
+    [request] = requests
+    assert json.loads(request.content)["input"]["messages"] == [
+        {"role": "user", "content": [{"text": prompt}]}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("model_name", "body"),
+    [
+        ("qwen-image-3.0", {"task_id": "top-level", "output": {}}),
+        ("wan2.6-t2i", {"output": {}}),
+    ],
+)
+def test_submit_requires_task_id(
+    model_factory: Callable[..., BaseImageGenerationModelSetup],
+    http_calls,
+    model_name: str,
+    body: dict[str, Any],
+) -> None:
+    model = model_factory(model=model_name)
+    _, responses = http_calls
+    responses.append(httpx.Response(200, json=body))
+    with pytest.raises(ValueError, match="task id"):
+        model.submit("Draw one picture.")
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        {"image": _RESULT},
+        [{"image": _RESULT}, {"image": 123}],
+        [{"image": _RESULT}, {"image": {"url": _RESULT}}],
+        [{"image": _RESULT}, {"image": "file:///tmp/private.png"}],
+        [{"image": _RESULT}, {"image": "https:///no-host.png"}],
+    ],
+)
+def test_fetch_rejects_invalid_image_result(
+    model_factory: Callable[..., BaseImageGenerationModelSetup],
+    http_calls,
+    content,
+) -> None:
+    model = model_factory()
+    requests, responses = http_calls
+    output = {
+        "task_status": "SUCCEEDED",
+        "choices": [{"message": {"content": content}}],
+    }
+    responses.append(httpx.Response(200, json={"output": output}))
+    with pytest.raises(ValueError):
+        model.fetch(MediaJob(job_id="job-1", submitted_at_ms=0))
+    [request] = requests
+    assert request.method == "GET"

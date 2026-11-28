@@ -36,6 +36,9 @@ from flink_agents.api.chat_message import (
 from flink_agents.integrations.rerank_models.dashscope_rerank_model import (
     DashScopeRerankModel,
 )
+from flink_agents.integrations.tests.dashscope_http import (
+    record_dashscope_requests as record_dashscope_requests,
+)
 
 _PATH = "/services/rerank/text-rerank/text-rerank"
 
@@ -57,23 +60,6 @@ def model_factory() -> Iterator[Callable[..., DashScopeRerankModel]]:
             return model
 
         yield create
-
-
-@pytest.fixture
-def http_calls(
-    monkeypatch: pytest.MonkeyPatch,
-) -> tuple[list[httpx.Request], list[httpx.Response]]:
-    requests: list[httpx.Request] = []
-    responses: list[httpx.Response] = []
-
-    def handle_request(
-        _transport: httpx.HTTPTransport, request: httpx.Request
-    ) -> httpx.Response:
-        requests.append(request)
-        return responses.pop(0)
-
-    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", handle_request)
-    return requests, responses
 
 
 def _ranked(*indexes: int) -> dict[str, Any]:
